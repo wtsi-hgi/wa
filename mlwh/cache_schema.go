@@ -57,6 +57,17 @@ var schemaStatementOrder = []string{
 	"donor_samples",
 	"iseq_product_metrics_mirror",
 	"seq_product_irods_locations_mirror",
+	"pac_bio_product_metrics_mirror",
+	"pac_bio_run_well_metrics_mirror",
+	"eseq_product_metrics_mirror",
+	"eseq_run_mirror",
+	"eseq_run_lane_metrics_mirror",
+	"useq_product_metrics_mirror",
+	"useq_run_metrics_mirror",
+	"oseq_flowcell_mirror",
+	"iseq_run_status_mirror",
+	"iseq_run_status_dict_mirror",
+	"seq_ops_tracking_per_sample_mirror",
 	"sample_search_token",
 	"sync_state",
 	"schema_version",
@@ -65,12 +76,23 @@ var schemaStatementOrder = []string{
 
 var cacheMigrationRecreateTables = []string{
 	"donor_samples",
+	"eseq_product_metrics_mirror",
+	"eseq_run_lane_metrics_mirror",
+	"eseq_run_mirror",
 	"iseq_product_metrics_mirror",
+	"iseq_run_status_dict_mirror",
+	"iseq_run_status_mirror",
 	"library_samples",
+	"oseq_flowcell_mirror",
+	"pac_bio_product_metrics_mirror",
+	"pac_bio_run_well_metrics_mirror",
 	"sample_mirror",
 	"sample_search_token",
+	"seq_ops_tracking_per_sample_mirror",
 	"seq_product_irods_locations_mirror",
 	"study_mirror",
+	"useq_product_metrics_mirror",
+	"useq_run_metrics_mirror",
 }
 
 var cacheMigrationSyncStateTables = []string{
@@ -79,6 +101,21 @@ var cacheMigrationSyncStateTables = []string{
 	syncTableIseqFlowcell,
 	syncTableSample,
 	syncTableStudy,
+	// New platform-coverage / tracking / run-status sync tables (A4). Their
+	// sync strategies land in a later Batch 2 item (A5); clearing any stale
+	// sync_state rows here keeps the migration clean so the next sync of each
+	// repopulates the corresponding mirror from scratch.
+	"pac_bio_product_metrics",
+	"pac_bio_run_well_metrics",
+	"eseq_product_metrics",
+	"eseq_run",
+	"eseq_run_lane_metrics",
+	"useq_product_metrics",
+	"useq_run_metrics",
+	"oseq_flowcell",
+	"iseq_run_status",
+	"iseq_run_status_dict",
+	"seq_ops_tracking_per_sample",
 }
 
 var cacheMigrationDropTables = []string{
@@ -88,6 +125,17 @@ var cacheMigrationDropTables = []string{
 	"donor_samples",
 	"iseq_product_metrics_mirror",
 	"seq_product_irods_locations_mirror",
+	"pac_bio_product_metrics_mirror",
+	"pac_bio_run_well_metrics_mirror",
+	"eseq_product_metrics_mirror",
+	"eseq_run_mirror",
+	"eseq_run_lane_metrics_mirror",
+	"useq_product_metrics_mirror",
+	"useq_run_metrics_mirror",
+	"oseq_flowcell_mirror",
+	"iseq_run_status_mirror",
+	"iseq_run_status_dict_mirror",
+	"seq_ops_tracking_per_sample_mirror",
 	"negative_cache",
 	"enrich_cache",
 	"watermarks",
@@ -103,12 +151,13 @@ func parseSchemaStatement(stmt string, shape *schemaShape) error {
 
 	switch {
 	case strings.HasPrefix(upper, "CREATE TABLE"):
-		table, columns, unique, err := parseCreateTable(stmt)
+		table, columns, nullable, unique, err := parseCreateTable(stmt)
 		if err != nil {
 			return err
 		}
 
 		shape.Tables[table] = columns
+		shape.Nullable[table] = nullable
 		if len(unique) > 0 {
 			shape.Unique[table] = unique
 		}
@@ -124,6 +173,19 @@ func parseSchemaStatement(stmt string, shape *schemaShape) error {
 	}
 
 	return nil
+}
+
+// columnDefinitionIsNullable reports whether a single column definition admits
+// SQL NULL: it does unless the definition declares NOT NULL or PRIMARY KEY (an
+// inline primary key is implicitly NOT NULL in both SQLite and MySQL).
+func columnDefinitionIsNullable(part string) bool {
+	normalized := strings.ToUpper(strings.Join(strings.Fields(part), " "))
+
+	if strings.Contains(normalized, "NOT NULL") {
+		return false
+	}
+
+	return !strings.Contains(normalized, "PRIMARY KEY")
 }
 
 func loadSchema(dialect string) ([]string, error) {
@@ -158,21 +220,29 @@ func loadSchemaWithMySQLCollation(dialect, collation string) ([]string, error) {
 
 // schemaShape is the dialect-agnostic, comparable representation of the cache
 // schema. Tables/Index/Unique capture column types, secondary index column
-// lists, and unique-constraint column tuples. The word-token prefix index that
-// backs sample search (sample_search_token) is an ordinary table+index, so it
-// is represented in Tables/Index like any other table and compares equal across
-// dialects without special casing.
+// lists, and unique-constraint column tuples. Nullable captures, per table, the
+// set of columns that may store SQL NULL (true when the column has neither a
+// NOT NULL constraint nor PRIMARY KEY); it is populated only when the shape is
+// parsed from DDL (parseSchemaShape) and is intentionally ignored by
+// compareCacheSchemaShapes and the live-DB shape readers, so it adds
+// nullability awareness for the .sql-parsing schema tests without changing the
+// runtime drift check. The word-token prefix index that backs sample search
+// (sample_search_token) is an ordinary table+index, so it is represented in
+// Tables/Index like any other table and compares equal across dialects without
+// special casing.
 type schemaShape struct {
-	Tables map[string]map[string]string
-	Index  map[string][]string
-	Unique map[string][]string
+	Tables   map[string]map[string]string
+	Index    map[string][]string
+	Unique   map[string][]string
+	Nullable map[string]map[string]bool
 }
 
 func parseSchemaShape(stmts []string) (schemaShape, error) {
 	shape := schemaShape{
-		Tables: make(map[string]map[string]string, len(stmts)),
-		Index:  make(map[string][]string, len(stmts)),
-		Unique: make(map[string][]string, len(stmts)),
+		Tables:   make(map[string]map[string]string, len(stmts)),
+		Index:    make(map[string][]string, len(stmts)),
+		Unique:   make(map[string][]string, len(stmts)),
+		Nullable: make(map[string]map[string]bool, len(stmts)),
 	}
 
 	for _, group := range stmts {
@@ -282,20 +352,21 @@ func splitSQLStatements(group string) []string {
 	return statements
 }
 
-func parseCreateTable(stmt string) (string, map[string]string, []string, error) {
+func parseCreateTable(stmt string) (string, map[string]string, map[string]bool, []string, error) {
 	bodyStart := strings.Index(stmt, "(")
 	bodyEnd := strings.LastIndex(stmt, ")")
 	if bodyStart == -1 || bodyEnd == -1 || bodyEnd <= bodyStart {
-		return "", nil, nil, fmt.Errorf("mlwh: malformed create table %q", stmt)
+		return "", nil, nil, nil, fmt.Errorf("mlwh: malformed create table %q", stmt)
 	}
 
 	header := strings.Fields(stmt[:bodyStart])
 	if len(header) < 3 {
-		return "", nil, nil, fmt.Errorf("mlwh: malformed create table header %q", stmt)
+		return "", nil, nil, nil, fmt.Errorf("mlwh: malformed create table header %q", stmt)
 	}
 
 	table := trimIdentifier(header[len(header)-1])
 	columns := make(map[string]string)
+	nullable := make(map[string]bool)
 	unique := make([]string, 0, 1)
 
 	for _, part := range splitTopLevel(body(stmt, bodyStart, bodyEnd), ',') {
@@ -307,7 +378,7 @@ func parseCreateTable(stmt string) (string, map[string]string, []string, error) 
 		if isTableConstraint(fields) {
 			tuples, ok, err := parseUniqueConstraint(part)
 			if err != nil {
-				return "", nil, nil, err
+				return "", nil, nil, nil, err
 			}
 
 			if ok {
@@ -317,10 +388,12 @@ func parseCreateTable(stmt string) (string, map[string]string, []string, error) 
 			continue
 		}
 
-		columns[trimIdentifier(fields[0])] = normaliseTypeFamily(fields[1])
+		name := trimIdentifier(fields[0])
+		columns[name] = normaliseTypeFamily(fields[1])
+		nullable[name] = columnDefinitionIsNullable(part)
 	}
 
-	return table, columns, unique, nil
+	return table, columns, nullable, unique, nil
 }
 
 func parseUniqueConstraint(part string) ([]string, bool, error) {

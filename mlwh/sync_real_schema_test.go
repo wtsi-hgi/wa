@@ -38,6 +38,318 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func seedRealMLWHIseqRunStatusDictRow(t *testing.T, db *sql.DB, idRunStatusDict int64, description string, temporalIndex int) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO iseq_run_status_dict(id_run_status_dict, description, temporal_index) VALUES (?, ?, ?)`,
+		idRunStatusDict, description, temporalIndex,
+	); err != nil {
+		t.Fatalf("seedRealMLWHIseqRunStatusDictRow: %v", err)
+	}
+}
+
+func seedRealMLWHOseqFlowcellRow(t *testing.T, db *sql.DB, idOseqFlowcellTmp, idSampleTmp, idStudyTmp int64) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO oseq_flowcell(id_oseq_flowcell_tmp, id_sample_tmp, id_study_tmp) VALUES (?, ?, ?)`,
+		idOseqFlowcellTmp, idSampleTmp, idStudyTmp,
+	); err != nil {
+		t.Fatalf("seedRealMLWHOseqFlowcellRow: %v", err)
+	}
+}
+
+func seedRealMLWHTrackingRow(t *testing.T, db *sql.DB, idSampleLims, studyID string, manifestCreated time.Time) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO seq_ops_tracking_per_sample(id_sample_lims, sanger_sample_id, sanger_sample_name, study_id, programme, faculty_sponsor, library_type, platform, manifest_created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		idSampleLims, idSampleLims, idSampleLims+"-name", studyID, "DNA Pipelines", "Sponsor", "Standard", "Illumina", formatSyncTime(manifestCreated),
+	); err != nil {
+		t.Fatalf("seedRealMLWHTrackingRow: %v", err)
+	}
+}
+
+type irodsLocationMirrorRow struct {
+	idSampleTmp int64
+	idStudyLims string
+	platform    string
+	created     string
+}
+
+func readIRODSLocationMirrorRowForTest(t *testing.T, db *sql.DB, productID string) irodsLocationMirrorRow {
+	t.Helper()
+
+	var row irodsLocationMirrorRow
+	if err := db.QueryRow(
+		`SELECT id_sample_tmp, id_study_lims, platform, created FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`,
+		productID,
+	).Scan(&row.idSampleTmp, &row.idStudyLims, &row.platform, &row.created); err != nil {
+		t.Fatalf("readIRODSLocationMirrorRowForTest(%q): %v", productID, err)
+	}
+
+	return row
+}
+
+func TestClientSyncSeqProductIRODSLocationsStoresCreatedAndPlatformForIllumina(t *testing.T) {
+	convey.Convey("A2.1: Given a source Illumina iRODS row with created and seq_platform_name=illumina", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.June, 1, 9, 0, 0, 0, time.UTC)
+		created := time.Date(2026, time.June, 25, 12, 30, 0, 0, time.UTC)
+		seedRealMLWHStudyRow(t, source, 70, "SQSCP", "7001", "uuid-study-70", "Study Seventy", "acc-st-70", base)
+		seedRealMLWHFlowcellRow(t, source, 7001, "Standard", 701, 70, base.Add(time.Minute))
+		seedRealMLWHProductMetricRow(t, source, 70001, 7001, 48000, 1, 1, 1, 1, 1, base.Add(2*time.Minute))
+		seedRealMLWHIRODSLocationPlatformRow(t, source, 80001, "product-70001", "illumina", "/seq/illumina/runs/48/48000", "plex1/48000#1.cram", created, base.Add(3*time.Minute))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.Convey("when the iRODS table syncs, then the mirror row stores the supplied created and platform", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 1)
+
+			row := readIRODSLocationMirrorRowForTest(t, cache.DB(), "product-70001")
+			convey.So(row.idSampleTmp, convey.ShouldEqual, 701)
+			convey.So(row.idStudyLims, convey.ShouldEqual, "7001")
+			convey.So(row.platform, convey.ShouldEqual, "illumina")
+			convey.So(row.created, convey.ShouldEqual, formatSyncTime(created))
+		})
+	})
+}
+
+// seedRealMLWHIRODSLocationPlatformRow seeds a seq_product_irods_locations row
+// with an explicit seq_platform_name and created time, so per-platform recovery
+// and the carried-through created/platform can be exercised end-to-end.
+func seedRealMLWHIRODSLocationPlatformRow(t *testing.T, db *sql.DB, idTmp int64, idProduct, platform, rootCollection, relativePath string, created, lastUpdated time.Time) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO seq_product_irods_locations(id_seq_product_irods_locations_tmp, created, last_changed, id_product, seq_platform_name, irods_root_collection, irods_data_relative_path, irods_secondary_data_relative_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		idTmp,
+		formatSyncTime(created),
+		formatSyncTime(lastUpdated),
+		idProduct,
+		platform,
+		rootCollection,
+		relativePath,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("seedRealMLWHIRODSLocationPlatformRow: %v", err)
+	}
+}
+
+func TestClientSyncSeqProductIRODSLocationsRecoversPacBioRowFromProductMetrics(t *testing.T) {
+	convey.Convey("A2.2: Given a PacBio iRODS row whose id_product matches pac_bio_product_metrics and no Illumina product", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.June, 2, 9, 0, 0, 0, time.UTC)
+		created := time.Date(2026, time.June, 26, 8, 0, 0, 0, time.UTC)
+		seedRealMLWHStudyRow(t, source, 71, "SQSCP", "7101", "uuid-study-71", "Study PacBio", "acc-st-71", base)
+		seedRealMLWHPacBioRunRow(t, source, 9100, 911, 71)
+		seedRealMLWHPacBioProductMetricRow(t, source, 91001, 9100, "pacbio-product-1", base.Add(time.Minute))
+		seedRealMLWHIRODSLocationPlatformRow(t, source, 81001, "pacbio-product-1", "pacbio", "/seq/pacbio/r64/runfolder", "demux/m64.hifi_reads.bam", created, base.Add(2*time.Minute))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.Convey("when syncing, then a mirror row is written with the PacBio sample/study and platform from seq_platform_name, not dropped", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 1)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`, "pacbio-product-1"), convey.ShouldEqual, 1)
+
+			row := readIRODSLocationMirrorRowForTest(t, cache.DB(), "pacbio-product-1")
+			convey.So(row.idSampleTmp, convey.ShouldEqual, 911)
+			convey.So(row.idStudyLims, convey.ShouldEqual, "7101")
+			convey.So(row.platform, convey.ShouldEqual, "pacbio")
+			convey.So(row.created, convey.ShouldEqual, formatSyncTime(created))
+		})
+	})
+}
+
+// TestClientSyncSeqProductIRODSLocationsToleratesNullRelativePath is the hermetic
+// regression guard for the real-source bug where seq_product_irods_locations rows
+// (e.g. the Ultimagen iRODS rows) carry a NULL irods_data_relative_path, which made
+// the sync fail with "converting NULL to string is unsupported". The fixture's
+// irods_data_relative_path column is nullable (matching reality) and this row's
+// value is NULL, so a sync that did not tolerate it would fail here without a real
+// database.
+func TestClientSyncSeqProductIRODSLocationsToleratesNullRelativePath(t *testing.T) {
+	convey.Convey("Given an Ultimagen iRODS row whose irods_data_relative_path is NULL", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.June, 4, 9, 0, 0, 0, time.UTC)
+		created := time.Date(2026, time.June, 28, 6, 0, 0, 0, time.UTC)
+		seedRealMLWHStudyRow(t, source, 73, "SQSCP", "7301", "uuid-study-73", "Study Ultimagen", "acc-st-73", base)
+		seedRealMLWHUseqWaferRow(t, source, 9300, 931, 73)
+		seedRealMLWHUseqProductMetricRow(t, source, "useq-product-1", 9300, 73001, base.Add(time.Minute))
+		seedRealMLWHIRODSLocationNullRelativePathRow(t, source, 83001, "useq-product-1", "ultimagen", "/seq/ultimagen/runs/r1", created, base.Add(2*time.Minute))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.Convey("when the iRODS table syncs, then the NULL relative path syncs cleanly as an empty path", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 1)
+
+			var relativePath string
+			convey.So(cache.DB().QueryRow(
+				`SELECT irods_data_relative_path FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`,
+				"useq-product-1",
+			).Scan(&relativePath), convey.ShouldBeNil)
+			convey.So(relativePath, convey.ShouldEqual, "")
+
+			row := readIRODSLocationMirrorRowForTest(t, cache.DB(), "useq-product-1")
+			convey.So(row.idSampleTmp, convey.ShouldEqual, 931)
+			convey.So(row.idStudyLims, convey.ShouldEqual, "7301")
+			convey.So(row.platform, convey.ShouldEqual, "ultimagen")
+		})
+	})
+}
+
+// TestClientSyncSeqOpsTrackingPerSampleToleratesNullContextColumns is the hermetic
+// regression guard for the real-source bug where the mlwh_reporting tracking
+// table's nullable context columns (library_type, platform, etc.) are NULL, which
+// made the full-refresh sync fail with "converting NULL to string is unsupported".
+func TestClientSyncSeqOpsTrackingPerSampleToleratesNullContextColumns(t *testing.T) {
+	convey.Convey("Given a tracking source row whose context columns are NULL", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		if _, err := source.Exec(
+			`INSERT INTO seq_ops_tracking_per_sample(id_sample_lims, sanger_sample_id, sanger_sample_name, study_id, programme, faculty_sponsor, library_type, platform, manifest_created) VALUES (?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
+			"NULLY-1",
+		); err != nil {
+			t.Fatalf("seed null tracking row: %v", err)
+		}
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqOpsTrackingPerSample)
+
+		convey.Convey("when the full-refresh sync runs, then the NULL context columns sync cleanly as empty strings", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 1)
+
+			var libraryType, platform string
+			convey.So(cache.DB().QueryRow(
+				`SELECT library_type, platform FROM seq_ops_tracking_per_sample_mirror WHERE id_sample_lims = ?`,
+				"NULLY-1",
+			).Scan(&libraryType, &platform), convey.ShouldBeNil)
+			convey.So(libraryType, convey.ShouldEqual, "")
+			convey.So(platform, convey.ShouldEqual, "")
+		})
+	})
+}
+
+func seedRealMLWHUseqWaferRow(t *testing.T, db *sql.DB, idUseqWaferTmp, idSampleTmp, idStudyTmp int64) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO useq_wafer(id_useq_wafer_tmp, id_sample_tmp, id_study_tmp) VALUES (?, ?, ?)`,
+		idUseqWaferTmp, idSampleTmp, idStudyTmp,
+	); err != nil {
+		t.Fatalf("seedRealMLWHUseqWaferRow: %v", err)
+	}
+}
+
+func seedRealMLWHUseqProductMetricRow(t *testing.T, db *sql.DB, idProduct string, idWaferTmp, idRun int64, lastChanged time.Time) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO useq_product_metrics(id_useq_pr_metrics_tmp, id_useq_wafer_tmp, id_run, id_useq_product, qc, qc_seq, qc_lib, last_changed) VALUES ((SELECT COALESCE(MAX(id_useq_pr_metrics_tmp), 0) + 1 FROM useq_product_metrics), ?, ?, ?, ?, ?, ?, ?)`,
+		idWaferTmp, idRun, idProduct, nil, nil, nil, formatSyncTime(lastChanged),
+	); err != nil {
+		t.Fatalf("seedRealMLWHUseqProductMetricRow: %v", err)
+	}
+}
+
+// seedRealMLWHIRODSLocationNullRelativePathRow seeds an iRODS row whose
+// irods_data_relative_path is NULL, exactly like the real Ultimagen rows.
+func seedRealMLWHIRODSLocationNullRelativePathRow(t *testing.T, db *sql.DB, idTmp int64, idProduct, platform, rootCollection string, created, lastUpdated time.Time) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO seq_product_irods_locations(id_seq_product_irods_locations_tmp, created, last_changed, id_product, seq_platform_name, irods_root_collection, irods_data_relative_path, irods_secondary_data_relative_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		idTmp,
+		formatSyncTime(created),
+		formatSyncTime(lastUpdated),
+		idProduct,
+		platform,
+		rootCollection,
+		nil,
+		nil,
+	); err != nil {
+		t.Fatalf("seedRealMLWHIRODSLocationNullRelativePathRow: %v", err)
+	}
+}
+
+func seedRealMLWHPacBioRunRow(t *testing.T, db *sql.DB, idPacBioTmp, idSampleTmp, idStudyTmp int64) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO pac_bio_run(id_pac_bio_tmp, id_sample_tmp, id_study_tmp) VALUES (?, ?, ?)`,
+		idPacBioTmp, idSampleTmp, idStudyTmp,
+	); err != nil {
+		t.Fatalf("seedRealMLWHPacBioRunRow: %v", err)
+	}
+}
+
+func seedRealMLWHPacBioProductMetricRow(t *testing.T, db *sql.DB, idTmp, idPacBioTmp int64, idProduct string, lastChanged time.Time) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO pac_bio_product_metrics(id_pac_bio_pr_metrics_tmp, id_pac_bio_rw_metrics_tmp, id_pac_bio_tmp, id_pac_bio_product, qc, last_changed) VALUES (?, ?, ?, ?, ?, ?)`,
+		idTmp, idTmp, idPacBioTmp, idProduct, nil, formatSyncTime(lastChanged),
+	); err != nil {
+		t.Fatalf("seedRealMLWHPacBioProductMetricRow: %v", err)
+	}
+}
+
+func TestClientSyncSeqProductIRODSLocationsPlatformComesFromSeqPlatformNameNotMatchedTable(t *testing.T) {
+	convey.Convey("A2.3: Given a row whose seq_platform_name is pacbio but that also matches an Illumina product", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.June, 3, 9, 0, 0, 0, time.UTC)
+		created := time.Date(2026, time.June, 27, 7, 0, 0, 0, time.UTC)
+		seedRealMLWHStudyRow(t, source, 72, "SQSCP", "7201", "uuid-study-72", "Study Shared", "acc-st-72", base)
+		seedRealMLWHFlowcellRow(t, source, 7200, "Standard", 721, 72, base.Add(time.Minute))
+		// An Illumina product whose id_iseq_product equals the iRODS row's id_product.
+		seedRealMLWHProductMetricRow(t, source, 72001, 7200, 48100, 1, 1, 1, 1, 1, base.Add(2*time.Minute))
+		seedRealMLWHIRODSLocationPlatformRow(t, source, 82001, "product-72001", "pacbio", "/seq/illumina/runs/48/48100", "plex1/48100#1.cram", created, base.Add(3*time.Minute))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.Convey("when syncing, then platform is pacbio from seq_platform_name, proving platform is not derived from the matched table", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 1)
+
+			row := readIRODSLocationMirrorRowForTest(t, cache.DB(), "product-72001")
+			convey.So(row.platform, convey.ShouldEqual, "pacbio")
+			// The Illumina recovery branch still supplies sample/study (it is the
+			// table that matched), proving platform and linkage are independent.
+			convey.So(row.idSampleTmp, convey.ShouldEqual, 721)
+			convey.So(row.idStudyLims, convey.ShouldEqual, "7201")
+		})
+	})
+}
+
 // TestSyncAgainstRealMLWHSchema exercises the full Client.Sync path against an
 // upstream "MLWH" SQLite database whose table shapes faithfully match the real
 // Sanger MLWH columns (in particular: the upstream `sample` table has NO
@@ -65,13 +377,13 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
 
 		reports, err := client.Sync(context.Background())
 
 		convey.Convey("when Sync runs without restricting tables, then every table is synced and the study mapping is stored via library_samples", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(reports, convey.ShouldHaveLength, 5)
+			convey.So(reports, convey.ShouldHaveLength, len(supportedSyncTables))
 
 			byTable := make(map[string]SyncReport, len(reports))
 			for _, report := range reports {
@@ -322,9 +634,18 @@ func TestClientSyncProductMetricsRealSourceNormalizesNullableNumericFields(t *te
 		convey.So(reports, convey.ShouldHaveLength, 1)
 		convey.So(reports[0].Inserted, convey.ShouldEqual, 1)
 
-		var idRun, position, tagIndex, qc, qcLib, qcSeq int
+		// id_run/position/tag_index are NOT NULL mirror columns, so a NULL source
+		// value normalizes to 0. The QC columns are NULL-preserving: a NULL source
+		// qc stays SQL NULL in the mirror (never coerced to 0) so a downstream read
+		// maps it to "pending" rather than a 0 "fail".
+		var idRun, position, tagIndex int
+		var qc, qcLib, qcSeq sql.NullInt64
 		convey.So(cache.DB().QueryRow(`SELECT id_run, position, tag_index, qc, qc_lib, qc_seq FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`, "product-4001").Scan(&idRun, &position, &tagIndex, &qc, &qcLib, &qcSeq), convey.ShouldBeNil)
-		convey.So([]int{idRun, position, tagIndex, qc, qcLib, qcSeq}, convey.ShouldResemble, []int{0, 0, 0, 0, 0, 0})
+		convey.So([]int{idRun, position, tagIndex}, convey.ShouldResemble, []int{0, 0, 0})
+		convey.So(qc.Valid, convey.ShouldBeFalse)
+		convey.So(qcLib.Valid, convey.ShouldBeFalse)
+		convey.So(qcSeq.Valid, convey.ShouldBeFalse)
+		convey.So(qcString(qc), convey.ShouldEqual, "pending")
 	})
 }
 
@@ -410,13 +731,181 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 		qc_seq               INTEGER
 	)`)
 
+	// irods_data_relative_path is nullable to match the real MLWH schema: the
+	// Ultimagen iRODS rows store NULL there, so a sync that scanned it into a
+	// plain string (rather than COALESCEing / NullString) would fail.
 	mustExec(t, db, `CREATE TABLE seq_product_irods_locations (
 		id_seq_product_irods_locations_tmp INTEGER PRIMARY KEY,
+		created                 TEXT,
 		last_changed            TEXT NOT NULL,
 		id_product              TEXT NOT NULL,
+		seq_platform_name       TEXT NOT NULL,
 		irods_root_collection    TEXT NOT NULL,
-		irods_data_relative_path TEXT NOT NULL,
+		irods_data_relative_path TEXT,
 		irods_secondary_data_relative_path TEXT
+	)`)
+
+	// Per-platform linkage tables (faithful subsets of the real MLWH schema)
+	// that the iRODS recovery UNION joins through to recover sample/study for
+	// PacBio, Elembio and Ultimagen products. Illumina links through
+	// iseq_product_metrics/iseq_flowcell above.
+	mustExec(t, db, `CREATE TABLE pac_bio_run (
+		id_pac_bio_tmp INTEGER PRIMARY KEY,
+		id_sample_tmp  INTEGER NOT NULL,
+		id_study_tmp   INTEGER NOT NULL
+	)`)
+
+	mustExec(t, db, `CREATE TABLE pac_bio_product_metrics (
+		id_pac_bio_pr_metrics_tmp INTEGER PRIMARY KEY,
+		id_pac_bio_rw_metrics_tmp INTEGER,
+		id_pac_bio_tmp            INTEGER,
+		id_pac_bio_product        TEXT NOT NULL,
+		qc                        INTEGER,
+		last_changed              TEXT NOT NULL
+	)`)
+
+	mustExec(t, db, `CREATE TABLE eseq_flowcell (
+		id_eseq_flowcell_tmp INTEGER PRIMARY KEY,
+		id_sample_tmp        INTEGER NOT NULL,
+		id_study_tmp         INTEGER NOT NULL
+	)`)
+
+	mustExec(t, db, `CREATE TABLE eseq_product_metrics (
+		id_eseq_pr_metrics_tmp INTEGER PRIMARY KEY,
+		id_eseq_flowcell_tmp   INTEGER,
+		id_run                 INTEGER NOT NULL,
+		id_eseq_product        TEXT NOT NULL,
+		qc                     INTEGER,
+		qc_seq                 INTEGER,
+		qc_lib                 INTEGER,
+		last_changed           TEXT NOT NULL
+	)`)
+
+	mustExec(t, db, `CREATE TABLE useq_wafer (
+		id_useq_wafer_tmp INTEGER PRIMARY KEY,
+		id_sample_tmp     INTEGER NOT NULL,
+		id_study_tmp      INTEGER NOT NULL
+	)`)
+
+	mustExec(t, db, `CREATE TABLE useq_product_metrics (
+		id_useq_pr_metrics_tmp INTEGER PRIMARY KEY,
+		id_useq_wafer_tmp      INTEGER,
+		id_run                 INTEGER NOT NULL,
+		id_useq_product        TEXT NOT NULL,
+		qc                     INTEGER,
+		qc_seq                 INTEGER,
+		qc_lib                 INTEGER,
+		last_changed           TEXT NOT NULL
+	)`)
+
+	// iseq_run_status carries the Illumina NPG run-status transitions keyed on the
+	// id_run_status primary key (no last_changed), synced in ascending-id mode.
+	mustExec(t, db, `CREATE TABLE iseq_run_status (
+		id_run_status      INTEGER PRIMARY KEY,
+		id_run             INTEGER NOT NULL,
+		date               TEXT    NOT NULL,
+		id_run_status_dict INTEGER NOT NULL,
+		iscurrent          INTEGER NOT NULL
+	)`)
+
+	// iseq_run_status_dict is a small lookup mirrored wholesale (no last_changed).
+	mustExec(t, db, `CREATE TABLE iseq_run_status_dict (
+		id_run_status_dict INTEGER PRIMARY KEY,
+		description        TEXT NOT NULL,
+		temporal_index     INTEGER
+	)`)
+
+	// oseq_flowcell carries ONT identity only and links to study via id_study_tmp;
+	// it is mirrored wholesale.
+	mustExec(t, db, `CREATE TABLE oseq_flowcell (
+		id_oseq_flowcell_tmp INTEGER PRIMARY KEY,
+		id_sample_tmp        INTEGER NOT NULL,
+		id_study_tmp         INTEGER NOT NULL
+	)`)
+
+	// Per-run status/date tables mirrored wholesale (small per-platform tables).
+	// Their nullable status/date columns and last_changed are faithful subsets of
+	// the real MLWH schema.
+	mustExec(t, db, `CREATE TABLE pac_bio_run_well_metrics (
+		id_pac_bio_rw_metrics_tmp INTEGER PRIMARY KEY,
+		pac_bio_run_name          TEXT NOT NULL,
+		well_label                TEXT NOT NULL,
+		plate_number              INTEGER,
+		run_start                 TEXT,
+		run_complete              TEXT,
+		well_complete             TEXT,
+		qc_seq_date               TEXT,
+		run_status                TEXT,
+		well_status               TEXT,
+		last_changed              TEXT
+	)`)
+
+	// eseq_run faithfully matches the real MLWH schema: it has NO run_status /
+	// run_start / run_complete columns; the run-level lifecycle is run_type,
+	// date_started, date_completed and a free-text outcome (and there is no
+	// last_changed). A sync query referencing the old names fails here.
+	mustExec(t, db, `CREATE TABLE eseq_run (
+		id_eseq_run_tmp INTEGER PRIMARY KEY,
+		folder_name     TEXT NOT NULL,
+		run_name        TEXT NOT NULL,
+		flowcell_id     TEXT NOT NULL,
+		run_type        TEXT,
+		date_started    TEXT,
+		date_completed  TEXT,
+		run_parameters  TEXT NOT NULL,
+		run_manifest    TEXT,
+		run_stats       TEXT,
+		outcome         TEXT
+	)`)
+
+	// eseq_run_lane_metrics faithfully matches the real MLWH schema: its primary
+	// key is the composite (id_run, lane) -- there is NO id_eseq_rlm_tmp -- and it
+	// has NO run_name; its timeline is the dated run_started / run_complete columns.
+	mustExec(t, db, `CREATE TABLE eseq_run_lane_metrics (
+		id_run          INTEGER NOT NULL,
+		lane            INTEGER NOT NULL,
+		run_folder_name TEXT NOT NULL,
+		run_started     TEXT,
+		run_complete    TEXT,
+		last_changed    TEXT,
+		PRIMARY KEY (id_run, lane)
+	)`)
+
+	// useq_run_metrics faithfully matches the real MLWH schema: its primary key is
+	// id_run -- there is NO id_useq_run_metrics_tmp -- and it has NO run_name /
+	// run_status / run_start / run_complete columns; the run-level lifecycle is the
+	// dated run_in_progress (start) and run_archived columns.
+	mustExec(t, db, `CREATE TABLE useq_run_metrics (
+		id_run          INTEGER PRIMARY KEY,
+		run_folder_name TEXT NOT NULL,
+		run_in_progress TEXT,
+		run_archived    TEXT,
+		last_changed    TEXT
+	)`)
+
+	// seq_ops_tracking_per_sample mutates in place and has no last_changed, so it
+	// is mirrored by full-table refresh with an atomic swap.
+	// Only id_sample_lims is NOT NULL upstream; the other context/lookup string
+	// columns are nullable in the real mlwh_reporting table (e.g. library_type and
+	// platform are frequently NULL), so the fixture leaves them nullable to match.
+	mustExec(t, db, `CREATE TABLE seq_ops_tracking_per_sample (
+		id_sample_lims         TEXT NOT NULL,
+		sanger_sample_id       TEXT,
+		sanger_sample_name     TEXT,
+		study_id               TEXT,
+		programme              TEXT,
+		faculty_sponsor        TEXT,
+		library_type           TEXT,
+		platform               TEXT,
+		manifest_created       TEXT,
+		manifest_uploaded      TEXT,
+		labware_received       TEXT,
+		order_made             TEXT,
+		working_dilution       TEXT,
+		library_start          TEXT,
+		library_complete       TEXT,
+		sequencing_run_start   TEXT,
+		sequencing_qc_complete  TEXT
 	)`)
 
 	return db
@@ -513,18 +1002,7 @@ func seedRealMLWHIRODSLocationRow(t *testing.T, db *sql.DB, idProduct int64, roo
 func seedRealMLWHIRODSLocationProductRow(t *testing.T, db *sql.DB, idTmp int64, idProduct, rootCollection, relativePath string, lastUpdated time.Time) {
 	t.Helper()
 
-	_, err := db.Exec(
-		`INSERT INTO seq_product_irods_locations(id_seq_product_irods_locations_tmp, last_changed, id_product, irods_root_collection, irods_data_relative_path, irods_secondary_data_relative_path) VALUES (?, ?, ?, ?, ?, ?)`,
-		idTmp,
-		formatSyncTime(lastUpdated),
-		idProduct,
-		rootCollection,
-		relativePath,
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("seedRealMLWHIRODSLocationRow: %v", err)
-	}
+	seedRealMLWHIRODSLocationPlatformRow(t, db, idTmp, idProduct, "Illumina", rootCollection, relativePath, lastUpdated, lastUpdated)
 }
 
 type sqliteJSONTableSource struct {
@@ -536,6 +1014,9 @@ func (source sqliteJSONTableSource) QueryContext(ctx context.Context, query stri
 }
 
 func rewriteJSONTableQueryForSQLite(query string) string {
+	// SQLite has no schemas, so the schema-qualified tracking table name resolves
+	// to the unqualified fixture table.
+	query = strings.ReplaceAll(query, "mlwh_reporting.seq_ops_tracking_per_sample", "seq_ops_tracking_per_sample")
 	query = strings.Replace(query,
 		`INNER JOIN JSON_TABLE(path_ipm.iseq_composition_tmp, '$.components[*]' COLUMNS(component_run INT PATH '$.id_run', component_position INT PATH '$.position', component_tag_index INT PATH '$.tag_index')) component ON TRUE`,
 		`INNER JOIN json_each(path_ipm.iseq_composition_tmp, '$.components') component ON TRUE`,

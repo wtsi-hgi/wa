@@ -35,10 +35,12 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
-// D2 acceptance test 2: a never-synced cache (no sync_state rows) reports five
-// tables, all ever_synced=false with empty timestamps, and does NOT error.
-func TestFreshnessNeverSyncedReturnsFiveAbsentWithoutError(t *testing.T) {
-	convey.Convey("Given a never-synced cache with no sync_state rows", t, func() {
+// A6 acceptance test 1 (and D2 acceptance test 2): a never-synced cache (no
+// sync_state rows) reports one entry per table in freshnessSyncTables (the new
+// total, now including every A4/A5 mirror), all ever_synced=false with empty
+// timestamps, and does NOT error.
+func TestFreshnessNeverSyncedReturnsAllTablesAbsentWithoutError(t *testing.T) {
+	convey.Convey("A6.1: Given a never-synced cache with no sync_state rows", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
@@ -46,9 +48,9 @@ func TestFreshnessNeverSyncedReturnsFiveAbsentWithoutError(t *testing.T) {
 
 		freshness, err := client.Freshness(context.Background())
 
-		convey.Convey("when Freshness runs, then it returns five absent tables and no error", func() {
+		convey.Convey("when Freshness runs, then it returns one absent table per sync table and no error", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(len(freshness.Tables), convey.ShouldEqual, 5)
+			convey.So(len(freshness.Tables), convey.ShouldEqual, len(freshnessSyncTables))
 
 			everSyncedCount := 0
 			nonEmptyTimestamps := 0
@@ -84,12 +86,12 @@ func TestFreshnessReportsPerTableSyncState(t *testing.T) {
 
 		freshness, err := client.Freshness(context.Background())
 
-		convey.Convey("when Freshness runs, then it returns five tables with the synced two populated", func() {
+		convey.Convey("when Freshness runs, then it returns every sync table with the synced two populated", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(len(freshness.Tables), convey.ShouldEqual, 5)
+			convey.So(len(freshness.Tables), convey.ShouldEqual, len(freshnessSyncTables))
 
 			byTable := freshnessByTable(freshness)
-			convey.So(len(byTable), convey.ShouldEqual, 5)
+			convey.So(len(byTable), convey.ShouldEqual, len(freshnessSyncTables))
 
 			for _, table := range []string{syncTableSample, syncTableStudy} {
 				convey.So(byTable[table].EverSynced, convey.ShouldBeTrue)
@@ -106,9 +108,10 @@ func TestFreshnessReportsPerTableSyncState(t *testing.T) {
 	})
 }
 
-// The five mirrored tables must always be reported, in the spec's declared order,
-// regardless of which ones have a sync_state row, so callers get a stable shape.
-func TestFreshnessReportsAllFiveTablesInOrder(t *testing.T) {
+// Every mirrored table must always be reported, in the spec's declared order
+// (the original five first, then the A4/A5 mirrors), regardless of which ones have
+// a sync_state row, so callers get a stable shape.
+func TestFreshnessReportsAllTablesInOrder(t *testing.T) {
 	convey.Convey("Given a cache with a single sync_state row", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
@@ -121,7 +124,7 @@ func TestFreshnessReportsAllFiveTablesInOrder(t *testing.T) {
 
 		freshness, err := client.Freshness(context.Background())
 
-		convey.Convey("when Freshness runs, then all five mirrored tables appear in declared order", func() {
+		convey.Convey("when Freshness runs, then every mirrored table appears in declared order", func() {
 			convey.So(err, convey.ShouldBeNil)
 
 			tables := make([]string, 0, len(freshness.Tables))
@@ -135,6 +138,17 @@ func TestFreshnessReportsAllFiveTablesInOrder(t *testing.T) {
 				syncTableIseqFlowcell,
 				syncTableIseqProductMetrics,
 				syncTableSeqProductIRODSLocations,
+				syncTableIseqRunStatus,
+				syncTableIseqRunStatusDict,
+				syncTableOseqFlowcell,
+				syncTablePacBioRunWellMetrics,
+				syncTableEseqRun,
+				syncTableEseqRunLaneMetrics,
+				syncTableUseqRunMetrics,
+				syncTableSeqOpsTrackingPerSample,
+				syncTablePacBioProductMetrics,
+				syncTableEseqProductMetrics,
+				syncTableUseqProductMetrics,
 			})
 		})
 	})
@@ -161,8 +175,66 @@ func TestFreshnessRemoteClientRoundTripEqualsLocalD2(t *testing.T) {
 		convey.Convey("when Freshness runs locally and remotely, then the decoded Freshness equals the local result", func() {
 			convey.So(localErr, convey.ShouldBeNil)
 			convey.So(remoteErr, convey.ShouldBeNil)
-			convey.So(len(localResult.Tables), convey.ShouldEqual, 5)
+			convey.So(len(localResult.Tables), convey.ShouldEqual, len(freshnessSyncTables))
 			convey.So(reflect.DeepEqual(localResult, remoteResult), convey.ShouldBeTrue)
+		})
+	})
+}
+
+// A6 acceptance test 2: the full-refresh tracking table records its refresh time
+// as high_water and the sync time as last_run, so Freshness surfaces the
+// tracking-mirror lag honestly (its high_water is a refresh timestamp, not a
+// data-change watermark).
+func TestFreshnessTrackingTableReportsRefreshTimeAsHighWater(t *testing.T) {
+	convey.Convey("A6.2: Given a seq_ops_tracking_per_sample sync_state row", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		refreshTime := time.Date(2026, time.June, 27, 2, 0, 0, 0, time.UTC)
+		syncTime := time.Date(2026, time.June, 27, 2, 4, 0, 0, time.UTC)
+		seedSyncStateRun(t, cache.DB(), syncTableSeqOpsTrackingPerSample, refreshTime, syncTime)
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		freshness, err := client.Freshness(context.Background())
+
+		convey.Convey("when Freshness runs, then its high_water is the refresh time and last_run the sync time", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			byTable := freshnessByTable(freshness)
+			tracking := byTable[syncTableSeqOpsTrackingPerSample]
+			convey.So(tracking.EverSynced, convey.ShouldBeTrue)
+			convey.So(tracking.HighWater, convey.ShouldEqual, "2026-06-27T02:00:00Z")
+			convey.So(tracking.LastRun, convey.ShouldEqual, "2026-06-27T02:04:00Z")
+		})
+	})
+}
+
+// A6 acceptance test 3: the ascending-id iseq_run_status table stores no
+// data-timestamp watermark, so its high_water is empty even though it has synced;
+// last_run still carries its sync time.
+func TestFreshnessIseqRunStatusReportsEmptyHighWaterWithLastRun(t *testing.T) {
+	convey.Convey("A6.3: Given an iseq_run_status sync_state row with the ascending-id zero high_water", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		syncTime := time.Date(2026, time.June, 27, 3, 30, 0, 0, time.UTC)
+		// The ascending-id sync writes the zero time as high_water (it has no
+		// last_changed watermark), exactly as syncIseqRunStatusTable persists it.
+		seedSyncStateRun(t, cache.DB(), syncTableIseqRunStatus, time.Time{}, syncTime)
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		freshness, err := client.Freshness(context.Background())
+
+		convey.Convey("when Freshness runs, then its high_water is empty and last_run carries its sync time", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			byTable := freshnessByTable(freshness)
+			runStatus := byTable[syncTableIseqRunStatus]
+			convey.So(runStatus.EverSynced, convey.ShouldBeTrue)
+			convey.So(runStatus.HighWater, convey.ShouldBeEmpty)
+			convey.So(runStatus.LastRun, convey.ShouldEqual, "2026-06-27T03:30:00Z")
 		})
 	})
 }

@@ -6,9 +6,9 @@ CREATE TABLE IF NOT EXISTS iseq_product_metrics_mirror (
 	tag_index            INT    NOT NULL,
 	id_sample_tmp        BIGINT NOT NULL,
 	id_study_lims        VARCHAR(255) NOT NULL COLLATE {{MYSQL_TEXT_COLLATION}},
-	qc                   INT    NOT NULL,
-	qc_lib               INT    NOT NULL,
-	qc_seq               INT    NOT NULL,
+	qc                   INT,
+	qc_lib               INT,
+	qc_seq               INT,
 	last_updated         VARCHAR(255) NOT NULL,
 	CHECK(id_study_lims <> '')
 );

@@ -106,6 +106,17 @@ func parityQueryCases() []parityQueryCase {
 			return q.LibrariesForStudy(ctx, parityStudyID, 100, 0)
 		}},
 		{name: "RunsForStudy", call: func(ctx context.Context, q Queryer) (any, error) { return q.RunsForStudy(ctx, parityStudyID, 100, 0) }},
+		{name: "StudyOverview", call: func(ctx context.Context, q Queryer) (any, error) { return q.StudyOverview(ctx, parityStudyID) }},
+		{name: "RunOverview", call: func(ctx context.Context, q Queryer) (any, error) { return q.RunOverview(ctx, parityRunID) }},
+		{name: "RunStatus", call: func(ctx context.Context, q Queryer) (any, error) { return q.RunStatus(ctx, parityRunID) }},
+		{name: "SampleProgress", call: func(ctx context.Context, q Queryer) (any, error) { return q.SampleProgress(ctx, paritySampleName) }},
+		{name: "StatusBreakdown", call: func(ctx context.Context, q Queryer) (any, error) { return q.StatusBreakdown(ctx, parityStudyID) }},
+		{name: "SamplesWithData", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.SamplesWithData(ctx, parityStudyID, 100, 0)
+		}},
+		{name: "SamplesWithoutData", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.SamplesWithoutData(ctx, parityStudyID, 100, 0)
+		}},
 		{name: "LanesForSample", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.LanesForSample(ctx, paritySampleName, 100, 0)
 		}},
@@ -162,6 +173,54 @@ func parityQueryCases() []parityQueryCase {
 		{name: "CountStudies", call: func(ctx context.Context, q Queryer) (any, error) { return q.CountStudies(ctx) }},
 		{name: "CountSamplesForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountSamplesForStudy(ctx, parityStudyID)
+		}},
+		{name: "CountSamplesWithData", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountSamplesWithData(ctx, parityStudyID)
+		}},
+		{name: "CountSamplesForRun", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountSamplesForRun(ctx, parityRunID)
+		}},
+		{name: "CountSamplesForLibrary", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountSamplesForLibrary(ctx, parityLibraryType, parityStudyID)
+		}},
+		{name: "CountSamplesForLibraryID", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountSamplesForLibraryID(ctx, parityLibraryID)
+		}},
+		{name: "CountSamplesForLibraryLimsID", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountSamplesForLibraryLimsID(ctx, parityLibraryLimsID)
+		}},
+		{name: "CountSamplesForLibraryType", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountSamplesForLibraryType(ctx, parityLibraryType)
+		}},
+		{name: "CountRunsForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountRunsForStudy(ctx, parityStudyID)
+		}},
+		{name: "CountLibrariesForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountLibrariesForStudy(ctx, parityStudyID)
+		}},
+		{name: "CountLanesForSample", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountLanesForSample(ctx, paritySampleName)
+		}},
+		{name: "CountIRODSPathsForSample", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountIRODSPathsForSample(ctx, paritySampleName)
+		}},
+		{name: "CountIRODSPathsForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountIRODSPathsForStudy(ctx, parityStudyID)
+		}},
+		{name: "CountFindSamplesBySangerID", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountFindSamplesBySangerID(ctx, paritySampleSangerID)
+		}},
+		{name: "CountFindSamplesByIDSampleLims", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountFindSamplesByIDSampleLims(ctx, paritySampleLimsID)
+		}},
+		{name: "CountFindSamplesByAccessionNumber", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountFindSamplesByAccessionNumber(ctx, paritySampleAccession)
+		}},
+		{name: "CountFindSamplesBySupplierName", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountFindSamplesBySupplierName(ctx, paritySampleSupplier)
+		}},
+		{name: "CountFindSamplesByLibraryType", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountFindSamplesByLibraryType(ctx, parityFindLibraryType)
 		}},
 		{name: "Freshness", call: func(ctx context.Context, q Queryer) (any, error) { return q.Freshness(ctx) }},
 	}

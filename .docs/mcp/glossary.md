@@ -102,6 +102,75 @@ study ──< library >── sample ──< lane (run, lane, tag) >── run
 - **iRODS paths** are the data objects produced for a sample or study; they are
   the bridge from metadata to the stored sequencing files.
 
+## Availability, recency and progress
+
+These are the domain concepts the availability, recency and sample-progress
+endpoints (`/study/:id/overview`, `/study/:id/samples-with-data`,
+`/study/:id/status-breakdown`, `/sample/:id/progress`, and their counterparts)
+report on. They explain _what those answers mean_, not the wire format.
+
+### Sequencing data available
+
+A sample has **sequencing data available** for a study when it has at least one
+row in the iRODS locations mirror (`seq_product_irods_locations_mirror`) scoped
+by `id_study_lims = :id` - that is, real data files exist in iRODS for that
+sample under that study - with the sample anchored to the study by its
+`library_samples` membership. Availability is therefore **study-scoped**: it
+means "data the sample has under this study" (scoped exactly as
+`/study/:id/irods` is), NOT "data the sample has anywhere". A study's linked
+samples partition into those with data available and those without
+(`with_data + without_data = samples_total`); the without-data side includes
+samples that were sequenced but produced no iRODS rows, registered-only samples,
+and ONT samples.
+
+### Added to iRODS
+
+Recency - "data **added to iRODS** since X" - is measured by the iRODS `created`
+timestamp, which records when the data object was created in iRODS. Every
+recency window (e.g. the `since`/`until` query params and the overview's
+`added_last_7_days`) filters on `created`, and **never** on `last_updated`
+(the source `last_changed`, which conflates a newly-added row with one merely
+modified later) or on `last_run` (which only records when `wa` last synced the
+cache). Only `created` answers when data was genuinely added, so it is the field
+every recency filter uses.
+
+### Baseline phase
+
+The **baseline phase** is the coarse, always-derivable progress phase reported
+for every sample on every platform, so there is no sample for which progress
+cannot be answered. It advances `registered` (linked to the study but with no
+products) to `sequenced` (has product-metrics, with QC rolled up to
+`pass`/`fail`/`pending`) to `delivered` (has study-scoped iRODS rows, with the
+earliest `created` reported as the delivered date). A multi-platform sample
+takes the most-advanced phase across its platforms. These three phases
+(`registered`, `sequenced`, `delivered`) are a closed vocabulary.
+
+### Detailed timeline
+
+The **detailed timeline** is the ordered wet-lab and sequencing milestone
+timeline for a sample, present only when the sample appears in the operations
+tracking mirror (`seq_ops_tracking_per_sample_mirror`). When present it lists
+the sample's reached milestones in canonical order and the progress response
+sets `detailed_timeline=true`; when the sample is absent from the tracking
+mirror the response sets `detailed_timeline=false` with a `timeline_reason`
+(e.g. "not in tracking window") and still returns the baseline phase - the
+absence of a detailed timeline is reported as less detail, never as an error.
+
+### Platform
+
+A **platform** is the sequencing platform a sample's data was produced on -
+Illumina, PacBio, Elembio, Ultimagen, or ONT (Oxford Nanopore) - reported as the
+canonical platform name derived from which product-metrics mirror the sample has
+products in (Illumina, PacBio, Elembio, or Ultimagen), with ONT derived from
+`oseq_flowcell` membership. It is determined by which platform's metrics the
+sample appears in, never from the iRODS `seq_platform_name` source string.
+Negatives are platform-qualified so a "no data" answer
+always names the platform it applies to. ONT is a special case: only a sample's
+identity and study are tracked for ONT, so rather than a false zero its QC is
+reported as `not_tracked`, its availability is reported by listing the sample
+among samples-without-data with platform `["ONT"]`, and its within-sequencing
+status is simply absent (sample progress returns empty `runs` for ONT).
+
 ## Identifier kinds
 
 An **identifier kind** (`IdentifierKind`) names what a raw identifier _is_. The

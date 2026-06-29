@@ -85,6 +85,30 @@ func TestMatchJSONRoundTripE1(t *testing.T) {
 	})
 }
 
+func TestPageJSONCasingE1(t *testing.T) {
+	convey.Convey("E1: Given a populated Page, when marshalled, then the JSON keys are items, total and next_offset", t, func() {
+		data, err := json.Marshal(Page[Sample]{
+			Items:      []Sample{{IDSampleLims: "123"}},
+			Total:      1,
+			NextOffset: -1,
+		})
+		convey.So(err, convey.ShouldBeNil)
+
+		var decoded map[string]json.RawMessage
+		convey.So(json.Unmarshal(data, &decoded), convey.ShouldBeNil)
+
+		convey.So(decoded, convey.ShouldContainKey, "items")
+		convey.So(decoded, convey.ShouldContainKey, "total")
+		convey.So(decoded, convey.ShouldContainKey, "next_offset")
+		convey.So(decoded, convey.ShouldNotContainKey, "Items")
+		convey.So(decoded, convey.ShouldNotContainKey, "Total")
+		convey.So(decoded, convey.ShouldNotContainKey, "NextOffset")
+
+		convey.So(string(decoded["total"]), convey.ShouldEqual, "1")
+		convey.So(string(decoded["next_offset"]), convey.ShouldEqual, "-1")
+	})
+}
+
 func TestTaggedIDJSONCasingE1(t *testing.T) {
 	convey.Convey("E1.3: Given a TaggedID, when marshalled, then the JSON keys are kind and canonical", t, func() {
 		data, err := json.Marshal(TaggedID{Kind: KindRunID, Canonical: "100"})

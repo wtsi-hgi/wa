@@ -35,6 +35,10 @@ import (
 
 const detailFetchLimit = 1_000_000
 
+// allDetailRows is the default detail-collection limit: it returns every nested
+// row, matching the exported StudyDetail/RunDetail behaviour.
+const allDetailRows = detailFetchLimit
+
 type enrichClassifier struct {
 	classify func(context.Context, *Client, string) (*EnrichmentResult, bool, []MissingHop, error)
 }
@@ -96,6 +100,368 @@ func missingHop(hop string, err error) MissingHop {
 	}
 
 	return MissingHop{Hop: hop, Reason: reason, Status: status}
+}
+
+// detailOptions carries the optional pagination and lean controls a detail
+// endpoint accepts. limit/offset page the nested collection (defaulting to
+// every nested row when limit is the server fetch-all default), and lean drops
+// the heavy nested objects in favour of the flat id lists. They are an HTTP-layer
+// concern, so the exported StudyDetail/RunDetail methods (used by enrichment and
+// the remote client) always return the full, all-rows, non-lean shape.
+type detailOptions struct {
+	limit  int
+	offset int
+	lean   bool
+}
+
+func defaultDetailOptions() detailOptions {
+	return detailOptions{limit: allDetailRows, offset: 0}
+}
+
+// studyDetailWithOptions builds the study detail, paginates its nested
+// library/sample collection by the given limit/offset, de-duplicates the
+// referenced studies/libraries into the lookup tables, and (when lean) collapses
+// it to the flat id lists. The returned total is the FULL nested sample count
+// before pagination, which the handler reports via X-Total-Count.
+func (c *Client) studyDetailWithOptions(ctx context.Context, studyLimsID string, opts detailOptions) (StudyDetail, int, error) {
+	study, err := c.studyDetailStudy(ctx, studyLimsID)
+	if err != nil {
+		return StudyDetail{}, 0, err
+	}
+
+	libraries, err := c.LibrariesForStudy(ctx, studyLimsID, detailFetchLimit, 0)
+	if err != nil {
+		return StudyDetail{}, 0, err
+	}
+
+	samples, err := c.SamplesForStudy(ctx, studyLimsID, detailFetchLimit, 0)
+	if err != nil {
+		return StudyDetail{}, 0, err
+	}
+
+	total := len(samples)
+	if opts.lean {
+		return leanStudyDetail(study, samples, libraries), total, nil
+	}
+
+	pagedSamples := paginateSamples(samples, opts)
+	detail := buildStudyDetail(study, pagedSamples)
+	addMissingStudyLibraries(&detail, libraries)
+	deduplicateStudyDetail(&detail)
+
+	return detail, total, nil
+}
+
+// leanStudyDetail builds the lean study-detail shape: the top-level study plus
+// the flat lists of its distinct sample and library ids, with the heavy
+// library_details and lookup tables dropped, so the serialized response is
+// strictly smaller than the non-lean one.
+func leanStudyDetail(study Study, samples []Sample, libraries []Library) StudyDetail {
+	return StudyDetail{
+		Study:      study,
+		SampleIDs:  distinctSampleIDs(samples),
+		LibraryIDs: distinctLibraryIDs(samples, libraries),
+		Lean:       true,
+	}
+}
+
+// distinctSampleIDs returns the distinct sample ids of the given samples, in
+// first-seen order, using the same key as the sample lookup table.
+func distinctSampleIDs(samples []Sample) []string {
+	ids := make([]string, 0, len(samples))
+	seen := make(map[string]struct{}, len(samples))
+	for _, sample := range samples {
+		key := sampleLookupKey(sample)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		ids = append(ids, key)
+	}
+
+	return ids
+}
+
+// distinctLibraryIDs returns the distinct library ids referenced by the given
+// samples and the study's standalone libraries, in first-seen order, using the
+// same key as the library lookup table.
+func distinctLibraryIDs(samples []Sample, libraries []Library) []string {
+	ids := make([]string, 0, len(libraries))
+	seen := make(map[string]struct{}, len(libraries))
+	add := func(library Library) {
+		if library.PipelineIDLims == "" {
+			return
+		}
+
+		key := libraryLookupKey(library)
+		if _, ok := seen[key]; ok {
+			return
+		}
+
+		seen[key] = struct{}{}
+		ids = append(ids, key)
+	}
+
+	for _, sample := range samples {
+		for _, library := range sample.Libraries {
+			add(library)
+		}
+	}
+	for _, library := range libraries {
+		add(library)
+	}
+
+	return ids
+}
+
+// libraryLookupKey is the stable per-library id used to key a library in a detail
+// lookup table and in the lean flat id list. It is unique across the library's
+// type, study, and identifiers, so two libraries that differ only by study do not
+// collide.
+func libraryLookupKey(library Library) string {
+	return studyLibraryGroupKey(library, library.IDStudyLims)
+}
+
+// deduplicateStudyDetail moves the distinct studies and libraries referenced by
+// the study detail's nested sample rows into the lookup tables and strips those
+// sub-objects from the nested rows, so each entity is carried once (keyed by id)
+// instead of being re-embedded under every sample.
+func deduplicateStudyDetail(detail *StudyDetail) {
+	lookups := newDetailLookups()
+	lookups.addStudy(detail.Study)
+
+	for libIndex := range detail.Libraries {
+		library := &detail.Libraries[libIndex]
+		lookups.addLibrary(library.Library)
+		for sampleIndex := range library.Samples {
+			lookups.addSampleReferences(library.Samples[sampleIndex])
+			library.Samples[sampleIndex] = strippedSample(library.Samples[sampleIndex])
+		}
+	}
+
+	detail.StudyLookup = lookups.studyMapOrNil()
+	detail.LibraryLookup = lookups.libraryMapOrNil()
+}
+
+func newDetailLookups() *detailLookups {
+	return &detailLookups{
+		studies:   make(map[string]Study),
+		libraries: make(map[string]Library),
+	}
+}
+
+// strippedSample returns a copy of sample with its studies/libraries sub-objects
+// cleared, so the de-duplicated nested rows reference those entities by id (via
+// the lookup tables) instead of re-embedding them.
+func strippedSample(sample Sample) Sample {
+	sample.Studies = nil
+	sample.Libraries = nil
+
+	return sample
+}
+
+// runDetailWithOptions builds the run detail, paginates its nested sample
+// collection by the given limit/offset (rebuilding the per-study detail from the
+// page so it stays consistent), de-duplicates the referenced studies/libraries
+// into the lookup tables, and (when lean) collapses it to the flat id lists. The
+// returned total is the FULL nested sample count before pagination, which the
+// handler reports via X-Total-Count.
+func (c *Client) runDetailWithOptions(ctx context.Context, idRun string, opts detailOptions) (RunDetail, int, error) {
+	runID, _ := strconv.Atoi(idRun)
+	samples, err := c.SamplesForRun(ctx, idRun, detailFetchLimit, 0)
+	if err != nil {
+		return RunDetail{Run: Run{IDRun: runID}}, 0, err
+	}
+
+	studies, samples, err := c.studiesForSamples(ctx, samples)
+	if err != nil {
+		return RunDetail{Run: Run{IDRun: runID}, Samples: samples}, len(samples), err
+	}
+
+	total := len(samples)
+	if opts.lean {
+		return leanRunDetail(runID, samples, studies), total, nil
+	}
+
+	pagedSamples := paginateSamples(samples, opts)
+	pagedStudies := studiesForRunSamples(studies, pagedSamples)
+	detail := RunDetail{
+		Run:          Run{IDRun: runID},
+		Samples:      pagedSamples,
+		Studies:      pagedStudies,
+		StudyDetails: buildStudyDetails(pagedStudies, pagedSamples),
+	}
+	deduplicateRunDetail(&detail)
+
+	return detail, total, nil
+}
+
+// leanRunDetail builds the lean run-detail shape: the run plus the flat lists of
+// its distinct sample and study ids, with the heavy samples/studies/study_details
+// and lookup tables dropped, so the serialized response is strictly smaller than
+// the non-lean one.
+func leanRunDetail(runID int, samples []Sample, studies []Study) RunDetail {
+	studyIDs := make([]string, 0, len(studies))
+	seen := make(map[string]struct{}, len(studies))
+	for _, study := range studies {
+		if study.IDStudyLims == "" {
+			continue
+		}
+		if _, ok := seen[study.IDStudyLims]; ok {
+			continue
+		}
+
+		seen[study.IDStudyLims] = struct{}{}
+		studyIDs = append(studyIDs, study.IDStudyLims)
+	}
+
+	return RunDetail{
+		Run:       Run{IDRun: runID},
+		SampleIDs: distinctSampleIDs(samples),
+		StudyIDs:  studyIDs,
+		Lean:      true,
+	}
+}
+
+// studiesForRunSamples narrows the run's studies to those actually referenced by
+// the given page of samples, so a paginated run detail's studies/study_details
+// stay consistent with the samples it carries.
+func studiesForRunSamples(studies []Study, samples []Sample) []Study {
+	referenced := make(map[string]struct{}, len(samples))
+	for _, sample := range samples {
+		for _, studyID := range sampleStudyIDs(sample) {
+			referenced[studyID] = struct{}{}
+		}
+	}
+
+	filtered := make([]Study, 0, len(studies))
+	for _, study := range studies {
+		if _, ok := referenced[study.IDStudyLims]; ok {
+			filtered = append(filtered, study)
+		}
+	}
+
+	return filtered
+}
+
+// deduplicateRunDetail moves the distinct studies and libraries referenced by the
+// run detail's nested rows into the lookup tables and strips those sub-objects
+// from every nested sample (both the top-level samples and the study_details), so
+// each entity is carried once (keyed by id) instead of being re-embedded.
+func deduplicateRunDetail(detail *RunDetail) {
+	lookups := newDetailLookups()
+
+	for index := range detail.Samples {
+		lookups.addSampleReferences(detail.Samples[index])
+		detail.Samples[index] = strippedSample(detail.Samples[index])
+	}
+	for _, study := range detail.Studies {
+		lookups.addStudy(study)
+	}
+	for detailIndex := range detail.StudyDetails {
+		studyDetail := &detail.StudyDetails[detailIndex]
+		lookups.addStudy(studyDetail.Study)
+		for libIndex := range studyDetail.Libraries {
+			library := &studyDetail.Libraries[libIndex]
+			lookups.addLibrary(library.Library)
+			for sampleIndex := range library.Samples {
+				library.Samples[sampleIndex] = strippedSample(library.Samples[sampleIndex])
+			}
+		}
+	}
+
+	detail.StudyLookup = lookups.studyMapOrNil()
+	detail.LibraryLookup = lookups.libraryMapOrNil()
+}
+
+// paginateSamples applies a detail collection's limit/offset to its samples,
+// returning the requested window. An offset past the end yields an empty page;
+// the default fetch-all limit returns every sample. A negative offset is clamped
+// to 0 so a direct caller cannot drive the slice bound out of range (the HTTP
+// layer already rejects negatives via mlwhPaginationFromQuery).
+func paginateSamples(samples []Sample, opts detailOptions) []Sample {
+	if opts.offset < 0 {
+		opts.offset = 0
+	}
+	if opts.offset >= len(samples) {
+		return []Sample{}
+	}
+
+	end := len(samples)
+	if opts.limit >= 0 && opts.offset+opts.limit < end {
+		end = opts.offset + opts.limit
+	}
+
+	return samples[opts.offset:end]
+}
+
+// detailLookups accumulates the distinct studies and libraries referenced by the
+// nested rows of a detail response, so each is carried once (keyed by id) instead
+// of being re-embedded under every sample.
+type detailLookups struct {
+	studies   map[string]Study
+	libraries map[string]Library
+}
+
+func (l *detailLookups) addSampleReferences(sample Sample) {
+	for _, study := range sample.Studies {
+		if study.IDStudyLims == "" {
+			continue
+		}
+		if _, ok := l.studies[study.IDStudyLims]; !ok {
+			l.studies[study.IDStudyLims] = study
+		}
+	}
+	for _, library := range sample.Libraries {
+		if library.PipelineIDLims == "" {
+			continue
+		}
+
+		key := libraryLookupKey(library)
+		if _, ok := l.libraries[key]; !ok {
+			l.libraries[key] = library
+		}
+	}
+}
+
+func (l *detailLookups) addStudy(study Study) {
+	if study.IDStudyLims == "" {
+		return
+	}
+	if _, ok := l.studies[study.IDStudyLims]; !ok {
+		l.studies[study.IDStudyLims] = study
+	}
+}
+
+func (l *detailLookups) addLibrary(library Library) {
+	if library.PipelineIDLims == "" {
+		return
+	}
+
+	key := libraryLookupKey(library)
+	if _, ok := l.libraries[key]; !ok {
+		l.libraries[key] = library
+	}
+}
+
+func (l *detailLookups) studyMapOrNil() map[string]Study {
+	if len(l.studies) == 0 {
+		return nil
+	}
+
+	return l.studies
+}
+
+func (l *detailLookups) libraryMapOrNil() map[string]Library {
+	if len(l.libraries) == 0 {
+		return nil
+	}
+
+	return l.libraries
 }
 
 func finishEnrichmentResult(result *EnrichmentResult, missing []MissingHop) EnrichmentResult {
@@ -237,10 +603,34 @@ func runEnrichmentResult(identifier string, runDetail RunDetail) *EnrichmentResu
 		Graph: EnrichmentGraph{
 			Samples:      runDetail.Samples,
 			Studies:      runDetail.Studies,
-			Libraries:    distinctLibrariesForSamples(runDetail.Samples),
+			Libraries:    libraryLinksFromStudyDetails(runDetail.StudyDetails),
 			StudyDetails: runDetail.StudyDetails,
 		},
 	}
+}
+
+// libraryLinksFromStudyDetails collects the distinct library links from a run's
+// per-study detail, in build order. The detail is de-duplicated so each library
+// is carried once under its study (rather than re-embedded under every sample),
+// so the enrichment graph's library links are derived from it deterministically.
+func libraryLinksFromStudyDetails(studyDetails []StudyDetail) []LibraryLink {
+	seen := make(map[LibraryLink]struct{})
+	links := make([]LibraryLink, 0)
+	for index := range studyDetails {
+		for _, link := range flatLibrariesFromStudyDetail(&studyDetails[index]) {
+			if _, ok := seen[link]; ok {
+				continue
+			}
+
+			seen[link] = struct{}{}
+			links = append(links, link)
+		}
+	}
+	if len(links) == 0 {
+		return nil
+	}
+
+	return links
 }
 
 func classifyLibraryType(ctx context.Context, client *Client, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
@@ -1137,50 +1527,26 @@ func (c *Client) SampleDetail(ctx context.Context, sangerName string) (SampleDet
 	}, nil
 }
 
-// StudyDetail returns a study and grouped library/sample details from the
-// synced cache.
+// StudyDetail returns a study and grouped library/sample details from the synced
+// cache. The result is de-duplicated: each distinct study and library is carried
+// once in the lookup tables and the nested sample rows reference them by id (see
+// StudyDetail). It returns every nested row in the default non-lean shape; the
+// HTTP handler reaches studyDetailWithOptions for limit/offset/lean.
 func (c *Client) StudyDetail(ctx context.Context, studyLimsID string) (StudyDetail, error) {
-	study, err := c.studyDetailStudy(ctx, studyLimsID)
-	if err != nil {
-		return StudyDetail{}, err
-	}
+	detail, _, err := c.studyDetailWithOptions(ctx, studyLimsID, defaultDetailOptions())
 
-	libraries, err := c.LibrariesForStudy(ctx, studyLimsID, detailFetchLimit, 0)
-	if err != nil {
-		return StudyDetail{}, err
-	}
-
-	samples, err := c.SamplesForStudy(ctx, studyLimsID, detailFetchLimit, 0)
-	if err != nil {
-		return StudyDetail{}, err
-	}
-
-	detail := buildStudyDetail(study, samples)
-	addMissingStudyLibraries(&detail, libraries)
-
-	return detail, nil
+	return detail, err
 }
 
 // RunDetail returns a run with its samples, studies, and grouped study details
-// from the synced cache.
+// from the synced cache. The result is de-duplicated: each distinct study and
+// library is carried once in the lookup tables and the nested rows reference them
+// by id (see RunDetail). It returns every nested row in the default non-lean
+// shape; the HTTP handler reaches runDetailWithOptions for limit/offset/lean.
 func (c *Client) RunDetail(ctx context.Context, idRun string) (RunDetail, error) {
-	runID, _ := strconv.Atoi(idRun)
-	samples, err := c.SamplesForRun(ctx, idRun, detailFetchLimit, 0)
-	if err != nil {
-		return RunDetail{Run: Run{IDRun: runID}}, err
-	}
+	detail, _, err := c.runDetailWithOptions(ctx, idRun, defaultDetailOptions())
 
-	studies, samples, err := c.studiesForSamples(ctx, samples)
-	if err != nil {
-		return RunDetail{Run: Run{IDRun: runID}, Samples: samples}, err
-	}
-
-	return RunDetail{
-		Run:          Run{IDRun: runID},
-		Samples:      samples,
-		Studies:      studies,
-		StudyDetails: buildStudyDetails(studies, samples),
-	}, nil
+	return detail, err
 }
 
 // LibraryDetail returns a study-scoped library and the samples it covers from

@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"os"
@@ -201,7 +202,7 @@ func TestOpenCacheSQLitePreviousVersionRecreatesSampleSearchTokenTable(t *testin
 
 		convey.Convey("when OpenCache runs at the new version, then it prints exactly one migration line (now including sample_search_token) and the token table is present and usable", func() {
 			convey.So(migrationLine, convey.ShouldEqual, fmt.Sprintf(
-				"mlwh cache: schema v%d->v%d, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, sample_search_token, seq_product_irods_locations_mirror, study_mirror]\n",
+				"mlwh cache: schema v%d->v%d, recreated tables: [donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n",
 				CacheSchemaVersion-1, CacheSchemaVersion,
 			))
 			convey.So(searchTables, convey.ShouldEqual, 1)
@@ -283,7 +284,7 @@ func TestOpenCacheSQLiteSchemaMismatchResetsSchema(t *testing.T) {
 		})
 
 		convey.Convey("when OpenCache runs, then it migrates to the current version, recreates the affected tables, and clears sync_state", func() {
-			convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v1->v%d, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, sample_search_token, seq_product_irods_locations_mirror, study_mirror]\n", CacheSchemaVersion))
+			convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v1->v%d, recreated tables: [donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n", CacheSchemaVersion))
 			convey.So(version, convey.ShouldEqual, CacheSchemaVersion)
 			convey.So(sampleRows, convey.ShouldEqual, 0)
 			convey.So(syncStateRows, convey.ShouldEqual, 1)
@@ -344,7 +345,7 @@ func TestOpenCacheSQLiteCurrentVersionShapeMismatchResetsSchema(t *testing.T) {
 			convey.So(sampleRows, convey.ShouldEqual, 0)
 		})
 
-		convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v%d->v%d, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, sample_search_token, seq_product_irods_locations_mirror, study_mirror]\n", CacheSchemaVersion, CacheSchemaVersion))
+		convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v%d->v%d, recreated tables: [donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n", CacheSchemaVersion, CacheSchemaVersion))
 	})
 }
 
@@ -375,7 +376,7 @@ func TestOpenCacheSQLiteCurrentVersionWrongShapeResetsSchema(t *testing.T) {
 			convey.So(columnCount, convey.ShouldBeGreaterThan, 1)
 		})
 
-		convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v%d->v%d, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, sample_search_token, seq_product_irods_locations_mirror, study_mirror]\n", CacheSchemaVersion, CacheSchemaVersion))
+		convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v%d->v%d, recreated tables: [donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n", CacheSchemaVersion, CacheSchemaVersion))
 	})
 }
 
@@ -553,7 +554,7 @@ func TestOpenCacheMySQLMigratesV1Cache(t *testing.T) {
 		})
 
 		convey.Convey("when OpenCache runs, then it applies the migration and emits the same single stderr line", func() {
-			convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v1->v%d, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, sample_search_token, seq_product_irods_locations_mirror, study_mirror]\n", CacheSchemaVersion))
+			convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v1->v%d, recreated tables: [donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n", CacheSchemaVersion))
 			convey.So(rwMock.ExpectationsWereMet(), convey.ShouldBeNil)
 			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		})
@@ -1293,14 +1294,13 @@ func expectMySQLSchemaMigration(mock sqlmock.Sqlmock, fromVersion, toVersion int
 	)
 	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE sync_state ADD COLUMN resume_cursor TEXT NULL`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE sync_state ADD COLUMN indexes_dropped INT NOT NULL DEFAULT 0`)).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM sync_state WHERE table_name IN (?, ?, ?, ?, ?)`)).
-		WithArgs(
-			"iseq_product_metrics",
-			"seq_product_irods_locations",
-			syncTableIseqFlowcell,
-			syncTableSample,
-			syncTableStudy,
-		).
+	syncStatePlaceholders := strings.TrimSuffix(strings.Repeat("?, ", len(cacheMigrationSyncStateTables)), ", ")
+	syncStateArgs := make([]driver.Value, len(cacheMigrationSyncStateTables))
+	for index, table := range cacheMigrationSyncStateTables {
+		syncStateArgs[index] = table
+	}
+	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM sync_state WHERE table_name IN (` + syncStatePlaceholders + `)`)).
+		WithArgs(syncStateArgs...).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM schema_version`)).WillReturnResult(sqlmock.NewResult(0, 0))

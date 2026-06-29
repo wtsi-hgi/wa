@@ -51,7 +51,13 @@ const (
 	mysqlSyncLockNamePrefix        = "wa_mlwh_sync_"
 
 	// CacheSchemaVersion is the embedded cache schema version supported by OpenCache.
-	CacheSchemaVersion = 7
+	// Bumped to 10 to make the seq_product_irods_locations_mirror.created column
+	// nullable: the cache schema-shape drift check compares column type families,
+	// indexes and unique constraints but not column nullability, so a NOT NULL ->
+	// nullable change is invisible to it and an existing cache would otherwise keep
+	// the old NOT NULL column. The version bump forces migrateCacheSchema to
+	// recreate the mirror tables with the new shape.
+	CacheSchemaVersion = 10
 )
 
 var (
@@ -608,36 +614,52 @@ func ensureAdditiveCurrentCacheIndexes(ctx context.Context, db *sql.DB, dialect 
 		for _, stmt := range []string{
 			`CREATE INDEX IF NOT EXISTS library_samples_library_id_idx ON library_samples(library_id)`,
 			`CREATE INDEX IF NOT EXISTS library_samples_id_library_lims_idx ON library_samples(id_library_lims)`,
+			`CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_iseq_product_idx ON seq_product_irods_locations_mirror(id_study_lims, id_iseq_product)`,
 		} {
 			if _, err := db.ExecContext(ctx, stmt); err != nil {
-				return fmt.Errorf("mlwh: create sqlite library identifier index: %w", err)
+				return fmt.Errorf("mlwh: create sqlite additive cache index: %w", err)
 			}
 		}
 
 		return nil
 	case "mysql":
-		indexes, _, err := readMySQLTableIndexes(ctx, db, "library_samples")
-		if err != nil {
+		if err := ensureAdditiveMySQLIndex(ctx, db, "library_samples", "library_id",
+			`CREATE INDEX library_samples_library_id_idx ON library_samples(library_id)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "library_samples", "id_library_lims",
+			`CREATE INDEX library_samples_id_library_lims_idx ON library_samples(id_library_lims)`); err != nil {
 			return err
 		}
 
-		for columns, stmt := range map[string]string{
-			"library_id":      `CREATE INDEX library_samples_library_id_idx ON library_samples(library_id)`,
-			"id_library_lims": `CREATE INDEX library_samples_id_library_lims_idx ON library_samples(id_library_lims)`,
-		} {
-			if slices.Contains(indexes, columns) {
-				continue
-			}
-
-			if _, err := db.ExecContext(ctx, stmt); err != nil {
-				return fmt.Errorf("mlwh: create mysql library identifier index: %w", err)
-			}
-		}
-
-		return nil
+		// The (id_study_lims, id_iseq_product) iRODS-locations index makes the
+		// per-platform status breakdown index-served; add it additively so an existing
+		// current-version cache (too large to re-sync) gains it without a version bump.
+		return ensureAdditiveMySQLIndex(ctx, db, "seq_product_irods_locations_mirror", "id_study_lims,id_iseq_product",
+			`CREATE INDEX spi_mirror_study_lims_iseq_product_idx ON seq_product_irods_locations_mirror(id_study_lims, id_iseq_product)`)
 	default:
 		return fmt.Errorf("mlwh: unsupported cache schema dialect %q", dialect)
 	}
+}
+
+// ensureAdditiveMySQLIndex creates the given index on a MySQL cache table only when
+// no index already covers the comma-joined columns, so it is idempotent across opens
+// and skips the (expensive) CREATE on a table that already has it.
+func ensureAdditiveMySQLIndex(ctx context.Context, db *sql.DB, table, columns, stmt string) error {
+	indexes, _, err := readMySQLTableIndexes(ctx, db, table)
+	if err != nil {
+		return err
+	}
+
+	if slices.Contains(indexes, columns) {
+		return nil
+	}
+
+	if _, err := db.ExecContext(ctx, stmt); err != nil {
+		return fmt.Errorf("mlwh: create mysql additive cache index on %s: %w", table, err)
+	}
+
+	return nil
 }
 
 func expectedCacheSchemaShape(dialect string) (schemaShape, error) {
@@ -734,14 +756,23 @@ func sqliteLargeCacheReadIndexShape(indexSet syncMirrorIndexSet, actual []string
 		return stringSlicesEqual(actual, iseqProductMetricsSparseReadIndexColumns()) ||
 			stringSlicesEqual(actual, []string{"id_sample_tmp,id_run,position,tag_index"})
 	case seqProductIRODSLocationsMirrorIndexSet.Table:
-		return stringSlicesEqual(actual, []string{"id_sample_tmp", "id_study_lims,id_sample_tmp"})
+		return stringSlicesEqual(actual, seqProductIRODSLocationsSparseReadIndexColumns()) ||
+			stringSlicesEqual(actual, []string{"id_sample_tmp", "id_study_lims,id_sample_tmp"})
 	default:
 		return false
 	}
 }
 
 func iseqProductMetricsSparseReadIndexColumns() []string {
-	return []string{"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index"}
+	return []string{"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_study_lims,id_run,position"}
+}
+
+// seqProductIRODSLocationsSparseReadIndexColumns is the sorted, comma-joined column
+// shape of the iRODS-locations mirror's sparse cold-load read index set
+// (seqProductIRODSLocationsMirrorReadIndexes), used to accept the post-cold-load
+// shape that includes the (id_study_lims, id_iseq_product) status-breakdown index.
+func seqProductIRODSLocationsSparseReadIndexColumns() []string {
+	return []string{"id_sample_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"}
 }
 
 func sqliteSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table string) bool {

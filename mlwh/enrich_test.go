@@ -32,6 +32,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"net/http"
 	"testing"
 	"time"
 
@@ -210,6 +211,41 @@ func TestEnrichJSONGraphPreservesLibraryLinkContract(t *testing.T) {
 		convey.So(library["library_id"], convey.ShouldEqual, "71046409")
 		convey.So(library["id_library_lims"], convey.ShouldEqual, "SQPP-47463-G:B1")
 		convey.So(hasPipelineIDLims, convey.ShouldBeFalse)
+	})
+}
+
+// TestRunDetailPaginatesNestedSamplesWithTotalCountE3 is spec E3 acceptance
+// test 3: GET /run/:id/detail?limit=2&offset=0 returns at most 2 nested samples
+// and X-Total-Count reports the full nested sample count (reusing item 3.3's
+// list-sizing header path).
+func TestRunDetailPaginatesNestedSamplesWithTotalCountE3(t *testing.T) {
+	convey.Convey("Given run 100 with five samples across two studies", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 1, "6568")
+		seedHierarchyStudy(t, client.cache.DB(), 2, "7777")
+		const runSamples = 5
+		for sampleID := range runSamples {
+			resolvedID := int64(sampleID + 21)
+			studyID := "6568"
+			if sampleID%2 == 1 {
+				studyID = "7777"
+			}
+			seedHierarchySample(t, client.cache.DB(), resolvedID, studyID, "run-sample-"+formatInt(resolvedID))
+			seedLibrarySample(t, client.cache.DB(), "Standard", resolvedID, studyID)
+			seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 6100+resolvedID, resolvedID, 100, sampleID+1, 0, studyID)
+		}
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/run/100/detail?limit=2&offset=0")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, formatInt(runSamples))
+		convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "2")
+
+		var detail RunDetail
+		decodeMLWHJSONResponseForTest(t, response, &detail)
+		convey.So(len(detail.Samples), convey.ShouldBeLessThanOrEqualTo, 2)
 	})
 }
 
@@ -521,6 +557,53 @@ func TestEnrichStudyPreservesStudyDetailContract(t *testing.T) {
 	})
 }
 
+// TestStudyDetailDeduplicatesNestedStudiesAndLibrariesE3 is spec E3 acceptance
+// test 1: a study whose libraries cover the same study/library metadata
+// repeatedly is built so that each distinct study and library appears exactly
+// once in a per-id lookup table and the nested sample rows reference them by id
+// (their heavy per-sample studies/libraries sub-objects are not re-embedded).
+func TestStudyDetailDeduplicatesNestedStudiesAndLibrariesE3(t *testing.T) {
+	convey.Convey("Given study 6568 with 12 samples all sharing one Standard library and the same study metadata", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 1, "6568")
+		const sharedSamples = 12
+		for sampleID := range sharedSamples {
+			resolvedID := int64(sampleID + 1)
+			seedHierarchySample(t, client.cache.DB(), resolvedID, "6568", "dedup-sample-"+formatInt(resolvedID))
+			seedLibrarySample(t, client.cache.DB(), "Standard", resolvedID, "6568")
+		}
+
+		detail, err := client.StudyDetail(context.Background(), "6568")
+
+		convey.So(err, convey.ShouldBeNil)
+
+		// Each distinct study and library appears exactly once in its lookup.
+		convey.So(detail.StudyLookup, convey.ShouldHaveLength, 1)
+		convey.So(detail.LibraryLookup, convey.ShouldHaveLength, 1)
+		_, studyPresent := detail.StudyLookup["6568"]
+		convey.So(studyPresent, convey.ShouldBeTrue)
+
+		// All 12 samples are still present, grouped under the single library.
+		convey.So(detail.Libraries, convey.ShouldHaveLength, 1)
+		convey.So(totalStudyDetailSamples(detail), convey.ShouldEqual, sharedSamples)
+
+		// Nested sample rows reference studies/libraries by id, not by re-embedding.
+		embeddedStudies, embeddedLibraries := countEmbeddedSampleSubObjects(detail)
+		convey.So(embeddedStudies, convey.ShouldEqual, 0)
+		convey.So(embeddedLibraries, convey.ShouldEqual, 0)
+
+		// Every nested library group resolves into the library lookup table.
+		convey.So(allNestedLibrariesReferenceLookup(detail), convey.ShouldBeTrue)
+
+		// At the serialized level, the study object is carried once (in the lookup).
+		payload, marshalErr := json.Marshal(detail)
+		convey.So(marshalErr, convey.ShouldBeNil)
+		convey.So(jsonObjectOccurrences(payload, "study_lookup"), convey.ShouldEqual, 1)
+	})
+}
+
 func totalStudyDetailSamples(detail StudyDetail) int {
 	total := 0
 	for _, library := range detail.Libraries {
@@ -528,6 +611,47 @@ func totalStudyDetailSamples(detail StudyDetail) int {
 	}
 
 	return total
+}
+
+// countEmbeddedSampleSubObjects counts how many nested study-detail sample rows
+// still carry their own studies/libraries sub-objects (which the de-duplication
+// must move into the top-level lookup tables instead of re-embedding).
+func countEmbeddedSampleSubObjects(detail StudyDetail) (int, int) {
+	embeddedStudies, embeddedLibraries := 0, 0
+	for _, library := range detail.Libraries {
+		for _, sample := range library.Samples {
+			embeddedStudies += len(sample.Studies)
+			embeddedLibraries += len(sample.Libraries)
+		}
+	}
+
+	return embeddedStudies, embeddedLibraries
+}
+
+// allNestedLibrariesReferenceLookup reports whether every library group in the
+// study detail resolves into the library lookup table (de-duplicated by id).
+func allNestedLibrariesReferenceLookup(detail StudyDetail) bool {
+	for _, library := range detail.Libraries {
+		if _, ok := detail.LibraryLookup[libraryLookupKey(library.Library)]; !ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+// jsonObjectOccurrences counts how many times the given top-level object key
+// appears in the marshalled payload.
+func jsonObjectOccurrences(payload []byte, key string) int {
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return -1
+	}
+	if _, ok := decoded[key]; ok {
+		return 1
+	}
+
+	return 0
 }
 
 func TestEnrichLibraryTruncatesSamplesPerHop(t *testing.T) {
@@ -560,4 +684,60 @@ func countMissingReason(missing []MissingHop, reason string) int {
 	}
 
 	return count
+}
+
+// TestStudyDetailLeanOmitsNestedObjectsWithSmallerSizeE3 is spec E3 acceptance
+// test 2: GET /study/:id/detail?lean=true drops the heavy nested per-sample
+// objects and carries flat id lists, and its serialized size is strictly
+// smaller than the non-lean response for the same study.
+func TestStudyDetailLeanOmitsNestedObjectsWithSmallerSizeE3(t *testing.T) {
+	convey.Convey("Given study 6568 with Standard and Bespoke libraries over several samples", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 1, "6568")
+		for sampleID := range 8 {
+			resolvedID := int64(sampleID + 1)
+			seedHierarchySample(t, client.cache.DB(), resolvedID, "6568", "lean-standard-"+formatInt(resolvedID))
+			seedLibrarySample(t, client.cache.DB(), "Standard", resolvedID, "6568")
+		}
+		for sampleID := range 4 {
+			resolvedID := int64(sampleID + 9)
+			seedHierarchySample(t, client.cache.DB(), resolvedID, "6568", "lean-bespoke-"+formatInt(resolvedID))
+			seedLibrarySample(t, client.cache.DB(), "Bespoke", resolvedID, "6568")
+		}
+
+		fullBody := mlwhResponseBody(t, client, http.MethodGet, "/study/6568/detail")
+		leanBody := mlwhResponseBody(t, client, http.MethodGet, "/study/6568/detail?lean=true")
+
+		convey.So(len(leanBody), convey.ShouldBeLessThan, len(fullBody))
+
+		var lean map[string]any
+		convey.So(json.Unmarshal(leanBody, &lean), convey.ShouldBeNil)
+
+		// Lean drops the heavy nested per-sample objects.
+		_, hasLibraryDetails := lean["library_details"]
+		convey.So(hasLibraryDetails, convey.ShouldBeFalse)
+		_, hasStudyLookup := lean["study_lookup"]
+		convey.So(hasStudyLookup, convey.ShouldBeFalse)
+
+		// Lean carries flat id lists.
+		sampleIDs, ok := lean["sample_ids"].([]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(sampleIDs, convey.ShouldHaveLength, 12)
+		libraryIDs, ok := lean["library_ids"].([]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(libraryIDs, convey.ShouldHaveLength, 2)
+	})
+}
+
+// mlwhResponseBody serves a single GET against the real cache-backed client and
+// returns the raw response body bytes (so a test can compare serialized sizes).
+func mlwhResponseBody(t *testing.T, queryer Queryer, method, path string) []byte {
+	t.Helper()
+
+	response := performMLWHRequestForTest(t, queryer, method, path)
+	convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+	return response.Body.Bytes()
 }

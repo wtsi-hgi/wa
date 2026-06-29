@@ -180,14 +180,23 @@ func TestLiveMLWHSyncPerTableColdSyncBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sync(): %v", err)
 	}
-	if len(reports) != len(queries) {
-		t.Fatalf("Sync() returned %d reports, want %d", len(reports), len(queries))
+	// Sync fans out over every supported table; this perf test only budgets the
+	// heavy streaming tables it explicitly probes, so it requires a report for
+	// each probed table rather than an exact 1:1 with the full fan-out.
+	if len(reports) < len(queries) {
+		t.Fatalf("Sync() returned %d reports, want at least %d", len(reports), len(queries))
 	}
 
 	syncDurations := make(map[string]time.Duration, len(reports))
 	for _, report := range reports {
 		syncDurations[report.Table] = report.Duration
 		t.Logf("sync %s inserted=%d updated=%d duration=%s", report.Table, report.Inserted, report.Updated, report.Duration)
+	}
+
+	for _, query := range queries {
+		if _, ok := syncDurations[query.table]; !ok {
+			t.Fatalf("Sync() returned no report for probed table %s", query.table)
+		}
 	}
 
 	for _, query := range queries {

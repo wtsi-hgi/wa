@@ -1026,11 +1026,23 @@ process.exit(cold ? 0 : 1);
 # order means /studies cannot pass until the study table lands -- and only then
 # is /studies awaited. A cold cache with no WA_MLWH_DSN to populate it fails fast
 # with an actionable message instead of hanging on the /studies readiness gate.
+#
+# Test mode is the exception: it serves a fresh, throwaway ephemeral SQLite cache
+# (always cold) and forbids WA_MLWH_DSN, so an empty cache is the expected state.
+# Once /freshness confirms the server is listening the backend is ready -- there
+# is nothing to sync and the /studies gate would stay 503 on a never-synced
+# cache, so neither is applied.
 ensure_mlwh_synced_after_serve() {
   local pid="$1"
 
   if ! wait_for_http "MLWH server" "$SEQMETA_FRESHNESS_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$pid" "$SEQMETA_LOG"; then
     return 1
+  fi
+
+  if [[ "$scenario" == "test" ]]; then
+    printf 'MLWH server ready on its ephemeral test cache at %s (no sync in test mode).\n' "${MLWH_CACHE_PATH:-<unset>}"
+
+    return 0
   fi
 
   local cold_status=0
@@ -1192,18 +1204,34 @@ const { DatabaseSync } = require("node:sqlite");
 const [repoRoot, cachePath] = process.argv.slice(2);
 const db = new DatabaseSync(cachePath);
 const schemaDir = path.join(repoRoot, "mlwh", "cache_schema", "sqlite");
-const schemaNames = [
-  "sample_mirror",
-  "study_mirror",
-  "library_samples",
-  "donor_samples",
-  "iseq_product_metrics_mirror",
-  "seq_product_irods_locations_mirror",
-  "sample_search_token",
-  "sync_state",
-  "schema_version",
-  "sync_lock",
-];
+
+// Apply every schema file the running wa binary embeds (mlwh/cache_schema/
+// sqlite/*.sql), not a hand-picked subset. wa opens this cache with
+// --mlwh-cache and runs a drift check (validateCurrentCacheSchema) that
+// compares the live schema shape against the full embedded schema; if any
+// expected table/column/index is missing it migrates by dropping and
+// recreating the mirror tables, which would wipe the data seeded below and
+// leave the cache reporting "never synced". Reading the directory keeps this
+// seed in lockstep with the schema as tables are added over time.
+const schemaNames = fs
+  .readdirSync(schemaDir)
+  .filter((entry) => entry.endsWith(".sql"))
+  .map((entry) => entry.slice(0, -".sql".length))
+  .sort();
+
+// cacheSchemaVersion mirrors the wa binary's mlwh.CacheSchemaVersion constant.
+// The seeded cache must record the current version so opening it does not
+// trigger a version-mismatch migration that drops and recreates the mirror
+// tables (clearing the seeded data). Parsing the constant from source keeps
+// the two in lockstep automatically.
+function cacheSchemaVersion() {
+  const source = fs.readFileSync(path.join(repoRoot, "mlwh", "cache.go"), "utf8");
+  const match = source.match(/CacheSchemaVersion\s*=\s*(\d+)/);
+  if (!match) {
+    throw new Error("could not parse CacheSchemaVersion from mlwh/cache.go");
+  }
+  return Number(match[1]);
+}
 
 // sampleSearchTokens mirrors mlwh.sampleSearchTokens: the distinct lowercased
 // [a-z0-9]+ words of the searchable fields, used to populate sample_search_token.
@@ -1238,7 +1266,7 @@ try {
   // would clear the data. The sample_search_token prefix index is one of the
   // ordinary schema tables above; it is populated from sample_mirror below.
   db.exec("DELETE FROM schema_version");
-  run("INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)", [7]);
+  run("INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)", [cacheSchemaVersion()]);
 
   for (const tableName of ["sample", "study", "iseq_flowcell", "iseq_product_metrics", "seq_product_irods_locations"]) {
     run(

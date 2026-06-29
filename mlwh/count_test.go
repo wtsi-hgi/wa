@@ -36,6 +36,33 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
+const (
+	countListFetchAll = 1_000_000
+
+	// e1SampleWithData is the Sanger name of the E1 sample that owns lanes and
+	// iRODS rows, so the sample-scoped lane/iRODS counts have data to size.
+	e1SampleWithData = "e1-sample-1"
+
+	// e1RunID is the run on which the E1 samples were sequenced.
+	e1RunID = "70001"
+
+	// e1LibraryID and e1LibraryLimsID are the library identifiers set on the E1
+	// library_samples rows so the library-id / library-lims-id counts match rows.
+	e1LibraryID     = "91001"
+	e1LibraryLimsID = "LIB-E1-1"
+
+	// The find-by fields seedSampleMirrorSearchRow stamps on sample 1, used so each
+	// find count resolves to exactly that one sample (count == 1 == len(list)).
+	e1FindSangerID     = "sanger-1"
+	e1FindIDSampleLims = "101"
+	e1FindAccession    = "accession-1"
+	e1FindSupplier     = "e1-supplier-1"
+
+	// e1SoloLibraryType is a library type with exactly one sample, so the
+	// find-by-library-type cross-check resolves to a unique match.
+	e1SoloLibraryType = "SoloLib"
+)
+
 func TestCountSerialisesAsCountEnvelope(t *testing.T) {
 	convey.Convey("Given a Count value", t, func() {
 		encoded, err := json.Marshal(Count{Count: 7})
@@ -153,6 +180,136 @@ func TestCountSamplesForStudyNeverSyncedReturnsJoinedSentinel(t *testing.T) {
 	})
 }
 
+// e1Count names one new /count endpoint under test: its Client count method and
+// the corresponding all-rows list-length, so the E1 cross-check
+// (count == len(list-all)) can be asserted for every count uniformly. zeroIs
+// NotFound records whether a synced cache with no matching rows yields ErrNotFound
+// (the resolve-first / find lists, whose empty result is not_found) rather than
+// Count{0} (the parent-exists lists), so the synced-empty assertion matches each
+// count's list exactly.
+type e1Count struct {
+	name           string
+	count          func(c *Client) (Count, error)
+	listLen        func(c *Client) (int, error)
+	zeroIsNotFound bool
+}
+
+// e1CountCases enumerates the fifteen new /count endpoints added for E1, bound to
+// the e1CountScenario fixture identifiers. Each pairs the count with its list so a
+// single table drives the count<->list cross-check, the never-synced cascade, and
+// the synced-empty behaviour for all of them.
+func e1CountCases() []e1Count {
+	ctx := context.Background()
+
+	return []e1Count{
+		{
+			name:    "CountIRODSPathsForStudy",
+			count:   func(c *Client) (Count, error) { return c.CountIRODSPathsForStudy(ctx, "E1") },
+			listLen: func(c *Client) (int, error) { return listLen(c.IRODSPathsForStudy(ctx, "E1", countListFetchAll, 0)) },
+		},
+		{
+			name:  "CountIRODSPathsForSample",
+			count: func(c *Client) (Count, error) { return c.CountIRODSPathsForSample(ctx, e1SampleWithData) },
+			listLen: func(c *Client) (int, error) {
+				return listLen(c.IRODSPathsForSample(ctx, e1SampleWithData, countListFetchAll, 0))
+			},
+		},
+		{
+			name:    "CountRunsForStudy",
+			count:   func(c *Client) (Count, error) { return c.CountRunsForStudy(ctx, "E1") },
+			listLen: func(c *Client) (int, error) { return listLen(c.RunsForStudy(ctx, "E1", countListFetchAll, 0)) },
+		},
+		{
+			name:    "CountLibrariesForStudy",
+			count:   func(c *Client) (Count, error) { return c.CountLibrariesForStudy(ctx, "E1") },
+			listLen: func(c *Client) (int, error) { return listLen(c.LibrariesForStudy(ctx, "E1", countListFetchAll, 0)) },
+		},
+		{
+			name:  "CountLanesForSample",
+			count: func(c *Client) (Count, error) { return c.CountLanesForSample(ctx, e1SampleWithData) },
+			listLen: func(c *Client) (int, error) {
+				return listLen(c.LanesForSample(ctx, e1SampleWithData, countListFetchAll, 0))
+			},
+		},
+		{
+			name:           "CountSamplesForRun",
+			count:          func(c *Client) (Count, error) { return c.CountSamplesForRun(ctx, e1RunID) },
+			listLen:        func(c *Client) (int, error) { return listLen(c.SamplesForRun(ctx, e1RunID, countListFetchAll, 0)) },
+			zeroIsNotFound: true,
+		},
+		{
+			name:  "CountSamplesForLibrary",
+			count: func(c *Client) (Count, error) { return c.CountSamplesForLibrary(ctx, "Standard", "E1") },
+			listLen: func(c *Client) (int, error) {
+				return listLen(c.SamplesForLibrary(ctx, "Standard", "E1", countListFetchAll, 0))
+			},
+		},
+		{
+			name:  "CountSamplesForLibraryID",
+			count: func(c *Client) (Count, error) { return c.CountSamplesForLibraryID(ctx, e1LibraryID) },
+			listLen: func(c *Client) (int, error) {
+				return listLen(c.SamplesForLibraryID(ctx, e1LibraryID, countListFetchAll, 0))
+			},
+			zeroIsNotFound: true,
+		},
+		{
+			name:  "CountSamplesForLibraryLimsID",
+			count: func(c *Client) (Count, error) { return c.CountSamplesForLibraryLimsID(ctx, e1LibraryLimsID) },
+			listLen: func(c *Client) (int, error) {
+				return listLen(c.SamplesForLibraryLimsID(ctx, e1LibraryLimsID, countListFetchAll, 0))
+			},
+			zeroIsNotFound: true,
+		},
+		{
+			name:  "CountSamplesForLibraryType",
+			count: func(c *Client) (Count, error) { return c.CountSamplesForLibraryType(ctx, "Standard") },
+			listLen: func(c *Client) (int, error) {
+				return listLen(c.SamplesForLibraryType(ctx, "Standard", countListFetchAll, 0))
+			},
+		},
+		{
+			name:           "CountFindSamplesBySangerID",
+			count:          func(c *Client) (Count, error) { return c.CountFindSamplesBySangerID(ctx, e1FindSangerID) },
+			listLen:        func(c *Client) (int, error) { return listLen(c.FindSamplesBySangerID(ctx, e1FindSangerID)) },
+			zeroIsNotFound: true,
+		},
+		{
+			name:           "CountFindSamplesByIDSampleLims",
+			count:          func(c *Client) (Count, error) { return c.CountFindSamplesByIDSampleLims(ctx, e1FindIDSampleLims) },
+			listLen:        func(c *Client) (int, error) { return listLen(c.FindSamplesByIDSampleLims(ctx, e1FindIDSampleLims)) },
+			zeroIsNotFound: true,
+		},
+		{
+			name:           "CountFindSamplesByAccessionNumber",
+			count:          func(c *Client) (Count, error) { return c.CountFindSamplesByAccessionNumber(ctx, e1FindAccession) },
+			listLen:        func(c *Client) (int, error) { return listLen(c.FindSamplesByAccessionNumber(ctx, e1FindAccession)) },
+			zeroIsNotFound: true,
+		},
+		{
+			name:           "CountFindSamplesBySupplierName",
+			count:          func(c *Client) (Count, error) { return c.CountFindSamplesBySupplierName(ctx, e1FindSupplier) },
+			listLen:        func(c *Client) (int, error) { return listLen(c.FindSamplesBySupplierName(ctx, e1FindSupplier)) },
+			zeroIsNotFound: true,
+		},
+		{
+			// FindSamplesByLibraryType requires a UNIQUE match, so the cross-check
+			// targets the single-sample "SoloLib" library type (the multi-sample
+			// "Standard" type, used by CountSamplesForLibraryType above, would make
+			// the Find list raise ErrAmbiguous rather than return one row).
+			name:           "CountFindSamplesByLibraryType",
+			count:          func(c *Client) (Count, error) { return c.CountFindSamplesByLibraryType(ctx, e1SoloLibraryType) },
+			listLen:        func(c *Client) (int, error) { return listLen(c.FindSamplesByLibraryType(ctx, e1SoloLibraryType)) },
+			zeroIsNotFound: true,
+		},
+	}
+}
+
+// listLen adapts a (slice, error) list result to (len, error) so a count can be
+// compared against its list length without per-list boilerplate.
+func listLen[T any](items []T, err error) (int, error) {
+	return len(items), err
+}
+
 // F2 acceptance test 1: CountStudies counts only SQSCP study_mirror rows.
 func TestCountStudiesCountsOnlySQSCPStudies(t *testing.T) {
 	convey.Convey("Given a synced cache with 7 SQSCP studies and some non-SQSCP studies", t, func() {
@@ -211,4 +368,183 @@ func seedNonSQSCPStudy(t *testing.T, db *sql.DB, idStudyTmp int64, idStudyLims s
 	if err != nil {
 		t.Fatalf("seedNonSQSCPStudy(): %v", err)
 	}
+}
+
+// E1 acceptance test 1: for every new /count, count == len(list-all) on a seeded
+// fixture, exercised against the real Client list and count methods.
+func TestCountEndpointsMatchListLength(t *testing.T) {
+	convey.Convey("Given the seeded E1 count fixture", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedE1CountScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		cases := e1CountCases()
+
+		convey.Convey("when each count and its list-all are taken, then count == len(list) and the data is non-empty", func() {
+			mismatches := []string{}
+			emptyCounts := []string{}
+
+			for _, tc := range cases {
+				count, countErr := tc.count(client)
+				length, listErr := tc.listLen(client)
+				if countErr != nil || listErr != nil {
+					mismatches = append(mismatches, tc.name+": error")
+
+					continue
+				}
+				if count.Count != length {
+					mismatches = append(mismatches, tc.name)
+				}
+				if count.Count == 0 {
+					emptyCounts = append(emptyCounts, tc.name)
+				}
+			}
+
+			convey.So(mismatches, convey.ShouldBeEmpty)
+			convey.So(emptyCounts, convey.ShouldBeEmpty)
+		})
+	})
+}
+
+// seedE1CountScenario builds the single fixture every new /count is cross-checked
+// against: study "E1" with five samples linked through the "Standard" library,
+// the first two also carrying the e1LibraryID / e1LibraryLimsID identifiers; sample
+// 1 owns Illumina product-metrics (run 70001, two lanes) and two distinct iRODS
+// data objects, and a second sample owns one more lane/product so the run, lane,
+// iRODS, library and sample lists are all non-empty. Distinct sample-finder fields
+// (sanger id, LIMS id, accession, supplier) on sample 1 give each find count a
+// unique match. Sync state is stamped for every feeding table so the counts return
+// data rather than the never-synced sentinel.
+func seedE1CountScenario(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedHierarchyStudy(t, db, 301, "E1")
+
+	for id := int64(1); id <= 5; id++ {
+		seedSampleMirrorSearchRow(t, db, id, "e1-sample-"+formatInt(id), "e1-supplier-"+formatInt(id), "Homo sapiens", "e1-donor-"+formatInt(id))
+		seedLibrarySample(t, db, "Standard", id, "E1")
+	}
+
+	// A sixth sample in a single-sample "SoloLib" library type, so the
+	// find-by-library-type count resolves to a unique match for the cross-check.
+	seedSampleMirrorSearchRow(t, db, 6, "e1-sample-6", "e1-supplier-6", "Homo sapiens", "e1-donor-6")
+	seedLibrarySample(t, db, e1SoloLibraryType, 6, "E1")
+
+	// Set the library identifiers on the first two rows so the library-id and
+	// library-lims-id counts (which filter on those columns) match rows.
+	if _, err := db.Exec(`UPDATE library_samples SET library_id = ?, id_library_lims = ? WHERE id_sample_tmp IN (1, 2) AND id_study_lims = 'E1'`, e1LibraryID, e1LibraryLimsID); err != nil {
+		t.Fatalf("seedE1CountScenario() set library identifiers: %v", err)
+	}
+
+	// Sample 1: two lanes on run 70001 and two distinct iRODS data objects.
+	seedIseqProductMetricsMirrorRow(t, db, 7001, 1, 70001, 1, 1, "E1")
+	seedIseqProductMetricsMirrorRow(t, db, 7002, 1, 70001, 2, 1, "E1")
+	seedIRODSLocationMirrorRow(t, db, "7001", "/seq/70001", "70001_1#1.cram", 1, "E1")
+	seedIRODSLocationMirrorRow(t, db, "7002", "/seq/70001", "70001_2#1.cram", 1, "E1")
+
+	// Sample 2: one further lane/product on the same run, so the run has two
+	// distinct samples and the study has runs/libraries to count.
+	seedIseqProductMetricsMirrorRow(t, db, 7003, 2, 70001, 3, 1, "E1")
+	seedIRODSLocationMirrorRow(t, db, "7003", "/seq/70001", "70001_3#1.cram", 2, "E1")
+
+	seedE1CountSyncState(t, db)
+}
+
+// E1 acceptance test 3: against a synced-but-empty parent, the parent-exists counts
+// return Count{0} with no error, while the resolve-first / find counts (whose list
+// reports not_found on an empty result) return ErrNotFound, matching each count's
+// list exactly.
+func TestCountEndpointsSyncedEmptyParentReturnZero(t *testing.T) {
+	convey.Convey("Given a synced cache whose parents exist but have no children", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		// The study and sample the parent-scoped counts resolve exist, but carry no
+		// libraries, runs, lanes or iRODS rows; the run/library-identifier/find
+		// targets match nothing on the otherwise synced cache. The sample resolves by
+		// the e1SampleWithData NAME but is seeded under id 42, so its derived
+		// sanger/LIMS/accession fields and its supplier do NOT match the find
+		// constants (those finds must report not_found, like their lists).
+		seedHierarchyStudy(t, cache.DB(), 311, "E1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 42, e1SampleWithData, "no-match-supplier", "Homo sapiens", "e1-donor-42")
+		seedE1CountSyncState(t, cache.DB())
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		cases := e1CountCases()
+
+		convey.Convey("when each count runs, then Count{0}+nil for parent-exists counts and ErrNotFound for the resolve-first/find counts", func() {
+			zeroFailures := []string{}
+			notFoundFailures := []string{}
+
+			for _, tc := range cases {
+				count, err := tc.count(client)
+				if tc.zeroIsNotFound {
+					if !errors.Is(err, ErrNotFound) || errors.Is(err, ErrCacheNeverSynced) {
+						notFoundFailures = append(notFoundFailures, tc.name)
+					}
+
+					continue
+				}
+				if err != nil || count != (Count{Count: 0}) {
+					zeroFailures = append(zeroFailures, tc.name)
+				}
+			}
+
+			convey.So(zeroFailures, convey.ShouldBeEmpty)
+			convey.So(notFoundFailures, convey.ShouldBeEmpty)
+		})
+	})
+}
+
+// seedE1CountSyncState stamps a synced sync_state for every table the E1 counts'
+// cascades consult, so each count reads data and never returns the never-synced
+// sentinel.
+func seedE1CountSyncState(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	base := time.Date(2026, time.June, 26, 8, 0, 0, 0, time.UTC)
+	seedSyncState(t, db, syncTableStudy, base)
+	seedSyncState(t, db, syncTableSample, base.Add(1*time.Minute))
+	seedSyncState(t, db, syncTableIseqFlowcell, base.Add(2*time.Minute))
+	seedSyncState(t, db, syncTableIseqProductMetrics, base.Add(3*time.Minute))
+	seedSyncState(t, db, syncTableSeqProductIRODSLocations, base.Add(4*time.Minute))
+}
+
+// E1 acceptance test 2: every new /count returns the same ErrCacheNeverSynced +
+// ErrNotFound joined sentinel as its list on a never-synced cache.
+func TestCountEndpointsNeverSyncedReturnJoinedSentinel(t *testing.T) {
+	convey.Convey("Given a never-synced SQLite cache", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		cases := e1CountCases()
+
+		convey.Convey("when each count runs, then it returns Count{} joined with both sentinels", func() {
+			missingNeverSynced := []string{}
+			missingNotFound := []string{}
+			nonZero := []string{}
+
+			for _, tc := range cases {
+				count, err := tc.count(client)
+				if !errors.Is(err, ErrCacheNeverSynced) {
+					missingNeverSynced = append(missingNeverSynced, tc.name)
+				}
+				if !errors.Is(err, ErrNotFound) {
+					missingNotFound = append(missingNotFound, tc.name)
+				}
+				if count != (Count{}) {
+					nonZero = append(nonZero, tc.name)
+				}
+			}
+
+			convey.So(missingNeverSynced, convey.ShouldBeEmpty)
+			convey.So(missingNotFound, convey.ShouldBeEmpty)
+			convey.So(nonZero, convey.ShouldBeEmpty)
+		})
+	})
 }

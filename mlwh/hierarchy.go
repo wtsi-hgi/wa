@@ -59,7 +59,7 @@ var (
 	lanesForSampleCacheSQL         = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
 	lanesForSampleStudyCacheSQL    = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? AND id_study_lims = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
 	irodsPathsForSampleCacheSQL    = `SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
-	irodsPathsForStudyCacheSQL     = `SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_study_lims = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
+	irodsPathsForStudyCacheSQL     = `SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, '') FROM seq_product_irods_locations_mirror spi LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp WHERE spi.id_study_lims = ? ORDER BY spi.id_iseq_product, spi.id_sample_tmp LIMIT ? OFFSET ?`
 	studiesForSampleCacheSQL       = `SELECT DISTINCT study_mirror.id_study_tmp, study_mirror.id_lims, study_mirror.id_study_lims, study_mirror.uuid_study_lims, study_mirror.name, study_mirror.accession_number, study_mirror.study_title, study_mirror.faculty_sponsor, study_mirror.state, study_mirror.data_release_strategy, study_mirror.data_access_group, study_mirror.programme, study_mirror.reference_genome, study_mirror.ethically_approved, study_mirror.study_type, study_mirror.contains_human_dna, study_mirror.contaminated_human_dna, study_mirror.study_visibility, study_mirror.ega_dac_accession_number, study_mirror.ega_policy_accession_number, study_mirror.data_release_timing FROM sample_mirror INNER JOIN library_samples ON library_samples.id_sample_tmp = sample_mirror.id_sample_tmp INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims WHERE sample_mirror.name = ? AND sample_mirror.id_lims = 'SQSCP' AND study_mirror.id_lims = 'SQSCP' ORDER BY study_mirror.id_study_lims`
 	qualifiedStudyMirrorSelectSQL  = qualifySelectColumns("study_mirror", studyMirrorSelectColumns)
 )
@@ -1230,7 +1230,7 @@ func (c *Client) IRODSPathsForStudy(ctx context.Context, studyLimsID string, lim
 		return nil, err
 	}
 
-	paths, err := c.queryIRODSPaths(ctx, irodsPathsForStudyCacheSQL, study.IDStudyLims, limit, offset, "query irods paths for study")
+	paths, err := c.queryIRODSPathsWithSample(ctx, irodsPathsForStudyCacheSQL, study.IDStudyLims, limit, offset, "query irods paths for study")
 	if err != nil {
 		return nil, err
 	}
@@ -1311,6 +1311,39 @@ func (c *Client) queryIRODSPaths(ctx context.Context, query string, parent any, 
 	for rows.Next() {
 		path := IRODSPath{}
 		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject); err != nil {
+			return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
+		}
+		path.IRODSPath = strings.TrimRight(path.Collection, "/") + "/" + path.DataObject
+
+		paths = append(paths, path)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
+	}
+
+	return paths, nil
+}
+
+// queryIRODSPathsWithSample is queryIRODSPaths for the study iRODS listing: it
+// also scans each row's id_sample_tmp and Sanger name (joined from sample_mirror)
+// so the study list is aggregatable by sample standalone. The name is left empty
+// when the sample is not mirrored, so a data object is never dropped.
+func (c *Client) queryIRODSPathsWithSample(ctx context.Context, query string, parent any, limit, offset int, action string) ([]IRODSPath, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	rows, err := db.QueryContext(ctx, query, parent, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	paths := make([]IRODSPath, 0)
+	for rows.Next() {
+		path := IRODSPath{}
+		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject, &path.IDSampleTmp, &path.Name); err != nil {
 			return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
 		}
 		path.IRODSPath = strings.TrimRight(path.Collection, "/") + "/" + path.DataObject

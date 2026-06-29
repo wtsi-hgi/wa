@@ -37,13 +37,31 @@ import (
 const utcRFC3339Layout = "2006-01-02T15:04:05Z"
 
 // freshnessSyncTables is the ordered set of mirrored sync tables reported by
-// Freshness, matching the five tables wa mlwh sync maintains.
+// Freshness, matching the tables wa mlwh sync maintains (kept in lockstep with
+// supportedSyncTables). The original five come first, then the platform-coverage,
+// run-status and tracking mirrors added by A4/A5. HighWater is reported straight
+// from each table's stored sync_state high_water, so its semantics follow the
+// table's sync mode automatically: the full-refresh tracking table records its
+// refresh time, the incremental product-metrics tables record their latest
+// last_changed, and the ascending-id and wholesale-replace tables store no
+// watermark (zero time), which formatFreshnessTime renders as empty.
 var freshnessSyncTables = []string{
 	syncTableStudy,
 	syncTableSample,
 	syncTableIseqFlowcell,
 	syncTableIseqProductMetrics,
 	syncTableSeqProductIRODSLocations,
+	syncTableIseqRunStatus,
+	syncTableIseqRunStatusDict,
+	syncTableOseqFlowcell,
+	syncTablePacBioRunWellMetrics,
+	syncTableEseqRun,
+	syncTableEseqRunLaneMetrics,
+	syncTableUseqRunMetrics,
+	syncTableSeqOpsTrackingPerSample,
+	syncTablePacBioProductMetrics,
+	syncTableEseqProductMetrics,
+	syncTableUseqProductMetrics,
 }
 
 // TableFreshness is the per-table freshness reported by Freshness (and served by
@@ -90,11 +108,11 @@ type Freshness struct {
 	Tables []TableFreshness `json:"tables" doc:"freshness per mirrored sync table"`
 }
 
-// Freshness reports, for each of the five mirrored sync tables, its high_water and
-// last_run (UTC RFC3339) and whether it has ever synced. It reads sync_state
-// directly and must succeed even on a never-synced cache (every table then reports
-// ever_synced=false with empty timestamps), so the MCP layer can degrade gracefully
-// rather than seeing ErrCacheNeverSynced.
+// Freshness reports, for each mirrored sync table in freshnessSyncTables, its
+// high_water and last_run (UTC RFC3339) and whether it has ever synced. It reads
+// sync_state directly and must succeed even on a never-synced cache (every table
+// then reports ever_synced=false with empty timestamps), so the MCP layer can
+// degrade gracefully rather than seeing ErrCacheNeverSynced.
 func (c *Client) Freshness(ctx context.Context) (Freshness, error) {
 	db := c.readCacheDB()
 	if db == nil {
@@ -114,12 +132,19 @@ func (c *Client) Freshness(ctx context.Context) (Freshness, error) {
 	return Freshness{Tables: tables}, nil
 }
 
-// formatFreshnessTime parses a stored sync_state timestamp and re-renders it as UTC
-// RFC3339 ending in Z, normalising any stored zone offset to UTC. A zero time renders
-// as the empty string: an interrupted cold load can persist a sync_state row whose
-// high_water is the formatted zero time ("0001-01-01T00:00:00Z"), and the contract is
-// that an absent meaningful timestamp is reported empty rather than as year 0001.
+// formatFreshnessTime parses a stored timestamp and re-renders it as UTC RFC3339
+// ending in Z, normalising any stored zone offset to UTC. An absent meaningful
+// timestamp renders as the empty string rather than year 0001: a SQL NULL (raw
+// is nil) reports empty, which is how a NULL MIN/MAX(created) aggregate (every
+// matching iRODS row has an unknown creation time) flows through to an empty
+// sequencing_date_range / newest_data_added / delivered_at; likewise a zero time,
+// which an interrupted cold load can persist as the formatted zero time
+// ("0001-01-01T00:00:00Z") in a sync_state high_water.
 func formatFreshnessTime(raw any) (string, error) {
+	if raw == nil {
+		return "", nil
+	}
+
 	parsed, err := parseSyncTimeValue(raw)
 	if err != nil {
 		return "", err

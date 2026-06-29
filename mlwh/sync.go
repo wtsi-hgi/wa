@@ -48,6 +48,18 @@ const (
 	syncTableIseqFlowcell             = "iseq_flowcell"
 	syncTableIseqProductMetrics       = "iseq_product_metrics"
 	syncTableSeqProductIRODSLocations = "seq_product_irods_locations"
+	syncTablePacBioProductMetrics     = "pac_bio_product_metrics"
+	syncTablePacBioRunWellMetrics     = "pac_bio_run_well_metrics"
+	syncTableEseqProductMetrics       = "eseq_product_metrics"
+	syncTableEseqRun                  = "eseq_run"
+	syncTableEseqRunLaneMetrics       = "eseq_run_lane_metrics"
+	syncTableUseqProductMetrics       = "useq_product_metrics"
+	syncTableUseqRunMetrics           = "useq_run_metrics"
+	syncTableOseqFlowcell             = "oseq_flowcell"
+	syncTableIseqRunStatus            = "iseq_run_status"
+	syncTableIseqRunStatusDict        = "iseq_run_status_dict"
+	syncTableSeqOpsTrackingPerSample  = "seq_ops_tracking_per_sample"
+	iseqRunStatusIDResumeMode         = "id_run_status"
 	sqscpIDLims                       = "SQSCP"
 	sampleIDDescResumeCursorMode      = "id_sample_tmp_desc"
 	sampleLastUpdatedResumeCursorMode = "last_updated"
@@ -69,12 +81,29 @@ var syncColdBatchSize = 50000
 // to force a modest fixture across many pages.
 var sampleSearchTokenReadPageSize = 4000
 
+// supportedSyncTables is the set of cache tables Sync() / syncTables() fans out
+// over. It must stay consistent with freshnessSyncTables (same table set) so
+// freshness never reports a table that the orchestrated sync does not populate.
+// The original five come first, then the platform-coverage, run-status and
+// tracking mirrors (A4) with their A5 sync strategies (dispatched per table by
+// syncTableData).
 var supportedSyncTables = []string{
 	syncTableSample,
 	syncTableStudy,
 	syncTableIseqFlowcell,
 	syncTableIseqProductMetrics,
 	syncTableSeqProductIRODSLocations,
+	syncTableIseqRunStatus,
+	syncTableIseqRunStatusDict,
+	syncTableOseqFlowcell,
+	syncTablePacBioRunWellMetrics,
+	syncTableEseqRun,
+	syncTableEseqRunLaneMetrics,
+	syncTableUseqRunMetrics,
+	syncTableSeqOpsTrackingPerSample,
+	syncTablePacBioProductMetrics,
+	syncTableEseqProductMetrics,
+	syncTableUseqProductMetrics,
 }
 
 var sampleMirrorColumns = []string{
@@ -141,6 +170,8 @@ var seqProductIRODSLocationsMirrorColumns = []string{
 	"id_sample_tmp",
 	"id_study_lims",
 	"last_updated",
+	"created",
+	"platform",
 }
 
 var syncStateColumns = []string{"table_name", "high_water", "last_run", "resume_cursor", "indexes_dropped"}
@@ -154,6 +185,34 @@ var sampleSearchTokenColumns = []string{"token", "id_sample_tmp"}
 // the cold-load token rebuild, ordered by the primary key so paging is a strict
 // keyset scan (no OFFSET, no held-open result set).
 const sampleSearchTokenPageQuery = `SELECT id_sample_tmp, name, supplier_name, common_name, donor_id FROM sample_mirror WHERE id_sample_tmp > ? ORDER BY id_sample_tmp LIMIT `
+
+// seqProductIRODSLocationsSelectColumns are the projected iRODS sync columns.
+// id_sample_tmp/id_study_lims come from the per-platform recovery UNION; created
+// and seq_platform_name ride along from seq_product_irods_locations (spi) itself
+// so the mirror can store the iRODS creation time and the authoritative platform.
+// irods_data_relative_path is nullable upstream (e.g. the Ultimagen iRODS rows
+// store NULL), so it is COALESCEd to ” to keep the string scan target and the
+// NOT NULL mirror column happy rather than failing with "converting NULL to
+// string is unsupported".
+const seqProductIRODSLocationsSelectColumns = `spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, COALESCE(spi.irods_data_relative_path, '') AS irods_data_relative_path, recovery.id_sample_tmp, recovery.id_study_lims, spi.last_changed, spi.created, spi.seq_platform_name`
+
+// seqProductIRODSLocationsIlluminaCompositionRecovery is the Illumina
+// composition-expansion branch: it expands each product's iseq_composition_tmp
+// components and recovers sample/study via iseq_flowcell, unchanged from the
+// historical join so existing /study/:id/irods results are preserved.
+const seqProductIRODSLocationsIlluminaCompositionRecovery = `SELECT path_ipm.id_iseq_product AS id_product, ifc.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM iseq_product_metrics path_ipm INNER JOIN JSON_TABLE(path_ipm.iseq_composition_tmp, '$.components[*]' COLUMNS(component_run INT PATH '$.id_run', component_position INT PATH '$.position', component_tag_index INT PATH '$.tag_index')) component ON TRUE INNER JOIN iseq_product_metrics ipm ON ipm.id_run = component.component_run AND ipm.position = component.component_position AND ipm.tag_index = component.component_tag_index INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP'`
+
+// seqProductIRODSLocationsIlluminaLegacyRecovery is the Illumina direct-join
+// branch used when the source lacks JSON_TABLE/composition support. Its
+// product-metrics alias is path_ipm (not ipm) so the derived-table FROM clause
+// does not collide with the iseq_product_metrics sync-routing marker.
+const seqProductIRODSLocationsIlluminaLegacyRecovery = `SELECT path_ipm.id_iseq_product AS id_product, ifc.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM iseq_product_metrics path_ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = path_ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP'`
+
+// seqProductIRODSLocationsNonIlluminaRecovery is the PacBio/Elembio/Ultimagen
+// recovery, keyed on each platform's *_product_metrics id matching
+// spi.id_product and recovering only id_sample_tmp/id_study_lims (platform always
+// comes from spi.seq_platform_name, never from which metrics table matched).
+const seqProductIRODSLocationsNonIlluminaRecovery = `SELECT pbm.id_pac_bio_product AS id_product, pbr.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM pac_bio_product_metrics pbm INNER JOIN pac_bio_run pbr ON pbr.id_pac_bio_tmp = pbm.id_pac_bio_tmp INNER JOIN study ON study.id_study_tmp = pbr.id_study_tmp AND study.id_lims = 'SQSCP' UNION ALL SELECT epm.id_eseq_product AS id_product, efc.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM eseq_product_metrics epm INNER JOIN eseq_flowcell efc ON efc.id_eseq_flowcell_tmp = epm.id_eseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = efc.id_study_tmp AND study.id_lims = 'SQSCP' UNION ALL SELECT upm.id_useq_product AS id_product, uw.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM useq_product_metrics upm INNER JOIN useq_wafer uw ON uw.id_useq_wafer_tmp = upm.id_useq_wafer_tmp INNER JOIN study ON study.id_study_tmp = uw.id_study_tmp AND study.id_lims = 'SQSCP'`
 
 // sampleSearchTokenIndex is the (token, id_sample_tmp) covering index that backs
 // the index-order sample search page. It is dropped before the cold-load bulk
@@ -233,16 +292,37 @@ var iseqProductMetricsMirrorIndexSet = syncMirrorIndexSet{
 var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
 	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
+	{Name: "spi_mirror_study_lims_iseq_product_idx", Column: "id_study_lims, id_iseq_product"},
 }
 
+// iseqProductMetricsMirrorReadIndexes is the subset of the iseq product-metrics
+// mirror's secondary indexes that the sparse cold-load path recreates immediately
+// (for a mirror too large to rebuild every declared index inline). It MUST include
+// the (id_study_lims, id_run, position) index: without it the id_study_lims-scoped
+// study read/aggregate queries (RunsForStudy, CountRunsForStudy, the study
+// overview, the availability joins) full-scan the ~9M-row mirror (~52s) instead of
+// being index-served (~1s). Omitting it here was the root cause of the slow study
+// pages, because the large-cold-load schema-shape tolerance then accepted the
+// missing index as expected drift.
 var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
 	{Name: "iseq_product_metrics_mirror_id_run_position_tag_index_idx", Column: "id_run, position, tag_index"},
 	{Name: "ipm_mirror_sample_run_position_tag_idx", Column: "id_sample_tmp, id_run, position, tag_index"},
+	{Name: "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx", Column: "id_study_lims, id_run, position"},
 }
 
+// seqProductIRODSLocationsMirrorReadIndexes is the subset of the iRODS-locations
+// mirror's secondary indexes that the sparse cold-load path recreates immediately
+// (the mirror is too large -- ~7M rows -- to rebuild every declared index inline).
+// It MUST include the (id_study_lims, id_iseq_product) index: the per-platform
+// status-breakdown query joins each platform's product id to spi.id_iseq_product
+// scoped by id_study_lims, and without this index that linkage full-scans the mirror
+// per study (the ~5s study page). Omitting it here would let the large-cold-load
+// schema-shape tolerance accept the missing index as expected drift, silently
+// recreating the slow path.
 var seqProductIRODSLocationsMirrorReadIndexes = []syncIndexSpec{
 	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
+	{Name: "spi_mirror_study_lims_iseq_product_idx", Column: "id_study_lims, id_iseq_product"},
 }
 
 var seqProductIRODSLocationsMirrorIndexSet = syncMirrorIndexSet{
@@ -344,6 +424,17 @@ func readSampleSearchTokenPage(ctx context.Context, tx *sql.Tx, pageQuery string
 	}
 
 	return page, maxID, nil
+}
+
+// seqProductIRODSLocationsSourceQuery assembles the full iRODS source SELECT for
+// the given Illumina recovery branch (composition or legacy) and WHERE/ORDER
+// suffix. The outer FROM stays seq_product_irods_locations spi and the recovery
+// UNION spans every platform so non-Illumina data is no longer dropped.
+func seqProductIRODSLocationsSourceQuery(illuminaRecovery, whereOrderSuffix string) string {
+	return `SELECT ` + seqProductIRODSLocationsSelectColumns +
+		` FROM seq_product_irods_locations spi INNER JOIN (` +
+		illuminaRecovery + ` UNION ALL ` + seqProductIRODSLocationsNonIlluminaRecovery +
+		`) recovery ON recovery.id_product = spi.id_product ` + whereOrderSuffix
 }
 
 // insertSampleSearchTokensFromMirror reads every sample's id and searchable
@@ -569,27 +660,83 @@ func iseqProductMetricsSyncSourceQueryFromCursor() string {
 }
 
 func seqProductIRODSLocationsSyncSourceQuery() string {
-	return `SELECT spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, spi.irods_data_relative_path, ifc.id_sample_tmp, study.id_study_lims, spi.last_changed FROM seq_product_irods_locations spi INNER JOIN iseq_product_metrics path_ipm ON path_ipm.id_iseq_product = spi.id_product INNER JOIN JSON_TABLE(path_ipm.iseq_composition_tmp, '$.components[*]' COLUMNS(component_run INT PATH '$.id_run', component_position INT PATH '$.position', component_tag_index INT PATH '$.tag_index')) component ON TRUE INNER JOIN iseq_product_metrics ipm ON ipm.id_run = component.component_run AND ipm.position = component.component_position AND ipm.tag_index = component.component_tag_index INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE spi.last_changed >= ? ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`
+	return seqProductIRODSLocationsSourceQuery(seqProductIRODSLocationsIlluminaCompositionRecovery,
+		`WHERE spi.last_changed >= ? ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`)
 }
 
 func seqProductIRODSLocationsColdSyncSourceQuery() string {
-	return `SELECT spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, spi.irods_data_relative_path, ifc.id_sample_tmp, study.id_study_lims, spi.last_changed FROM seq_product_irods_locations spi INNER JOIN iseq_product_metrics path_ipm ON path_ipm.id_iseq_product = spi.id_product INNER JOIN JSON_TABLE(path_ipm.iseq_composition_tmp, '$.components[*]' COLUMNS(component_run INT PATH '$.id_run', component_position INT PATH '$.position', component_tag_index INT PATH '$.tag_index')) component ON TRUE INNER JOIN iseq_product_metrics ipm ON ipm.id_run = component.component_run AND ipm.position = component.component_position AND ipm.tag_index = component.component_tag_index INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE spi.id_seq_product_irods_locations_tmp > ? ORDER BY spi.id_seq_product_irods_locations_tmp`
+	return seqProductIRODSLocationsSourceQuery(seqProductIRODSLocationsIlluminaCompositionRecovery,
+		`WHERE spi.id_seq_product_irods_locations_tmp > ? ORDER BY spi.id_seq_product_irods_locations_tmp`)
 }
 
 func seqProductIRODSLocationsSyncSourceQueryFromCursor() string {
-	return `SELECT spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, spi.irods_data_relative_path, ifc.id_sample_tmp, study.id_study_lims, spi.last_changed FROM seq_product_irods_locations spi INNER JOIN iseq_product_metrics path_ipm ON path_ipm.id_iseq_product = spi.id_product INNER JOIN JSON_TABLE(path_ipm.iseq_composition_tmp, '$.components[*]' COLUMNS(component_run INT PATH '$.id_run', component_position INT PATH '$.position', component_tag_index INT PATH '$.tag_index')) component ON TRUE INNER JOIN iseq_product_metrics ipm ON ipm.id_run = component.component_run AND ipm.position = component.component_position AND ipm.tag_index = component.component_tag_index INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE (spi.last_changed > ?) OR (spi.last_changed = ? AND spi.id_seq_product_irods_locations_tmp > ?) ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`
+	return seqProductIRODSLocationsSourceQuery(seqProductIRODSLocationsIlluminaCompositionRecovery,
+		`WHERE (spi.last_changed > ?) OR (spi.last_changed = ? AND spi.id_seq_product_irods_locations_tmp > ?) ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`)
 }
 
 func seqProductIRODSLocationsLegacySyncSourceQuery() string {
-	return `SELECT spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, spi.irods_data_relative_path, ifc.id_sample_tmp, study.id_study_lims, spi.last_changed FROM seq_product_irods_locations spi INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_product = spi.id_product INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE spi.last_changed >= ? ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`
+	return seqProductIRODSLocationsSourceQuery(seqProductIRODSLocationsIlluminaLegacyRecovery,
+		`WHERE spi.last_changed >= ? ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`)
 }
 
 func seqProductIRODSLocationsLegacyColdSyncSourceQuery() string {
-	return `SELECT spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, spi.irods_data_relative_path, ifc.id_sample_tmp, study.id_study_lims, spi.last_changed FROM seq_product_irods_locations spi INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_product = spi.id_product INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE spi.id_seq_product_irods_locations_tmp > ? ORDER BY spi.id_seq_product_irods_locations_tmp`
+	return seqProductIRODSLocationsSourceQuery(seqProductIRODSLocationsIlluminaLegacyRecovery,
+		`WHERE spi.id_seq_product_irods_locations_tmp > ? ORDER BY spi.id_seq_product_irods_locations_tmp`)
 }
 
 func seqProductIRODSLocationsLegacySyncSourceQueryFromCursor() string {
-	return `SELECT spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, spi.irods_data_relative_path, ifc.id_sample_tmp, study.id_study_lims, spi.last_changed FROM seq_product_irods_locations spi INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_product = spi.id_product INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE (spi.last_changed > ?) OR (spi.last_changed = ? AND spi.id_seq_product_irods_locations_tmp > ?) ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`
+	return seqProductIRODSLocationsSourceQuery(seqProductIRODSLocationsIlluminaLegacyRecovery,
+		`WHERE (spi.last_changed > ?) OR (spi.last_changed = ? AND spi.id_seq_product_irods_locations_tmp > ?) ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`)
+}
+
+// SyncSourceQuery names one source SELECT the sync issues against the upstream
+// MLWH so it can be validated independently (e.g. prepared / run with LIMIT 0
+// against the real source). ArgCount is the number of bound parameters the query
+// expects, so a validator can supply that many placeholders.
+type SyncSourceQuery struct {
+	Name     string
+	Query    string
+	ArgCount int
+}
+
+// AllSyncSourceQueries returns every distinct SELECT the sync issues against the
+// upstream MLWH source, across all supported tables and all watermark variants
+// (cold / incremental / from-cursor / legacy). It is the single source of truth
+// the source-schema integration test runs against the real MLWH so any missing
+// column, missing table or wrong schema fails the test generically. New sync
+// source queries MUST be added here so they stay covered.
+func AllSyncSourceQueries() []SyncSourceQuery {
+	queries := []SyncSourceQuery{
+		{Name: "sample cold", Query: sampleColdSyncSourceQuery(), ArgCount: 1},
+		{Name: "sample incremental", Query: sampleSyncSourceQuery(), ArgCount: 1},
+		{Name: "sample from cursor", Query: sampleSyncSourceQueryFromCursor(), ArgCount: 3},
+		{Name: "iseq_flowcell incremental", Query: flowcellSyncSourceQuery(), ArgCount: 1},
+		{Name: "iseq_flowcell from cursor", Query: flowcellSyncSourceQueryFromCursor(), ArgCount: 5},
+		{Name: "iseq_product_metrics incremental", Query: iseqProductMetricsSyncSourceQuery(), ArgCount: 1},
+		{Name: "iseq_product_metrics cold", Query: iseqProductMetricsColdSyncSourceQuery(), ArgCount: 1},
+		{Name: "iseq_product_metrics from cursor", Query: iseqProductMetricsSyncSourceQueryFromCursor(), ArgCount: 3},
+		{Name: "seq_product_irods_locations incremental", Query: seqProductIRODSLocationsSyncSourceQuery(), ArgCount: 1},
+		{Name: "seq_product_irods_locations cold", Query: seqProductIRODSLocationsColdSyncSourceQuery(), ArgCount: 1},
+		{Name: "seq_product_irods_locations from cursor", Query: seqProductIRODSLocationsSyncSourceQueryFromCursor(), ArgCount: 3},
+		{Name: "seq_product_irods_locations legacy incremental", Query: seqProductIRODSLocationsLegacySyncSourceQuery(), ArgCount: 1},
+		{Name: "seq_product_irods_locations legacy cold", Query: seqProductIRODSLocationsLegacyColdSyncSourceQuery(), ArgCount: 1},
+		{Name: "seq_product_irods_locations legacy from cursor", Query: seqProductIRODSLocationsLegacySyncSourceQueryFromCursor(), ArgCount: 3},
+		{Name: "iseq_run_status page", Query: iseqRunStatusPageQuery(), ArgCount: 1},
+		{Name: "seq_ops_tracking_per_sample", Query: seqOpsTrackingPerSampleSourceQuery, ArgCount: 0},
+		{Name: "study probe", Query: `SELECT * FROM study WHERE id_lims = 'SQSCP'`, ArgCount: 0},
+	}
+
+	for _, spec := range allProductMetricsMirrorSpecs() {
+		query, args := spec.sourceQuery(syncStateRecord{})
+		queries = append(queries, SyncSourceQuery{Name: spec.syncTable, Query: query, ArgCount: len(args)})
+	}
+
+	for _, table := range wholesaleMirrorTables() {
+		spec := wholesaleMirrorSpecFor(table)
+		queries = append(queries, SyncSourceQuery{Name: spec.syncTable, Query: spec.sourceQuery, ArgCount: 0})
+	}
+
+	return queries
 }
 
 type syncStateRecord struct {
@@ -597,6 +744,18 @@ type syncStateRecord struct {
 	ResumeCursor   *string
 	IndexesDropped bool
 	Exists         bool
+}
+
+// formatNullableSyncTime renders an optional sync timestamp as an RFC3339 string
+// argument, or nil (SQL NULL) when the value is absent. It keeps a NULL upstream
+// created from being stored as the zero time ("0001-01-01T00:00:00Z"), so the
+// downstream MIN/MAX(created) aggregates and recency filter ignore it.
+func formatNullableSyncTime(value sql.NullTime) any {
+	if !value.Valid {
+		return nil
+	}
+
+	return formatSyncTime(value.Time)
 }
 
 // Querier provides the upstream MLWH query surface used by sync.
@@ -2213,6 +2372,19 @@ func (c *Client) syncTableData(ctx context.Context, table string, state syncStat
 		return syncIseqProductMetricsTable(ctx, c.cache, source, state)
 	case syncTableSeqProductIRODSLocations:
 		return syncSeqProductIRODSLocationsTable(ctx, c.cache, source, state)
+	case syncTablePacBioProductMetrics:
+		return syncPacBioProductMetricsTable(ctx, c.cache, source, state)
+	case syncTableEseqProductMetrics:
+		return syncEseqProductMetricsTable(ctx, c.cache, source, state)
+	case syncTableUseqProductMetrics:
+		return syncUseqProductMetricsTable(ctx, c.cache, source, state)
+	case syncTableIseqRunStatus:
+		return syncIseqRunStatusTable(ctx, c.cache, source, state)
+	case syncTablePacBioRunWellMetrics, syncTableEseqRun, syncTableEseqRunLaneMetrics,
+		syncTableUseqRunMetrics, syncTableOseqFlowcell, syncTableIseqRunStatusDict:
+		return syncWholesaleMirrorTable(ctx, c.cache, source, state, wholesaleMirrorSpecFor(table))
+	case syncTableSeqOpsTrackingPerSample:
+		return syncSeqOpsTrackingPerSampleTable(ctx, c.cache, source, state)
 	default:
 		return SyncReport{}, false, fmt.Errorf("mlwh: unsupported sync table %q", table)
 	}
@@ -2227,9 +2399,9 @@ type iseqProductMetricsSyncRow struct {
 	TagIndex          int
 	IDSampleTmp       int64
 	IDStudyLims       string
-	QC                int
-	QCLib             int
-	QCSeq             int
+	QC                sql.NullInt64
+	QCLib             sql.NullInt64
+	QCSeq             sql.NullInt64
 	LastUpdated       time.Time
 }
 
@@ -2336,9 +2508,11 @@ func scanIseqProductMetricsSyncRow(rows *sql.Rows) (iseqProductMetricsSyncRow, e
 	row.IDRun = nullIntValue(idRun)
 	row.Position = nullIntValue(position)
 	row.TagIndex = nullIntValue(tagIndex)
-	row.QC = nullIntValue(qc)
-	row.QCLib = nullIntValue(qcLib)
-	row.QCSeq = nullIntValue(qcSeq)
+	// QC columns are NULL-preserving: a NULL source qc must stay SQL NULL in the
+	// mirror so a downstream read maps it to "pending", distinct from a 0 "fail".
+	row.QC = qc
+	row.QCLib = qcLib
+	row.QCSeq = qcSeq
 
 	parsed, err := parseSyncTimeValue(lastUpdated)
 	if err != nil {
@@ -2426,6 +2600,8 @@ type seqProductIRODSLocationsSyncRow struct {
 	IDSampleTmp           int64
 	IDStudyLims           string
 	LastUpdated           time.Time
+	Created               sql.NullTime
+	Platform              string
 }
 
 func syncSeqProductIRODSLocationsTable(ctx context.Context, cache Cache, source Querier, state syncStateRecord) (SyncReport, bool, error) {
@@ -2529,7 +2705,7 @@ func isUnsupportedCompositionQueryError(err error) bool {
 
 func scanSeqProductIRODSLocationsSyncRow(rows *sql.Rows) (seqProductIRODSLocationsSyncRow, error) {
 	var row seqProductIRODSLocationsSyncRow
-	var lastUpdated any
+	var lastUpdated, created any
 	if err := rows.Scan(
 		&row.SourceRowID,
 		&row.IDIseqProduct,
@@ -2538,6 +2714,8 @@ func scanSeqProductIRODSLocationsSyncRow(rows *sql.Rows) (seqProductIRODSLocatio
 		&row.IDSampleTmp,
 		&row.IDStudyLims,
 		&lastUpdated,
+		&created,
+		&row.Platform,
 	); err != nil {
 		return seqProductIRODSLocationsSyncRow{}, fmt.Errorf("mlwh: scan seq_product_irods_locations sync row: %w", err)
 	}
@@ -2548,6 +2726,21 @@ func scanSeqProductIRODSLocationsSyncRow(rows *sql.Rows) (seqProductIRODSLocatio
 		return seqProductIRODSLocationsSyncRow{}, fmt.Errorf("mlwh: parse seq_product_irods_locations last_updated: %w", err)
 	}
 	row.LastUpdated = parsed
+
+	// created is nullable upstream (default CURRENT_TIMESTAMP); a NULL value is
+	// mirrored as NULL (the mirror's created column is nullable) rather than the
+	// zero time, so the downstream MIN/MAX(created) aggregates and the
+	// created >= since recency filter naturally ignore unknown-creation rows
+	// instead of skewing date ranges / delivered_at to year 0001. Existence-based
+	// counts (data_objects, samples_with_data) still include the row because they
+	// never read created.
+	if created != nil {
+		parsedCreated, parseErr := parseSyncTimeValue(created)
+		if parseErr != nil {
+			return seqProductIRODSLocationsSyncRow{}, fmt.Errorf("mlwh: parse seq_product_irods_locations created: %w", parseErr)
+		}
+		row.Created = sql.NullTime{Time: parsedCreated, Valid: true}
+	}
 
 	return row, nil
 }
@@ -2617,6 +2810,8 @@ func seqProductIRODSLocationsMirrorRowArgs(row seqProductIRODSLocationsSyncRow) 
 		row.IDSampleTmp,
 		row.IDStudyLims,
 		formatSyncTime(row.LastUpdated),
+		formatNullableSyncTime(row.Created),
+		row.Platform,
 	}
 }
 
