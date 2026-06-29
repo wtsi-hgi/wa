@@ -363,11 +363,16 @@ func TestMLWHInfoCommandUsesConfiguredServerWithoutLocalCredentials(t *testing.T
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "DN1234"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "Identifier: DN1234")
+		convey.So(output, convey.ShouldContainSubstring, "Sample")
+		convey.So(output, convey.ShouldContainSubstring, "DN1234")
 		convey.So(output, convey.ShouldContainSubstring, "remote-supplier")
 		convey.So(output, convey.ShouldContainSubstring, "Remote Study")
-		convey.So(output, convey.ShouldContainSubstring, "library: Chromium / 5901")
+		convey.So(output, convey.ShouldContainSubstring, "Chromium / 5901")
 		convey.So(output, convey.ShouldContainSubstring, "/seq/remote/DN1234.cram")
+		// The lane's run is surfaced in the merged Sequencing section rather than a
+		// standalone "Lanes (N)" header.
+		convey.So(output, convey.ShouldContainSubstring, "Run 49001")
+		convey.So(output, convey.ShouldNotContainSubstring, "Lanes (")
 	})
 }
 
@@ -422,15 +427,19 @@ func TestMLWHInfoCommandHumanReadableSample(t *testing.T) {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "DN1234"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "Identifier: DN1234")
-		convey.So(output, convey.ShouldContainSubstring, "sanger_sample_name")
 		convey.So(output, convey.ShouldContainSubstring, "DN1234")
+		convey.So(output, convey.ShouldContainSubstring, "sanger_sample_name")
 		convey.So(output, convey.ShouldContainSubstring, "8675309")
 		convey.So(output, convey.ShouldContainSubstring, "vendor-id-1")
-		convey.So(strings.Count(output, "library:"), convey.ShouldEqual, 2)
-		convey.So(output, convey.ShouldContainSubstring, "library: Standard / 5901")
-		convey.So(output, convey.ShouldContainSubstring, "library: Chromium / 5902")
-		convey.So(output, convey.ShouldContainSubstring, "49001")
+		// Both library/study pairings are shown, each with its study id.
+		convey.So(output, convey.ShouldContainSubstring, "Standard / 5901")
+		convey.So(output, convey.ShouldContainSubstring, "Chromium / 5902")
+		// The lane's run is surfaced in the merged Sequencing section (lane-only
+		// run: no within-sequencing status), not a separate "Lanes (N)" header.
+		convey.So(output, convey.ShouldContainSubstring, "Sequencing")
+		convey.So(output, convey.ShouldContainSubstring, "Run 49001")
+		convey.So(output, convey.ShouldContainSubstring, "lane 2 tag 7")
+		convey.So(output, convey.ShouldNotContainSubstring, "Lanes (")
 		convey.So(stub.closed, convey.ShouldBeTrue)
 	})
 }
@@ -479,7 +488,9 @@ func TestMLWHInfoCommandSampleIncludesLibraryIdentifiersAndIRODSPaths(t *testing
 		textOutput, textErr := executeRootCommandForTest(t, []string{"mlwh", "info", "7607STDY14643771"})
 
 		convey.So(textErr, convey.ShouldBeNil)
-		convey.So(textOutput, convey.ShouldContainSubstring, "library: Custom / 7607 library_id=71046409 id_library_lims=SQPP-47463-G:B1")
+		convey.So(textOutput, convey.ShouldContainSubstring, "Custom / 7607")
+		convey.So(textOutput, convey.ShouldContainSubstring, "library_id=71046409")
+		convey.So(textOutput, convey.ShouldContainSubstring, "id_library_lims=SQPP-47463-G:B1")
 		convey.So(textOutput, convey.ShouldContainSubstring, "/seq/illumina/runs/48/48522/plex1/48522#1.cram")
 
 		withStubMLWHInfoClient(t, newStub())
@@ -844,17 +855,18 @@ func TestMLWHInfoStudyFeatureSections(t *testing.T) {
 			output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901"})
 
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(output, convey.ShouldContainSubstring, "Study overview:")
-			convey.So(output, convey.ShouldContainSubstring, "samples_total: 100")
-			convey.So(output, convey.ShouldContainSubstring, "added_last_7_days: 3")
-			convey.So(output, convey.ShouldContainSubstring, "Status breakdown:")
-			convey.So(output, convey.ShouldContainSubstring, "with_data: 80")
+			// The single Samples panel folds in the total, the distinct
+			// with-data partition, the without-data figure and the recency.
+			convey.So(output, convey.ShouldContainSubstring, "Samples")
+			convey.So(output, convey.ShouldContainSubstring, "100 total")
+			convey.So(output, convey.ShouldContainSubstring, "with data")
+			convey.So(output, convey.ShouldContainSubstring, "80")
+			convey.So(output, convey.ShouldContainSubstring, "20 without data")
+			convey.So(output, convey.ShouldContainSubstring, "last 7 days")
 			convey.So(output, convey.ShouldContainSubstring, "Illumina")
-			convey.So(output, convey.ShouldContainSubstring, "Samples with data:")
-			convey.So(output, convey.ShouldContainSubstring, "all_time: 80")
-			convey.So(output, convey.ShouldContainSubstring, "added_since")
-			convey.So(output, convey.ShouldContainSubstring, "Samples without data:")
-			convey.So(output, convey.ShouldContainSubstring, "count: 2")
+			// The distinct partition is shown once, not duplicated across an
+			// overview and a status-breakdown section.
+			convey.So(strings.Count(output, "Cache synced"), convey.ShouldEqual, 1)
 		})
 
 		convey.Convey("json output carries the structured feature data", func() {
@@ -966,7 +978,10 @@ func TestMLWHInfoStudyFeatureGracefulDegradation(t *testing.T) {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "Status breakdown:")
+		// The overview failed but the status-breakdown-derived sample partition
+		// still renders, and the raw warning is surfaced verbatim.
+		convey.So(output, convey.ShouldContainSubstring, "with data")
+		convey.So(output, convey.ShouldContainSubstring, "Warnings")
 		convey.So(output, convey.ShouldContainSubstring, "overview boom")
 	})
 }
@@ -1009,11 +1024,19 @@ func TestMLWHInfoSampleProgressSection(t *testing.T) {
 			output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "DN1234"})
 
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(output, convey.ShouldContainSubstring, "Sample progress:")
-			convey.So(output, convey.ShouldContainSubstring, "baseline_phase: delivered")
-			convey.So(output, convey.ShouldContainSubstring, "qc: pass")
+			convey.So(output, convey.ShouldContainSubstring, "Progress")
+			convey.So(output, convey.ShouldContainSubstring, "delivered")
+			convey.So(output, convey.ShouldContainSubstring, "QC pass")
 			convey.So(output, convey.ShouldContainSubstring, "sequencing_done")
+			// The run's within-sequencing status now appears under the merged
+			// Sequencing section, not dangling off the Progress milestone timeline.
+			convey.So(output, convey.ShouldContainSubstring, "Sequencing")
+			convey.So(output, convey.ShouldContainSubstring, "Run 49001")
 			convey.So(output, convey.ShouldContainSubstring, "qc complete")
+
+			// Progress is headline + milestone timeline only: the run line moved out
+			// of it, so Sequencing is introduced after the Progress milestone block.
+			convey.So(strings.Index(output, "Sequencing"), convey.ShouldBeGreaterThan, strings.Index(output, "Progress"))
 		})
 
 		convey.Convey("json output carries the structured progress data", func() {
@@ -1059,9 +1082,13 @@ func TestMLWHInfoSampleProgressNotTracked(t *testing.T) {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "ONT1"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "Sample progress:")
-		convey.So(output, convey.ShouldContainSubstring, "qc: not_tracked")
-		convey.So(output, convey.ShouldContainSubstring, "runs: none")
+		convey.So(output, convey.ShouldContainSubstring, "Progress")
+		convey.So(output, convey.ShouldContainSubstring, "QC not_tracked")
+		// With no runs and no lanes the merged Sequencing section shows an explicit
+		// empty signal rather than the old per-Progress "runs: none" line.
+		convey.So(output, convey.ShouldContainSubstring, "Sequencing")
+		convey.So(output, convey.ShouldContainSubstring, "none")
+		convey.So(output, convey.ShouldNotContainSubstring, "runs: none")
 	})
 }
 
@@ -1103,10 +1130,10 @@ func TestMLWHInfoRunFeatureSections(t *testing.T) {
 			output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "49001", "--type", "run"})
 
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(output, convey.ShouldContainSubstring, "Run overview:")
-			convey.So(output, convey.ShouldContainSubstring, "samples: 96")
-			convey.So(output, convey.ShouldContainSubstring, "Run status:")
-			convey.So(output, convey.ShouldContainSubstring, "current: qc complete")
+			convey.So(output, convey.ShouldContainSubstring, "Contents")
+			convey.So(output, convey.ShouldContainSubstring, "96 samples")
+			convey.So(output, convey.ShouldContainSubstring, "Status")
+			convey.So(output, convey.ShouldContainSubstring, "current qc complete")
 			convey.So(output, convey.ShouldContainSubstring, "run pending")
 		})
 
@@ -1152,8 +1179,8 @@ func TestMLWHInfoRunStatusNotTracked(t *testing.T) {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "70000", "--type", "run"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "Run overview:")
-		convey.So(output, convey.ShouldContainSubstring, "Run status:")
+		convey.So(output, convey.ShouldContainSubstring, "Contents")
+		convey.So(output, convey.ShouldContainSubstring, "Status")
 		convey.So(output, convey.ShouldContainSubstring, "none")
 	})
 }

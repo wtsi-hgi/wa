@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -168,6 +169,717 @@ func infoQueryError(identifier string, err error, canSync bool) error {
 	return fmt.Errorf("resolve %q: %w", identifier, err)
 }
 
+func writeSamplePanel(out io.Writer, report infoReport, style infoStyle) {
+	writeInfoTitle(out, style, "Sample", report)
+
+	sample := report.Sample
+	writeSampleIdentityFields(out, style, sample)
+	writeSampleStudyLine(out, report, style)
+	writeSampleLibraries(out, style, sample)
+	writeSampleProgressSection(out, report.SampleProgress, style)
+	writeSequencingSection(out, report, style)
+	writeSampleIRODS(out, report, style)
+	writeCacheSyncedLine(out, style, sampleCacheSyncedAt(report))
+}
+
+// writeInfoTitle renders the panel title line (entity word, identifier and
+// kind, with the canonical form when it differs) followed by a rule.
+func writeInfoTitle(out io.Writer, style infoStyle, entity string, report infoReport) {
+	title := style.header(entity) + "  " + style.bold(report.Identifier)
+	if report.Kind != "" {
+		title += "   " + style.dim("("+report.Kind+")")
+	}
+	if report.Canonical != "" && report.Canonical != report.Identifier {
+		title += " " + style.dim("→ "+report.Canonical)
+	}
+
+	_, _ = fmt.Fprintln(out, title)
+	_, _ = fmt.Fprintln(out, infoRule(style))
+}
+
+// writeSampleIdentityFields prints the sample's core identity in aligned
+// label/value fields, surfacing supplier_name and the other always-shown
+// identifiers.
+func writeSampleIdentityFields(out io.Writer, style infoStyle, sample *mlwh.Sample) {
+	const labelWidth = 12
+
+	organism := strings.TrimSpace(sample.CommonName)
+	if sample.TaxonID > 0 {
+		organism = infoJoinNonEmpty(" ", organism, fmt.Sprintf("(%d)", sample.TaxonID))
+	}
+
+	// sanger_sample_id is shown only when it differs from the sample name (they
+	// are usually identical), to avoid a redundant near-duplicate row.
+	sangerID := ""
+	if strings.TrimSpace(sample.SangerSampleID) != "" && sample.SangerSampleID != sample.Name {
+		sangerID = sample.SangerSampleID
+	}
+
+	fields := []struct{ label, value string }{
+		{"Sanger ID", sample.Name},
+		{"LIMS ID", sample.IDSampleLims},
+		{"Sanger SID", sangerID},
+		{"Supplier", sample.SupplierName},
+		{"Accession", sample.AccessionNumber},
+		{"Donor", sample.DonorID},
+		{"Organism", organism},
+		{"UUID", sample.UUIDSampleLims},
+	}
+
+	for _, field := range fields {
+		if strings.TrimSpace(field.value) == "" {
+			continue
+		}
+
+		value := field.value
+		if field.label == "UUID" {
+			value = style.dim(value)
+		}
+
+		_, _ = fmt.Fprintf(out, "  %s\n", infoField(style, field.label, value, labelWidth))
+	}
+}
+
+// writeSampleStudyLine prints the single resolved study, or each study when the
+// sample spans several (so a two-pairing sample still shows both study ids).
+func writeSampleStudyLine(out io.Writer, report infoReport, style infoStyle) {
+	studies := report.Studies
+	if len(studies) == 0 && report.Study != nil {
+		studies = []mlwh.Study{*report.Study}
+	}
+	if len(studies) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintln(out)
+	for _, study := range studies {
+		_, _ = fmt.Fprintf(out, "  %s\n", infoField(style, "Study", infoStudyHeadline(style, study), 12))
+	}
+}
+
+func infoStudyHeadline(style infoStyle, study mlwh.Study) string {
+	headline := style.bold(study.IDStudyLims)
+	headline = infoJoinNonEmpty("  ", headline, study.Name)
+	if strings.TrimSpace(study.AccessionNumber) != "" {
+		headline = infoJoinNonEmpty("  ", headline, style.dim("("+study.AccessionNumber+")"))
+	}
+
+	return headline
+}
+
+// writeSampleLibraries lists each library/study pairing (with its library_id
+// and id_library_lims when present), so both pairings of a two-pairing sample
+// are shown with their study ids.
+func writeSampleLibraries(out io.Writer, style infoStyle, sample *mlwh.Sample) {
+	pairs := make([]mlwh.Library, 0, len(sample.Libraries))
+	for _, library := range sample.Libraries {
+		if strings.TrimSpace(library.PipelineIDLims) == "" || strings.TrimSpace(library.IDStudyLims) == "" {
+			continue
+		}
+
+		pairs = append(pairs, library)
+	}
+
+	if len(pairs) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\n  %s\n", style.section("Libraries"))
+	for _, library := range pairs {
+		line := library.PipelineIDLims + " / " + library.IDStudyLims
+		if ids := infoLibraryIdentifiers(style, library); ids != "" {
+			line += "  " + ids
+		}
+
+		_, _ = fmt.Fprintf(out, "    %s\n", line)
+	}
+}
+
+func infoLibraryIdentifiers(style infoStyle, library mlwh.Library) string {
+	var parts []string
+	if strings.TrimSpace(library.LibraryID) != "" {
+		parts = append(parts, style.dim("library_id=")+library.LibraryID)
+	}
+	if strings.TrimSpace(library.IDLibraryLims) != "" {
+		parts = append(parts, style.dim("id_library_lims=")+library.IDLibraryLims)
+	}
+
+	return strings.Join(parts, " ")
+}
+
+// infoProgressHeadline folds the platforms, baseline phase, QC verdict and
+// delivery date into a single compact line.
+func infoProgressHeadline(style infoStyle, progress *mlwh.SampleProgress) string {
+	parts := []string{}
+	if len(progress.Platforms) > 0 {
+		parts = append(parts, strings.Join(progress.Platforms, "+"))
+	}
+	if phase := strings.TrimSpace(progress.BaselinePhase); phase != "" {
+		parts = append(parts, phase)
+	}
+	if qc := strings.TrimSpace(progress.QC); qc != "" {
+		parts = append(parts, style.qcColour(qc, "QC "+qc))
+	}
+	if delivered := infoCompactDate(progress.DeliveredAt); delivered != "" {
+		// The delivery date is important timeline content: keep it readable (the
+		// surrounding " · " separators stay dim via the join below).
+		parts = append(parts, "delivered "+delivered)
+	}
+
+	return strings.Join(parts, style.dim(" · "))
+}
+
+func writeMilestoneTimeline(out io.Writer, style infoStyle, milestones []mlwh.Milestone) {
+	if len(milestones) == 0 {
+		return
+	}
+
+	items := make([]infoTimelineItem, len(milestones))
+	for i, milestone := range milestones {
+		items[i] = infoTimelineItem{
+			label: milestone.Name,
+			at:    milestone.ReachedAt,
+			open:  strings.TrimSpace(milestone.DurationToNext) == "" && i == len(milestones)-1,
+		}
+	}
+
+	writeInfoTimeline(out, style, items, "    ")
+}
+
+// writeSequencingSection renders one Sequencing section for the sample, merging
+// the within-sequencing run status (progress.Runs) and the physical lane/tag
+// rows (report.Lanes) keyed by id_run so a run that appears in both feeds is
+// shown exactly once. Runs from progress.Runs come first in their given order;
+// runs that appear only in the lane rows follow in ascending id_run order. The
+// ordering is fully deterministic and never depends on time.Now. With sample
+// progress present but no runs and no lanes it shows an explicit "none"; it is
+// omitted entirely only when there is neither progress nor any sequencing data
+// (so lane rows still render even if the progress feed degraded).
+func writeSequencingSection(out io.Writer, report infoReport, style infoStyle) {
+	var statuses []mlwh.RunStatusTimeline
+	if report.SampleProgress != nil {
+		statuses = report.SampleProgress.Runs
+	}
+
+	order, runs, lanes := infoMergeSequencing(statuses, report.Lanes)
+
+	if report.SampleProgress == nil && len(order) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\n  %s\n", style.section("Sequencing"))
+
+	if len(order) == 0 {
+		_, _ = fmt.Fprintf(out, "    %s\n", style.dim("none"))
+
+		return
+	}
+
+	for _, id := range order {
+		writeSequencingRun(out, style, id, runs[id], lanes[id])
+	}
+}
+
+// infoMergeSequencing groups the run-status feed and the lane-row feed by id_run.
+// It returns the deterministic id order (progress runs first in their given
+// order, then lane-only runs ascending), plus lookups from id_run to its status
+// (when present) and to its lane rows (in their given order).
+func infoMergeSequencing(
+	statuses []mlwh.RunStatusTimeline, allLanes []mlwh.Lane,
+) ([]int, map[int]mlwh.RunStatusTimeline, map[int][]mlwh.Lane) {
+	runs := make(map[int]mlwh.RunStatusTimeline, len(statuses))
+	lanes := make(map[int][]mlwh.Lane)
+
+	var order []int
+	seen := make(map[int]bool)
+
+	for _, status := range statuses {
+		if !seen[status.IDRun] {
+			seen[status.IDRun] = true
+			order = append(order, status.IDRun)
+		}
+		runs[status.IDRun] = status
+	}
+
+	var laneOnly []int
+	for _, lane := range allLanes {
+		lanes[lane.IDRun] = append(lanes[lane.IDRun], lane)
+		if !seen[lane.IDRun] {
+			seen[lane.IDRun] = true
+			laneOnly = append(laneOnly, lane.IDRun)
+		}
+	}
+
+	sort.Ints(laneOnly)
+
+	return append(order, laneOnly...), runs, lanes
+}
+
+// writeSequencingRun renders one run of the Sequencing section. With a single
+// lane (or none) it is a one-liner: "Run <id>  <platform> · <lane X tag Y> ·
+// <current>". With several lanes the run headline carries platform/status and
+// each lane is an indented "lane X · tag Y" line beneath it. The platform,
+// lane/tag and current-status text are readable; only the " · " separators dim.
+func writeSequencingRun(out io.Writer, style infoStyle, id int, run mlwh.RunStatusTimeline, lanes []mlwh.Lane) {
+	platform := strings.TrimSpace(run.Platform)
+	current := strings.TrimSpace(run.Current)
+
+	if len(lanes) <= 1 {
+		lanePart := ""
+		if len(lanes) == 1 {
+			lanePart = fmt.Sprintf("lane %d tag %d", lanes[0].Position, lanes[0].TagIndex)
+		}
+
+		headline := infoJoinNonEmpty(style.dim(" · "), platform, lanePart, current)
+		_, _ = fmt.Fprintf(out, "    %s %d  %s\n", style.label("Run"), id, headline)
+
+		return
+	}
+
+	headline := infoJoinNonEmpty(style.dim(" · "), platform, current)
+	_, _ = fmt.Fprintf(out, "    %s %d  %s\n", style.label("Run"), id, headline)
+	for _, lane := range lanes {
+		_, _ = fmt.Fprintf(out, "      %s\n",
+			infoJoinNonEmpty(style.dim(" · "), fmt.Sprintf("lane %d", lane.Position), fmt.Sprintf("tag %d", lane.TagIndex)))
+	}
+}
+
+// writeSampleIRODS lists every iRODS data-object path for the sample, each as a
+// single compact line. The lane/tag links are shown by writeSequencingSection
+// (merged with the run status), so this lists only the data-object paths.
+func writeSampleIRODS(out io.Writer, report infoReport, style infoStyle) {
+	if len(report.IRODSPaths) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintln(out)
+	label := fmt.Sprintf("iRODS (%d)", len(report.IRODSPaths))
+	for i, path := range report.IRODSPaths {
+		writeListField(out, style, label, path.IRODSPath, i, 12)
+	}
+}
+
+// writeListField prints the first row of a list with its label and blank-pads
+// the label column on subsequent rows so the values align.
+func writeListField(out io.Writer, style infoStyle, label, value string, index, labelWidth int) {
+	shown := label
+	if index > 0 {
+		shown = ""
+	}
+
+	_, _ = fmt.Fprintf(out, "  %s\n", infoField(style, shown, value, labelWidth))
+}
+
+func writeCacheSyncedLine(out io.Writer, style infoStyle, synced string) {
+	date := infoCompactDate(synced)
+	if date == "" {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\n  %s\n", style.dim("Cache synced "+date))
+}
+
+// sampleCacheSyncedAt picks the cache-synced timestamp to show once for a sample
+// panel, preferring the progress feed (the broadest set of feeding tables).
+func sampleCacheSyncedAt(report infoReport) string {
+	if report.SampleProgress != nil && strings.TrimSpace(report.SampleProgress.CacheSyncedAt) != "" {
+		return report.SampleProgress.CacheSyncedAt
+	}
+
+	return ""
+}
+
+func writeStudyPanel(out io.Writer, report infoReport, style infoStyle) {
+	writeInfoTitle(out, style, "Study", report)
+
+	study := report.Study
+	const labelWidth = 12
+
+	writeStudyMetaFields(out, style, study, labelWidth)
+	writeStudySamplesBlock(out, report, style, labelWidth)
+	writeStudyDataBlock(out, report, style, labelWidth)
+	writeStudyListColumns(out, report, style)
+	writeCacheSyncedLine(out, style, studyCacheSyncedAt(report))
+}
+
+func writeStudyMetaFields(out io.Writer, style infoStyle, study *mlwh.Study, labelWidth int) {
+	for _, field := range []struct{ label, value string }{
+		{"Accession", study.AccessionNumber},
+		{"Programme", study.Programme},
+		{"Sponsor", study.FacultySponsor},
+		{"Title", study.StudyTitle},
+		{"UUID", study.UUIDStudyLims},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			continue
+		}
+
+		// The UUID is an auxiliary identifier: render it dim (matching the sample
+		// panel) and never truncate it.
+		value := infoTruncate(field.value, max(20, style.width-18))
+		if field.label == "UUID" {
+			value = style.dim(field.value)
+		}
+
+		_, _ = fmt.Fprintf(out, "  %s\n", infoField(style, field.label, value, labelWidth))
+	}
+}
+
+// writeStudySamplesBlock renders the sample partition once: the total, the
+// recency note, the distinct with_data / sequenced_no_data / registered buckets
+// as proportional bars, the per-platform summary and the detailed-timeline
+// count. Sources are reconciled (StatusBreakdown.Distinct sums to samples_total,
+// the StudyOverview supplies the total and recency).
+func writeStudySamplesBlock(out io.Writer, report infoReport, style infoStyle, labelWidth int) {
+	overview := report.StudyOverview
+	breakdown := report.StatusBreakdown
+	if overview == nil && breakdown == nil {
+		return
+	}
+
+	total, withData, withoutData, recency := infoStudySampleTotals(report)
+
+	summary := fmt.Sprintf("%s total", infoInt(total))
+	summary = infoJoinNonEmpty(style.dim(" · "), summary, fmt.Sprintf("%s with data", infoInt(withData)),
+		fmt.Sprintf("%s without data", infoInt(withoutData)))
+	if recency > 0 {
+		summary += "  " + style.dim(fmt.Sprintf("(+%s added in last 7 days)", infoInt(recency)))
+	}
+
+	_, _ = fmt.Fprintf(out, "\n  %s\n", infoField(style, "Samples", summary, labelWidth))
+
+	if breakdown != nil {
+		writeStudyDistinctBars(out, breakdown.Distinct, total)
+		writeStudyPlatformSummary(out, style, breakdown.PerPlatform)
+		if breakdown.WithDetailedTimeline > 0 {
+			_, _ = fmt.Fprintf(out, "    %s\n", style.dim(fmt.Sprintf("detailed timeline for %s samples", infoInt(breakdown.WithDetailedTimeline))))
+		}
+	}
+}
+
+// infoStudySampleTotals reconciles the authoritative figures: the distinct
+// partition from StatusBreakdown sums to samples_total; the StudyOverview gives
+// the total, the without-data superset and the recency count.
+func infoStudySampleTotals(report infoReport) (total, withData, withoutData, recency int) {
+	if report.StatusBreakdown != nil {
+		ladder := report.StatusBreakdown.Distinct
+		withData = ladder.WithData
+		total = ladder.WithData + ladder.SequencedNoData + ladder.Registered
+	}
+
+	if report.StudyOverview != nil {
+		overview := report.StudyOverview
+		if overview.SamplesTotal > 0 || total == 0 {
+			total = overview.SamplesTotal
+		}
+		withData = overview.SamplesWithData
+		recency = overview.AddedLast7Days
+	}
+
+	withoutData = total - withData
+	if withoutData < 0 {
+		withoutData = 0
+	}
+
+	return total, withData, withoutData, recency
+}
+
+// infoInt renders an integer with thousands separators for readability (text
+// only; the JSON contract is untouched).
+func infoInt(value int) string {
+	if value < 0 {
+		return "-" + infoInt(-value)
+	}
+
+	digits := fmt.Sprintf("%d", value)
+	if len(digits) <= 3 {
+		return digits
+	}
+
+	var b strings.Builder
+	lead := len(digits) % 3
+	if lead > 0 {
+		b.WriteString(digits[:lead])
+	}
+	for i := lead; i < len(digits); i += 3 {
+		if b.Len() > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(digits[i : i+3])
+	}
+
+	return b.String()
+}
+
+func writeStudyDistinctBars(out io.Writer, ladder mlwh.PhaseLadder, total int) {
+	rows := []struct {
+		label string
+		count int
+	}{
+		{"with data", ladder.WithData},
+		{"sequenced, no data", ladder.SequencedNoData},
+		{"registered only", ladder.Registered},
+	}
+
+	const labelWidth = 19
+	for _, row := range rows {
+		bar := infoProportionBar(row.count, total, 20)
+		_, _ = fmt.Fprintf(out, "    %s %s  %s  %s\n",
+			infoPadTo(row.label, labelWidth), infoRight(infoInt(row.count), 4), bar, infoPercent(row.count, total))
+	}
+}
+
+// infoProportionBar renders a 20-ish cell bar with `count/total` filled.
+func infoProportionBar(count, total, width int) string {
+	if width <= 0 {
+		width = 20
+	}
+
+	filled := 0
+	if total > 0 && count > 0 {
+		filled = (count*width + total/2) / total
+		if filled == 0 {
+			filled = 1
+		}
+		if filled > width {
+			filled = width
+		}
+	}
+
+	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+}
+
+func infoRight(text string, n int) string {
+	if len(text) >= n {
+		return text
+	}
+
+	return strings.Repeat(" ", n-len(text)) + text
+}
+
+func infoPercent(count, total int) string {
+	if total <= 0 {
+		return "0%"
+	}
+
+	return fmt.Sprintf("%d%%", (count*100+total/2)/total)
+}
+
+func writeStudyPlatformSummary(out io.Writer, style infoStyle, platforms []mlwh.PlatformPhaseLadder) {
+	if len(platforms) == 0 {
+		return
+	}
+
+	var parts []string
+	for _, platform := range platforms {
+		if platform.Ladder.WithData > 0 {
+			parts = append(parts, fmt.Sprintf("%s %s with data", platform.Platform, infoInt(platform.Ladder.WithData)))
+		} else {
+			parts = append(parts, platform.Platform)
+		}
+	}
+
+	_, _ = fmt.Fprintf(out, "    %s\n", style.dim("by platform: "+strings.Join(parts, ", ")))
+}
+
+// writeStudyDataBlock summarises the study's sequencing data once: object, run
+// and library counts, library types and the sequencing date range.
+func writeStudyDataBlock(out io.Writer, report infoReport, style infoStyle, labelWidth int) {
+	overview := report.StudyOverview
+	if overview == nil {
+		return
+	}
+
+	summary := infoJoinNonEmpty(style.dim(" · "),
+		fmt.Sprintf("%s objects", infoInt(overview.DataObjects)),
+		fmt.Sprintf("%s runs", infoInt(overview.Runs)),
+		fmt.Sprintf("%s libraries", infoInt(overview.Libraries)))
+
+	_, _ = fmt.Fprintf(out, "\n  %s\n", infoField(style, "Data", summary, labelWidth))
+
+	if len(overview.LibraryTypes) > 0 {
+		_, _ = fmt.Fprintf(out, "    %s\n", style.dim("library types: "+strings.Join(overview.LibraryTypes, ", ")))
+	}
+
+	if rng := infoDateRange(overview.SequencingDateRange); rng != "" {
+		// Sequencing dates are important timeline content: keep them readable.
+		_, _ = fmt.Fprintf(out, "    sequencing %s\n", rng)
+	}
+}
+
+// infoDateRange renders an "earliest → latest" compact range, or "" when
+// absent. The year is appended when the two ends fall in different years so a
+// cross-year range reads unambiguously, while staying compact within one year.
+func infoDateRange(rng *mlwh.DateRange) string {
+	if rng == nil {
+		return ""
+	}
+
+	start, okStart := parseInfoTime(rng.Earliest)
+	end, okEnd := parseInfoTime(rng.Latest)
+
+	if okStart && okEnd && start.Year() != end.Year() {
+		return start.Format("Jan 02 2006") + " → " + end.Format("Jan 02 2006")
+	}
+
+	return infoJoinNonEmpty(" → ", infoCompactDate(rng.Earliest), infoCompactDate(rng.Latest))
+}
+
+// writeStudyListColumns lists the study's libraries, runs and samples, each with
+// the true total in its header and a "(N of M)" header when truncated at the
+// fetch cap.
+func writeStudyListColumns(out io.Writer, report infoReport, style infoStyle) {
+	total := 0
+	if report.StudyOverview != nil {
+		total = report.StudyOverview.Libraries
+	}
+	writeLibrariesList(out, style, report.Libraries, total)
+
+	total = 0
+	if report.StudyOverview != nil {
+		total = report.StudyOverview.Runs
+	}
+	writeRunsList(out, style, report.Runs, total)
+
+	total = 0
+	if report.StudyOverview != nil {
+		total = report.StudyOverview.SamplesTotal
+	}
+	writeSamplesList(out, style, report.Samples, total)
+}
+
+func writeLibrariesList(out io.Writer, style infoStyle, libraries []mlwh.Library, total int) {
+	if len(libraries) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\n  %s\n", style.section(infoListHeading("Libraries", len(libraries), total)))
+	for _, library := range libraries {
+		line := library.PipelineIDLims
+		if strings.TrimSpace(library.IDStudyLims) != "" {
+			line += " / " + library.IDStudyLims
+		}
+		if ids := infoLibraryIdentifiers(style, library); ids != "" {
+			line += "  " + ids
+		}
+
+		_, _ = fmt.Fprintf(out, "    %s\n", line)
+	}
+}
+
+// infoListHeading renders a list heading like "Runs (5)" or, when the shown
+// rows were truncated below the true total, "Samples (50 of 100)".
+func infoListHeading(label string, shown, total int) string {
+	if total > shown {
+		return fmt.Sprintf("%s (%d of %d)", label, shown, total)
+	}
+
+	return fmt.Sprintf("%s (%d)", label, shown)
+}
+
+func writeRunsList(out io.Writer, style infoStyle, runs []mlwh.Run, total int) {
+	if len(runs) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\n  %s\n", style.section(infoListHeading("Runs", len(runs), total)))
+	for _, run := range runs {
+		_, _ = fmt.Fprintf(out, "    %d\n", run.IDRun)
+	}
+}
+
+func writeSamplesList(out io.Writer, style infoStyle, samples []mlwh.Sample, total int) {
+	if len(samples) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\n  %s\n", style.section(infoListHeading("Samples", len(samples), total)))
+	for _, sample := range samples {
+		line := sample.Name
+		if supplier := strings.TrimSpace(sample.SupplierName); supplier != "" {
+			line = infoJoinNonEmpty("  ", line, style.dim(supplier))
+		}
+
+		_, _ = fmt.Fprintf(out, "    %s\n", line)
+	}
+}
+
+func studyCacheSyncedAt(report infoReport) string {
+	if report.StudyOverview != nil && strings.TrimSpace(report.StudyOverview.CacheSyncedAt) != "" {
+		return report.StudyOverview.CacheSyncedAt
+	}
+	if report.StatusBreakdown != nil {
+		return report.StatusBreakdown.CacheSyncedAt
+	}
+
+	return ""
+}
+
+func writeRunPanel(out io.Writer, report infoReport, style infoStyle) {
+	writeInfoTitle(out, style, "Run", report)
+
+	writeRunContents(out, report, style)
+	writeRunStatusSection(out, report.RunStatus, style)
+
+	total := 0
+	if report.RunOverview != nil {
+		total = report.RunOverview.Samples
+	}
+	writeSamplesList(out, style, report.Samples, total)
+	writeCacheSyncedLine(out, style, runCacheSyncedAt(report))
+}
+
+func writeRunContents(out io.Writer, report infoReport, style infoStyle) {
+	overview := report.RunOverview
+	if overview == nil {
+		return
+	}
+
+	summary := infoJoinNonEmpty(style.dim(" · "),
+		fmt.Sprintf("%s samples", infoInt(overview.Samples)),
+		fmt.Sprintf("%s studies", infoInt(overview.Studies)),
+		fmt.Sprintf("%s data objects", infoInt(overview.DataObjects)))
+
+	_, _ = fmt.Fprintf(out, "  %s\n", infoField(style, "Contents", summary, 12))
+
+	if rng := infoDateRange(overview.SequencingDateRange); rng != "" {
+		// Sequencing dates are important timeline content: keep them readable.
+		_, _ = fmt.Fprintf(out, "    sequencing %s\n", rng)
+	}
+}
+
+func infoCurrentPhase(status *mlwh.RunStatusTimeline) string {
+	if reason := strings.TrimSpace(status.NotTracked); reason != "" {
+		return "not tracked"
+	}
+	if current := strings.TrimSpace(status.Current); current != "" {
+		return "current " + current
+	}
+
+	return ""
+}
+
+func runCacheSyncedAt(report infoReport) string {
+	if report.RunOverview != nil && strings.TrimSpace(report.RunOverview.CacheSyncedAt) != "" {
+		return report.RunOverview.CacheSyncedAt
+	}
+
+	return ""
+}
+
+func writeLibraryPanel(out io.Writer, report infoReport, style infoStyle) {
+	writeInfoTitle(out, style, "Library", report)
+
+	library := report.Library
+	_, _ = fmt.Fprintf(out, "  %s\n", infoField(style, "pipeline_id_lims", library.PipelineIDLims, 16))
+	if strings.TrimSpace(library.IDStudyLims) != "" {
+		_, _ = fmt.Fprintf(out, "  %s\n", infoField(style, "id_study_lims", library.IDStudyLims, 16))
+	}
+	if ids := infoLibraryIdentifiers(style, *library); ids != "" {
+		_, _ = fmt.Fprintf(out, "  %s\n", ids)
+	}
+}
+
 type mlwhInfoSampleNameResolver interface {
 	ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error)
 }
@@ -188,7 +900,7 @@ func runMLWHInfo(ctx context.Context, client mlwhInfoClient, out io.Writer, iden
 		return writeInfoReportJSON(out, report)
 	}
 
-	writeInfoReportText(out, report)
+	writeInfoReportText(out, report, resolveInfoStyle(out))
 
 	return nil
 }
@@ -240,319 +952,84 @@ func writeInfoReportJSON(out io.Writer, report infoReport) error {
 	return nil
 }
 
-func writeInfoReportText(out io.Writer, report infoReport) {
-	_, _ = fmt.Fprintf(out, "Identifier: %s\n", report.Identifier)
-	_, _ = fmt.Fprintf(out, "Kind:       %s\n", report.Kind)
-
-	if report.Canonical != "" {
-		_, _ = fmt.Fprintf(out, "Canonical:  %s\n", report.Canonical)
+func writeInfoReportText(out io.Writer, report infoReport, style infoStyle) {
+	switch {
+	case report.Sample != nil:
+		writeSamplePanel(out, report, style)
+	case report.Study != nil:
+		writeStudyPanel(out, report, style)
+	case report.Run != nil:
+		writeRunPanel(out, report, style)
+	case report.Library != nil:
+		writeLibraryPanel(out, report, style)
+	default:
+		writeInfoTitle(out, style, "Result", report)
 	}
 
-	if report.Sample != nil {
-		writeSampleSection(out, report.Sample)
-	}
-	writeSampleProgressSection(out, report.SampleProgress)
-
-	if report.Study != nil {
-		writeStudySection(out, report.Study)
-	}
-	writeStudiesSection(out, report.Studies)
-	writeStudyOverviewSection(out, report.StudyOverview)
-	writeStatusBreakdownSection(out, report.StatusBreakdown)
-	writeSamplesWithDataCountSection(out, report.SamplesWithDataCount)
-	writeSamplesWithoutDataCountSection(out, report.SamplesWithoutDataCount)
-
-	if report.Run != nil {
-		_, _ = fmt.Fprintf(out, "\nRun:\n  id_run: %d\n", report.Run.IDRun)
-	}
-	writeRunOverviewSection(out, report.RunOverview)
-	writeRunStatusSection(out, report.RunStatus)
-
-	if report.Library != nil {
-		_, _ = fmt.Fprintf(out, "\nLibrary:\n  pipeline_id_lims: %s\n",
-			report.Library.PipelineIDLims)
-		writeKV(out, "  id_study_lims", report.Library.IDStudyLims)
-	}
-
-	writeLanesSection(out, report.Lanes)
-	writeLibrariesSection(out, report.Libraries)
-	writeRunsSection(out, report.Runs)
-	writeSamplesSection(out, report.Samples)
-	writeIRODSPathsSection(out, report.IRODSPaths)
-	writeWarningsSection(out, report.Warnings)
+	writeWarningsSection(out, report.Warnings, style)
 }
 
-func writeSampleSection(out io.Writer, sample *mlwh.Sample) {
-	_, _ = fmt.Fprintf(out, "\nSample:\n")
-	writeKV(out, "  name", sample.Name)
-	writeKV(out, "  id_sample_lims", sample.IDSampleLims)
-	writeKV(out, "  uuid_sample_lims", sample.UUIDSampleLims)
-	writeKV(out, "  sanger_sample_id", sample.SangerSampleID)
-	writeKV(out, "  supplier_name", sample.SupplierName)
-	writeKV(out, "  accession_number", sample.AccessionNumber)
-	writeKV(out, "  donor_id", sample.DonorID)
-	writeKV(out, "  common_name", sample.CommonName)
-	for _, library := range sample.Libraries {
-		if strings.TrimSpace(library.PipelineIDLims) == "" || strings.TrimSpace(library.IDStudyLims) == "" {
-			continue
-		}
-
-		_, _ = fmt.Fprintf(out, "  library: %s / %s", library.PipelineIDLims, library.IDStudyLims)
-		writeLibraryIdentifiers(out, library)
-		_, _ = fmt.Fprintln(out)
-	}
-}
-
-func writeLibraryIdentifiers(out io.Writer, library mlwh.Library) {
-	if strings.TrimSpace(library.LibraryID) != "" {
-		_, _ = fmt.Fprintf(out, " library_id=%s", library.LibraryID)
-	}
-	if strings.TrimSpace(library.IDLibraryLims) != "" {
-		_, _ = fmt.Fprintf(out, " id_library_lims=%s", library.IDLibraryLims)
-	}
-}
-
-func writeKV(out io.Writer, key, value string) {
-	if strings.TrimSpace(value) == "" {
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "%s: %s\n", key, value)
-}
-
-func writeStudySection(out io.Writer, study *mlwh.Study) {
-	_, _ = fmt.Fprintf(out, "\nStudy:\n")
-	writeKV(out, "  id_study_lims", study.IDStudyLims)
-	writeKV(out, "  uuid_study_lims", study.UUIDStudyLims)
-	writeKV(out, "  name", study.Name)
-	writeKV(out, "  accession_number", study.AccessionNumber)
-	writeKV(out, "  study_title", study.StudyTitle)
-	writeKV(out, "  faculty_sponsor", study.FacultySponsor)
-	writeKV(out, "  programme", study.Programme)
-}
-
-func writeStudyOverviewSection(out io.Writer, overview *mlwh.StudyOverview) {
-	if overview == nil {
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "\nStudy overview:\n")
-	_, _ = fmt.Fprintf(out, "  samples_total: %d\n", overview.SamplesTotal)
-	_, _ = fmt.Fprintf(out, "  samples_with_data: %d\n", overview.SamplesWithData)
-	_, _ = fmt.Fprintf(out, "  samples_without_data: %d\n", overview.SamplesWithoutData)
-	_, _ = fmt.Fprintf(out, "  samples_sequenced_no_data: %d\n", overview.SamplesSequencedNoData)
-	_, _ = fmt.Fprintf(out, "  data_objects: %d\n", overview.DataObjects)
-	_, _ = fmt.Fprintf(out, "  runs: %d\n", overview.Runs)
-	_, _ = fmt.Fprintf(out, "  libraries: %d\n", overview.Libraries)
-	if len(overview.LibraryTypes) > 0 {
-		_, _ = fmt.Fprintf(out, "  library_types: %s\n", strings.Join(overview.LibraryTypes, ", "))
-	}
-	writeKV(out, "  newest_data_added", overview.NewestDataAdded)
-	_, _ = fmt.Fprintf(out, "  added_last_7_days: %d\n", overview.AddedLast7Days)
-	writeKV(out, "  cache_synced_at", overview.CacheSyncedAt)
-}
-
-func writeStatusBreakdownSection(out io.Writer, breakdown *mlwh.StatusBreakdown) {
-	if breakdown == nil {
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "\nStatus breakdown:\n")
-	_, _ = fmt.Fprintf(out, "  distinct: with_data: %d sequenced_no_data: %d registered: %d\n",
-		breakdown.Distinct.WithData, breakdown.Distinct.SequencedNoData, breakdown.Distinct.Registered)
-	for _, platform := range breakdown.PerPlatform {
-		_, _ = fmt.Fprintf(out, "  %s: with_data: %d sequenced_no_data: %d registered: %d\n",
-			platform.Platform, platform.Ladder.WithData, platform.Ladder.SequencedNoData, platform.Ladder.Registered)
-	}
-	_, _ = fmt.Fprintf(out, "  with_detailed_timeline: %d\n", breakdown.WithDetailedTimeline)
-	writeKV(out, "  cache_synced_at", breakdown.CacheSyncedAt)
-}
-
-func writeSamplesWithDataCountSection(out io.Writer, count *infoSamplesWithDataCount) {
-	if count == nil {
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "\nSamples with data:\n")
-	_, _ = fmt.Fprintf(out, "  all_time: %d\n", count.AllTime)
-	_, _ = fmt.Fprintf(out, "  added_since %s: %d\n", count.Since, count.AddedSince)
-}
-
-func writeSamplesWithoutDataCountSection(out io.Writer, count *infoCount) {
-	if count == nil {
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "\nSamples without data:\n")
-	_, _ = fmt.Fprintf(out, "  count: %d\n", count.Count)
-}
-
-func writeSampleProgressSection(out io.Writer, progress *mlwh.SampleProgress) {
+// writeSampleProgressSection renders the headline progress line and the
+// milestone timeline bar (when a detailed timeline is present). The per-run
+// within-sequencing status is shown by writeSequencingSection instead, so
+// Progress stays headline + timeline only. It degrades cleanly when progress is
+// nil or not tracked.
+func writeSampleProgressSection(out io.Writer, progress *mlwh.SampleProgress, style infoStyle) {
 	if progress == nil {
 		return
 	}
 
-	_, _ = fmt.Fprintf(out, "\nSample progress:\n")
-	if len(progress.Platforms) > 0 {
-		_, _ = fmt.Fprintf(out, "  platforms: %s\n", strings.Join(progress.Platforms, ", "))
+	_, _ = fmt.Fprintf(out, "\n  %s  %s\n", style.section("Progress"), infoProgressHeadline(style, progress))
+
+	if reason := strings.TrimSpace(progress.TimelineReason); reason != "" && !progress.DetailedTimeline {
+		_, _ = fmt.Fprintf(out, "    %s\n", style.dim(reason))
 	}
-	writeKV(out, "  baseline_phase", progress.BaselinePhase)
-	writeKV(out, "  qc", progress.QC)
-	writeKV(out, "  delivered_at", progress.DeliveredAt)
-	_, _ = fmt.Fprintf(out, "  detailed_timeline: %t\n", progress.DetailedTimeline)
-	writeKV(out, "  timeline_reason", progress.TimelineReason)
-	writeKV(out, "  current_milestone", progress.CurrentMilestone)
-	writeProgressMilestones(out, progress.Milestones)
-	writeProgressRuns(out, progress.Runs)
-	writeKV(out, "  cache_synced_at", progress.CacheSyncedAt)
+
+	writeMilestoneTimeline(out, style, progress.Milestones)
 }
 
-func writeProgressMilestones(out io.Writer, milestones []mlwh.Milestone) {
-	if len(milestones) == 0 {
-		_, _ = fmt.Fprintf(out, "  milestones: none\n")
-
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "  milestones (%d):\n", len(milestones))
-	for _, milestone := range milestones {
-		_, _ = fmt.Fprintf(out, "    %s reached_at=%s\n", milestone.Name, milestone.ReachedAt)
-	}
-}
-
-func writeProgressRuns(out io.Writer, runs []mlwh.RunStatusTimeline) {
-	if len(runs) == 0 {
-		_, _ = fmt.Fprintf(out, "  runs: none\n")
-
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "  runs (%d):\n", len(runs))
-	for _, run := range runs {
-		_, _ = fmt.Fprintf(out, "    id_run=%d platform=%s current=%s\n", run.IDRun, run.Platform, run.Current)
-	}
-}
-
-func writeRunOverviewSection(out io.Writer, overview *mlwh.RunOverview) {
-	if overview == nil {
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "\nRun overview:\n")
-	_, _ = fmt.Fprintf(out, "  samples: %d\n", overview.Samples)
-	_, _ = fmt.Fprintf(out, "  studies: %d\n", overview.Studies)
-	_, _ = fmt.Fprintf(out, "  data_objects: %d\n", overview.DataObjects)
-	writeKV(out, "  cache_synced_at", overview.CacheSyncedAt)
-}
-
-func writeRunStatusSection(out io.Writer, status *mlwh.RunStatusTimeline) {
+// writeRunStatusSection renders the within-sequencing status: the platform and
+// current phase headline plus a proportional event timeline (the same renderer
+// as the milestone bar), or "none" when the timeline is empty/not tracked.
+func writeRunStatusSection(out io.Writer, status *mlwh.RunStatusTimeline, style infoStyle) {
 	if status == nil {
 		return
 	}
 
-	_, _ = fmt.Fprintf(out, "\nRun status:\n")
-	writeKV(out, "  platform", status.Platform)
-	writeKV(out, "  current", status.Current)
-	writeKV(out, "  not_tracked", status.NotTracked)
+	headline := infoJoinNonEmpty(style.dim(" · "), status.Platform, infoCurrentPhase(status))
+	if strings.TrimSpace(headline) == "" {
+		headline = style.dim("not tracked")
+	}
+
+	_, _ = fmt.Fprintf(out, "\n  %s  %s\n", style.section("Status"), headline)
+
 	if len(status.Events) == 0 {
-		_, _ = fmt.Fprintf(out, "  events: none\n")
+		_, _ = fmt.Fprintf(out, "    %s\n", style.dim("none"))
 
 		return
 	}
 
-	_, _ = fmt.Fprintf(out, "  events (%d):\n", len(status.Events))
-	for _, event := range status.Events {
-		_, _ = fmt.Fprintf(out, "    %s entered_at=%s\n", event.Phase, event.EnteredAt)
-	}
-}
-
-func writeStudiesSection(out io.Writer, studies []mlwh.Study) {
-	if len(studies) == 0 {
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "\nStudies (%d):\n", len(studies))
-	for _, study := range studies {
-		_, _ = fmt.Fprintf(out, "  id_study_lims=%s", study.IDStudyLims)
-		if strings.TrimSpace(study.Name) != "" {
-			_, _ = fmt.Fprintf(out, " name=%s", study.Name)
+	items := make([]infoTimelineItem, len(status.Events))
+	for i, event := range status.Events {
+		items[i] = infoTimelineItem{
+			label: event.Phase,
+			at:    event.EnteredAt,
+			open:  strings.TrimSpace(event.Duration) == "" && i == len(status.Events)-1,
 		}
-		if strings.TrimSpace(study.AccessionNumber) != "" {
-			_, _ = fmt.Fprintf(out, " accession_number=%s", study.AccessionNumber)
-		}
-		_, _ = fmt.Fprintln(out)
 	}
+
+	writeInfoTimeline(out, style, items, "    ")
 }
 
-func writeLanesSection(out io.Writer, lanes []mlwh.Lane) {
-	if len(lanes) == 0 {
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "\nLanes (%d):\n", len(lanes))
-	for _, lane := range lanes {
-		_, _ = fmt.Fprintf(out, "  id_run=%d lane=%d tag_index=%d\n", lane.IDRun, lane.Position, lane.TagIndex)
-	}
-}
-
-func writeLibrariesSection(out io.Writer, libraries []mlwh.Library) {
-	if len(libraries) == 0 {
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "\nLibraries (%d):\n", len(libraries))
-	for _, lib := range libraries {
-		_, _ = fmt.Fprintf(out, "  pipeline_id_lims=%s", lib.PipelineIDLims)
-		if strings.TrimSpace(lib.IDStudyLims) != "" {
-			_, _ = fmt.Fprintf(out, " id_study_lims=%s", lib.IDStudyLims)
-		}
-		writeLibraryIdentifiers(out, lib)
-		_, _ = fmt.Fprintln(out)
-	}
-}
-
-func writeRunsSection(out io.Writer, runs []mlwh.Run) {
-	if len(runs) == 0 {
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "\nRuns (%d):\n", len(runs))
-	for _, run := range runs {
-		_, _ = fmt.Fprintf(out, "  id_run=%d\n", run.IDRun)
-	}
-}
-
-func writeSamplesSection(out io.Writer, samples []mlwh.Sample) {
-	if len(samples) == 0 {
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "\nSamples (%d):\n", len(samples))
-	for _, sample := range samples {
-		_, _ = fmt.Fprintf(out, "  name=%s id_sample_lims=%s sanger_sample_id=%s supplier_name=%s\n",
-			sample.Name, sample.IDSampleLims, sample.SangerSampleID, sample.SupplierName)
-	}
-}
-
-func writeIRODSPathsSection(out io.Writer, paths []mlwh.IRODSPath) {
-	if len(paths) == 0 {
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "\niRODS paths (%d):\n", len(paths))
-	for _, path := range paths {
-		_, _ = fmt.Fprintf(out, "  %s\n", path.IRODSPath)
-	}
-}
-
-func writeWarningsSection(out io.Writer, warnings []string) {
+func writeWarningsSection(out io.Writer, warnings []string, style infoStyle) {
 	if len(warnings) == 0 {
 		return
 	}
 
-	_, _ = fmt.Fprintf(out, "\nWarnings:\n")
+	_, _ = fmt.Fprintf(out, "\n  %s\n", style.section("Warnings"))
 	for _, warning := range warnings {
-		_, _ = fmt.Fprintf(out, "  %s\n", warning)
+		// Warnings should stand out rather than recede, so colour them yellow.
+		_, _ = fmt.Fprintf(out, "    %s\n", style.warn(warning))
 	}
 }
 
