@@ -86,6 +86,7 @@ type stubMLWHInfoClient struct {
 	studiesForSample    func(ctx context.Context, name string) ([]mlwh.Study, error)
 	lanesForSample      func(ctx context.Context, name string, limit, offset int) ([]mlwh.Lane, error)
 	irodsPathsForSample func(ctx context.Context, name string, limit, offset int) ([]mlwh.IRODSPath, error)
+	irodsPathsForRun    func(ctx context.Context, idRun, fileType string, limit, offset int) ([]mlwh.IRODSPath, error)
 	librariesForStudy   func(ctx context.Context, id string, limit, offset int) ([]mlwh.Library, error)
 	runsForStudy        func(ctx context.Context, id string, limit, offset int) ([]mlwh.Run, error)
 	samplesForStudy     func(ctx context.Context, id string, limit, offset int) ([]mlwh.Sample, error)
@@ -259,6 +260,14 @@ func (s *stubMLWHInfoClient) LanesForSample(ctx context.Context, name string, li
 func (s *stubMLWHInfoClient) IRODSPathsForSample(ctx context.Context, name string, limit, offset int) ([]mlwh.IRODSPath, error) {
 	if s.irodsPathsForSample != nil {
 		return s.irodsPathsForSample(ctx, name, limit, offset)
+	}
+
+	return nil, nil
+}
+
+func (s *stubMLWHInfoClient) IRODSPathsForRun(ctx context.Context, idRun, fileType string, limit, offset int) ([]mlwh.IRODSPath, error) {
+	if s.irodsPathsForRun != nil {
+		return s.irodsPathsForRun(ctx, idRun, fileType, limit, offset)
 	}
 
 	return nil, nil
@@ -720,6 +729,188 @@ func TestMLWHInfoStudySinceRejectsNonPositiveDuration(t *testing.T) {
 	})
 }
 
+func TestMLWHInfoStudyQCAndDerivedSequencingCounts(t *testing.T) {
+	convey.Convey("Given a study whose breakdown carries qc counts and a distinct ladder summing to samples_total, "+
+		"when wa mlwh info <study> runs, then the status breakdown shows received/sequenced/not-sequenced and the qc split (H1 acceptance 1)", t, func() {
+		stub := &stubMLWHInfoClient{
+			resolveStudy: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{
+					Kind:      mlwh.KindStudyLimsID,
+					Canonical: raw,
+					Study:     &mlwh.Study{IDStudyLims: raw},
+				}, nil
+			},
+			statusBreakdown: func(_ context.Context, id string) (mlwh.StatusBreakdown, error) {
+				// distinct buckets sum to samples_total=45277; registered=4482 are
+				// the not-sequenced samples, so sequenced=40795.
+				return mlwh.StatusBreakdown{
+					IDStudyLims: id,
+					Distinct:    mlwh.PhaseLadder{WithData: 40000, SequencedNoData: 795, Registered: 4482},
+					QC:          mlwh.StudyQCBreakdown{QCPass: 40012, QCFail: 200, QCPending: 583},
+				}, nil
+			},
+		}
+
+		withStubMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "7699", "--type", "study"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "45,277 total")
+		convey.So(output, convey.ShouldContainSubstring, "40,000 with data")
+		convey.So(output, convey.ShouldContainSubstring, "sequenced, no data")
+		convey.So(output, convey.ShouldContainSubstring, "registered only")
+		convey.So(output, convey.ShouldContainSubstring, "QC")
+		convey.So(output, convey.ShouldContainSubstring, "pass 40,012")
+		convey.So(output, convey.ShouldContainSubstring, "fail 200")
+		convey.So(output, convey.ShouldContainSubstring, "pending 583")
+	})
+}
+
+func TestMLWHInfoStudyOverviewMetadata(t *testing.T) {
+	convey.Convey("Given a study overview carrying data access group and the other D5 metadata, "+
+		"when wa mlwh info <study> runs, then the overview section surfaces them (H1 acceptance 2)", t, func() {
+		stub := &stubMLWHInfoClient{
+			resolveStudy: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{
+					Kind:      mlwh.KindStudyLimsID,
+					Canonical: raw,
+					Study:     &mlwh.Study{IDStudyLims: raw},
+				}, nil
+			},
+			studyOverview: func(_ context.Context, id string) (mlwh.StudyOverview, error) {
+				return mlwh.StudyOverview{
+					IDStudyLims:     id,
+					Name:            "Lung cancer GWAS",
+					AccessionNumber: "EGAS00001005678",
+					FacultySponsor:  "Carl Anderson",
+					DataAccessGroup: "grp-1",
+				}, nil
+			},
+		}
+
+		withStubMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901", "--type", "study"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "Data Access")
+		convey.So(output, convey.ShouldContainSubstring, "grp-1")
+		convey.So(output, convey.ShouldContainSubstring, "Sponsor")
+		convey.So(output, convey.ShouldContainSubstring, "Carl Anderson")
+		convey.So(output, convey.ShouldContainSubstring, "Name")
+		convey.So(output, convey.ShouldContainSubstring, "Lung cancer GWAS")
+		convey.So(output, convey.ShouldContainSubstring, "Accession")
+		convey.So(output, convey.ShouldContainSubstring, "EGAS00001005678")
+	})
+}
+
+func TestMLWHInfoRunIRODSPathsSection(t *testing.T) {
+	convey.Convey("Given a run with iRODS objects, when wa mlwh info <run> runs, then the run iRODS section lists the capped "+
+		"paths with id_run and platform; given a run with no objects, the section renders \"none\" and exits 0 (H1 acceptance 3)", t, func() {
+		convey.Convey("a run resolving to 52553 with 6 iRODS objects lists the capped paths with id_run and platform", func() {
+			var capturedLimit int
+			stub := &stubMLWHInfoClient{
+				resolveRun: func(_ context.Context, _ string) (mlwh.Match, error) {
+					return mlwh.Match{
+						Kind:      mlwh.KindRunID,
+						Canonical: "52553",
+						Run:       &mlwh.Run{IDRun: 52553},
+					}, nil
+				},
+				irodsPathsForRun: func(_ context.Context, idRun, fileType string, limit, _ int) ([]mlwh.IRODSPath, error) {
+					convey.So(idRun, convey.ShouldEqual, "52553")
+					convey.So(fileType, convey.ShouldEqual, "")
+					capturedLimit = limit
+
+					paths := make([]mlwh.IRODSPath, 0, 6)
+					for i := range 6 {
+						paths = append(paths, mlwh.IRODSPath{
+							IRODSPath: "/seq/illumina/runs/52/52553/plex" + string(rune('1'+i)) + "/52553.cram",
+							IDRun:     52553,
+							Platform:  "illumina",
+						})
+					}
+
+					return paths, nil
+				},
+			}
+
+			withStubMLWHInfoClient(t, stub)
+
+			output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "52553", "--type", "run"})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(capturedLimit, convey.ShouldEqual, infoMaxRelated)
+			convey.So(output, convey.ShouldContainSubstring, "iRODS paths (6)")
+			convey.So(output, convey.ShouldContainSubstring, "/seq/illumina/runs/52/52553/plex1/52553.cram")
+			convey.So(output, convey.ShouldContainSubstring, "id_run=52553")
+			convey.So(output, convey.ShouldContainSubstring, "platform=illumina")
+		})
+
+		convey.Convey("a run with no iRODS objects renders the section as none and exits 0", func() {
+			stub := &stubMLWHInfoClient{
+				resolveRun: func(_ context.Context, _ string) (mlwh.Match, error) {
+					return mlwh.Match{
+						Kind:      mlwh.KindRunID,
+						Canonical: "52553",
+						Run:       &mlwh.Run{IDRun: 52553},
+					}, nil
+				},
+				irodsPathsForRun: func(_ context.Context, _, _ string, _, _ int) ([]mlwh.IRODSPath, error) {
+					return nil, nil
+				},
+			}
+
+			withStubMLWHInfoClient(t, stub)
+
+			output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "52553", "--type", "run"})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(output, convey.ShouldContainSubstring, "iRODS paths (0)")
+			convey.So(output, convey.ShouldContainSubstring, "none")
+		})
+	})
+}
+
+func TestMLWHInfoRunIRODSPathsJSON(t *testing.T) {
+	convey.Convey("Given --json for a run with iRODS objects, when wa mlwh info <run> runs, then the run iRODS paths appear in the JSON object", t, func() {
+		stub := &stubMLWHInfoClient{
+			resolveRun: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{
+					Kind:      mlwh.KindRunID,
+					Canonical: "52553",
+					Run:       &mlwh.Run{IDRun: 52553},
+				}, nil
+			},
+			irodsPathsForRun: func(_ context.Context, _, _ string, _, _ int) ([]mlwh.IRODSPath, error) {
+				return []mlwh.IRODSPath{{
+					IRODSPath: "/seq/illumina/runs/52/52553/plex1/52553.cram",
+					IDRun:     52553,
+					Platform:  "illumina",
+				}}, nil
+			},
+		}
+
+		withStubMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "52553", "--type", "run", "--json"})
+
+		convey.So(err, convey.ShouldBeNil)
+
+		decoded := map[string]any{}
+		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
+
+		paths, ok := decoded["run_irods_paths"].([]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(paths, convey.ShouldHaveLength, 1)
+		path := paths[0].(map[string]any)
+		convey.So(path["irods_path"], convey.ShouldEqual, "/seq/illumina/runs/52/52553/plex1/52553.cram")
+		convey.So(path["id_run"], convey.ShouldEqual, 52553)
+		convey.So(path["platform"], convey.ShouldEqual, "illumina")
+	})
+}
+
 func withStubMLWHInfoClient(t *testing.T, stub *stubMLWHInfoClient) {
 	t.Helper()
 	t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(localhost:3306)/mlwarehouse")
@@ -773,6 +964,32 @@ func TestMLWHInfoCommandServerModeNotFoundDoesNotMentionSync(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "no-such-thing")
 		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "no match")
 		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
+	})
+}
+
+func TestMLWHInfoStudyServerModeNeverSyncedDegradesGracefully(t *testing.T) {
+	convey.Convey("Given a never-synced cache reached via the MLWH server (no WA_MLWH_DSN), when wa mlwh info <study> runs, "+
+		"then it degrades gracefully on the resolve-not-found path exactly as info does today: a neutral cache-unavailable "+
+		"message and no sync hint (H1 acceptance 4)", t, func() {
+		stub := &stubMLWHInfoClient{
+			resolveStudy: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{}, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
+			},
+		}
+
+		withServerModeMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "7699", "--type", "study"})
+
+		// Degradation mirrors the existing info behaviour exactly (e.g.
+		// TestMLWHInfoCommandServerModeNeverSyncedDoesNotMentionSync): a neutral
+		// cache-unavailable message with no sync hint, and no embedded
+		// ErrCacheNeverSynced text. The study-rendering changes in this item do not
+		// alter the resolve-not-found degradation path.
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
+		convey.So(output, convey.ShouldNotContainSubstring, mlwh.ErrCacheNeverSynced.Error())
+		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "not available")
 	})
 }
 

@@ -103,6 +103,17 @@ func TestServerOpenAPIRouteServesDocumentC2(t *testing.T) {
 	})
 }
 
+func TestAPIVersionIsTheG1ReleaseG1(t *testing.T) {
+	// G1 acceptance test 4: the served MLWH REST API version is bumped to the
+	// Phase 6 (G1) release once the new run-iRODS / manifest / people endpoints
+	// are wired through the Registry. Pinning the literal here (rather than only
+	// the self-tracking served-document equality in TestOpenAPIPublicVersionConstantNoDrift)
+	// means the wiring pass cannot land without the matching version bump.
+	convey.Convey("Given the public APIVersion constant, then it equals the Phase 6 release 1.7.0", t, func() {
+		convey.So(APIVersion, convey.ShouldEqual, "1.7.0")
+	})
+}
+
 func TestOpenAPIDocumentIdentityC2(t *testing.T) {
 	// C2 acceptance test 1.
 	convey.Convey("Given the generated document, when parsed, then its identity fields match the spec", t, func() {

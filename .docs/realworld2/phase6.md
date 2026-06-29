@@ -68,8 +68,8 @@ headers; `APIVersion == "1.7.0"`;
 `TestRegistryRecencyDescriptionsCiteCreationTimestampG1` still passes).
 Depends on Phases 2-5 (all endpoints implemented).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after batch 1 is reviewed)
 
@@ -103,8 +103,8 @@ objects renders "none" exit 0; a never-synced cache in `--server` mode
 degrades gracefully -- neutral message, no sync hint, exit 0). Depends on
 Batch 1 and Phases 2/4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.3: H2 - `wa mlwh irods` subcommand [parallel with 6.2, 6.4, 6.5]
 
@@ -127,8 +127,8 @@ exit 0; `--json` emits one `[]IRODSPath` array; `--file-type a/b`
 bad-request -> clear message, non-zero exit). Depends on Batch 1 and
 Phase 2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.4: H3 - `wa mlwh manifest` subcommand [parallel with 6.2, 6.3, 6.5]
 
@@ -150,8 +150,8 @@ emits one `StudyManifest` object; a synced study with no products prints
 the header + "no products" exit 0, and a never-synced cache degrades
 gracefully). Depends on Batch 1 and Phase 3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.5: H4 - `wa mlwh studies` and `wa mlwh people` subcommands [parallel with 6.2, 6.3, 6.4]
 
@@ -178,8 +178,8 @@ study_users candidate lines with source / stored form / study_count, exit
 "cache not available" message, no sync hint, exit 0). Depends on Batch 1
 and Phase 5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items
@@ -209,8 +209,8 @@ and OpenAPI cover the same Registry paths; the committed reference matches
 manifest" and "file-type filter"). Depends on 6.1 (the Registry must be
 complete before regenerating the reference).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ## Ordering and dependency notes
 

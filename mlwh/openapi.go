@@ -40,7 +40,7 @@ import (
 // constant: reading it never contacts a live server, letting an external
 // consumer (such as an MCP server importing this package) read the targeted API
 // version with compile-time safety.
-const APIVersion = "1.6.0"
+const APIVersion = "1.7.0"
 
 // mlwhAPIVersion is the unexported alias of APIVersion retained for internal
 // references; it shares APIVersion's single source of truth so the served

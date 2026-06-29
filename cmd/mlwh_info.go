@@ -70,6 +70,7 @@ type mlwhInfoClient interface {
 	StudiesForSample(ctx context.Context, sangerName string) ([]mlwh.Study, error)
 	LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error)
 	IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error)
+	IRODSPathsForRun(ctx context.Context, idRun, fileType string, limit, offset int) ([]mlwh.IRODSPath, error)
 	LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error)
 	RunsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Run, error)
 	SamplesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
@@ -470,6 +471,14 @@ func writeListField(out io.Writer, style infoStyle, label, value string, index, 
 	_, _ = fmt.Fprintf(out, "  %s\n", infoField(style, shown, value, labelWidth))
 }
 
+func writeKV(out io.Writer, key, value string) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "%s: %s\n", key, value)
+}
+
 func writeCacheSyncedLine(out io.Writer, style infoStyle, synced string) {
 	date := infoCompactDate(synced)
 	if date == "" {
@@ -492,21 +501,42 @@ func sampleCacheSyncedAt(report infoReport) string {
 func writeStudyPanel(out io.Writer, report infoReport, style infoStyle) {
 	writeInfoTitle(out, style, "Study", report)
 
-	study := report.Study
 	const labelWidth = 12
 
-	writeStudyMetaFields(out, style, study, labelWidth)
+	writeStudyMetaFields(out, style, report, labelWidth)
 	writeStudySamplesBlock(out, report, style, labelWidth)
 	writeStudyDataBlock(out, report, style, labelWidth)
 	writeStudyListColumns(out, report, style)
 	writeCacheSyncedLine(out, style, studyCacheSyncedAt(report))
 }
 
-func writeStudyMetaFields(out io.Writer, style infoStyle, study *mlwh.Study, labelWidth int) {
+func writeStudyMetaFields(out io.Writer, style infoStyle, report infoReport, labelWidth int) {
+	study := report.Study
+	overview := report.StudyOverview
+
+	name := study.Name
+	accession := study.AccessionNumber
+	sponsor := study.FacultySponsor
+	dataAccessGroup := ""
+	if overview != nil {
+		if strings.TrimSpace(name) == "" {
+			name = overview.Name
+		}
+		if strings.TrimSpace(accession) == "" {
+			accession = overview.AccessionNumber
+		}
+		if strings.TrimSpace(sponsor) == "" {
+			sponsor = overview.FacultySponsor
+		}
+		dataAccessGroup = overview.DataAccessGroup
+	}
+
 	for _, field := range []struct{ label, value string }{
-		{"Accession", study.AccessionNumber},
+		{"Name", name},
+		{"Accession", accession},
 		{"Programme", study.Programme},
-		{"Sponsor", study.FacultySponsor},
+		{"Sponsor", sponsor},
+		{"Data Access", dataAccessGroup},
 		{"Title", study.StudyTitle},
 		{"UUID", study.UUIDStudyLims},
 	} {
@@ -551,6 +581,7 @@ func writeStudySamplesBlock(out io.Writer, report infoReport, style infoStyle, l
 	if breakdown != nil {
 		writeStudyDistinctBars(out, breakdown.Distinct, total)
 		writeStudyPlatformSummary(out, style, breakdown.PerPlatform)
+		writeStudyQCSummary(out, style, breakdown.QC)
 		if breakdown.WithDetailedTimeline > 0 {
 			_, _ = fmt.Fprintf(out, "    %s\n", style.dim(fmt.Sprintf("detailed timeline for %s samples", infoInt(breakdown.WithDetailedTimeline))))
 		}
@@ -688,6 +719,19 @@ func writeStudyPlatformSummary(out io.Writer, style infoStyle, platforms []mlwh.
 	}
 
 	_, _ = fmt.Fprintf(out, "    %s\n", style.dim("by platform: "+strings.Join(parts, ", ")))
+}
+
+func writeStudyQCSummary(out io.Writer, style infoStyle, qc mlwh.StudyQCBreakdown) {
+	if qc.QCPass == 0 && qc.QCFail == 0 && qc.QCPending == 0 {
+		return
+	}
+
+	parts := []string{
+		style.qcColour("pass", fmt.Sprintf("pass %s", infoInt(qc.QCPass))),
+		style.qcColour("fail", fmt.Sprintf("fail %s", infoInt(qc.QCFail))),
+		style.qcColour("pending", fmt.Sprintf("pending %s", infoInt(qc.QCPending))),
+	}
+	_, _ = fmt.Fprintf(out, "    %s\n", infoJoinNonEmpty(style.dim(" · "), "QC", strings.Join(parts, style.dim(" · "))))
 }
 
 // writeStudyDataBlock summarises the study's sequencing data once: object, run
@@ -828,6 +872,7 @@ func writeRunPanel(out io.Writer, report infoReport, style infoStyle) {
 
 	writeRunContents(out, report, style)
 	writeRunStatusSection(out, report.RunStatus, style)
+	writeRunIRODSPathsSection(out, report.RunIRODSPaths, style)
 
 	total := 0
 	if report.RunOverview != nil {
@@ -873,6 +918,25 @@ func runCacheSyncedAt(report infoReport) string {
 	}
 
 	return ""
+}
+
+// writeRunIRODSPathsSection renders the run-scoped iRODS data objects. It is
+// always emitted for a resolved run; an empty list prints "none" so a synced run
+// with no data objects remains a successful lookup.
+func writeRunIRODSPathsSection(out io.Writer, paths []mlwh.IRODSPath, style infoStyle) {
+	_, _ = fmt.Fprintf(out, "\n  %s\n", style.section(infoListHeading("iRODS paths", len(paths), 0)))
+	if len(paths) == 0 {
+		_, _ = fmt.Fprintf(out, "    %s\n", style.dim("none"))
+
+		return
+	}
+
+	for _, path := range paths {
+		details := infoJoinNonEmpty(style.dim(" · "),
+			fmt.Sprintf("id_run=%d", path.IDRun),
+			"platform="+path.Platform)
+		_, _ = fmt.Fprintf(out, "    %s  %s\n", path.IRODSPath, details)
+	}
 }
 
 func writeLibraryPanel(out io.Writer, report infoReport, style infoStyle) {
@@ -1307,6 +1371,14 @@ func populateRunFeatures(ctx context.Context, client mlwhInfoClient, report *inf
 	}
 
 	report.RunStatus = &status
+
+	// An empty file type lists every data object for the run; a run with no
+	// iRODS rows yet yields an empty list rendered as "none".
+	if paths, err := client.IRODSPathsForRun(ctx, idRun, "", infoMaxRelated, 0); err == nil {
+		report.RunIRODSPaths = paths
+	} else if !errors.Is(err, mlwh.ErrNotFound) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("irods paths for run: %v", err))
+	}
 }
 
 // infoReport is the JSON-friendly shape of `wa mlwh info` results.
@@ -1332,6 +1404,7 @@ type infoReport struct {
 	SampleProgress          *mlwh.SampleProgress      `json:"sample_progress,omitempty"`
 	RunOverview             *mlwh.RunOverview         `json:"run_overview,omitempty"`
 	RunStatus               *mlwh.RunStatusTimeline   `json:"run_status,omitempty"`
+	RunIRODSPaths           []mlwh.IRODSPath          `json:"run_irods_paths,omitempty"`
 
 	Warnings []string `json:"warnings,omitempty"`
 }

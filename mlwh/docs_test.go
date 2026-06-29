@@ -265,6 +265,35 @@ func TestGlossaryDefinesAvailabilityConceptsG2(t *testing.T) {
 	})
 }
 
+func TestGlossaryDefinesPeopleAndManifestConceptsG2(t *testing.T) {
+	// G2 acceptance test 3: the glossary defines the study-metadata, manifest,
+	// file-type, QC and people concepts introduced by this feature - "data
+	// manifest" and "file-type filter" are called out by the spec, plus "faculty
+	// sponsor", "study_users / role membership", "manual QC", and "data access
+	// group". Each must be a genuine glossary term (a heading), not a passing
+	// mention, so the document truly defines them.
+	convey.Convey("Given the glossary document, when read, then it defines the manifest, file-type, QC and people concepts", t, func() {
+		glossary := readGlossaryForTest(t)
+		terms := glossaryTermsForTest(glossary)
+
+		convey.Convey("it defines data manifest and file-type filter (the spec's named terms)", func() {
+			convey.So(terms, convey.ShouldContainKey, "data manifest")
+			convey.So(terms, convey.ShouldContainKey, "file-type filter (filename suffix)")
+		})
+
+		convey.Convey("it defines the remaining G2 study-metadata and people concepts", func() {
+			for _, want := range []string{
+				"faculty sponsor",
+				"study_users / role membership",
+				"manual qc",
+				"data access group",
+			} {
+				convey.So(terms, convey.ShouldContainKey, want)
+			}
+		})
+	})
+}
+
 func TestGlossaryListsEveryIdentifierKindG1(t *testing.T) {
 	// G1 acceptance test 3 (second half): the glossary lists every IdentifierKind
 	// constant value. Driven from IdentifierKinds() so a newly added kind that is
