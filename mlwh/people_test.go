@@ -89,6 +89,7 @@ func TestResolvePersonDisambiguatesMultipleSponsorsE3(t *testing.T) {
 		seedStudyMirrorSearchRow(t, cache.DB(), 2, "5002", "study-b", "Title B", "Programme B", "Carl Anderson")
 		seedStudyMirrorSearchRow(t, cache.DB(), 3, "5003", "study-c", "Title C", "Programme C", "Carla Anders")
 		seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableStudyUsers, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
@@ -389,6 +390,7 @@ func TestStudiesForUserSameStudyMultipleRolesDeduplicatesE2(t *testing.T) {
 		// A duplicate (same study, same role) must collapse to one row.
 		seedStudyUsersMirrorRow(t, cache.DB(), 8003, 1, "owner", "dc9", "dc9@sanger.ac.uk", "Dee Contact")
 		seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableStudyUsers, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
@@ -469,6 +471,39 @@ func TestStudiesForUserHTTPRoleParamAndSizingHeadersE2(t *testing.T) {
 	})
 }
 
+// E2 regression: study_users role-membership results are not complete unless the
+// study_users mirror has synced. A cache with study rows synced but no
+// study_users sync-state row must degrade as never-synced instead of serving
+// empty or partial role-membership results.
+func TestStudiesForUserRequiresStudyUsersSyncStateE2(t *testing.T) {
+	convey.Convey("Given study and study_users rows for ca3 but only the study table has sync state", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedStudyMirrorSearchRow(t, cache.DB(), 1, "5001", "study-a", "Title A", "Programme A", "")
+		seedStudyUsersMirrorRow(t, cache.DB(), 9001, 1, "owner", "ca3", "ca3@sanger.ac.uk", "Carl Anderson")
+		seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when StudiesForUser runs, then it returns an empty list and the never-synced sentinels", func() {
+			rows, err := client.StudiesForUser(context.Background(), "ca3", "", 100, 0)
+
+			convey.So(rows, convey.ShouldResemble, []PersonStudy{})
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		})
+
+		convey.Convey("when CountStudiesForUser runs, then it returns Count{} and the never-synced sentinels", func() {
+			count, err := client.CountStudiesForUser(context.Background(), "ca3", "")
+
+			convey.So(count, convey.ShouldResemble, Count{})
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		})
+	})
+}
+
 // E2 acceptance test 6: a never-synced cache returns an EMPTY list plus an error
 // satisfying both ErrCacheNeverSynced and ErrNotFound; a synced cache with no
 // match returns an empty list and NO error (the people-endpoint cascade).
@@ -522,7 +557,8 @@ func TestStudiesForUserPeopleCascadeE2(t *testing.T) {
 // seedUserStudies seeds the ca3 user fixture used by E2's acceptance tests: four
 // SQSCP studies (X=5001, Y=5002, Z=5003, W=5004) and study_users_mirror rows for
 // person login "ca3" / email "ca3@sanger.ac.uk" / name "Carl Anderson" -- owner
-// of X,Y; manager of Z; follower of W -- then marks the study table synced.
+// of X,Y; manager of Z; follower of W -- then marks the study and study_users
+// tables synced.
 func seedUserStudies(t *testing.T, cache Cache) {
 	t.Helper()
 
@@ -537,6 +573,7 @@ func seedUserStudies(t *testing.T, cache Cache) {
 	seedStudyUsersMirrorRow(t, cache.DB(), 9004, 4, "follower", "ca3", "ca3@sanger.ac.uk", "Carl Anderson")
 
 	seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+	seedSyncState(t, cache.DB(), syncTableStudyUsers, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
 }
 
 // E3 acceptance test 1: a "carl" term returns BOTH a faculty_sponsor candidate
@@ -637,6 +674,7 @@ func TestResolvePersonHTTPPaginationHeadersE3(t *testing.T) {
 		seedStudyMirrorSearchRow(t, cache.DB(), 2, "5002", "study-b", "Title B", "Programme B", "Carla Anders")
 		seedStudyUsersMirrorRow(t, cache.DB(), 9001, 1, "owner", "ca3", "ca3@sanger.ac.uk", "Carl Anderson")
 		seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableStudyUsers, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
 		convey.Convey("when GET /resolve-person/carl?limit=2&offset=0 is served, then 2 rows with X-Total-Count 3 and X-Next-Offset 2", func() {
@@ -649,6 +687,38 @@ func TestResolvePersonHTTPPaginationHeadersE3(t *testing.T) {
 			var candidates []PersonCandidate
 			decodeMLWHJSONResponseForTest(t, response, &candidates)
 			convey.So(personCandidateNames(candidates), convey.ShouldResemble, []string{"Carl Anderson", "Carla Anders"})
+		})
+	})
+}
+
+// E3 regression: resolve-person combines faculty_sponsor and study_users sources,
+// so it must not serve a partial candidate set when study is synced but
+// study_users has never synced.
+func TestResolvePersonRequiresStudyUsersSyncStateE3(t *testing.T) {
+	convey.Convey("Given matching faculty_sponsor and study_users rows but only the study table has sync state", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedStudyMirrorSearchRow(t, cache.DB(), 1, "5001", "study-a", "Title A", "Programme A", "Carl Anderson")
+		seedStudyUsersMirrorRow(t, cache.DB(), 9001, 1, "owner", "ca3", "ca3@sanger.ac.uk", "Carl Anderson")
+		seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when ResolvePerson runs, then it returns an empty list and the never-synced sentinels", func() {
+			candidates, err := client.ResolvePerson(context.Background(), "carl", 100, 0)
+
+			convey.So(candidates, convey.ShouldResemble, []PersonCandidate{})
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		})
+
+		convey.Convey("when CountResolvePerson runs, then it returns Count{} and the never-synced sentinels", func() {
+			count, err := client.CountResolvePerson(context.Background(), "carl")
+
+			convey.So(count, convey.ShouldResemble, Count{})
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
 		})
 	})
 }
@@ -706,9 +776,10 @@ func TestResolvePersonPeopleCascadeE3(t *testing.T) {
 // seedCarlResolveFixture seeds the Carl resolve-person fixture used by E3's
 // acceptance tests: 91 SQSCP studies whose faculty_sponsor is "Carl Anderson",
 // with a study_users owner row for login "ca3" / email "ca3@sanger.ac.uk" / name
-// "Carl Anderson" on 59 of them, then marks the study table synced. The two
-// StudyCount bases differ on purpose (91 distinct studies for the sponsor; 59
-// distinct studies for the (login, role)), so the test proves Note 2's two keys.
+// "Carl Anderson" on 59 of them, then marks the study and study_users tables
+// synced. The two StudyCount bases differ on purpose (91 distinct studies for the
+// sponsor; 59 distinct studies for the (login, role)), so the test proves Note 2's
+// two keys.
 func seedCarlResolveFixture(t *testing.T, cache Cache) {
 	t.Helper()
 
@@ -730,6 +801,7 @@ func seedCarlResolveFixture(t *testing.T, cache Cache) {
 	}
 
 	seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+	seedSyncState(t, cache.DB(), syncTableStudyUsers, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
 }
 
 // seedStudyUsersMirrorRow inserts one study_users_mirror row linking a person

@@ -73,16 +73,16 @@ const (
 	parityFacultySponsorTerm = "Faculty sponsor"
 	// parityUserPerson is a non-whitespace person for the StudiesForUser /
 	// CountStudiesForUser parity cases. The parity cache seeds no
-	// study_users_mirror rows, so both clients return the same empty list / zero
-	// count (synced cache, no match), giving a deterministic equal-result parity
-	// case bound to a valid (non-400) person.
+	// study_users_mirror rows but does mark study_users synced, so both clients
+	// return the same empty list / zero count (synced cache, no match), giving a
+	// deterministic equal-result parity case bound to a valid (non-400) person.
 	parityUserPerson = "nobody"
 	// parityResolvePersonTerm is a non-whitespace term for the ResolvePerson /
 	// CountResolvePerson parity cases. It matches neither the seeded faculty_sponsor
 	// values ("Faculty sponsor 7607"/"7608") nor any study_users_mirror row (none are
-	// seeded), so both clients return the same empty candidate list / zero count
-	// (synced cache, no match), giving a deterministic equal-result parity case bound
-	// to a valid (non-400) term.
+	// seeded, but study_users is marked synced), so both clients return the same
+	// empty candidate list / zero count (synced cache, no match), giving a
+	// deterministic equal-result parity case bound to a valid (non-400) term.
 	parityResolvePersonTerm = "nobody"
 )
 
@@ -293,6 +293,7 @@ func seedParityCache(t *testing.T, db *sql.DB) {
 	syncedAt := paritySyncedAt()
 	seedSyncState(t, db, syncTableSample, syncedAt)
 	seedSyncState(t, db, syncTableStudy, syncedAt)
+	seedSyncState(t, db, syncTableStudyUsers, syncedAt)
 	seedSyncState(t, db, syncTableIseqFlowcell, syncedAt)
 	seedSyncState(t, db, syncTableIseqProductMetrics, syncedAt)
 	seedSyncState(t, db, syncTableSeqProductIRODSLocations, syncedAt)

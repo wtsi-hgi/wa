@@ -25,11 +25,11 @@
 
 // People-to-studies queries (D4): a named PI/sponsor or a study_users role
 // member to their studies. The faculty-sponsor surface matches the free-text
-// study.faculty_sponsor; the (later) user surface matches study_users role
-// membership. Both share the people-endpoint cascade: a never-synced cache
-// returns an empty list joined with neverSyncedReadErr(), while a synced cache
-// with no match returns an empty list and no error (there is no parent
-// identifier to "not find").
+// study.faculty_sponsor; the user surface matches study_users role membership.
+// They share the people-endpoint cascade: a never-synced cache returns an empty
+// list joined with neverSyncedReadErr(), while a synced cache with no match
+// returns an empty list and no error (there is no parent identifier to "not
+// find").
 package mlwh
 
 import (
@@ -346,9 +346,11 @@ func (c *Client) CountStudiesForFacultySponsor(ctx context.Context, name string)
 // row per (id_study_lims, role) and ordered by (id_study_lims, role) for stable
 // pagination. A whitespace-only person (after trimming) is rejected with
 // ErrUnsupportedIdentifier (the HTTP handler 400s first; this re-validates
-// defensively). The people-endpoint cascade applies: a never-synced cache returns
-// an empty slice joined with ErrCacheNeverSynced and ErrNotFound, while a synced
-// cache with no match returns an empty slice and no error.
+// defensively). The people-endpoint cascade applies: cache freshness for both the
+// study and study_users mirrors is required before serving results, so a
+// never-synced dependency returns an empty slice joined with ErrCacheNeverSynced
+// and ErrNotFound, while a synced cache with no match returns an empty slice and
+// no error.
 func (c *Client) StudiesForUser(ctx context.Context, person, role string, limit, offset int) ([]PersonStudy, error) {
 	if strings.TrimSpace(person) == "" {
 		return nil, fmt.Errorf("%w: person is required", ErrUnsupportedIdentifier)
@@ -357,6 +359,9 @@ func (c *Client) StudiesForUser(ctx context.Context, person, role string, limit,
 	db := c.readCacheDB()
 	if db == nil {
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+	if err := c.requireAnySyncState(ctx, syncTableStudy, syncTableStudyUsers); err != nil {
+		return []PersonStudy{}, err
 	}
 
 	roles := resolveStudyUsersRoles(role)
@@ -370,10 +375,6 @@ func (c *Client) StudiesForUser(ctx context.Context, person, role string, limit,
 		return rows, nil
 	}
 
-	if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
-		return []PersonStudy{}, err
-	}
-
 	return []PersonStudy{}, nil
 }
 
@@ -382,12 +383,16 @@ func (c *Client) StudiesForUser(ctx context.Context, person, role string, limit,
 // projection with no LIMIT, so the count equals len(StudiesForUser(person, role,
 // all)) for any person/role. Validation and the people-endpoint cascade mirror
 // StudiesForUser: a whitespace-only person is ErrUnsupportedIdentifier, a
-// never-synced cache returns Count{} with both ErrCacheNeverSynced and
-// ErrNotFound, and a synced cache with no match returns Count{Count: 0} and no
-// error.
+// cache freshness for both the study and study_users mirrors is required before
+// serving a count, so a never-synced dependency returns Count{} with both
+// ErrCacheNeverSynced and ErrNotFound, and a synced cache with no match returns
+// Count{Count: 0} and no error.
 func (c *Client) CountStudiesForUser(ctx context.Context, person, role string) (Count, error) {
 	if strings.TrimSpace(person) == "" {
 		return Count{}, fmt.Errorf("%w: person is required", ErrUnsupportedIdentifier)
+	}
+	if err := c.requireAnySyncState(ctx, syncTableStudy, syncTableStudyUsers); err != nil {
+		return Count{}, err
 	}
 
 	roles := resolveStudyUsersRoles(role)
@@ -398,10 +403,6 @@ func (c *Client) CountStudiesForUser(ctx context.Context, person, role string) (
 	}
 	if count > 0 {
 		return Count{Count: count}, nil
-	}
-
-	if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
-		return Count{}, err
 	}
 
 	return Count{Count: 0}, nil
@@ -417,9 +418,10 @@ func (c *Client) CountStudiesForUser(ctx context.Context, person, role string) (
 // (source, name, login, role) and scoped to id_lims = 'SQSCP'. A whitespace-only
 // term (after trimming) is rejected with ErrUnsupportedIdentifier (the HTTP handler
 // 400s first; this re-validates defensively). The people-endpoint cascade applies:
-// a never-synced cache returns an empty slice joined with ErrCacheNeverSynced and
-// ErrNotFound, while a synced cache with no match returns an empty slice and no
-// error.
+// cache freshness for both the study and study_users mirrors is required before
+// serving the combined candidate set, so a never-synced dependency returns an
+// empty slice joined with ErrCacheNeverSynced and ErrNotFound, while a synced
+// cache with no match returns an empty slice and no error.
 func (c *Client) ResolvePerson(ctx context.Context, term string, limit, offset int) ([]PersonCandidate, error) {
 	if strings.TrimSpace(term) == "" {
 		return nil, fmt.Errorf("%w: resolve-person term is required", ErrUnsupportedIdentifier)
@@ -428,6 +430,9 @@ func (c *Client) ResolvePerson(ctx context.Context, term string, limit, offset i
 	db := c.readCacheDB()
 	if db == nil {
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+	if err := c.requireAnySyncState(ctx, syncTableStudy, syncTableStudyUsers); err != nil {
+		return []PersonCandidate{}, err
 	}
 
 	args := append(resolvePersonArgs(term), limit, offset)
@@ -440,10 +445,6 @@ func (c *Client) ResolvePerson(ctx context.Context, term string, limit, offset i
 		return candidates, nil
 	}
 
-	if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
-		return []PersonCandidate{}, err
-	}
-
 	return []PersonCandidate{}, nil
 }
 
@@ -451,12 +452,16 @@ func (c *Client) ResolvePerson(ctx context.Context, term string, limit, offset i
 // COUNT(*) over the identical UNION ALL of the two DISTINCT candidate branches with
 // no LIMIT, so the count equals len(ResolvePerson(term, all)) for any term.
 // Validation and the people-endpoint cascade mirror ResolvePerson: a whitespace-only
-// term is ErrUnsupportedIdentifier, a never-synced cache returns Count{} with both
-// ErrCacheNeverSynced and ErrNotFound, and a synced cache with no match returns
-// Count{Count: 0} and no error.
+// term is ErrUnsupportedIdentifier, cache freshness for both the study and
+// study_users mirrors is required before serving a count, a never-synced
+// dependency returns Count{} with both ErrCacheNeverSynced and ErrNotFound, and a
+// synced cache with no match returns Count{Count: 0} and no error.
 func (c *Client) CountResolvePerson(ctx context.Context, term string) (Count, error) {
 	if strings.TrimSpace(term) == "" {
 		return Count{}, fmt.Errorf("%w: resolve-person term is required", ErrUnsupportedIdentifier)
+	}
+	if err := c.requireAnySyncState(ctx, syncTableStudy, syncTableStudyUsers); err != nil {
+		return Count{}, err
 	}
 
 	count, err := c.queryCount(ctx, resolvePersonCountSQL, "count resolve person", resolvePersonArgs(term)...)
@@ -465,10 +470,6 @@ func (c *Client) CountResolvePerson(ctx context.Context, term string) (Count, er
 	}
 	if count > 0 {
 		return Count{Count: count}, nil
-	}
-
-	if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
-		return Count{}, err
 	}
 
 	return Count{Count: 0}, nil
