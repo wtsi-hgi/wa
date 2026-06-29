@@ -726,6 +726,61 @@ func TestServerSearchPaginationGuardA4(t *testing.T) {
 	})
 }
 
+func TestServerFetchAllPaginationGuard(t *testing.T) {
+	convey.Convey("Given GET /study/SZ/detail?offset=-1, then status is 400 with code bad_request (not a 500/panic)", t, func() {
+		client := newListSizingClientForTest(t, "SZ", 5)
+		defer closeParityClientForTest(t, client)
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/study/SZ/detail?offset=-1")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+	})
+
+	convey.Convey("Given GET /study/SZ/detail?limit=-1, then status is 400 with code bad_request", t, func() {
+		client := newListSizingClientForTest(t, "SZ", 5)
+		defer closeParityClientForTest(t, client)
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/study/SZ/detail?limit=-1")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+	})
+
+	convey.Convey("Given GET /study/SZ/detail?offset=0, then status is 200 (the valid path still works)", t, func() {
+		client := newListSizingClientForTest(t, "SZ", 5)
+		defer closeParityClientForTest(t, client)
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/study/SZ/detail?offset=0")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+	})
+
+	convey.Convey("Given GET /study/SZ/samples?offset=-1, then status is 400 with code bad_request and the queryer is not called", t, func() {
+		queryer := &serverFakeQueryer{
+			samplesForStudyFunc: func(_ context.Context, _ string, _, _ int) ([]Sample, error) {
+				panic("queryer must not be called when offset is negative")
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/SZ/samples?offset=-1")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		convey.So(queryer.samplesForStudyCall.studyLimsID, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given GET /study/SZ/samples?limit=-1, then status is 400 with code bad_request and the queryer is not called", t, func() {
+		queryer := &serverFakeQueryer{
+			samplesForStudyFunc: func(_ context.Context, _ string, _, _ int) ([]Sample, error) {
+				panic("queryer must not be called when limit is negative")
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/SZ/samples?limit=-1")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		convey.So(queryer.samplesForStudyCall.studyLimsID, convey.ShouldBeEmpty)
+	})
+}
+
 func TestServerCountEndpointsF3(t *testing.T) {
 	convey.Convey("F3.1: Given a fake Queryer whose CountStudies returns Count{7}, when GET /studies/count is served, then status is 200 and body is {\"count\":7}", t, func() {
 		queryer := &serverFakeQueryer{

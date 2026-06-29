@@ -380,8 +380,13 @@ func deduplicateRunDetail(detail *RunDetail) {
 
 // paginateSamples applies a detail collection's limit/offset to its samples,
 // returning the requested window. An offset past the end yields an empty page;
-// the default fetch-all limit returns every sample.
+// the default fetch-all limit returns every sample. A negative offset is clamped
+// to 0 so a direct caller cannot drive the slice bound out of range (the HTTP
+// layer already rejects negatives via mlwhPaginationFromQuery).
 func paginateSamples(samples []Sample, opts detailOptions) []Sample {
+	if opts.offset < 0 {
+		opts.offset = 0
+	}
 	if opts.offset >= len(samples) {
 		return []Sample{}
 	}

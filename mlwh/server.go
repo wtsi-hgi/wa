@@ -169,9 +169,19 @@ func mlwhPaginationFromQuery(c *gin.Context) (mlwhPagination, bool) {
 	if !ok {
 		return mlwhPagination{}, false
 	}
+	if limit < 0 {
+		writeMLWHBadRequest(c, "limit must not be negative")
+
+		return mlwhPagination{}, false
+	}
 
 	offset, ok := mlwhQueryInt(c, "offset", 0)
 	if !ok {
+		return mlwhPagination{}, false
+	}
+	if offset < 0 {
+		writeMLWHBadRequest(c, "offset must not be negative")
+
 		return mlwhPagination{}, false
 	}
 
