@@ -1287,19 +1287,11 @@ func writeMLWHStudyManifest(c *gin.Context, manifest StudyManifest, err error, o
 }
 
 // studyManifestTotal resolves the total product count sizing the manifest's Rows
-// collection. The manifest is product-grained, so the total is the distinct
-// (id_run, position, tag_index) products in the study, the same grain the C2
-// /study/:id/manifest/count endpoint counts; a queryer that exposes that count
-// (the Client) reports it so X-Total-Count equals the count endpoint and the two
-// cannot drift, and a queryer that does not (a test fake) reports 0 so the body is
-// still served.
+// collection by reusing Queryer.CountStudyManifest, the same public method backing
+// /study/:id/manifest/count, so X-Total-Count equals the count endpoint for local,
+// remote, and external Queryer implementations.
 func studyManifestTotal(ctx context.Context, queryer Queryer, studyLimsID string) (int, error) {
-	counter, ok := queryer.(studyManifestCounter)
-	if !ok {
-		return 0, nil
-	}
-
-	return counter.countStudyManifestProducts(ctx, studyLimsID)
+	return countValue(queryer.CountStudyManifest(ctx, studyLimsID))
 }
 
 // mlwhPeopleName reads a people-endpoint path param (e.g. the faculty-sponsor
@@ -1496,15 +1488,6 @@ func mlwhQueryBool(c *gin.Context, name string) (bool, bool) {
 	}
 
 	return value, true
-}
-
-// studyManifestCounter is the optional Queryer capability that sizes the manifest
-// list by its product count (the C2 grain). The Client satisfies it; a queryer
-// that does not falls back to no sizing headers, so the manifest endpoint works
-// regardless. C2 (the public CountStudyManifest) will count over the same grain,
-// so the standalone count and this sizing total never drift.
-type studyManifestCounter interface {
-	countStudyManifestProducts(ctx context.Context, studyLimsID string) (int, error)
 }
 
 // detailWithOptionsQueryer is the optional Queryer capability that builds a

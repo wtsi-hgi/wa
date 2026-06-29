@@ -58,6 +58,7 @@ type serverFakeQueryer struct {
 	classifyIdentifierFunc   func(context.Context, string) (Match, error)
 	resolveStudyFunc         func(context.Context, string) (Match, error)
 	samplesForStudyFunc      func(context.Context, string, int, int) ([]Sample, error)
+	studyManifestFunc        func(context.Context, string, string, bool, int, int) (StudyManifest, error)
 	enrichFunc               func(context.Context, string) (EnrichmentResult, error)
 	expandIdentifierFunc     func(context.Context, IdentifierKind, string) ([]TaggedID, error)
 	searchStudiesFunc        func(context.Context, string, int, int) ([]Study, error)
@@ -65,6 +66,7 @@ type serverFakeQueryer struct {
 	countStudySearchFunc     func(context.Context, string) (Count, error)
 	countSampleSearchFunc    func(context.Context, string) (Count, error)
 	countStudiesFunc         func(context.Context) (Count, error)
+	countStudyManifestFunc   func(context.Context, string) (Count, error)
 	countSamplesForStudyFunc func(context.Context, string) (Count, error)
 	countSamplesWithDataFunc func(context.Context, string) (Count, error)
 	freshnessFunc            func(context.Context) (Freshness, error)
@@ -79,6 +81,14 @@ type serverFakeQueryer struct {
 		term   string
 		limit  int
 		offset int
+	}
+
+	studyManifestCall struct {
+		studyLimsID string
+		fileType    string
+		withIRODS   bool
+		limit       int
+		offset      int
 	}
 
 	countCall struct {
@@ -199,8 +209,18 @@ func (q *serverFakeQueryer) IRODSPathsForRun(_ context.Context, _ string, _ stri
 	panic("unexpected IRODSPathsForRun call")
 }
 
-func (q *serverFakeQueryer) StudyManifest(_ context.Context, _ string, _ string, _ bool, _ int, _ int) (StudyManifest, error) {
-	panic("unexpected StudyManifest call")
+func (q *serverFakeQueryer) StudyManifest(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (StudyManifest, error) {
+	if q.studyManifestFunc == nil {
+		panic("unexpected StudyManifest call")
+	}
+
+	q.studyManifestCall.studyLimsID = studyLimsID
+	q.studyManifestCall.fileType = fileType
+	q.studyManifestCall.withIRODS = withIRODS
+	q.studyManifestCall.limit = limit
+	q.studyManifestCall.offset = offset
+
+	return q.studyManifestFunc(ctx, studyLimsID, fileType, withIRODS, limit, offset)
 }
 
 func (q *serverFakeQueryer) StudiesForSample(_ context.Context, _ string) ([]Study, error) {
@@ -398,8 +418,14 @@ func (q *serverFakeQueryer) CountRunsForStudy(_ context.Context, _ string) (Coun
 	panic("unexpected CountRunsForStudy call")
 }
 
-func (q *serverFakeQueryer) CountStudyManifest(_ context.Context, _ string) (Count, error) {
-	panic("unexpected CountStudyManifest call")
+func (q *serverFakeQueryer) CountStudyManifest(ctx context.Context, studyLimsID string) (Count, error) {
+	q.countCall.studyLimsID = studyLimsID
+
+	if q.countStudyManifestFunc == nil {
+		return Count{}, nil
+	}
+
+	return q.countStudyManifestFunc(ctx, studyLimsID)
 }
 
 func (q *serverFakeQueryer) CountLibrariesForStudy(_ context.Context, _ string) (Count, error) {
@@ -947,6 +973,41 @@ func TestServerCountEndpointsF3(t *testing.T) {
 		var count Count
 		decodeMLWHJSONResponseForTest(t, response, &count)
 		convey.So(count, convey.ShouldResemble, Count{Count: 2})
+	})
+}
+
+func TestServerStudyManifestPaginationHeadersUseQueryerCount(t *testing.T) {
+	convey.Convey("Given a server over a fake Queryer whose manifest page has 2 rows and CountStudyManifest returns 3", t, func() {
+		queryer := &serverFakeQueryer{
+			studyManifestFunc: func(_ context.Context, studyLimsID, _ string, _ bool, limit, offset int) (StudyManifest, error) {
+				convey.So(studyLimsID, convey.ShouldEqual, "S1")
+				convey.So(limit, convey.ShouldEqual, 2)
+				convey.So(offset, convey.ShouldEqual, 0)
+
+				return StudyManifest{
+					IDStudyLims: studyLimsID,
+					Rows: []ManifestRow{
+						{Name: "sample-1", IDRun: 52553, Position: 1, TagIndex: 1},
+						{Name: "sample-2", IDRun: 52553, Position: 1, TagIndex: 2},
+					},
+				}, nil
+			},
+			countStudyManifestFunc: func(_ context.Context, studyLimsID string) (Count, error) {
+				convey.So(studyLimsID, convey.ShouldEqual, "S1")
+
+				return Count{Count: 3}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/S1/manifest?limit=2&offset=0")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var manifest StudyManifest
+		decodeMLWHJSONResponseForTest(t, response, &manifest)
+		convey.So(manifest.Rows, convey.ShouldHaveLength, 2)
+		convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "3")
+		convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "2")
 	})
 }
 
