@@ -389,9 +389,9 @@ type EnrichmentResult struct {
 // the next page (the X-Next-Offset value: offset+len(Items) when more rows
 // remain, else -1 for the last page).
 type Page[T any] struct {
-	Items      []T
-	Total      int
-	NextOffset int
+	Items      []T `json:"items" doc:"the page of rows"`
+	Total      int `json:"total" doc:"total number of matching rows"`
+	NextOffset int `json:"next_offset" doc:"offset of the next page, or -1 on the last page"`
 }
 
 // TaggedID identifies one canonical identifier dimension for results expansion.
