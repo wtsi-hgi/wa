@@ -117,6 +117,35 @@ type IRODSPath struct {
 	Platform    string `json:"platform" doc:"platform string the iRODS row was synced with (source seq_platform_name); disambiguates a 0 id_run as ONT/non-Illumina"`
 }
 
+// ManifestRow is one row of a study's data manifest: one sequencing product
+// (run x position x tag) joined to its sample's identity, plus the study-level
+// metadata carried once in the envelope (not per row). When the file-type / iRODS
+// path is requested, IRODSPath is the data object for that product matching the
+// suffix filter (empty string when the product has no matching iRODS object).
+type ManifestRow struct {
+	Name            string `json:"name" doc:"Sanger sample name"`
+	SupplierName    string `json:"supplier_name" doc:"supplier-given sample name"`
+	AccessionNumber string `json:"accession_number" doc:"sample public archive accession number"`
+	SangerSampleID  string `json:"sanger_sample_id" doc:"Sanger sample id"`
+	IDRun           int    `json:"id_run" doc:"Illumina NPG run id of the product"`
+	Position        int    `json:"lane" doc:"lane position of the product"`
+	TagIndex        int    `json:"tag_index" doc:"multiplexing tag index of the product"`
+	IRODSPath       string `json:"irods_path,omitempty" doc:"iRODS path of the product's data object matching the file-type filter; present only when with_irods is set"`
+}
+
+// StudyManifest is the manifest envelope: the study-level metadata once, plus the
+// page of product rows. The page is bounded/pageable; the study fields answer Q3's
+// "study details" without repeating per row (D2/D5).
+type StudyManifest struct {
+	IDStudyLims     string        `json:"id_study_lims" doc:"LIMS study id"`
+	Name            string        `json:"name" doc:"study name"`
+	AccessionNumber string        `json:"accession_number" doc:"study accession number"`
+	FacultySponsor  string        `json:"faculty_sponsor" doc:"study faculty sponsor"`
+	DataAccessGroup string        `json:"data_access_group" doc:"study data access group"`
+	Rows            []ManifestRow `json:"rows" doc:"page of per-product manifest rows"`
+	CacheSyncedAt   string        `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
+}
+
 // SampleWithData is the enriched list row for the samples-with-data and
 // samples-without-data partitions. It carries the platforms the sample has
 // products on so every entry is platform-qualified rather than a bare "no data":

@@ -199,6 +199,10 @@ func (q *serverFakeQueryer) IRODSPathsForRun(_ context.Context, _ string, _ stri
 	panic("unexpected IRODSPathsForRun call")
 }
 
+func (q *serverFakeQueryer) StudyManifest(_ context.Context, _ string, _ string, _ bool, _ int, _ int) (StudyManifest, error) {
+	panic("unexpected StudyManifest call")
+}
+
 func (q *serverFakeQueryer) StudiesForSample(_ context.Context, _ string) ([]Study, error) {
 	panic("unexpected StudiesForSample call")
 }
@@ -368,6 +372,10 @@ func (q *serverFakeQueryer) CountSamplesForLibraryType(_ context.Context, _ stri
 
 func (q *serverFakeQueryer) CountRunsForStudy(_ context.Context, _ string) (Count, error) {
 	panic("unexpected CountRunsForStudy call")
+}
+
+func (q *serverFakeQueryer) CountStudyManifest(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountStudyManifest call")
 }
 
 func (q *serverFakeQueryer) CountLibrariesForStudy(_ context.Context, _ string) (Count, error) {

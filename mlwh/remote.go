@@ -336,6 +336,31 @@ func (rc *RemoteClient) IRODSPathsForRunPage(ctx context.Context, idRun string, 
 	return remoteCallPage[IRODSPath](rc, ctx, "IRODSPathsForRun", []string{idRun}, remotePagination(limit, offset))
 }
 
+// StudyManifest returns a study's product manifest envelope through the remote
+// server. It is a PLAIN remoteCall returning the StudyManifest envelope (not a
+// bare-slice Page[T]), since the manifest is an envelope (study metadata once plus
+// the page of product rows). The query forwards the limit/offset pagination plus
+// the optional with_irods flag (omitted when false) and file_type filter (omitted
+// when empty), so the server applies the same product-grain list and the same
+// sizing headers; the server validates the file_type and returns 400 for an
+// invalid value.
+func (rc *RemoteClient) StudyManifest(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (StudyManifest, error) {
+	return remoteCall[StudyManifest](rc, ctx, "StudyManifest", []string{studyLimsID}, remoteManifestQuery(limit, offset, withIRODS, fileType))
+}
+
+// remoteManifestQuery builds the query values for the study manifest list: the
+// limit/offset pagination controls plus the optional with_irods flag (set only
+// when true) and file_type filter (set only when non-empty), matching the
+// bare/with-irods/filtered call forms.
+func remoteManifestQuery(limit, offset int, withIRODS bool, fileType string) url.Values {
+	values := remotePaginationWithFileType(limit, offset, fileType)
+	if withIRODS {
+		values.Set("with_irods", "true")
+	}
+
+	return values
+}
+
 // StudiesForSample lists studies for a sample through the remote server.
 func (rc *RemoteClient) StudiesForSample(ctx context.Context, sangerName string) ([]Study, error) {
 	return remoteCall[[]Study](rc, ctx, "StudiesForSample", []string{sangerName}, nil)
@@ -470,6 +495,15 @@ func (rc *RemoteClient) CountSamplesForLibraryType(ctx context.Context, pipeline
 // CountRunsForStudy counts the distinct runs for a study through the remote server.
 func (rc *RemoteClient) CountRunsForStudy(ctx context.Context, studyLimsID string) (Count, error) {
 	return remoteCall[Count](rc, ctx, "CountRunsForStudy", []string{studyLimsID}, nil)
+}
+
+// CountStudyManifest counts the distinct products in a study's manifest through
+// the remote server (spec C2), the count counterpart of StudyManifest. It is a
+// plain remoteCall returning the Count envelope; the figure is product-grained
+// (unaffected by the manifest's with_irods / file_type options, which this
+// endpoint does not take), so it equals the manifest list's row count.
+func (rc *RemoteClient) CountStudyManifest(ctx context.Context, studyLimsID string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudyManifest", []string{studyLimsID}, nil)
 }
 
 // CountLibrariesForStudy counts the distinct libraries for a study through the remote server.

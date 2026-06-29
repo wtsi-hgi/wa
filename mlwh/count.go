@@ -327,6 +327,31 @@ func (c *Client) CountSamplesForLibraryType(ctx context.Context, pipelineIDLims 
 	return Count{Count: 0}, nil
 }
 
+// CountStudyManifest counts the distinct (id_run, position, tag_index) products
+// in a study, the count counterpart of StudyManifest (spec C2). It sizes the
+// manifest via the SAME private countStudyManifestProducts helper the list handler
+// uses for X-Total-Count, which does COUNT(*) over manifestProductGrainDistinctSQL
+// -- the EXACT SELECT DISTINCT product set the manifest list groups by -- so
+// CountStudyManifest(study) equals len(StudyManifest(study, ..., all).Rows) and the
+// standalone count and the list's sizing total cannot drift. The manifest is
+// product-grained, so the with_irods / file_type params (which this count does not
+// take) never change it: a product with no matching iRODS object is still one row.
+// The never-synced / unknown-study / synced-empty cascade matches
+// CountSamplesForStudy: a synced study with no products returns Count{Count: 0} and
+// no error, a never-synced cache returns Count{} with an error satisfying both
+// ErrCacheNeverSynced and ErrNotFound, and an unknown study returns ErrNotFound.
+func (c *Client) CountStudyManifest(ctx context.Context, studyLimsID string) (Count, error) {
+	count, err := c.countStudyManifestProducts(ctx, studyLimsID)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	return c.countSamplesForEmptyStudy(ctx, studyLimsID)
+}
+
 // CountRunsForStudy counts the distinct runs for a study, the count counterpart
 // of RunsForStudy (same iseq_product_metrics_mirror id_study_lims filter, no
 // LIMIT), so it equals len(RunsForStudy(study, all)). It shares RunsForStudy's

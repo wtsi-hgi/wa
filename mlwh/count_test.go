@@ -269,6 +269,97 @@ func TestCountIRODSPathsForRunEqualsListLength(t *testing.T) {
 	})
 }
 
+// C2 acceptance test 1: CountStudyManifest counts the distinct (id_run, position,
+// tag_index) products that ARE the manifest's row grain, so for study S1 with 3
+// distinct products it is Count{3} AND equal to len(StudyManifest("S1","",false,
+// all).Rows) -- the count and the all-rows list are sized over the same SELECT
+// DISTINCT product set and cannot drift.
+func TestCountStudyManifestMatchesManifestListLengthC2(t *testing.T) {
+	convey.Convey("Given study S1 with 3 distinct Illumina products", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedManifestS1Scenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		ctx := context.Background()
+		count, countErr := client.CountStudyManifest(ctx, "S1")
+		manifest, manifestErr := client.StudyManifest(ctx, "S1", "", false, manifestAllRows, 0)
+
+		convey.Convey("when CountStudyManifest(\"S1\") is taken, then it is Count{3} and equals len(StudyManifest(\"S1\",\"\",false,all).Rows)", func() {
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(manifestErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 3})
+			convey.So(count.Count, convey.ShouldEqual, len(manifest.Rows))
+		})
+	})
+}
+
+// C2 acceptance test 2 (never-synced half): a never-synced cache returns Count{}
+// joined with both ErrCacheNeverSynced and ErrNotFound, matching
+// CountSamplesForStudy's cascade.
+func TestCountStudyManifestNeverSyncedReturnsJoinedSentinelC2(t *testing.T) {
+	convey.Convey("Given a never-synced SQLite cache", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		count, err := client.CountStudyManifest(context.Background(), "S1")
+
+		convey.Convey("when CountStudyManifest runs, then it returns Count{} and both sentinels", func() {
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(count, convey.ShouldResemble, Count{})
+		})
+	})
+}
+
+// C2 acceptance test 2 (unknown-study half): an unknown study on a synced cache
+// returns ErrNotFound (and not the never-synced sentinel), matching
+// CountSamplesForStudy.
+func TestCountStudyManifestUnknownStudyReturnsNotFoundC2(t *testing.T) {
+	convey.Convey("Given a synced cache with no such study", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedManifestSyncState(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		count, err := client.CountStudyManifest(context.Background(), "S1")
+
+		convey.Convey("when CountStudyManifest runs for an unknown study, then it returns ErrNotFound and Count{}", func() {
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeFalse)
+			convey.So(count, convey.ShouldResemble, Count{})
+		})
+	})
+}
+
+// C2 acceptance test 2 (synced-empty half): a known study on a synced cache with
+// no products returns Count{0} and no error, matching CountSamplesForStudy.
+func TestCountStudyManifestSyncedStudyWithNoProductsReturnsZeroC2(t *testing.T) {
+	convey.Convey("Given a synced study S1 with metadata but no products", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedHierarchyStudy(t, cache.DB(), 211, "S1")
+		seedManifestSyncState(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		ctx := context.Background()
+		count, countErr := client.CountStudyManifest(ctx, "S1")
+		manifest, manifestErr := client.StudyManifest(ctx, "S1", "", false, manifestAllRows, 0)
+
+		convey.Convey("when CountStudyManifest runs, then it returns Count{0}, no error, equal to the empty manifest's row count", func() {
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(manifestErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 0})
+			convey.So(count.Count, convey.ShouldEqual, len(manifest.Rows))
+		})
+	})
+}
+
 // e1Count names one new /count endpoint under test: its Client count method and
 // the corresponding all-rows list-length, so the E1 cross-check
 // (count == len(list-all)) can be asserted for every count uniformly. zeroIs

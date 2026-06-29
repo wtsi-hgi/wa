@@ -70,8 +70,8 @@ envelope with metadata + empty rows + cache_synced_at; MySQL EXPLAIN
 index-served with and without `with_irods` -- see I1/Phase 7). Depends on
 Phases 1 and 2 (the iRODS join/index and file-type linkage).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.2: C2 - study manifest count
 
@@ -90,8 +90,8 @@ both acceptance tests from C2 (`Count{3}` equal to
 / unknown `ErrNotFound` / synced-empty `Count{0}` no error). Depends on
 3.1 (same DISTINCT product grain).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For sequential items, a single review pass after each item is
 acceptable; reviewers must confirm the count matches the list-all length
