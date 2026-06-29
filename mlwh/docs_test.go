@@ -243,6 +243,28 @@ func TestGlossaryDefinesDomainEntitiesG1(t *testing.T) {
 	})
 }
 
+func TestGlossaryDefinesAvailabilityConceptsG2(t *testing.T) {
+	// G2 acceptance test 3: the glossary defines the availability, recency and
+	// progress concepts introduced by this feature - "sequencing data available"
+	// and "added to iRODS" (called out by the spec), plus "baseline phase",
+	// "detailed timeline", and "platform". Each must be a genuine glossary term (a
+	// heading), not a passing mention, so the document truly defines them.
+	convey.Convey("Given the glossary document, when read, then it defines the availability, recency and progress concepts", t, func() {
+		glossary := readGlossaryForTest(t)
+		terms := glossaryTermsForTest(glossary)
+
+		for _, want := range []string{
+			"sequencing data available",
+			"added to iRODS",
+			"baseline phase",
+			"detailed timeline",
+			"platform",
+		} {
+			convey.So(terms, convey.ShouldContainKey, strings.ToLower(want))
+		}
+	})
+}
+
 func TestGlossaryListsEveryIdentifierKindG1(t *testing.T) {
 	// G1 acceptance test 3 (second half): the glossary lists every IdentifierKind
 	// constant value. Driven from IdentifierKinds() so a newly added kind that is

@@ -43,8 +43,8 @@ the same typed result; every windowed/recency Description states the
 filter is on the iRODS creation timestamp, never `last_updated`/
 `last_run`). Depends on Phases 2-4 (all endpoints implemented).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 5.2: G2 - regenerate docs; drift guards green; glossary updated
 
@@ -61,8 +61,8 @@ OpenAPI cover the same Registry paths; the committed reference matches
 "sequencing data available" and "added to iRODS"). Depends on 5.1 (the
 Registry must be complete before regenerating the reference).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ## Ordering and dependency notes
 

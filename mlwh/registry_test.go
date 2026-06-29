@@ -218,8 +218,241 @@ func registryDocText(source string) (string, error) {
 	return strings.Join(parts, "\n"), nil
 }
 
+func TestRegistryNewEndpointsAreFullyDocumentedG1(t *testing.T) {
+	// G1 acceptance test 1, stated explicitly over the Phase 2-4 endpoint set:
+	// every new Method carries a non-empty Summary AND Description, and every new
+	// paginated entry declares integer limit/offset QueryParams. The all-entries
+	// guards (TestRegistryEntriesAreDocumented,
+	// TestRegistryPaginatedEntriesDeclareLimitOffset) already cover the superset;
+	// this pins the bar to the new surface so a future addition cannot regress it.
+	convey.Convey("Given the Phase 2-4 endpoints, when iterated, then each is fully documented", t, func() {
+		newMethods := newAvailabilityRecencyProgressMethods()
+
+		convey.Convey("the named new methods all exist in the Registry (the assertion is not vacuous)", func() {
+			convey.So(newMethodsExistInRegistry(newMethods), convey.ShouldBeEmpty)
+		})
+
+		convey.Convey("every new Method has a non-empty Summary and Description", func() {
+			missingSummary := []string{}
+			missingDescription := []string{}
+
+			for _, method := range newMethods {
+				entry, ok := registryEntryByMethod(method)
+				if !ok {
+					continue
+				}
+				if strings.TrimSpace(entry.Summary) == "" {
+					missingSummary = append(missingSummary, method)
+				}
+				if strings.TrimSpace(entry.Description) == "" {
+					missingDescription = append(missingDescription, method)
+				}
+			}
+
+			convey.So(missingSummary, convey.ShouldBeEmpty)
+			convey.So(missingDescription, convey.ShouldBeEmpty)
+		})
+
+		convey.Convey("every new paginated Method declares integer limit and offset QueryParams", func() {
+			missingLimitOffset := []string{}
+
+			for _, method := range newMethods {
+				entry, ok := registryEntryByMethod(method)
+				if !ok || !entry.Paginated {
+					continue
+				}
+
+				limit, hasLimit := queryParamByName(entry.QueryParams, "limit")
+				offset, hasOffset := queryParamByName(entry.QueryParams, "offset")
+				if !hasLimit || limit.Type != "integer" || !hasOffset || offset.Type != "integer" {
+					missingLimitOffset = append(missingLimitOffset, method)
+				}
+			}
+
+			convey.So(missingLimitOffset, convey.ShouldBeEmpty)
+		})
+	})
+}
+
+// newAvailabilityRecencyProgressMethods is the closed set of Queryer methods
+// added across Phases 2-4 (the availability / recency / run-overview / budget
+// /count / progress surface). G1's wiring assertions are stated explicitly over
+// this set so a new endpoint that is wired into the Queryer/Registry but left
+// without a Summary, a Description or (when paginated) limit/offset QueryParams
+// fails here. newMethodsExistInRegistry guards that the set is not vacuous: each
+// name must be a live Registry method, so a typo or a removed endpoint surfaces
+// as a missing entry rather than a silently skipped assertion.
+func newAvailabilityRecencyProgressMethods() []string {
+	return []string{
+		// Phase 2: availability (B) + recency (C).
+		"StudyOverview",
+		"SamplesWithData",
+		"SamplesWithoutData",
+		"CountSamplesWithData",
+		// Phase 3: run overview (D) + the budget-safety /count counterparts (E1).
+		"RunOverview",
+		"CountSamplesForRun",
+		"CountSamplesForLibrary",
+		"CountSamplesForLibraryID",
+		"CountSamplesForLibraryLimsID",
+		"CountSamplesForLibraryType",
+		"CountRunsForStudy",
+		"CountLibrariesForStudy",
+		"CountLanesForSample",
+		"CountIRODSPathsForSample",
+		"CountIRODSPathsForStudy",
+		"CountFindSamplesBySangerID",
+		"CountFindSamplesByIDSampleLims",
+		"CountFindSamplesByAccessionNumber",
+		"CountFindSamplesBySupplierName",
+		"CountFindSamplesByLibraryType",
+		// Phase 4: progress (F).
+		"RunStatus",
+		"SampleProgress",
+		"StatusBreakdown",
+	}
+}
+
+func newMethodsExistInRegistry(methods []string) []string {
+	missing := []string{}
+	for _, method := range methods {
+		if _, ok := registryEntryByMethod(method); !ok {
+			missing = append(missing, method)
+		}
+	}
+
+	slices.Sort(missing)
+
+	return missing
+}
+
+func TestRegistryRecencyDescriptionsCiteCreationTimestampG1(t *testing.T) {
+	// G1 acceptance test 4: every windowed/recency Description must state that the
+	// "added since" filter is on the iRODS CREATION timestamp (the created column)
+	// and NEVER on last_updated or last_run (the freshness Key Decision / HARD REQ
+	// 3). The rule is data-driven over the whole Registry so it cannot silently
+	// miss a new endpoint: any Description that mentions the created column (the
+	// recency surface) must also carry the never-last_updated/last_run clause.
+	convey.Convey("Given the Registry, when each Description that cites the iRODS created column is inspected", t, func() {
+		convey.Convey("then it also states the filter is never on last_updated or last_run", func() {
+			missingNegativeClause := []string{}
+
+			for _, entry := range Registry {
+				if !mentionsIRODSCreationTimestamp(entry.Description) {
+					continue
+				}
+				if !statesCreatedNotLastUpdatedOrLastRun(entry.Description) {
+					missingNegativeClause = append(missingNegativeClause, entry.Method)
+				}
+			}
+
+			convey.So(missingNegativeClause, convey.ShouldBeEmpty)
+		})
+
+		convey.Convey("and the four windowed/recency endpoints each carry the creation-timestamp wording", func() {
+			windowedRecency := []string{"StudyOverview", "RunOverview", "SamplesWithData", "CountSamplesWithData"}
+			notStated := []string{}
+
+			for _, method := range windowedRecency {
+				entry, ok := registryEntryByMethod(method)
+				if !ok {
+					notStated = append(notStated, method+" (missing)")
+
+					continue
+				}
+				if !mentionsIRODSCreationTimestamp(entry.Description) || !statesCreatedNotLastUpdatedOrLastRun(entry.Description) {
+					notStated = append(notStated, method)
+				}
+			}
+
+			convey.So(notStated, convey.ShouldBeEmpty)
+		})
+	})
+}
+
+// mentionsIRODSCreationTimestamp reports whether a Description refers to the
+// iRODS creation timestamp by its canonical column name, the marker that an
+// endpoint exposes recency/windowed semantics.
+func mentionsIRODSCreationTimestamp(description string) bool {
+	return strings.Contains(strings.ToLower(description), "created column")
+}
+
+// statesCreatedNotLastUpdatedOrLastRun reports whether a Description states the
+// recency filter is never on last_updated or last_run, tolerating the two
+// phrasings in use ("NEVER last_updated or last_run" and "NEVER on last_updated
+// or last_run").
+func statesCreatedNotLastUpdatedOrLastRun(description string) bool {
+	normalized := normalizeDocText(strings.ToLower(description))
+
+	return strings.Contains(normalized, "never last_updated or last_run") ||
+		strings.Contains(normalized, "never on last_updated or last_run")
+}
+
 func normalizeDocText(doc string) string {
 	return strings.Join(strings.Fields(doc), " ")
+}
+
+func TestRegistryQueryListMatchesQueryParamsG1(t *testing.T) {
+	// G1 internal-consistency guard: the Endpoint.Query list and the structured
+	// QueryParams must agree, so the Registry cannot declare a query param in one
+	// place but not the other (the inconsistency seen on /study/:id/detail and
+	// /run/:id/detail, which declared lean in QueryParams but left Query empty).
+	// The contract is: Query lists exactly the endpoint's non-pagination query
+	// params; limit/offset are pagination controls, declared via QueryParams (and
+	// surfaced by the OpenAPI generator) but deliberately omitted from Query, so a
+	// paginated list with no extra filter has an empty Query.
+	convey.Convey("Given each Registry entry, when its Query list is compared to its non-pagination QueryParams, then they agree", t, func() {
+		queryNotInParams := []string{}
+		nonPaginationParamNotInQuery := []string{}
+
+		for _, entry := range Registry {
+			paramNames := queryParamNameSet(entry.QueryParams)
+
+			for _, name := range entry.Query {
+				if !paramNames[name] {
+					queryNotInParams = append(queryNotInParams, entry.Method+":"+name)
+				}
+			}
+
+			for _, param := range entry.QueryParams {
+				if isPaginationQueryParamName(param.Name) {
+					continue
+				}
+				if !slices.Contains(entry.Query, param.Name) {
+					nonPaginationParamNotInQuery = append(nonPaginationParamNotInQuery, entry.Method+":"+param.Name)
+				}
+			}
+		}
+
+		convey.So(queryNotInParams, convey.ShouldBeEmpty)
+		convey.So(nonPaginationParamNotInQuery, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given the detail endpoints, then each lists its lean query param in both Query and QueryParams", t, func() {
+		for _, method := range []string{"StudyDetail", "RunDetail"} {
+			entry, ok := registryEntryByMethod(method)
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(entry.Query, convey.ShouldContain, "lean")
+			_, hasLean := queryParamByName(entry.QueryParams, "lean")
+			convey.So(hasLean, convey.ShouldBeTrue)
+		}
+	})
+}
+
+func queryParamNameSet(params []QueryParam) map[string]bool {
+	names := make(map[string]bool, len(params))
+	for _, param := range params {
+		names[param.Name] = true
+	}
+
+	return names
+}
+
+// isPaginationQueryParamName reports whether a QueryParam name is one of the
+// pagination controls (limit/offset), which are declared via QueryParams but
+// deliberately kept out of the Endpoint.Query list.
+func isPaginationQueryParamName(name string) bool {
+	return name == "limit" || name == "offset"
 }
 
 func TestRegistryCoversQueryer(t *testing.T) {

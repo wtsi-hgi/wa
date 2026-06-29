@@ -455,7 +455,7 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/study/:id/detail",
 		PathParams:  []string{"id"},
-		Query:       []string{},
+		Query:       []string{"lean"},
 		NewResult:   newResult[StudyDetail],
 		Summary:     "Get study detail",
 		Description: "Returns the given study with the detail of each of its libraries and their samples. The response is de-duplicated to stay bounded: each distinct study and library is carried once in the study_lookup / library_lookup tables (keyed by id) and the nested sample rows under library_details reference them by id rather than re-embedding the same study and library objects under every sample. The optional limit/offset query params paginate the nested sample collection (defaulting to every sample), and X-Total-Count reports the full nested sample count while X-Next-Offset gives the offset of the next page (offset+returned, or -1 on the last page), exactly as the paginated list endpoints do. The optional lean query param (a boolean) drops the heavy library_details and lookup tables and returns only the top-level study plus the flat sample_ids and library_ids lists, so the response is strictly smaller.",
@@ -466,7 +466,7 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/run/:id/detail",
 		PathParams:  []string{"id"},
-		Query:       []string{},
+		Query:       []string{"lean"},
 		NewResult:   newResult[RunDetail],
 		Summary:     "Get run detail",
 		Description: "Returns the given run with its related samples, studies, and per-study detail. The response is de-duplicated to stay bounded: each distinct study and library is carried once in the study_lookup / library_lookup tables (keyed by id) and the nested sample rows (both samples and study_details) reference them by id rather than re-embedding the same study and library objects under every sample. The optional limit/offset query params paginate the nested sample collection (defaulting to every sample, with studies and study_details rebuilt from the page), and X-Total-Count reports the full nested sample count while X-Next-Offset gives the offset of the next page (offset+returned, or -1 on the last page), exactly as the paginated list endpoints do. The optional lean query param (a boolean) drops the heavy samples, studies, study_details and lookup tables and returns only the run plus the flat sample_ids and study_ids lists, so the response is strictly smaller.",
@@ -794,17 +794,21 @@ func searchPaginationParams() []QueryParam {
 	}
 }
 
-// addedWindowQueryParams are the optional since/until RFC3339 QueryParams for the
-// windowed samples-with-data count: a half-open [since, until) filter on the iRODS
-// creation timestamp (the created column, never last_updated/last_run). They are
-// not pagination controls, so they are declared on a non-paginated entry.
+// addedWindowQueryParams are the optional since/until RFC3339 QueryParams shared
+// by the windowed samples-with-data count and the windowed samples-with-data
+// list: a half-open [since, until) filter on the iRODS creation timestamp (the
+// created column, never last_updated/last_run). The wording is surface-neutral
+// ("restricts the result"/"an all-time result") so it reads correctly whether it
+// documents the count endpoint or the list endpoint. They are not pagination
+// controls, so they are declared on a non-paginated entry (and appended to the
+// list endpoint's pagination params by fetchAllPaginationWithAddedWindowParams).
 func addedWindowQueryParams() []QueryParam {
 	return []QueryParam{
 		{
 			Name:        "since",
 			Type:        "string",
 			Required:    false,
-			Description: "RFC3339 timestamp; when set, counts only samples whose study-scoped data was added to iRODS at or after this instant (created >= since, inclusive), filtering on the iRODS creation timestamp and never on last_updated/last_run; omit for an all-time count",
+			Description: "RFC3339 timestamp; when set, restricts the result to samples whose study-scoped data was added to iRODS at or after this instant (created >= since, inclusive), filtering on the iRODS creation timestamp and never on last_updated/last_run; omit for an all-time result",
 		},
 		{
 			Name:        "until",
