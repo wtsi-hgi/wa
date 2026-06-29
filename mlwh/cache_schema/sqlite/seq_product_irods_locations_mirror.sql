@@ -23,3 +23,6 @@ CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_created_idx
 
 CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_iseq_product_idx
 	ON seq_product_irods_locations_mirror(id_study_lims, id_iseq_product);
+
+CREATE INDEX IF NOT EXISTS spi_mirror_iseq_product_idx
+	ON seq_product_irods_locations_mirror(id_iseq_product);

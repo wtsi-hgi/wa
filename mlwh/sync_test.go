@@ -129,6 +129,7 @@ var newSyncTestSourceTables = map[string]bool{
 	syncTableIseqRunStatus:           true,
 	syncTableIseqRunStatusDict:       true,
 	syncTableOseqFlowcell:            true,
+	syncTableStudyUsers:              true,
 	syncTablePacBioRunWellMetrics:    true,
 	syncTableEseqRun:                 true,
 	syncTableEseqRunLaneMetrics:      true,
@@ -157,6 +158,18 @@ var (
 	syncCountingSQLiteCountersMu sync.Mutex
 	syncCountingSQLiteCounters   = map[string]*syncCommitCounter{}
 )
+
+func TestSeqProductIRODSLocationsMirrorReadIndexesIncludeIseqProductIndex(t *testing.T) {
+	convey.Convey("Given the iRODS-locations mirror sparse cold-load read-index set", t, func() {
+		convey.Convey("when inspected, then it includes spi_mirror_iseq_product_idx (id_iseq_product) so the D1 run-scoped join and D2 manifest LEFT JOIN are index-served immediately after a cold load", func() {
+			convey.So(seqProductIRODSLocationsMirrorReadIndexes, convey.ShouldContain, syncIndexSpec{Name: "spi_mirror_iseq_product_idx", Column: "id_iseq_product"})
+		})
+
+		convey.Convey("and the mirror's full secondary-index set also includes it, so a full rebuild keeps the join index-served", func() {
+			convey.So(seqProductIRODSLocationsMirrorSecondaryIndexes, convey.ShouldContain, syncIndexSpec{Name: "spi_mirror_iseq_product_idx", Column: "id_iseq_product"})
+		})
+	})
+}
 
 func withSampleSearchTokenReadPageSizeForTest(t *testing.T, size int) {
 	t.Helper()
@@ -331,6 +344,94 @@ func TestFinalizeSampleSyncStateRebuildsLargeSQLiteSecondaryIndexes(t *testing.T
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
+// TestClientSyncStudyUsersWholesaleReplace covers A3 acceptance test 1: a mocked
+// source study_users (including a row with a NULL email) for an SQSCP study
+// mirrors into study_users_mirror with the NULL email stored as ” and the
+// correct id_study_tmp/role/login/name.
+func TestClientSyncStudyUsersWholesaleReplace(t *testing.T) {
+	convey.Convey("A3.1: Given a study_users source (incl. a NULL email) linked to an SQSCP study", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.June, 18, 9, 0, 0, 0, time.UTC)
+		seedRealMLWHStudyRow(t, source, 90, "SQSCP", "9001", "uuid-study-90", "Study Users", "acc-st-90", base)
+
+		owner := "owneruser"
+		ownerEmail := "owner@example.com"
+		ownerName := "Owner User"
+		seedRealMLWHStudyUsersRow(t, source, 9001, 90, "owner", &owner, &ownerEmail, &ownerName, base)
+
+		manager := "manageruser"
+		managerName := "Manager User"
+		seedRealMLWHStudyUsersRow(t, source, 9002, 90, "manager", &manager, nil, &managerName, base)
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableStudyUsers)
+
+		convey.Convey("when the study_users table syncs, then both rows mirror with the NULL email stored as '' and correct id_study_tmp/role/login/name", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 2)
+
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_users_mirror WHERE id_study_tmp = ?`, 90), convey.ShouldEqual, 2)
+
+			var idStudyTmp int64
+			var role, login, email, name string
+			convey.So(cache.DB().QueryRow(`SELECT id_study_tmp, role, login, email, name FROM study_users_mirror WHERE id_study_users_tmp = ?`, 9001).
+				Scan(&idStudyTmp, &role, &login, &email, &name), convey.ShouldBeNil)
+			convey.So(idStudyTmp, convey.ShouldEqual, 90)
+			convey.So(role, convey.ShouldEqual, "owner")
+			convey.So(login, convey.ShouldEqual, "owneruser")
+			convey.So(email, convey.ShouldEqual, "owner@example.com")
+			convey.So(name, convey.ShouldEqual, "Owner User")
+
+			convey.So(cache.DB().QueryRow(`SELECT id_study_tmp, role, login, email, name FROM study_users_mirror WHERE id_study_users_tmp = ?`, 9002).
+				Scan(&idStudyTmp, &role, &login, &email, &name), convey.ShouldBeNil)
+			convey.So(idStudyTmp, convey.ShouldEqual, 90)
+			convey.So(role, convey.ShouldEqual, "manager")
+			convey.So(login, convey.ShouldEqual, "manageruser")
+			convey.So(email, convey.ShouldEqual, "")
+			convey.So(name, convey.ShouldEqual, "Manager User")
+		})
+	})
+}
+
+// TestClientSyncStudyUsersDropsNonSQSCPStudy covers A3 acceptance test 2: a
+// study_users source row whose study is not SQSCP is dropped by the INNER JOIN
+// to study and never mirrored.
+func TestClientSyncStudyUsersDropsNonSQSCPStudy(t *testing.T) {
+	convey.Convey("A3.2: Given a study_users source row whose study is not SQSCP", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.June, 18, 9, 0, 0, 0, time.UTC)
+		seedRealMLWHStudyRow(t, source, 90, "SQSCP", "9001", "uuid-study-90", "SQSCP Study", "acc-st-90", base)
+		seedRealMLWHStudyRow(t, source, 91, "OTHER", "9101", "uuid-study-91", "Other Study", "acc-st-91", base)
+
+		sqscpLogin := "sqscpuser"
+		seedRealMLWHStudyUsersRow(t, source, 9001, 90, "owner", &sqscpLogin, nil, nil, base)
+		otherLogin := "otheruser"
+		seedRealMLWHStudyUsersRow(t, source, 9101, 91, "owner", &otherLogin, nil, nil, base)
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableStudyUsers)
+
+		convey.Convey("when syncing, then only the SQSCP-study row mirrors and the non-SQSCP row is absent", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 1)
+
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_users_mirror`), convey.ShouldEqual, 1)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_users_mirror WHERE id_study_users_tmp = ?`, 9001), convey.ShouldEqual, 1)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_users_mirror WHERE id_study_users_tmp = ?`, 9101), convey.ShouldEqual, 0)
+		})
 	})
 }
 
@@ -3075,11 +3176,14 @@ func iseqProductMetricsMirrorSecondaryIndexNames() []string {
 }
 
 func seqProductIRODSLocationsMirrorSecondaryIndexNames() []string {
-	// The cold load drops and recreates the mirror's rebuild index set, but the
-	// table also carries the A1 (id_study_lims, created) recency index, which is
-	// never dropped; mirrorIndexNames reads every physical index, sorted.
+	// The cold load drops and recreates the mirror's rebuild index set (which now
+	// includes the A2 (id_iseq_product) index for the D1 run-scoped join and D2
+	// manifest LEFT JOIN), but the table also carries the (id_study_lims, created)
+	// recency index, which is never dropped; mirrorIndexNames reads every physical
+	// index, sorted.
 	return []string{
 		"seq_product_irods_locations_mirror_id_sample_tmp_idx",
+		"spi_mirror_iseq_product_idx",
 		"spi_mirror_study_lims_created_idx",
 		"spi_mirror_study_lims_iseq_product_idx",
 		"spi_mirror_study_lims_sample_tmp_idx",
@@ -4056,6 +4160,8 @@ func syncTableForQuery(query string) string {
 	switch {
 	case strings.Contains(query, " FROM sample "):
 		return syncTableSample
+	case strings.Contains(query, " FROM study_users su "):
+		return syncTableStudyUsers
 	case strings.Contains(query, " FROM study "):
 		return syncTableStudy
 	case strings.Contains(query, " FROM iseq_flowcell "):

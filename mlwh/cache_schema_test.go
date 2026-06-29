@@ -64,6 +64,38 @@ var a4MirrorTables = map[string][]string{
 	"seq_ops_tracking_per_sample_mirror": {"id_sample_lims", "sanger_sample_name", "study_id"},
 }
 
+// studyUsersMirrorColumns is the column set study_users_mirror declares in both
+// dialects (id_study_users_tmp INTEGER PK + the six text/integer columns the
+// study_users source carries), with the normalised type family parseSchemaShape
+// records. It is the single source of truth shared by the A1 sqlite-shape,
+// mysql-shape and cross-dialect-equality assertions below.
+var studyUsersMirrorColumns = map[string]string{
+	"id_study_users_tmp": "integer",
+	"id_study_tmp":       "integer",
+	"role":               "text",
+	"login":              "text",
+	"email":              "text",
+	"name":               "text",
+	"last_updated":       "text",
+}
+
+// studyUsersMirrorIndexes is the sorted, comma-joined column list of the five
+// study_users_mirror secondary indexes, in the form parseSchemaShape stores.
+var studyUsersMirrorIndexes = []string{"email", "id_study_tmp", "login", "name", "role"}
+
+// a2NewIndexColumns maps each table A2 adds a single-column index to, to that
+// index's column in the comma-joined form parseSchemaShape stores. study_mirror
+// gains study_mirror_faculty_sponsor_idx (faculty_sponsor) for the D4
+// faculty-sponsor lookup and the resolve-person GROUP BY faculty_sponsor
+// enumeration; seq_product_irods_locations_mirror gains
+// spi_mirror_iseq_product_idx (id_iseq_product) for the D1 run-scoped iRODS join
+// and the D2 manifest per-product iRODS LEFT JOIN. It is the single source of
+// truth shared by the A2 existence and cross-dialect-equality assertions below.
+var a2NewIndexColumns = map[string]string{
+	"study_mirror":                       "faculty_sponsor",
+	"seq_product_irods_locations_mirror": "id_iseq_product",
+}
+
 func TestLoadSchema(t *testing.T) {
 	convey.Convey("Given the SQLite schema files", t, func() {
 		stmts, err := loadSchema("sqlite")
@@ -296,6 +328,101 @@ func TestA3IseqProductMetricsMirrorQCColumnsNullableInBothDialects(t *testing.T)
 
 		convey.Convey("when the parsed nullability is compared across dialects for every table, then it matches (no pre-existing dialect mismatch)", func() {
 			convey.So(sqliteShape.Nullable, convey.ShouldResemble, mysqlShape.Nullable)
+		})
+	})
+}
+
+func TestA1StudyUsersMirrorSQLiteShapeHasColumnsAndIndexes(t *testing.T) {
+	convey.Convey("A1.1: Given the SQLite schema parsed into a schemaShape", t, func() {
+		stmts, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+
+		shape, err := parseSchemaShape(stmts)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when study_users_mirror is inspected, then it has the seven declared columns and the five declared indexes", func() {
+			convey.So(shape.Tables, convey.ShouldContainKey, "study_users_mirror")
+			convey.So(shape.Tables["study_users_mirror"], convey.ShouldResemble, studyUsersMirrorColumns)
+			convey.So(shape.Index["study_users_mirror"], convey.ShouldResemble, studyUsersMirrorIndexes)
+		})
+	})
+}
+
+func TestA1StudyUsersMirrorMySQLShapeMatchesSQLite(t *testing.T) {
+	convey.Convey("A1.2: Given the SQLite and MySQL schemas parsed into schemaShapes", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when study_users_mirror is inspected, then it has the same columns and indexes and the two dialects compare equal", func() {
+			convey.So(mysqlShape.Tables, convey.ShouldContainKey, "study_users_mirror")
+			convey.So(mysqlShape.Tables["study_users_mirror"], convey.ShouldResemble, studyUsersMirrorColumns)
+			convey.So(mysqlShape.Index["study_users_mirror"], convey.ShouldResemble, studyUsersMirrorIndexes)
+
+			convey.So(mysqlShape.Tables["study_users_mirror"], convey.ShouldResemble, sqliteShape.Tables["study_users_mirror"])
+			convey.So(mysqlShape.Index["study_users_mirror"], convey.ShouldResemble, sqliteShape.Index["study_users_mirror"])
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestA2NewLookupIndexesExistInBothDialectsAndCompareEqual(t *testing.T) {
+	convey.Convey("A2.1: Given the sqlite and mysql schemas parsed into schemaShapes", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when study_mirror and seq_product_irods_locations_mirror are inspected, then each carries its new single-column index in both dialects", func() {
+			for table, column := range a2NewIndexColumns {
+				convey.So(sqliteShape.Index[table], convey.ShouldContain, column)
+				convey.So(mysqlShape.Index[table], convey.ShouldContain, column)
+			}
+		})
+
+		convey.Convey("when the two dialects are compared, then the affected tables' index lists are equal and the schemas compare structurally equal", func() {
+			for table := range a2NewIndexColumns {
+				convey.So(mysqlShape.Index[table], convey.ShouldResemble, sqliteShape.Index[table])
+			}
+
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestA2CrossDialectShapeParityStillPassesWithNewIndexes(t *testing.T) {
+	convey.Convey("A2.2: Given both dialect schemas parsed into schemaShapes", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when the full per-table index column lists are compared, then they still match across dialects with the new indexes present", func() {
+			for table, column := range a2NewIndexColumns {
+				convey.So(sqliteShape.Index[table], convey.ShouldContain, column)
+			}
+
+			convey.So(sqliteShape.Index, convey.ShouldResemble, mysqlShape.Index)
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldBeNil)
 		})
 	})
 }
@@ -817,6 +944,16 @@ func sortedSchemaTableNames() []string {
 	return names
 }
 
+func TestA1StudyUsersMirrorEphemeralInsertReadsBack(t *testing.T) {
+	convey.Convey("A1.3: Given an opened ephemeral SQLite cache", t, func() {
+		db := openSQLiteSchemaTestDB(t)
+
+		convey.Convey("when a row is inserted with the study_users_mirror column list, then it reads back unchanged", func() {
+			convey.So(insertReadBackStudyUsersMirror(t, db), convey.ShouldBeNil)
+		})
+	})
+}
+
 func openSQLiteSchemaTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
@@ -840,6 +977,43 @@ func openSQLiteSchemaTestDB(t *testing.T) *sql.DB {
 	}
 
 	return db
+}
+
+func insertReadBackStudyUsersMirror(t *testing.T, db *sql.DB) error {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO study_users_mirror(id_study_users_tmp, id_study_tmp, role, login, email, name, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		int64(4242), int64(6568), "manager", "abc", "abc@sanger.ac.uk", "Ann B Cole",
+		"2026-06-25T09:00:00Z",
+	); err != nil {
+		return err
+	}
+
+	var (
+		idStudyTmp  int64
+		role        string
+		login       string
+		email       string
+		name        string
+		lastUpdated string
+	)
+
+	if err := db.QueryRow(
+		`SELECT id_study_tmp, role, login, email, name, last_updated FROM study_users_mirror WHERE id_study_users_tmp = ?`,
+		int64(4242),
+	).Scan(&idStudyTmp, &role, &login, &email, &name, &lastUpdated); err != nil {
+		return err
+	}
+
+	convey.So(idStudyTmp, convey.ShouldEqual, 6568)
+	convey.So(role, convey.ShouldEqual, "manager")
+	convey.So(login, convey.ShouldEqual, "abc")
+	convey.So(email, convey.ShouldEqual, "abc@sanger.ac.uk")
+	convey.So(name, convey.ShouldEqual, "Ann B Cole")
+	convey.So(lastUpdated, convey.ShouldEqual, "2026-06-25T09:00:00Z")
+
+	return nil
 }
 
 func loadMySQLCacheConfigForTest(t *testing.T) (CacheConfig, string) {

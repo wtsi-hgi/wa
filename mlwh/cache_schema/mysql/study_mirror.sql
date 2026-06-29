@@ -34,3 +34,6 @@ CREATE INDEX study_mirror_accession_number_idx
 
 CREATE INDEX study_mirror_name_idx
 	ON study_mirror(name);
+
+CREATE INDEX study_mirror_faculty_sponsor_idx
+	ON study_mirror(faculty_sponsor);

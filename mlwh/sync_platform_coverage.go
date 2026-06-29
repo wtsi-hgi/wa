@@ -585,6 +585,7 @@ func wholesaleMirrorTables() []string {
 	return []string{
 		syncTableIseqRunStatusDict,
 		syncTableOseqFlowcell,
+		syncTableStudyUsers,
 		syncTablePacBioRunWellMetrics,
 		syncTableEseqRun,
 		syncTableEseqRunLaneMetrics,
@@ -598,6 +599,8 @@ func wholesaleMirrorSpecFor(table string) wholesaleMirrorSpec {
 		return iseqRunStatusDictWholesaleSpec()
 	case syncTableOseqFlowcell:
 		return oseqFlowcellWholesaleSpec()
+	case syncTableStudyUsers:
+		return studyUsersWholesaleSpec()
 	case syncTablePacBioRunWellMetrics:
 		return pacBioRunWellMetricsWholesaleSpec()
 	case syncTableEseqRun:
@@ -647,6 +650,33 @@ func oseqFlowcellWholesaleSpec() wholesaleMirrorSpec {
 			}
 
 			return []any{idOseqFlowcellTmp, idSampleTmp, idStudyLims}, nil
+		},
+	}
+}
+
+// studyUsersWholesaleSpec mirrors study_users wholesale, INNER JOINing to study
+// on id_study_tmp AND id_lims = 'SQSCP' so only rows whose study is an SQSCP
+// study mirror (preserving the id_lims = 'SQSCP' invariant and ensuring the
+// study_mirror.id_study_tmp link always resolves). The nullable login/email/name
+// columns are scanned via sql.NullString and COALESCEd to '' for the NOT NULL
+// mirror columns; a row whose id_study_tmp is 0 is skipped.
+func studyUsersWholesaleSpec() wholesaleMirrorSpec {
+	return wholesaleMirrorSpec{
+		syncTable:     syncTableStudyUsers,
+		mirrorTable:   "study_users_mirror",
+		mirrorColumns: []string{"id_study_users_tmp", "id_study_tmp", "role", "login", "email", "name", "last_updated"},
+		sourceQuery:   `SELECT su.id_study_users_tmp, su.id_study_tmp, su.role, su.login, su.email, su.name, su.last_updated FROM study_users su INNER JOIN study ON study.id_study_tmp = su.id_study_tmp AND study.id_lims = 'SQSCP' ORDER BY su.id_study_users_tmp`,
+		scan: func(rows *sql.Rows) ([]any, error) {
+			var idStudyUsersTmp, idStudyTmp int64
+			var role, login, email, name, lastUpdated sql.NullString
+			if err := rows.Scan(&idStudyUsersTmp, &idStudyTmp, &role, &login, &email, &name, &lastUpdated); err != nil {
+				return nil, fmt.Errorf("mlwh: scan study_users sync row: %w", err)
+			}
+			if idStudyTmp == 0 {
+				return nil, nil
+			}
+
+			return []any{idStudyUsersTmp, idStudyTmp, role.String, login.String, email.String, name.String, normalizeWholesaleTime(lastUpdated)}, nil
 		},
 	}
 }

@@ -60,6 +60,20 @@ func seedRealMLWHOseqFlowcellRow(t *testing.T, db *sql.DB, idOseqFlowcellTmp, id
 	}
 }
 
+// seedRealMLWHStudyUsersRow inserts a study_users role assignment linked to a
+// study via id_study_tmp. login/email/name are passed as *string so a nil
+// pointer seeds an upstream NULL (which the wholesale scan COALESCEs to '').
+func seedRealMLWHStudyUsersRow(t *testing.T, db *sql.DB, idStudyUsersTmp, idStudyTmp int64, role string, login, email, name *string, lastUpdated time.Time) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO study_users(id_study_users_tmp, id_study_tmp, last_updated, role, login, email, name) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		idStudyUsersTmp, idStudyTmp, formatSyncTime(lastUpdated), role, login, email, name,
+	); err != nil {
+		t.Fatalf("seedRealMLWHStudyUsersRow: %v", err)
+	}
+}
+
 func seedRealMLWHTrackingRow(t *testing.T, db *sql.DB, idSampleLims, studyID string, manifestCreated time.Time) {
 	t.Helper()
 
@@ -705,6 +719,19 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 		ega_policy_accession_number TEXT,
 		data_release_timing         TEXT,
 		last_updated                TEXT NOT NULL
+	)`)
+
+	// study_users carries per-study role assignments and links to study via
+	// id_study_tmp; it is mirrored wholesale. login/email/name are nullable
+	// upstream (the wholesale scan COALESCEs NULL to '').
+	mustExec(t, db, `CREATE TABLE study_users (
+		id_study_users_tmp INTEGER PRIMARY KEY,
+		id_study_tmp       INTEGER NOT NULL,
+		last_updated       TEXT NOT NULL,
+		role               TEXT,
+		login              TEXT,
+		email              TEXT,
+		name               TEXT
 	)`)
 
 	mustExec(t, db, `CREATE TABLE iseq_flowcell (

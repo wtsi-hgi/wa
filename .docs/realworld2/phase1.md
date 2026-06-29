@@ -47,8 +47,8 @@ acceptance tests from A1 (sqlite shape with the 7 columns + 5 indexes;
 mysql shape + cross-dialect equality; ephemeral insert/read-back of the
 column list).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.2: A2 - faculty_sponsor index + iRODS id_iseq_product index, both dialects [parallel with 1.1]
 
@@ -64,8 +64,8 @@ iRODS LEFT JOIN over the ~9M-row iRODS mirror). Covering both acceptance
 tests from A2 (both schemas have the two new indexes in both dialects and
 compare equal; the existing cross-dialect shape test still passes).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items
@@ -100,8 +100,8 @@ JOIN; never-synced `Freshness` returns a `study_users` entry with
 row reported with its `last_run`). Depends on 1.1 (the mirror table) and
 the existing `study_mirror.id_study_tmp` link key.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.4: A5 - sparse cold-load read-index decisions
 
@@ -121,8 +121,8 @@ accept-list -- `sqliteLargeCacheReadIndexShape` /
 `...SparseReadIndexColumns` -- is updated to the new shape and still
 passes). Depends on 1.2 (the index definition).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.5: A4 - CacheSchemaVersion bump (full resync)
 
@@ -141,8 +141,8 @@ recreates the tables, clears the sync-state rows for the recreated
 tables, and stamps `schema_version` to 11). Depends on 1.1 (table +
 migration-list registration) and 1.3 (the sync state for `study_users`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For sequential items, a single review pass after each item (or one pass
 over Batch 2) is acceptable; reviewers must confirm the schema change is

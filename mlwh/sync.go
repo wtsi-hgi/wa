@@ -56,6 +56,7 @@ const (
 	syncTableUseqProductMetrics       = "useq_product_metrics"
 	syncTableUseqRunMetrics           = "useq_run_metrics"
 	syncTableOseqFlowcell             = "oseq_flowcell"
+	syncTableStudyUsers               = "study_users"
 	syncTableIseqRunStatus            = "iseq_run_status"
 	syncTableIseqRunStatusDict        = "iseq_run_status_dict"
 	syncTableSeqOpsTrackingPerSample  = "seq_ops_tracking_per_sample"
@@ -96,6 +97,7 @@ var supportedSyncTables = []string{
 	syncTableIseqRunStatus,
 	syncTableIseqRunStatusDict,
 	syncTableOseqFlowcell,
+	syncTableStudyUsers,
 	syncTablePacBioRunWellMetrics,
 	syncTableEseqRun,
 	syncTableEseqRunLaneMetrics,
@@ -293,6 +295,7 @@ var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
 	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_iseq_product_idx", Column: "id_study_lims, id_iseq_product"},
+	{Name: "spi_mirror_iseq_product_idx", Column: "id_iseq_product"},
 }
 
 // iseqProductMetricsMirrorReadIndexes is the subset of the iseq product-metrics
@@ -312,17 +315,21 @@ var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
 
 // seqProductIRODSLocationsMirrorReadIndexes is the subset of the iRODS-locations
 // mirror's secondary indexes that the sparse cold-load path recreates immediately
-// (the mirror is too large -- ~7M rows -- to rebuild every declared index inline).
+// (the mirror is too large -- ~9M rows -- to rebuild every declared index inline).
 // It MUST include the (id_study_lims, id_iseq_product) index: the per-platform
 // status-breakdown query joins each platform's product id to spi.id_iseq_product
 // scoped by id_study_lims, and without this index that linkage full-scans the mirror
-// per study (the ~5s study page). Omitting it here would let the large-cold-load
+// per study (the ~5s study page). It MUST also include the (id_iseq_product) index:
+// the D1 run-scoped iRODS join and the D2 manifest per-product iRODS LEFT JOIN match
+// on id_iseq_product alone, so without it those joins full-scan the mirror until the
+// full index set is rebuilt. Omitting either here would let the large-cold-load
 // schema-shape tolerance accept the missing index as expected drift, silently
 // recreating the slow path.
 var seqProductIRODSLocationsMirrorReadIndexes = []syncIndexSpec{
 	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_iseq_product_idx", Column: "id_study_lims, id_iseq_product"},
+	{Name: "spi_mirror_iseq_product_idx", Column: "id_iseq_product"},
 }
 
 var seqProductIRODSLocationsMirrorIndexSet = syncMirrorIndexSet{
@@ -2381,7 +2388,7 @@ func (c *Client) syncTableData(ctx context.Context, table string, state syncStat
 	case syncTableIseqRunStatus:
 		return syncIseqRunStatusTable(ctx, c.cache, source, state)
 	case syncTablePacBioRunWellMetrics, syncTableEseqRun, syncTableEseqRunLaneMetrics,
-		syncTableUseqRunMetrics, syncTableOseqFlowcell, syncTableIseqRunStatusDict:
+		syncTableUseqRunMetrics, syncTableOseqFlowcell, syncTableStudyUsers, syncTableIseqRunStatusDict:
 		return syncWholesaleMirrorTable(ctx, c.cache, source, state, wholesaleMirrorSpecFor(table))
 	case syncTableSeqOpsTrackingPerSample:
 		return syncSeqOpsTrackingPerSampleTable(ctx, c.cache, source, state)

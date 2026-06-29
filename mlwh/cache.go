@@ -51,13 +51,15 @@ const (
 	mysqlSyncLockNamePrefix        = "wa_mlwh_sync_"
 
 	// CacheSchemaVersion is the embedded cache schema version supported by OpenCache.
-	// Bumped to 10 to make the seq_product_irods_locations_mirror.created column
-	// nullable: the cache schema-shape drift check compares column type families,
-	// indexes and unique constraints but not column nullability, so a NOT NULL ->
-	// nullable change is invisible to it and an existing cache would otherwise keep
-	// the old NOT NULL column. The version bump forces migrateCacheSchema to
-	// recreate the mirror tables with the new shape.
-	CacheSchemaVersion = 10
+	// Bumped to 11 to add the study_users_mirror table plus the study_mirror
+	// faculty_sponsor and seq_product_irods_locations_mirror id_iseq_product
+	// indexes: the schema-shape drift check would not recreate an existing cache
+	// for a new table or index that it cannot observe on the old schema, so this
+	// single bump forces migrateCacheSchema to recreate the mirror tables (a full
+	// resync) with the new shape, after which the next sync repopulates them.
+	// (Earlier, v10 made the seq_product_irods_locations_mirror.created column
+	// nullable for the same drift-check reason.)
+	CacheSchemaVersion = 11
 )
 
 var (
@@ -770,9 +772,10 @@ func iseqProductMetricsSparseReadIndexColumns() []string {
 // seqProductIRODSLocationsSparseReadIndexColumns is the sorted, comma-joined column
 // shape of the iRODS-locations mirror's sparse cold-load read index set
 // (seqProductIRODSLocationsMirrorReadIndexes), used to accept the post-cold-load
-// shape that includes the (id_study_lims, id_iseq_product) status-breakdown index.
+// shape that includes the (id_study_lims, id_iseq_product) status-breakdown index
+// and the (id_iseq_product) D1 run-scope / D2 manifest LEFT JOIN index.
 func seqProductIRODSLocationsSparseReadIndexColumns() []string {
-	return []string{"id_sample_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"}
+	return []string{"id_iseq_product", "id_sample_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"}
 }
 
 func sqliteSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table string) bool {
