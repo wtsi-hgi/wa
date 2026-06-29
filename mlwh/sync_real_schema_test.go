@@ -62,7 +62,7 @@ func seedRealMLWHOseqFlowcellRow(t *testing.T, db *sql.DB, idOseqFlowcellTmp, id
 
 // seedRealMLWHStudyUsersRow inserts a study_users role assignment linked to a
 // study via id_study_tmp. login/email/name are passed as *string so a nil
-// pointer seeds an upstream NULL (which the wholesale scan COALESCEs to '').
+// pointer seeds an upstream NULL (which the wholesale scan COALESCEs to empty string).
 func seedRealMLWHStudyUsersRow(t *testing.T, db *sql.DB, idStudyUsersTmp, idStudyTmp int64, role string, login, email, name *string, lastUpdated time.Time) {
 	t.Helper()
 

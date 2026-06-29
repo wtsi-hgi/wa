@@ -658,7 +658,7 @@ func oseqFlowcellWholesaleSpec() wholesaleMirrorSpec {
 // on id_study_tmp AND id_lims = 'SQSCP' so only rows whose study is an SQSCP
 // study mirror (preserving the id_lims = 'SQSCP' invariant and ensuring the
 // study_mirror.id_study_tmp link always resolves). The nullable login/email/name
-// columns are scanned via sql.NullString and COALESCEd to '' for the NOT NULL
+// columns are scanned via sql.NullString and COALESCEd to empty string for the NOT NULL
 // mirror columns; a row whose id_study_tmp is 0 is skipped.
 func studyUsersWholesaleSpec() wholesaleMirrorSpec {
 	return wholesaleMirrorSpec{
@@ -948,7 +948,7 @@ func seqOpsTrackingPerSampleMirrorRowArgs(row seqOpsTrackingPerSampleSyncRow) []
 // source rewrites the qualifier away (it has no schemas).
 // The context/lookup string columns (everything except the id_sample_lims primary
 // key and the nullable milestone datetimes) are nullable in the real
-// mlwh_reporting table, so they are COALESCEd to '' to keep the plain-string scan
+// mlwh_reporting table, so they are COALESCEd to empty string to keep the plain-string scan
 // targets and the NOT NULL mirror columns happy rather than failing with
 // "converting NULL to string is unsupported".
 const seqOpsTrackingPerSampleSourceQuery = `SELECT id_sample_lims, COALESCE(sanger_sample_id, '') AS sanger_sample_id, COALESCE(sanger_sample_name, '') AS sanger_sample_name, COALESCE(study_id, '') AS study_id, COALESCE(programme, '') AS programme, COALESCE(faculty_sponsor, '') AS faculty_sponsor, COALESCE(library_type, '') AS library_type, COALESCE(platform, '') AS platform, manifest_created, manifest_uploaded, labware_received, order_made, working_dilution, library_start, library_complete, sequencing_run_start, sequencing_qc_complete FROM mlwh_reporting.seq_ops_tracking_per_sample`
