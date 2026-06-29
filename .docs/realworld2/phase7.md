@@ -77,8 +77,8 @@ queries each has a non-empty real index key and is not a full scan;
 EXPLAIN of `/studies/user` is served by a `study_users_mirror` index, not
 a full scan). Depends on all prior phases.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 7.2: I2 - source integration test for the new source columns/tables [parallel with 7.1]
 
@@ -100,8 +100,8 @@ the supported-tables check; the probe SELECT of `study.faculty_sponsor`,
 successfully). Depends on Phase 1 (the `study_users` sync source query
 and supported-tables registration).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items
