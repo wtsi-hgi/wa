@@ -503,7 +503,11 @@ func (c *Client) studyOverviewWindowArgs() []any {
 }
 
 // fillStudyOverviewIRODS fills data_objects, sequencing_date_range and
-// newest_data_added from one study-scoped iRODS aggregate (COUNT, MIN, MAX created).
+// newest_data_added from one study-scoped iRODS aggregate (COUNT, MIN, MAX
+// created). The date range and newest_data_added are omitted when the study has
+// no iRODS rows (e.g. mid-sequencing, before delivery to iRODS), so a study with
+// linked samples but zero data objects reports data_objects=0 rather than erroring
+// on the NULL MIN/MAX.
 func (c *Client) fillStudyOverviewIRODS(ctx context.Context, studyLimsID string, overview *StudyOverview) error {
 	db := c.readCacheDB()
 	if db == nil {
@@ -517,6 +521,11 @@ func (c *Client) fillStudyOverviewIRODS(ctx context.Context, studyLimsID string,
 	)
 	if err := db.QueryRowContext(ctx, studyOverviewIRODSAggregateSQL, studyLimsID).Scan(&dataObjects, &minCreated, &maxCreated); err != nil {
 		return fmt.Errorf("%w: aggregate study irods for overview: %w", ErrUpstreamImpaired, err)
+	}
+	if dataObjects == 0 {
+		overview.DataObjects = 0
+
+		return nil
 	}
 
 	earliest, err := formatFreshnessTime(minCreated)
@@ -728,6 +737,11 @@ func (c *Client) fillRunOverviewIRODS(ctx context.Context, runID int, overview *
 	)
 	if err := db.QueryRowContext(ctx, runOverviewIRODSAggregateSQL, runID).Scan(&dataObjects, &minCreated, &maxCreated); err != nil {
 		return fmt.Errorf("%w: aggregate run irods for overview: %w", ErrUpstreamImpaired, err)
+	}
+	if dataObjects == 0 {
+		overview.DataObjects = 0
+
+		return nil
 	}
 
 	earliest, err := formatFreshnessTime(minCreated)

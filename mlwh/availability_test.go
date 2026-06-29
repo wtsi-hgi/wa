@@ -115,6 +115,20 @@ var (
 	d1CreatedLatest   = time.Date(2026, time.June, 26, 18, 0, 0, 0, time.UTC)
 )
 
+// b1MidSequencingSample is the single S1 sample for the mid-sequencing scenario:
+// it has iseq product-metrics in S1 but no iRODS row anywhere, so the study has
+// linked samples yet zero iRODS data objects.
+const b1MidSequencingSample = int64(21)
+
+// d1NotYetInIRODSRun is the Illumina NPG run for the not-yet-in-iRODS scenario:
+// it has iseq product-metrics rows but no iRODS rows joined to it.
+const d1NotYetInIRODSRun = 52554
+
+// d1NotYetInIRODSSample is the single sample on d1NotYetInIRODSRun; it has
+// product-metrics on the run but no iRODS row, so the run resolves yet has zero
+// iRODS data objects.
+const d1NotYetInIRODSSample = int64(81)
+
 // SamplesWithData and SamplesWithoutData must mirror SamplesForStudy's
 // never-synced cascade: a never-synced cache yields both sentinels.
 func TestSamplesWithDataNeverSyncedReturnsJoinedSentinel(t *testing.T) {
@@ -939,6 +953,33 @@ func seedD1RunOverviewScenario(t *testing.T, db *sql.DB) {
 	seedB3AvailabilitySyncState(t, db)
 }
 
+// RunOverview on a run that has been sequenced (it has iseq product-metrics) but
+// whose data has not yet reached iRODS must report data_objects=0 with no
+// sequencing date range, not error.
+func TestRunOverviewSequencedNoIRODSHasNoDateRange(t *testing.T) {
+	convey.Convey("Given a synced run 52554 with product-metrics but no iRODS rows", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedHierarchyStudy(t, cache.DB(), 173, "S1")
+		seedHierarchySample(t, cache.DB(), d1NotYetInIRODSSample, "S1", "d1-sample-"+formatInt(d1NotYetInIRODSSample))
+		seedLibrarySample(t, cache.DB(), "Standard", d1NotYetInIRODSSample, "S1")
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 8101, d1NotYetInIRODSSample, d1NotYetInIRODSRun, 1, 1, "S1")
+		seedB3AvailabilitySyncState(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		overview, err := client.RunOverview(context.Background(), "52554")
+
+		convey.Convey("when RunOverview is called, then it reports the run's one sample with no iRODS and no date range", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(overview.IDRun, convey.ShouldEqual, d1NotYetInIRODSRun)
+			convey.So(overview.Samples, convey.ShouldEqual, 1)
+			convey.So(overview.DataObjects, convey.ShouldEqual, 0)
+			convey.So(overview.SequencingDateRange, convey.ShouldBeNil)
+		})
+	})
+}
+
 // seedB3AvailabilitySyncState marks every feeding table synced, so the B3
 // availability queries return data rather than the never-synced sentinel.
 func seedB3AvailabilitySyncState(t *testing.T, db *sql.DB) {
@@ -1150,6 +1191,36 @@ func TestStudyOverviewSyncedEmptyStudyIsAllZeroWithCacheSyncedAt(t *testing.T) {
 			convey.So(overview.NewestDataAdded, convey.ShouldBeEmpty)
 			convey.So(overview.AddedLast7Days, convey.ShouldEqual, 0)
 			convey.So(overview.CacheSyncedAt, convey.ShouldEqual, b1OldestLastRun.Format(utcRFC3339Layout))
+		})
+	})
+}
+
+// StudyOverview on a synced study whose only sample has been sequenced (it has
+// iseq product-metrics) but whose data has not yet reached iRODS must report
+// data_objects=0 with no sequencing date range, not error: a study mid-sequencing
+// is a valid, expected state.
+func TestStudyOverviewSequencedNoIRODSHasNoDateRange(t *testing.T) {
+	convey.Convey("Given a synced study S1 whose one sample has product-metrics but no iRODS row", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedHierarchyStudy(t, cache.DB(), 230, "S1")
+		seedHierarchySample(t, cache.DB(), b1MidSequencingSample, "S1", "ov-sample-"+formatInt(b1MidSequencingSample))
+		seedLibrarySample(t, cache.DB(), "Standard", b1MidSequencingSample, "S1")
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 2101, b1MidSequencingSample, 52553, 1, 1, "S1")
+		seedB1OverviewSyncState(t, cache.DB())
+		client := newB1OverviewClient(cache)
+
+		overview, err := client.StudyOverview(context.Background(), "S1")
+
+		convey.Convey("when StudyOverview is called, then the sample is sequenced-no-data with no iRODS and no date range", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(overview.SamplesTotal, convey.ShouldEqual, 1)
+			convey.So(overview.SamplesWithData, convey.ShouldEqual, 0)
+			convey.So(overview.SamplesSequencedNoData, convey.ShouldEqual, 1)
+			convey.So(overview.DataObjects, convey.ShouldEqual, 0)
+			convey.So(overview.SequencingDateRange, convey.ShouldBeNil)
+			convey.So(overview.NewestDataAdded, convey.ShouldBeEmpty)
 		})
 	})
 }
