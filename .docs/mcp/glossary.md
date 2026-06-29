@@ -159,9 +159,12 @@ absence of a detailed timeline is reported as less detail, never as an error.
 ### Platform
 
 A **platform** is the sequencing platform a sample's data was produced on -
-Illumina, PacBio, Elembio, Ultimagen, or ONT (Oxford Nanopore) - sourced from
-the authoritative `seq_platform_name` column rather than inferred from the
-matched metrics table. Negatives are platform-qualified so a "no data" answer
+Illumina, PacBio, Elembio, Ultimagen, or ONT (Oxford Nanopore) - reported as the
+canonical platform name derived from which product-metrics mirror the sample has
+products in (Illumina, PacBio, Elembio, or Ultimagen), with ONT derived from
+`oseq_flowcell` membership. It is determined by which platform's metrics the
+sample appears in, never from the iRODS `seq_platform_name` source string.
+Negatives are platform-qualified so a "no data" answer
 always names the platform it applies to. ONT is a special case: only a sample's
 identity and study are tracked for ONT, so its availability, QC, and
 within-sequencing status are reported as `not_tracked` rather than as a false
