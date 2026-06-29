@@ -309,3 +309,75 @@ Each new endpoint's results MUST be reachable from the `wa mlwh` CLI
   Checklists for the bugfix workflow: `.docs/bugfixes/`.
 - The first wave (reused, not rebuilt): `.docs/realworld/` (background only — code is
   authority).
+
+## Notes
+
+These decisions are settled and govern the spec. They resolve the open "HOW"
+choices above; they are direct instructions, not open questions.
+
+### Cache schema migration — bump CacheSchemaVersion (full resync)
+
+- Bump `CacheSchemaVersion` from 10 to 11. The new `study_users_mirror` table and all
+  new indexes (e.g. on `study_mirror.faculty_sponsor`, plus the iRODS/product-metrics
+  indexes backing the new query paths) are created by the existing recreate-tables
+  migration, which performs a full resync. A full resync is acceptable; do NOT take the
+  additive `IF NOT EXISTS` no-version-bump path.
+
+### D3 QC counts — extend StatusBreakdown (no new endpoint; defer per-platform)
+
+- Do NOT add a `/study/:id/qc-breakdown` endpoint. Instead extend the existing
+  `StatusBreakdown` (`/study/:id/status-breakdown`) response with study-level
+  `qc_pass` / `qc_fail` / `qc_pending` counts computed over the **sequenced (distinct)
+  samples**, so a single call returns received (= `samples_total`), sequenced
+  (= `samples_total` − the `registered` bucket), not-sequenced (= the `registered`
+  bucket) AND the QC split.
+- The per-sample QC verdict MUST use the **same roll-up** `progress.go` /
+  `SampleProgress.qc` already applies (precedence fail > pending > pass; `not_tracked`
+  when no products), so study counts and per-sample QC cannot disagree. Reuse
+  `StatusBreakdown`'s existing feeding-tables list and `cache_synced_at` / freshness
+  machinery.
+- **Per-platform QC counts are deferred** (not part of the Q6 ask, not clearly cheap).
+  Leave the design so they can be added later without breaking the response shape.
+
+### D4 people→studies — two endpoints + resolve-person directory
+
+- Provide **two separate endpoints**, not one endpoint with a mode/source param, so each
+  carries its own description and the faculty_sponsor-vs-study_users routing is
+  self-documenting (the MCP layer cannot mis-set a param):
+  - `GET /studies/faculty-sponsor/:name` (+ `/count`) — the named PI/sponsor; free-text
+    case-insensitive substring match on `study.faculty_sponsor`.
+  - `GET /studies/user/:person` (+ `/count`) — `study_users` role membership; matches
+    case-insensitively across `name`, `login`, AND `email` (substring).
+- **Default role filter for `/studies/user`** is `owner`, `manager`, and
+  `data_access_contact` (the substantive "responsible-for" roles). **Exclude** `follower`
+  and the operational roles `slf_manager`, `lab_manager`, `administrator` by default. A
+  `role=` query param overrides the default set. Each result row MUST surface the matched
+  `role`. The endpoint description MUST state the default role set so the agent can widen
+  via `role=` when a user expects more.
+- Keep the **resolve-person / people-directory endpoint** as its own endpoint that feeds
+  both: given a partial term it returns the distinct candidate people with their canonical
+  stored forms (distinct `faculty_sponsor` values; distinct `study_users`
+  `(name, login, email, role)`) plus a study count per candidate, cheap and bounded
+  (+ `/count`).
+
+### File-type filter — open suffix, empty-result-not-error
+
+- The file-type filter accepts **any token** (open vocabulary; no closed allow-list).
+  Normalise the token: strip a single leading `.` and match case-insensitively as
+  `irods_file_name LIKE '%.<token>'`.
+- A **valid-but-unmatched** suffix returns an **empty result, not an error**. Return
+  **400** only when the value is empty/whitespace or contains the SQL-wildcard / path
+  characters `%`, `_`, or `/`.
+- Endpoint descriptions MUST state it is a **filename-suffix** filter. The `/count`
+  counterparts MUST honour the same filter so an empty result is distinguishable from
+  "no data".
+
+### D1 iRODS id_run representation
+
+- Add `id_run` to `IRODSPath` as an **`int`**, populated via LEFT JOIN
+  (`id_iseq_product` → `iseq_product_metrics_mirror.id_run`), with **`0` = not derivable**
+  (non-Illumina or unmatched), matching the existing `RunStatusTimeline.IDRun` /
+  `RunOverview.IDRun` "0 for non-Illumina" convention so the API stays internally
+  consistent. Apply this on the study, sample, AND run iRODS rows.
+- Document that `0` means unknown / non-Illumina, and also expose each row's **platform**
+  so a `0` reads as "ONT / non-Illumina" rather than ambiguous.
