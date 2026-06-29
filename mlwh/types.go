@@ -99,7 +99,13 @@ type Lane struct {
 
 // IRODSPath identifies a product path exported from MLWH joins. IDSampleTmp and
 // Name identify the sample the data object belongs to, so a study iRODS listing
-// is aggregatable by sample without a second query.
+// is aggregatable by sample without a second query. IDRun is the Illumina NPG run
+// id, derived by LEFT JOIN id_iseq_product -> iseq_product_metrics_mirror.id_run;
+// it is 0 when not derivable (non-Illumina / unmatched), matching the existing
+// RunOverview.IDRun / RunStatusTimeline.IDRun "0 for non-Illumina" convention.
+// Platform is the iRODS row's mirrored platform string (the source
+// seq_platform_name, e.g. "illumina"), so a 0 id_run reads as ONT / non-Illumina
+// rather than ambiguous. Both fields are additive; existing fields unchanged.
 type IRODSPath struct {
 	IDProduct   string `json:"id_product" doc:"product identifier of the iRODS data object"`
 	Collection  string `json:"collection" doc:"iRODS collection containing the data object"`
@@ -107,6 +113,8 @@ type IRODSPath struct {
 	IRODSPath   string `json:"irods_path" doc:"full iRODS path of the data object"`
 	IDSampleTmp int64  `json:"id_sample_tmp" doc:"internal MLWH surrogate key of the sample the data object belongs to"`
 	Name        string `json:"name" doc:"Sanger sample name of the sample the data object belongs to; empty when the sample is not present in the sample mirror"`
+	IDRun       int    `json:"id_run" doc:"Illumina NPG run id of the data object; 0 when not derivable (non-Illumina or unmatched)"`
+	Platform    string `json:"platform" doc:"platform string the iRODS row was synced with (source seq_platform_name); disambiguates a 0 id_run as ONT/non-Illumina"`
 }
 
 // SampleWithData is the enriched list row for the samples-with-data and

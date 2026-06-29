@@ -195,6 +195,10 @@ func (q *serverFakeQueryer) IRODSPathsForStudy(_ context.Context, _ string, _ in
 	panic("unexpected IRODSPathsForStudy call")
 }
 
+func (q *serverFakeQueryer) IRODSPathsForRun(_ context.Context, _ string, _ string, _ int, _ int) ([]IRODSPath, error) {
+	panic("unexpected IRODSPathsForRun call")
+}
+
 func (q *serverFakeQueryer) StudiesForSample(_ context.Context, _ string) ([]Study, error) {
 	panic("unexpected StudiesForSample call")
 }
@@ -380,6 +384,10 @@ func (q *serverFakeQueryer) CountIRODSPathsForSample(_ context.Context, _ string
 
 func (q *serverFakeQueryer) CountIRODSPathsForStudy(_ context.Context, _ string) (Count, error) {
 	panic("unexpected CountIRODSPathsForStudy call")
+}
+
+func (q *serverFakeQueryer) CountIRODSPathsForRun(_ context.Context, _ string, _ string) (Count, error) {
+	panic("unexpected CountIRODSPathsForRun call")
 }
 
 func (q *serverFakeQueryer) CountFindSamplesBySangerID(_ context.Context, _ string) (Count, error) {
@@ -726,6 +734,40 @@ func TestServerSearchPaginationGuardA4(t *testing.T) {
 	})
 }
 
+// TestServerIRODSFileTypeBadRequestGuardB2 is B2 acceptance test 4: a present
+// but invalid file_type (empty, a '%', a '/', or a '_') on any iRODS list or
+// count endpoint returns the 400 bad_request envelope BEFORE the queryer is
+// reached. The serverFakeQueryer panics on every iRODS method, so a 400 with no
+// panic proves the queryer was never called.
+func TestServerIRODSFileTypeBadRequestGuardB2(t *testing.T) {
+	invalidFileTypes := map[string]string{
+		"empty":           "file_type=",
+		"percent":         "file_type=%25",
+		"path separator":  "file_type=a/b",
+		"underscore":      "file_type=a_b",
+		"whitespace only": "file_type=%20",
+		"lone dot":        "file_type=.",
+	}
+	endpoints := []string{
+		"/study/SZ/irods",
+		"/study/SZ/irods/count",
+		"/sample/SN/irods",
+		"/sample/SN/irods/count",
+	}
+
+	for label, query := range invalidFileTypes {
+		for _, endpoint := range endpoints {
+			convey.Convey("B2.4: Given GET "+endpoint+"?"+query+" ("+label+"), then status is 400 bad_request and the queryer is not reached", t, func() {
+				queryer := &serverFakeQueryer{}
+
+				response := performMLWHRequestForTest(t, queryer, http.MethodGet, endpoint+"?"+query)
+
+				assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+			})
+		}
+	}
+}
+
 func TestServerFetchAllPaginationGuard(t *testing.T) {
 	convey.Convey("Given GET /study/SZ/detail?offset=-1, then status is 400 with code bad_request (not a 500/panic)", t, func() {
 		client := newListSizingClientForTest(t, "SZ", 5)
@@ -937,6 +979,98 @@ func TestServerExpandJSONCasingE1(t *testing.T) {
 	})
 }
 
+// irodsFileTypeFakeQueryer is a Queryer that also satisfies
+// irodsPathsByFileTypeQueryer, recording which iRODS path each endpoint took and
+// the file_type it received, so the dispatch test can assert the handler routes a
+// present file_type to the filtered method and an absent one to the bare method.
+type irodsFileTypeFakeQueryer struct {
+	serverFakeQueryer
+	bareStudyListCalled bool
+	studyListFileType   string
+	studyCountFileType  string
+	sampleListFileType  string
+	sampleCountFileType string
+}
+
+func (q *irodsFileTypeFakeQueryer) IRODSPathsForStudy(_ context.Context, _ string, _, _ int) ([]IRODSPath, error) {
+	q.bareStudyListCalled = true
+
+	return []IRODSPath{}, nil
+}
+
+func (q *irodsFileTypeFakeQueryer) CountIRODSPathsForStudy(_ context.Context, _ string) (Count, error) {
+	return Count{}, nil
+}
+
+func (q *irodsFileTypeFakeQueryer) IRODSPathsForSample(_ context.Context, _ string, _, _ int) ([]IRODSPath, error) {
+	return []IRODSPath{}, nil
+}
+
+func (q *irodsFileTypeFakeQueryer) CountIRODSPathsForSample(_ context.Context, _ string) (Count, error) {
+	return Count{}, nil
+}
+
+func (q *irodsFileTypeFakeQueryer) IRODSPathsForStudyByFileType(_ context.Context, _, fileType string, _, _ int) ([]IRODSPath, error) {
+	q.studyListFileType = fileType
+
+	return []IRODSPath{}, nil
+}
+
+func (q *irodsFileTypeFakeQueryer) CountIRODSPathsForStudyByFileType(_ context.Context, _, fileType string) (Count, error) {
+	q.studyCountFileType = fileType
+
+	return Count{}, nil
+}
+
+func (q *irodsFileTypeFakeQueryer) IRODSPathsForSampleByFileType(_ context.Context, _, fileType string, _, _ int) ([]IRODSPath, error) {
+	q.sampleListFileType = fileType
+
+	return []IRODSPath{}, nil
+}
+
+func (q *irodsFileTypeFakeQueryer) CountIRODSPathsForSampleByFileType(_ context.Context, _, fileType string) (Count, error) {
+	q.sampleCountFileType = fileType
+
+	return Count{}, nil
+}
+
+// TestServerIRODSFileTypeDispatchB2 proves the handler routes a present, valid
+// file_type to the filtered ByFileType query path (and an absent file_type to
+// the bare path), parameterising the existing endpoints rather than adding new
+// ones. The fake records which path each endpoint took.
+func TestServerIRODSFileTypeDispatchB2(t *testing.T) {
+	convey.Convey("Given a server over a fake that records the file-type dispatch", t, func() {
+		convey.Convey("when GET /study/SZ/irods?file_type=cram is served, then the filtered study path receives the normalised token", func() {
+			queryer := &irodsFileTypeFakeQueryer{}
+
+			response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/SZ/irods?file_type=.CRAM")
+
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+			convey.So(queryer.studyListFileType, convey.ShouldEqual, "cram")
+			convey.So(queryer.studyCountFileType, convey.ShouldEqual, "cram")
+		})
+
+		convey.Convey("when GET /sample/SN/irods/count?file_type=bam is served, then the filtered sample count receives the normalised token", func() {
+			queryer := &irodsFileTypeFakeQueryer{}
+
+			response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/sample/SN/irods/count?file_type=bam")
+
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+			convey.So(queryer.sampleCountFileType, convey.ShouldEqual, "bam")
+		})
+
+		convey.Convey("when GET /study/SZ/irods is served with no file_type, then the bare path is taken", func() {
+			queryer := &irodsFileTypeFakeQueryer{}
+
+			response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/SZ/irods")
+
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+			convey.So(queryer.bareStudyListCalled, convey.ShouldBeTrue)
+			convey.So(queryer.studyListFileType, convey.ShouldBeEmpty)
+		})
+	})
+}
+
 func TestServerUnauthenticatedReachabilityG3(t *testing.T) {
 	convey.Convey("G3.1: Given a server over a synced cache (seeded with a malaria study) and no auth group", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -1078,6 +1212,31 @@ func TestServerListSizingHeadersNotSetOnErrorE2(t *testing.T) {
 		convey.So(response.Code, convey.ShouldEqual, http.StatusServiceUnavailable)
 		convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "")
 		convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "")
+	})
+}
+
+// B3 acceptance test 3: GET /run/:id/irods with limit=2&offset=0 over a run with
+// six matching iRODS objects returns a 2-element JSON array with X-Total-Count: 6
+// and X-Next-Offset: 2 (the sizing headers track the run-scope count, which is the
+// same join with no LIMIT).
+func TestServerIRODSPathsForRunPaginationHeadersB3(t *testing.T) {
+	convey.Convey("B3.3: Given run 52553 with 6 matching iRODS objects served over HTTP", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		seedB3RunIRODSScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		defer closeParityClientForTest(t, client)
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/run/52553/irods?limit=2&offset=0")
+
+		convey.Convey("when GET /run/52553/irods?limit=2&offset=0 is served, then a 2-element array with X-Total-Count 6 and X-Next-Offset 2", func() {
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+			var paths []IRODSPath
+			decodeMLWHJSONResponseForTest(t, response, &paths)
+			convey.So(paths, convey.ShouldHaveLength, 2)
+			convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "6")
+			convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "2")
+		})
 	})
 }
 

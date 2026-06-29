@@ -126,6 +126,9 @@ func parityQueryCases() []parityQueryCase {
 		{name: "IRODSPathsForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.IRODSPathsForStudy(ctx, parityStudyID, 100, 0)
 		}},
+		{name: "IRODSPathsForRun", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.IRODSPathsForRun(ctx, parityRunID, "", 100, 0)
+		}},
 		{name: "StudiesForSample", call: func(ctx context.Context, q Queryer) (any, error) { return q.StudiesForSample(ctx, paritySampleName) }},
 		{name: "FindSamplesBySangerID", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.FindSamplesBySangerID(ctx, paritySampleSangerID)
@@ -206,6 +209,9 @@ func parityQueryCases() []parityQueryCase {
 		}},
 		{name: "CountIRODSPathsForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountIRODSPathsForStudy(ctx, parityStudyID)
+		}},
+		{name: "CountIRODSPathsForRun", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountIRODSPathsForRun(ctx, parityRunID, "")
 		}},
 		{name: "CountFindSamplesBySangerID", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountFindSamplesBySangerID(ctx, paritySampleSangerID)

@@ -422,6 +422,8 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 				Collection: "/seq/run",
 				DataObject: "1",
 				IRODSPath:  "/seq/run/1",
+				IDRun:      9001,
+				Platform:   "Illumina",
 			}})
 
 			var studyLimsForSample1 string

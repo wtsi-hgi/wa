@@ -463,7 +463,7 @@ func TestRegistryCoversQueryer(t *testing.T) {
 		convey.Convey("when compared, then every Queryer method has exactly one Registry entry", func() {
 			missing, duplicate, unknown := registryCoverageIssues(queryer, registryMethods)
 
-			convey.So(Registry, convey.ShouldHaveLength, 63)
+			convey.So(Registry, convey.ShouldHaveLength, 65)
 			convey.So(missing, convey.ShouldBeEmpty)
 			convey.So(duplicate, convey.ShouldBeEmpty)
 			convey.So(unknown, convey.ShouldBeEmpty)

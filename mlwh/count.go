@@ -87,17 +87,33 @@ const (
 	// triples for a sample, via COUNT(*) over the same SELECT DISTINCT.
 	countLanesForSampleCacheSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ?) AS distinct_lanes`
 
-	// countIRODSPathsForSampleCacheSQL sizes IRODSPathsForSample
-	// (irodsPathsForSampleCacheSQL, SELECT DISTINCT id_iseq_product,
-	// irods_collection, irods_file_name): the distinct iRODS data objects for a
-	// sample, via COUNT(*) over the same SELECT DISTINCT.
-	countIRODSPathsForSampleCacheSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ?) AS distinct_sample_irods`
+	// countIRODSPathsForSampleCacheSQLPrefix/Suffix size IRODSPathsForSample (the
+	// SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name list): the
+	// distinct iRODS data objects for a sample, via COUNT(*) over the same SELECT
+	// DISTINCT. The file-type filter (B2) is spliced into the inner WHERE between
+	// the parent predicate and the closing paren (irodsCountFileTypeQuery), so the
+	// count honours the same filter as the list and count == len(list) for every
+	// file_type.
+	countIRODSPathsForSampleCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ?`
+	countIRODSPathsForSampleCacheSQLSuffix = `) AS distinct_sample_irods`
 
-	// countIRODSPathsForStudyCacheSQL sizes IRODSPathsForStudy
-	// (irodsPathsForStudyCacheSQL): the distinct iRODS rows for a study under the
-	// same LEFT JOIN to sample_mirror and the same DISTINCT projection, via
-	// COUNT(*) over that SELECT DISTINCT.
-	countIRODSPathsForStudyCacheSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, '') FROM seq_product_irods_locations_mirror spi LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp WHERE spi.id_study_lims = ?) AS distinct_study_irods`
+	// countIRODSPathsForStudyCacheSQLPrefix/Suffix size IRODSPathsForStudy: the
+	// distinct iRODS rows for a study under the same LEFT JOIN to sample_mirror and
+	// the same DISTINCT projection, via COUNT(*) over that SELECT DISTINCT. The
+	// file-type filter (B2) is spliced into the inner WHERE the same way as the
+	// sample count.
+	countIRODSPathsForStudyCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, '') FROM seq_product_irods_locations_mirror spi LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp WHERE spi.id_study_lims = ?`
+	countIRODSPathsForStudyCacheSQLSuffix = `) AS distinct_study_irods`
+
+	// countIRODSPathsForRunCacheSQLPrefix/Suffix size IRODSPathsForRun (B3): the
+	// run's iseq_product_metrics_mirror rows joined to the iRODS mirror on
+	// id_iseq_product, the same join as irodsPathsForRunCacheSQL with no LIMIT.
+	// COUNT(*) over the SELECT DISTINCT of the same iRODS data-object columns the
+	// list groups by collapses the product-metrics fan-out identically, so
+	// count == len(list) for the run scope. The file-type filter (B2) splices into
+	// the inner WHERE between the id_run predicate and the closing paren.
+	countIRODSPathsForRunCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.platform FROM seq_product_irods_locations_mirror spi INNER JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE ipm.id_run = ?`
+	countIRODSPathsForRunCacheSQLSuffix = `) AS distinct_run_irods`
 )
 
 // countFindSamplesBySangerIDSQL and its siblings size the find/sample/* lists:
@@ -116,6 +132,20 @@ const (
 	// a library type, mirroring findSamplesByLibraryTypeSQL's join and filter.
 	countFindSamplesByLibraryTypeSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND sample_mirror.id_lims = 'SQSCP'`
 )
+
+// irodsCountFileTypeQuery assembles an iRODS count query from its prefix and
+// suffix, splicing the file-type filter clause into the inner subquery's WHERE
+// (between the parent predicate and the closing paren) when normalised is
+// non-empty, and returns the query alongside its bound args (the parent id, then
+// the suffix LIKE pattern when filtered). It mirrors irodsFileTypeQuery so the
+// count applies exactly the filter the list does and count == len(list) holds.
+func irodsCountFileTypeQuery(prefix, suffix, normalised string, parent any) (string, []any) {
+	if normalised == "" {
+		return prefix + suffix, []any{parent}
+	}
+
+	return prefix + irodsFileTypeFilterClause + suffix, []any{parent, irodsFileTypeLikePattern(normalised)}
+}
 
 // Count is the bare count envelope returned by the /count endpoints. It
 // serialises as {"count": N}.
@@ -400,9 +430,25 @@ func (c *Client) CountLanesForSample(ctx context.Context, sangerName string) (Co
 // (by Sanger sample name), the count counterpart of IRODSPathsForSample (same
 // seq_product_irods_locations_mirror SELECT DISTINCT id_iseq_product,
 // irods_collection, irods_file_name, no LIMIT), so it equals
-// len(IRODSPathsForSample(name, all)). It shares IRODSPathsForSample's
-// sample-resolve / synced-empty / unknown cascade.
+// len(IRODSPathsForSample(name, all)). It is the bare, all-file-types variant:
+// it delegates to CountIRODSPathsForSampleByFileType with an empty fileType.
 func (c *Client) CountIRODSPathsForSample(ctx context.Context, sangerName string) (Count, error) {
+	return c.CountIRODSPathsForSampleByFileType(ctx, sangerName, "")
+}
+
+// CountIRODSPathsForSampleByFileType counts the distinct iRODS data objects for a
+// sample, optionally restricted to data objects whose irods_file_name ends in
+// `.<fileType>` (case-insensitive, leading dot stripped), so it equals
+// len(IRODSPathsForSampleByFileType(name, fileType, all)) for any fileType. An
+// empty fileType counts all objects (the bare behaviour); an invalid fileType is
+// rejected with ErrUnsupportedIdentifier. It shares IRODSPathsForSample's
+// sample-resolve / synced-empty / unknown cascade.
+func (c *Client) CountIRODSPathsForSampleByFileType(ctx context.Context, sangerName, fileType string) (Count, error) {
+	normalised, err := normaliseFileType(fileType)
+	if err != nil {
+		return Count{}, err
+	}
+
 	sample, err := c.resolveSampleFromCache(ctx, `SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, sangerName)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -416,7 +462,8 @@ func (c *Client) CountIRODSPathsForSample(ctx context.Context, sangerName string
 		return Count{}, err
 	}
 
-	count, err := c.queryCount(ctx, countIRODSPathsForSampleCacheSQL, "count sample irods paths", sample.IDSampleTmp)
+	query, args := irodsCountFileTypeQuery(countIRODSPathsForSampleCacheSQLPrefix, countIRODSPathsForSampleCacheSQLSuffix, normalised, sample.IDSampleTmp)
+	count, err := c.queryCount(ctx, query, "count sample irods paths", args...)
 	if err != nil {
 		return Count{}, err
 	}
@@ -434,9 +481,25 @@ func (c *Client) CountIRODSPathsForSample(ctx context.Context, sangerName string
 // CountIRODSPathsForStudy counts the distinct iRODS data objects for a study, the
 // count counterpart of IRODSPathsForStudy (same LEFT JOIN to sample_mirror and
 // SELECT DISTINCT projection scoped by id_study_lims, no LIMIT), so it equals
-// len(IRODSPathsForStudy(study, all)). It shares IRODSPathsForStudy's
-// study-resolve / synced-empty / unknown cascade.
+// len(IRODSPathsForStudy(study, all)). It is the bare, all-file-types variant: it
+// delegates to CountIRODSPathsForStudyByFileType with an empty fileType.
 func (c *Client) CountIRODSPathsForStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	return c.CountIRODSPathsForStudyByFileType(ctx, studyLimsID, "")
+}
+
+// CountIRODSPathsForStudyByFileType counts the distinct iRODS data objects for a
+// study, optionally restricted to data objects whose irods_file_name ends in
+// `.<fileType>` (case-insensitive, leading dot stripped), so it equals
+// len(IRODSPathsForStudyByFileType(study, fileType, all)) for any fileType. An
+// empty fileType counts all objects (the bare behaviour); an invalid fileType is
+// rejected with ErrUnsupportedIdentifier. It shares IRODSPathsForStudy's
+// study-resolve / synced-empty / unknown cascade.
+func (c *Client) CountIRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, fileType string) (Count, error) {
+	normalised, err := normaliseFileType(fileType)
+	if err != nil {
+		return Count{}, err
+	}
+
 	study, err := c.resolveStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, studyLimsID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -450,7 +513,46 @@ func (c *Client) CountIRODSPathsForStudy(ctx context.Context, studyLimsID string
 		return Count{}, err
 	}
 
-	count, err := c.queryCount(ctx, countIRODSPathsForStudyCacheSQL, "count study irods paths", study.IDStudyLims)
+	query, args := irodsCountFileTypeQuery(countIRODSPathsForStudyCacheSQLPrefix, countIRODSPathsForStudyCacheSQLSuffix, normalised, study.IDStudyLims)
+	count, err := c.queryCount(ctx, query, "count study irods paths", args...)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	if err = c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); err != nil {
+		return Count{}, err
+	}
+
+	return Count{Count: 0}, nil
+}
+
+// CountIRODSPathsForRun counts the iRODS data objects on a run, the count
+// counterpart of IRODSPathsForRun (same iseq_product_metrics_mirror -> iRODS join
+// on id_iseq_product, filtered by id_run, with no LIMIT), so
+// CountIRODSPathsForRun(run, fileType) equals len(IRODSPathsForRun(run, fileType,
+// all)) for any fileType. idRun is the Illumina NPG id_run, resolved via ResolveRun:
+// a non-numeric run is ErrUnsupportedIdentifier, a numeric run absent from a synced
+// cache is ErrNotFound, and a never-synced cache returns Count{} with both
+// ErrCacheNeverSynced and ErrNotFound -- the same run-space cascade as
+// CountSamplesForRun. An empty fileType counts all objects; an invalid fileType is
+// rejected with ErrUnsupportedIdentifier. A valid but unmatched suffix, or a run
+// with no iRODS rows yet, yields Count{0} on a synced cache.
+func (c *Client) CountIRODSPathsForRun(ctx context.Context, idRun, fileType string) (Count, error) {
+	normalised, err := normaliseFileType(fileType)
+	if err != nil {
+		return Count{}, err
+	}
+
+	match, err := c.ResolveRun(ctx, idRun)
+	if err != nil {
+		return Count{}, err
+	}
+
+	query, args := irodsCountFileTypeQuery(countIRODSPathsForRunCacheSQLPrefix, countIRODSPathsForRunCacheSQLSuffix, normalised, match.Run.IDRun)
+	count, err := c.queryCount(ctx, query, "count run irods paths", args...)
 	if err != nil {
 		return Count{}, err
 	}

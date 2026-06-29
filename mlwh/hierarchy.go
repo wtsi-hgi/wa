@@ -40,6 +40,49 @@ import (
 
 const expandIdentifierTTL = 5 * time.Minute
 
+// The iRODS list SQL is split into a prefix (SELECT/JOIN/WHERE-on-parent) and a
+// suffix (GROUP BY/ORDER BY/LIMIT) so the optional file-type filter clause
+// (irodsFileTypeFilterClause) can be spliced between the parent predicate and the
+// GROUP BY. The bare constants concatenate prefix+suffix with no filter, so the
+// unfiltered SQL is byte-for-byte the same as before; a filtered variant inserts
+// the clause and binds the suffix pattern, keeping the row grain (and therefore
+// count == len(list)) identical to the unfiltered query.
+const (
+	irodsPathsForSampleCacheSQLPrefix = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, COALESCE(MIN(ipm.id_run), 0), spi.platform FROM seq_product_irods_locations_mirror spi LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE spi.id_sample_tmp = ?`
+	irodsPathsForSampleCacheSQLSuffix = ` GROUP BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.platform ORDER BY spi.id_iseq_product LIMIT ? OFFSET ?`
+	irodsPathsForStudyCacheSQLPrefix  = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, ''), COALESCE(MIN(ipm.id_run), 0), spi.platform FROM seq_product_irods_locations_mirror spi LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE spi.id_study_lims = ?`
+	irodsPathsForStudyCacheSQLSuffix  = ` GROUP BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, ''), spi.platform ORDER BY spi.id_iseq_product, spi.id_sample_tmp LIMIT ? OFFSET ?`
+
+	// irodsPathsForRunCacheSQLPrefix/Suffix list the iRODS data objects on a run
+	// (B3): the run's iseq_product_metrics_mirror rows (filtered by id_run) joined
+	// to the iRODS mirror on the shared id_iseq_product, the same index-served join
+	// (spi_mirror_iseq_product_idx) as runOverviewIRODSAggregateSQL. id_run is the
+	// bound run constant (the scope), not an aggregate, so every row carries it.
+	// GROUP BY the iRODS data-object columns + platform collapses any product-metrics
+	// fan-out (a product may have several metrics rows on the run) to one row per
+	// data object, so the grain matches the /count DISTINCT projection and
+	// count == len(list). The B2 file-type filter (irodsFileTypeFilterClause) splices
+	// between the id_run predicate and the GROUP BY; irods_file_name is unambiguous
+	// because only seq_product_irods_locations_mirror has that column.
+	irodsPathsForRunCacheSQLPrefix = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, ?, spi.platform FROM seq_product_irods_locations_mirror spi INNER JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE ipm.id_run = ?`
+	irodsPathsForRunCacheSQLSuffix = ` GROUP BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.platform ORDER BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name LIMIT ? OFFSET ?`
+
+	// irodsFileTypeFilterClause is the WHERE-clause fragment that restricts an
+	// iRODS list or count to data objects whose irods_file_name ends in
+	// `.<file-type>`, case-insensitively. The match is a FILENAME-SUFFIX match on
+	// irods_file_name, not a real file-type column. The suffix pattern (`%.<token>`,
+	// lowercased) is built in Go (irodsFileTypeLikePattern) and bound as a ?
+	// parameter rather than concatenated in SQL with `||`/CONCAT, matching how this
+	// package parameterises dialect-portable LIKE predicates (see search.go's
+	// likeContainsClause): `||` is logical OR on MySQL under the default sql_mode,
+	// so binding the whole pattern keeps one SQL string valid on both sqlite and
+	// mysql. The bound token is validated wildcard-free (normaliseFileType rejects
+	// %/_/ /) so the LIKE needs no ESCAPE clause. The study-scoped / sample-scoped
+	// parent predicate stays the primary, index-served filter; this clause only
+	// narrows the already-scoped rows, so the study-scoped index is preserved.
+	irodsFileTypeFilterClause = ` AND LOWER(irods_file_name) LIKE ?`
+)
+
 var (
 	samplesForStudyCacheSQL        = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 	samplesForLibraryTypeCacheSQL  = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
@@ -58,8 +101,6 @@ var (
 	runsForStudyCacheSQL           = `SELECT DISTINCT id_run FROM iseq_product_metrics_mirror WHERE id_study_lims = ? ORDER BY id_run LIMIT ? OFFSET ?`
 	lanesForSampleCacheSQL         = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
 	lanesForSampleStudyCacheSQL    = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? AND id_study_lims = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
-	irodsPathsForSampleCacheSQL    = `SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
-	irodsPathsForStudyCacheSQL     = `SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, '') FROM seq_product_irods_locations_mirror spi LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp WHERE spi.id_study_lims = ? ORDER BY spi.id_iseq_product, spi.id_sample_tmp LIMIT ? OFFSET ?`
 	studiesForSampleCacheSQL       = `SELECT DISTINCT study_mirror.id_study_tmp, study_mirror.id_lims, study_mirror.id_study_lims, study_mirror.uuid_study_lims, study_mirror.name, study_mirror.accession_number, study_mirror.study_title, study_mirror.faculty_sponsor, study_mirror.state, study_mirror.data_release_strategy, study_mirror.data_access_group, study_mirror.programme, study_mirror.reference_genome, study_mirror.ethically_approved, study_mirror.study_type, study_mirror.contains_human_dna, study_mirror.contaminated_human_dna, study_mirror.study_visibility, study_mirror.ega_dac_accession_number, study_mirror.ega_policy_accession_number, study_mirror.data_release_timing FROM sample_mirror INNER JOIN library_samples ON library_samples.id_sample_tmp = sample_mirror.id_sample_tmp INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims WHERE sample_mirror.name = ? AND sample_mirror.id_lims = 'SQSCP' AND study_mirror.id_lims = 'SQSCP' ORDER BY study_mirror.id_study_lims`
 	qualifiedStudyMirrorSelectSQL  = qualifySelectColumns("study_mirror", studyMirrorSelectColumns)
 )
@@ -146,6 +187,65 @@ func (c *Client) expandResolvedSampleIdentifiers(ctx context.Context, base Tagge
 		Runs:      runValues,
 		Lanes:     laneValues,
 	}, nil
+}
+
+// normaliseFileType normalises a raw file-type token (strip ONE leading '.', then
+// lowercase) and validates it: a token that is empty after trimming, or that
+// contains a LIKE wildcard ('%' or '_') or a path separator ('/'), is rejected
+// with ErrUnsupportedIdentifier. It is the single shared helper used by both the
+// HTTP handler (which turns the error into a 400 before the queryer is reached)
+// and the queryer/Client variants (which re-validate defensively so a direct Go
+// caller is never silently wrong). An empty input returns ("", nil): the caller
+// treats that as "no filter" (the bare, all-rows path), which is not an error.
+func normaliseFileType(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+
+	normalised := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(raw), "."))
+	if normalised == "" || strings.ContainsAny(normalised, `%_/`) {
+		return "", ErrUnsupportedIdentifier
+	}
+
+	return normalised, nil
+}
+
+// irodsFileTypeQuery assembles an iRODS list query from its prefix and suffix,
+// splicing in the file-type filter clause when normalised is non-empty, and
+// returns the query alongside its bound args in the order the SQL expects: the
+// parent id, then (when filtered) the suffix LIKE pattern, then limit and offset.
+// When normalised is empty the query and args are exactly the unfiltered form, so
+// the all-rows path is unchanged.
+func irodsFileTypeQuery(prefix, suffix, normalised string, parent any, limit, offset int) (string, []any) {
+	if normalised == "" {
+		return prefix + suffix, []any{parent, limit, offset}
+	}
+
+	return prefix + irodsFileTypeFilterClause + suffix, []any{parent, irodsFileTypeLikePattern(normalised), limit, offset}
+}
+
+// irodsRunFileTypeQuery assembles the run-scoped iRODS list query (B3) from its
+// prefix and suffix, splicing in the file-type filter clause when normalised is
+// non-empty. The run id appears twice in the bound args: first as the projected
+// id_run constant (every row carries it) and then as the id_run join predicate,
+// matching irodsPathsForRunCacheSQLPrefix's two leading placeholders. When filtered,
+// the suffix LIKE pattern follows the two run binds, then limit and offset; when
+// unfiltered the query and args are exactly the all-rows form.
+func irodsRunFileTypeQuery(normalised string, runID, limit, offset int) (string, []any) {
+	if normalised == "" {
+		return irodsPathsForRunCacheSQLPrefix + irodsPathsForRunCacheSQLSuffix, []any{runID, runID, limit, offset}
+	}
+
+	return irodsPathsForRunCacheSQLPrefix + irodsFileTypeFilterClause + irodsPathsForRunCacheSQLSuffix,
+		[]any{runID, runID, irodsFileTypeLikePattern(normalised), limit, offset}
+}
+
+// irodsFileTypeLikePattern builds the LIKE pattern for a normalised file-type
+// token: a literal `.` separator and the lowercased token, anchored to the end of
+// the (lowered) irods_file_name by the leading `%`. The token is already validated
+// wildcard-free, so no escaping is needed.
+func irodsFileTypeLikePattern(normalised string) string {
+	return "%." + normalised
 }
 
 func querySamples(ctx context.Context, querier Querier, query, action string, args ...any) ([]Sample, error) {
@@ -1175,8 +1275,26 @@ func (c *Client) LanesForSample(ctx context.Context, sangerName string, limit, o
 	return lanes, nil
 }
 
-// IRODSPathsForSample returns iRODS paths for a sample.
+// IRODSPathsForSample returns iRODS paths for a sample. It is the bare,
+// all-file-types variant: it delegates to IRODSPathsForSampleByFileType with an
+// empty fileType so the two share one implementation.
 func (c *Client) IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]IRODSPath, error) {
+	return c.IRODSPathsForSampleByFileType(ctx, sangerName, "", limit, offset)
+}
+
+// IRODSPathsForSampleByFileType returns iRODS paths for a sample, optionally
+// restricted to data objects whose irods_file_name ends in `.<fileType>`
+// (case-insensitive, leading dot stripped). An empty fileType returns all paths
+// (the bare behaviour). A fileType that is empty after trimming or contains a
+// LIKE wildcard or path separator is rejected with ErrUnsupportedIdentifier (the
+// HTTP handler returns 400 first; this re-validates defensively). A valid but
+// unmatched suffix yields an empty list (no error) on a synced cache.
+func (c *Client) IRODSPathsForSampleByFileType(ctx context.Context, sangerName, fileType string, limit, offset int) ([]IRODSPath, error) {
+	normalised, err := normaliseFileType(fileType)
+	if err != nil {
+		return nil, err
+	}
+
 	sample, err := c.resolveSampleFromCache(ctx, `SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, sangerName)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -1194,7 +1312,8 @@ func (c *Client) IRODSPathsForSample(ctx context.Context, sangerName string, lim
 		return nil, err
 	}
 
-	paths, err := c.queryIRODSPaths(ctx, irodsPathsForSampleCacheSQL, sample.IDSampleTmp, limit, offset, "query irods paths for sample")
+	query, args := irodsFileTypeQuery(irodsPathsForSampleCacheSQLPrefix, irodsPathsForSampleCacheSQLSuffix, normalised, sample.IDSampleTmp, limit, offset)
+	paths, err := c.queryIRODSPaths(ctx, query, args, "query irods paths for sample")
 	if err != nil {
 		return nil, err
 	}
@@ -1211,8 +1330,26 @@ func (c *Client) IRODSPathsForSample(ctx context.Context, sangerName string, lim
 	return paths, nil
 }
 
-// IRODSPathsForStudy returns iRODS paths for a study.
+// IRODSPathsForStudy returns iRODS paths for a study. It is the bare,
+// all-file-types variant: it delegates to IRODSPathsForStudyByFileType with an
+// empty fileType so the two share one implementation.
 func (c *Client) IRODSPathsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]IRODSPath, error) {
+	return c.IRODSPathsForStudyByFileType(ctx, studyLimsID, "", limit, offset)
+}
+
+// IRODSPathsForStudyByFileType returns iRODS paths for a study, optionally
+// restricted to data objects whose irods_file_name ends in `.<fileType>`
+// (case-insensitive, leading dot stripped). An empty fileType returns all paths
+// (the bare behaviour). A fileType that is empty after trimming or contains a
+// LIKE wildcard or path separator is rejected with ErrUnsupportedIdentifier (the
+// HTTP handler returns 400 first; this re-validates defensively). A valid but
+// unmatched suffix yields an empty list (no error) on a synced cache.
+func (c *Client) IRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, fileType string, limit, offset int) ([]IRODSPath, error) {
+	normalised, err := normaliseFileType(fileType)
+	if err != nil {
+		return nil, err
+	}
+
 	study, err := c.resolveStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, studyLimsID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -1230,7 +1367,51 @@ func (c *Client) IRODSPathsForStudy(ctx context.Context, studyLimsID string, lim
 		return nil, err
 	}
 
-	paths, err := c.queryIRODSPathsWithSample(ctx, irodsPathsForStudyCacheSQL, study.IDStudyLims, limit, offset, "query irods paths for study")
+	query, args := irodsFileTypeQuery(irodsPathsForStudyCacheSQLPrefix, irodsPathsForStudyCacheSQLSuffix, normalised, study.IDStudyLims, limit, offset)
+	paths, err := c.queryIRODSPathsWithSample(ctx, query, args, "query irods paths for study")
+	if err != nil {
+		return nil, err
+	}
+	if len(paths) == 0 {
+		if syncErr := c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); syncErr != nil {
+			if errors.Is(syncErr, ErrCacheNeverSynced) {
+				return []IRODSPath{}, syncErr
+			}
+
+			return nil, syncErr
+		}
+	}
+
+	return paths, nil
+}
+
+// IRODSPathsForRun returns the iRODS data objects on a run (spec B3), optionally
+// restricted to data objects whose irods_file_name ends in `.<fileType>`
+// (case-insensitive, leading dot stripped). idRun is the Illumina NPG id_run,
+// resolved via ResolveRun: a non-numeric / invalid run yields
+// ErrUnsupportedIdentifier, a numeric run absent from a synced cache yields
+// ErrNotFound, and a never-synced cache yields an error satisfying both
+// ErrCacheNeverSynced and ErrNotFound -- the same run-space cascade as RunOverview.
+// The list joins the run's iseq_product_metrics_mirror rows (filtered by id_run) to
+// the iRODS mirror on id_iseq_product, returning IRODSPath rows each carrying
+// id_run = the run and the iRODS row's platform. An empty fileType returns all data
+// objects; an invalid fileType is rejected with ErrUnsupportedIdentifier (the HTTP
+// handler returns 400 first; this re-validates defensively). A valid but unmatched
+// suffix, or a run with no iRODS rows yet, yields an empty list (no error) on a
+// synced cache.
+func (c *Client) IRODSPathsForRun(ctx context.Context, idRun, fileType string, limit, offset int) ([]IRODSPath, error) {
+	normalised, err := normaliseFileType(fileType)
+	if err != nil {
+		return nil, err
+	}
+
+	match, err := c.ResolveRun(ctx, idRun)
+	if err != nil {
+		return nil, err
+	}
+
+	query, args := irodsRunFileTypeQuery(normalised, match.Run.IDRun, limit, offset)
+	paths, err := c.queryIRODSPaths(ctx, query, args, "query irods paths for run")
 	if err != nil {
 		return nil, err
 	}
@@ -1295,13 +1476,13 @@ func (c *Client) StudiesForSample(ctx context.Context, sangerName string) ([]Stu
 	return nil, ErrNotFound
 }
 
-func (c *Client) queryIRODSPaths(ctx context.Context, query string, parent any, limit, offset int, action string) ([]IRODSPath, error) {
+func (c *Client) queryIRODSPaths(ctx context.Context, query string, args []any, action string) ([]IRODSPath, error) {
 	db := c.readCacheDB()
 	if db == nil {
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	rows, err := db.QueryContext(ctx, query, parent, limit, offset)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
 	}
@@ -1310,7 +1491,7 @@ func (c *Client) queryIRODSPaths(ctx context.Context, query string, parent any, 
 	paths := make([]IRODSPath, 0)
 	for rows.Next() {
 		path := IRODSPath{}
-		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject); err != nil {
+		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject, &path.IDRun, &path.Platform); err != nil {
 			return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
 		}
 		path.IRODSPath = strings.TrimRight(path.Collection, "/") + "/" + path.DataObject
@@ -1328,13 +1509,13 @@ func (c *Client) queryIRODSPaths(ctx context.Context, query string, parent any, 
 // also scans each row's id_sample_tmp and Sanger name (joined from sample_mirror)
 // so the study list is aggregatable by sample standalone. The name is left empty
 // when the sample is not mirrored, so a data object is never dropped.
-func (c *Client) queryIRODSPathsWithSample(ctx context.Context, query string, parent any, limit, offset int, action string) ([]IRODSPath, error) {
+func (c *Client) queryIRODSPathsWithSample(ctx context.Context, query string, args []any, action string) ([]IRODSPath, error) {
 	db := c.readCacheDB()
 	if db == nil {
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	rows, err := db.QueryContext(ctx, query, parent, limit, offset)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
 	}
@@ -1343,7 +1524,7 @@ func (c *Client) queryIRODSPathsWithSample(ctx context.Context, query string, pa
 	paths := make([]IRODSPath, 0)
 	for rows.Next() {
 		path := IRODSPath{}
-		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject, &path.IDSampleTmp, &path.Name); err != nil {
+		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject, &path.IDSampleTmp, &path.Name, &path.IDRun, &path.Platform); err != nil {
 			return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
 		}
 		path.IRODSPath = strings.TrimRight(path.Collection, "/") + "/" + path.DataObject

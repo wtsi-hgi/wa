@@ -180,6 +180,95 @@ func TestCountSamplesForStudyNeverSyncedReturnsJoinedSentinel(t *testing.T) {
 	})
 }
 
+// B2: the file-type-filtered iRODS counts must equal the filtered list length for
+// every file_type (including a valid-but-unmatched one), so the count<->list
+// grain identity holds under the filter as it does unfiltered.
+func TestCountIRODSPathsByFileTypeMatchesFilteredListLength(t *testing.T) {
+	convey.Convey("Given a study and sample with iRODS objects across several suffixes", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		seedSyncState(t, client.cache.DB(), syncTableSeqProductIRODSLocations, time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC))
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 1, "S1", "S1STDY1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-a", "/seq/s1", "a.cram", 1, "S1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-b", "/seq/s1", "b.cram", 1, "S1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-c", "/seq/s1", "c.bai", 1, "S1")
+
+		convey.Convey("when each filtered count is compared to its filtered list length, then they agree for cram, bai and the unmatched bam", func() {
+			mismatched := []string{}
+			for _, fileType := range []string{"cram", "bai", "bam"} {
+				studyCount, studyCountErr := client.CountIRODSPathsForStudyByFileType(ctx, "S1", fileType)
+				convey.So(studyCountErr, convey.ShouldBeNil)
+				studyList, studyListErr := client.IRODSPathsForStudyByFileType(ctx, "S1", fileType, countListFetchAll, 0)
+				convey.So(studyListErr, convey.ShouldBeNil)
+				if studyCount.Count != len(studyList) {
+					mismatched = append(mismatched, "study:"+fileType)
+				}
+
+				sampleCount, sampleCountErr := client.CountIRODSPathsForSampleByFileType(ctx, "S1STDY1", fileType)
+				convey.So(sampleCountErr, convey.ShouldBeNil)
+				sampleList, sampleListErr := client.IRODSPathsForSampleByFileType(ctx, "S1STDY1", fileType, countListFetchAll, 0)
+				convey.So(sampleListErr, convey.ShouldBeNil)
+				if sampleCount.Count != len(sampleList) {
+					mismatched = append(mismatched, "sample:"+fileType)
+				}
+			}
+
+			convey.So(mismatched, convey.ShouldBeEmpty)
+		})
+	})
+}
+
+// B3 acceptance test 2 (count half): CountIRODSPathsForRun honours the file_type
+// filter, so the run's cram count is 4 (the four .cram of the six objects).
+func TestCountIRODSPathsForRunByFileTypeMatchesFilteredList(t *testing.T) {
+	convey.Convey("Given run 52553 with four .cram and two .bai iRODS objects", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedB3RunIRODSScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		ctx := context.Background()
+		count, countErr := client.CountIRODSPathsForRun(ctx, "52553", "cram")
+		list, listErr := client.IRODSPathsForRun(ctx, "52553", "cram", countListFetchAll, 0)
+
+		convey.Convey("when CountIRODSPathsForRun(52553, cram) is taken, then it is 4 and equals the filtered list length", func() {
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(listErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, 4)
+			convey.So(count.Count, convey.ShouldEqual, len(list))
+		})
+	})
+}
+
+// B3 acceptance test 5: CountIRODSPathsForRun(run, "") equals
+// len(IRODSPathsForRun(run, "", all)) -- the run-scope count is the same join with
+// no LIMIT, so the count and the all-rows list cannot drift (with or without a
+// file_type filter).
+func TestCountIRODSPathsForRunEqualsListLength(t *testing.T) {
+	convey.Convey("Given run 52553 with six iRODS data objects", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedB3RunIRODSScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		ctx := context.Background()
+		count, countErr := client.CountIRODSPathsForRun(ctx, "52553", "")
+		list, listErr := client.IRODSPathsForRun(ctx, "52553", "", countListFetchAll, 0)
+
+		convey.Convey("when both are taken, then the count equals the all-rows list length (6)", func() {
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(listErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(list))
+			convey.So(count.Count, convey.ShouldEqual, 6)
+		})
+	})
+}
+
 // e1Count names one new /count endpoint under test: its Client count method and
 // the corresponding all-rows list-length, so the E1 cross-check
 // (count == len(list-all)) can be asserted for every count uniformly. zeroIs

@@ -49,6 +49,16 @@ type Endpoint struct {
 	QueryParams []QueryParam // structured specs for limit/offset and any filters
 }
 
+// QueryParam is a structured specification of one query-string parameter,
+// consumed by the OpenAPI generator and the human reference to describe the
+// limit/offset pagination controls (and any future filters).
+type QueryParam struct {
+	Name        string // e.g. "limit"
+	Type        string // OpenAPI type, e.g. "integer"
+	Required    bool
+	Description string
+}
+
 // Registry is the single source from which the handler and RemoteClient derive.
 // Adding a Queryer method requires adding a Registry entry so local and remote
 // query surfaces stay aligned.
@@ -321,24 +331,36 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/sample/:id/irods",
 		PathParams:  []string{"id"},
-		Query:       []string{},
+		Query:       []string{"file_type"},
 		Paginated:   true,
 		NewResult:   newSliceResult[IRODSPath],
 		Summary:     "List iRODS paths for a sample",
-		Description: "Lists the iRODS data-object paths exported for the given sample (by Sanger sample name). Defaults to returning all paths; use limit/offset to page.",
-		QueryParams: fetchAllPaginationParams(),
+		Description: "Lists the iRODS data-object paths exported for the given sample (by Sanger sample name). Defaults to returning all paths; use limit/offset to page. Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request.",
+		QueryParams: fetchAllPaginationWithFileTypeParams(),
 	},
 	{
 		Method:      "IRODSPathsForStudy",
 		Verb:        registryVerbGet,
 		Path:        "/study/:id/irods",
 		PathParams:  []string{"id"},
-		Query:       []string{},
+		Query:       []string{"file_type"},
 		Paginated:   true,
 		NewResult:   newSliceResult[IRODSPath],
 		Summary:     "List iRODS paths for a study",
-		Description: "Lists the iRODS data-object paths exported for the given study. Defaults to returning all paths; use limit/offset to page.",
-		QueryParams: fetchAllPaginationParams(),
+		Description: "Lists the iRODS data-object paths exported for the given study. Defaults to returning all paths; use limit/offset to page. Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request.",
+		QueryParams: fetchAllPaginationWithFileTypeParams(),
+	},
+	{
+		Method:      "IRODSPathsForRun",
+		Verb:        registryVerbGet,
+		Path:        "/run/:id/irods",
+		PathParams:  []string{"id"},
+		Query:       []string{"file_type"},
+		Paginated:   true,
+		NewResult:   newSliceResult[IRODSPath],
+		Summary:     "List iRODS paths for a run",
+		Description: "Lists the iRODS data objects on the given run: the run's iseq_product_metrics rows (filtered by id_run) joined to the iRODS locations mirror by the shared id_iseq_product (the run's real data files in iRODS), one row per data object. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Every row carries id_run = the run plus the iRODS row's platform. Defaults to returning all data objects; use limit/offset to page, and it is bounded and paginated like /study/:id/irods and /sample/:id/irods, setting the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /run/:id/irods/count and the two cannot drift). Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. The list is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+		QueryParams: fetchAllPaginationWithFileTypeParams(),
 	},
 	{
 		Method:      "StudiesForSample",
@@ -641,20 +663,33 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/sample/:id/irods/count",
 		PathParams:  []string{"id"},
-		Query:       []string{},
+		Query:       []string{"file_type"},
 		NewResult:   newResult[Count],
 		Summary:     "Count iRODS paths for a sample",
-		Description: "Returns the number of distinct iRODS data objects exported for the given sample (by Sanger sample name), the count counterpart of /sample/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS data objects the list returns with no LIMIT. An unknown sample yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+		Description: "Returns the number of distinct iRODS data objects exported for the given sample (by Sanger sample name), the count counterpart of /sample/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS data objects the list returns with no LIMIT. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. An unknown sample yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+		QueryParams: []QueryParam{fileTypeQueryParam()},
 	},
 	{
 		Method:      "CountIRODSPathsForStudy",
 		Verb:        registryVerbGet,
 		Path:        "/study/:id/irods/count",
 		PathParams:  []string{"id"},
-		Query:       []string{},
+		Query:       []string{"file_type"},
 		NewResult:   newResult[Count],
 		Summary:     "Count iRODS paths for a study",
-		Description: "Returns the number of distinct iRODS data objects exported for the given study, the count counterpart of /study/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS rows the list returns (scoped by id_study_lims) with no LIMIT. An unknown study yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+		Description: "Returns the number of distinct iRODS data objects exported for the given study, the count counterpart of /study/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS rows the list returns (scoped by id_study_lims) with no LIMIT. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. An unknown study yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+		QueryParams: []QueryParam{fileTypeQueryParam()},
+	},
+	{
+		Method:      "CountIRODSPathsForRun",
+		Verb:        registryVerbGet,
+		Path:        "/run/:id/irods/count",
+		PathParams:  []string{"id"},
+		Query:       []string{"file_type"},
+		NewResult:   newResult[Count],
+		Summary:     "Count iRODS paths for a run",
+		Description: "Returns the number of iRODS data objects on the given run, the count counterpart of /run/:id/irods (count == the length of that list when all rows are fetched), counting the run's iseq_product_metrics rows joined to the iRODS locations mirror by the shared id_iseq_product with no LIMIT. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+		QueryParams: []QueryParam{fileTypeQueryParam()},
 	},
 	{
 		Method:      "CountFindSamplesBySangerID",
@@ -717,14 +752,20 @@ var Registry = []Endpoint{
 	},
 }
 
-// QueryParam is a structured specification of one query-string parameter,
-// consumed by the OpenAPI generator and the human reference to describe the
-// limit/offset pagination controls (and any future filters).
-type QueryParam struct {
-	Name        string // e.g. "limit"
-	Type        string // OpenAPI type, e.g. "integer"
-	Required    bool
-	Description string
+// fileTypeQueryParam is the optional file_type filter QueryParam shared by the
+// iRODS list and count endpoints: a case-insensitive FILENAME-SUFFIX match on
+// irods_file_name (a leading dot is stripped), not a real file-type column. The
+// wording is surface-neutral so it reads correctly on both the list endpoints and
+// their /count counterparts. It is not a pagination control, so it is declared on
+// the count entries directly and appended to the list entries' pagination params
+// by fetchAllPaginationWithFileTypeParams.
+func fileTypeQueryParam() QueryParam {
+	return QueryParam{
+		Name:        "file_type",
+		Type:        "string",
+		Required:    false,
+		Description: "when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '_' or '/' is rejected with a 400 bad_request; omit to return all file types",
+	}
 }
 
 // fetchAllPaginationWithAddedWindowParams are the QueryParams for the
@@ -752,6 +793,15 @@ func detailQueryParams() []QueryParam {
 		Required:    false,
 		Description: "when true, drops the heavy nested objects (library_details / samples / studies / study_details and the lookup tables) and returns only the top-level entity plus flat id lists, so the response is strictly smaller; defaults to false",
 	})
+}
+
+// fetchAllPaginationWithFileTypeParams are the QueryParams for the iRODS list
+// endpoints: the fetch-all limit/offset pagination controls plus the optional
+// file_type filter. The list shares its single endpoint with the filtered
+// variant (parameterised by file_type), so it documents both the pagination and
+// the filter controls.
+func fetchAllPaginationWithFileTypeParams() []QueryParam {
+	return append(fetchAllPaginationParams(), fileTypeQueryParam())
 }
 
 // fetchAllPaginationParams are the limit/offset QueryParams for the fetch-all

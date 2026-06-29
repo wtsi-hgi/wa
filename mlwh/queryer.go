@@ -58,6 +58,7 @@ type Queryer interface {
 	LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]Lane, error)
 	IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]IRODSPath, error)
 	IRODSPathsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]IRODSPath, error)
+	IRODSPathsForRun(ctx context.Context, idRun, fileType string, limit, offset int) ([]IRODSPath, error)
 	StudiesForSample(ctx context.Context, sangerName string) ([]Study, error)
 
 	// Sample finders.
@@ -87,6 +88,7 @@ type Queryer interface {
 	CountLanesForSample(ctx context.Context, sangerName string) (Count, error)
 	CountIRODSPathsForSample(ctx context.Context, sangerName string) (Count, error)
 	CountIRODSPathsForStudy(ctx context.Context, studyLimsID string) (Count, error)
+	CountIRODSPathsForRun(ctx context.Context, idRun, fileType string) (Count, error)
 	CountFindSamplesBySangerID(ctx context.Context, sangerID string) (Count, error)
 	CountFindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) (Count, error)
 	CountFindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) (Count, error)

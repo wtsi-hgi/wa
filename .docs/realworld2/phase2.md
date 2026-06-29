@@ -59,8 +59,8 @@ Covering all 3 acceptance tests from B1 (an Illumina row gets
 `len(IRODSPathsForStudy(...,all))` -- grain unchanged). Depends on Phase
 1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.2: B2 - file-type filter on study/sample/run iRODS lists and counts
 
@@ -91,8 +91,8 @@ before the queryer; sample `.cram` filter returns 1; the MySQL EXPLAIN of
 the file-type query is index-served -- see I1/Phase 7). Depends on 2.1
 (extends the same select).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.3: B3 - run-scoped iRODS list + count
 
@@ -120,8 +120,8 @@ absent-numeric -> `ErrNotFound`, never-synced -> both sentinels;
 count == len(list)). Depends on 2.1 (id_run/platform select), 2.2
 (file-type filter), and Phase 1 (the `id_iseq_product` index).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For sequential items, a single review pass after each item is
 acceptable; reviewers must confirm the count<->list grain identity holds

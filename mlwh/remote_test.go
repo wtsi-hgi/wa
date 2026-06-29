@@ -469,6 +469,32 @@ func TestRemoteClientIRODSPathsForStudyPageReadsSizingHeadersE2(t *testing.T) {
 	})
 }
 
+// B3: the RemoteClient run-scope Page variant reads the X-Total-Count /
+// X-Next-Offset sizing headers into Page.Total / Page.NextOffset and its Items
+// equal the bare-slice IRODSPathsForRun result, exactly like the study Page
+// variant. newListSizingClientForTest seeds 25 iRODS objects on run 99000.
+func TestRemoteClientIRODSPathsForRunPageReadsSizingHeadersB3(t *testing.T) {
+	convey.Convey("B3 (irods-run): Given a RemoteClient Page variant against a server returning the sizing headers", t, func() {
+		local := newListSizingClientForTest(t, "SZ", 25)
+		defer closeParityClientForTest(t, local)
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		convey.Convey("when IRODSPathsForRunPage runs with limit=10&offset=0, then Total==25, NextOffset==10, and Items equals the bare-slice IRODSPathsForRun result", func() {
+			page, err := remote.IRODSPathsForRunPage(context.Background(), "99000", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(page.Total, convey.ShouldEqual, 25)
+			convey.So(page.NextOffset, convey.ShouldEqual, 10)
+			convey.So(page.Items, convey.ShouldHaveLength, 10)
+
+			bare, err := remote.IRODSPathsForRun(context.Background(), "99000", "", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.Items, convey.ShouldResemble, bare)
+		})
+	})
+}
+
 func TestRemoteClientSamplesWithDataPageReadsSizingHeadersE2(t *testing.T) {
 	convey.Convey("E2.3 (samples-with-data): Given a RemoteClient Page variant over the feature's new paginated list", t, func() {
 		local := newListSizingClientForTest(t, "SZ", 25)
