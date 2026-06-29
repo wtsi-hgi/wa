@@ -28,6 +28,7 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -193,6 +194,16 @@ var samplesAddedSinceCacheSQL = `SELECT DISTINCT ` + sampleMirrorSelectColumns +
 // ceiling.
 const addedWindowOpenEnded = "9999-12-31T23:59:59Z"
 
+// errUntilRequiresSince reports that the added-window since/until methods were
+// given an until without a since. until is only the upper bound of a
+// [since, until) window, so alone it is meaningless: rather than silently dropping
+// it (which would return the all-time superset), SamplesWithDataSince and
+// CountSamplesWithDataSince reject it. It is the Client-layer guard mirroring the
+// HTTP handler's 400 for the same input; it stays unexported because callers
+// satisfy the contract by passing a since with their until rather than branching
+// on this error.
+var errUntilRequiresSince = errors.New("mlwh: until requires since")
+
 // studyScopedIRODSExists is the correlated existence predicate for "this linked
 // sample has >=1 study-scoped iRODS row". An optional half-open [since, until)
 // filter on the mirrored created column (over the (id_study_lims, created)
@@ -339,12 +350,17 @@ func (c *Client) SamplesWithoutData(ctx context.Context, studyLimsID string, lim
 // identically, so the in-window list and the windowed count
 // (CountSamplesWithDataSince) stay the exact list<->count cross-check. WITHOUT a
 // since (empty), it reuses the all-time SamplesWithData path, so the two never
-// diverge. The never-synced / unknown-study / synced-empty cascade matches
-// SamplesWithData. The since/until values are validated as RFC3339 at the HTTP
-// handler, which returns 400 before this method is reached, so callers of this
-// method pass them through.
+// diverge; an until supplied without a since is rejected (until is only the upper
+// bound of a window, so it is meaningless alone) rather than silently dropped. The
+// never-synced / unknown-study / synced-empty cascade matches SamplesWithData. The
+// since/until values are validated as RFC3339 at the HTTP handler, which returns
+// 400 before this method is reached, so callers of this method pass them through.
 func (c *Client) SamplesWithDataSince(ctx context.Context, studyLimsID, since, until string, limit, offset int) ([]SampleWithData, error) {
 	if since == "" {
+		if until != "" {
+			return nil, errUntilRequiresSince
+		}
+
 		return c.SamplesWithData(ctx, studyLimsID, limit, offset)
 	}
 
@@ -390,7 +406,9 @@ func (c *Client) CountSamplesWithData(ctx context.Context, studyLimsID string) (
 // CountSamplesWithData over the same membership join and the same study-scoped
 // iRODS existence predicate (studyScopedIRODSExists), so it counts distinct
 // SAMPLES, never iRODS data objects. WITHOUT a since (empty), it reuses the
-// all-time CountSamplesWithData path, so the two never diverge. The
+// all-time CountSamplesWithData path, so the two never diverge; an until supplied
+// without a since is rejected (until is only the upper bound of a window, so it is
+// meaningless alone) rather than silently dropped. The
 // never-synced / unknown-study / synced-empty cascade matches CountSamplesWithData:
 // a synced study with no in-window samples-with-data returns Count{Count: 0} and
 // no error, an unknown study returns ErrNotFound, and a never-synced cache returns
@@ -399,6 +417,10 @@ func (c *Client) CountSamplesWithData(ctx context.Context, studyLimsID string) (
 // 400 before this method is reached, so callers of this method pass them through.
 func (c *Client) CountSamplesWithDataSince(ctx context.Context, studyLimsID, since, until string) (Count, error) {
 	if since == "" {
+		if until != "" {
+			return Count{}, errUntilRequiresSince
+		}
+
 		return c.CountSamplesWithData(ctx, studyLimsID)
 	}
 

@@ -934,11 +934,13 @@ func countValue(count Count, err error) (int, error) {
 }
 
 // mlwhAddedWindowFromQuery reads the optional since/until RFC3339 query params of
-// the windowed samples-with-data count. A malformed since or until aborts with
-// the bad_request 400 envelope BEFORE the queryer is reached, so junk never
-// reaches the query layer; an absent bound is returned as an empty string (the
-// all-time / open-ended case). The raw RFC3339 strings are passed through on
-// success so the query layer normalises them once.
+// the windowed samples-with-data count and list. A malformed since or until, or an
+// until supplied WITHOUT a since, aborts with the bad_request 400 envelope BEFORE
+// the queryer is reached, so junk never reaches the query layer; an absent bound is
+// returned as an empty string (the all-time / open-ended case). until is only the
+// upper bound of a [since, until) window, so until-without-since is rejected rather
+// than silently dropped (which would return the all-time superset). The raw RFC3339
+// strings are passed through on success so the query layer normalises them once.
 func mlwhAddedWindowFromQuery(c *gin.Context) (string, string, bool) {
 	since, ok := mlwhQueryRFC3339(c, "since")
 	if !ok {
@@ -947,6 +949,12 @@ func mlwhAddedWindowFromQuery(c *gin.Context) (string, string, bool) {
 
 	until, ok := mlwhQueryRFC3339(c, "until")
 	if !ok {
+		return "", "", false
+	}
+
+	if since == "" && until != "" {
+		writeMLWHBadRequest(c, "invalid until: requires since")
+
 		return "", "", false
 	}
 

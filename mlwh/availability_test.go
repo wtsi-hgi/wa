@@ -251,6 +251,40 @@ func TestSamplesWithDataSinceListMalformedSinceReturns400(t *testing.T) {
 	})
 }
 
+// A well-formed until WITHOUT a since must be rejected with 400 bad_request
+// before the queryer is reached on BOTH the count and list endpoints: until is
+// only meaningful as the upper bound of a [since, until) window, so an until-only
+// request would otherwise silently return the all-time result (a superset of what
+// the caller asked for). The fake queryer's funcs panic if reached, proving the
+// 400 fires before the query layer.
+func TestSamplesWithDataSinceUntilWithoutSinceReturns400(t *testing.T) {
+	const validUntil = "2026-06-01T00:00:00Z"
+
+	convey.Convey("Given the samples-with-data/count endpoint over a fake queryer that panics if its count func is reached", t, func() {
+		queryer := &serverFakeQueryer{
+			countSamplesWithDataFunc: func(_ context.Context, _ string) (Count, error) {
+				panic("queryer reached despite until without since")
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/S1/samples-with-data/count?until="+validUntil)
+
+		convey.Convey("when GET ...?until=<valid> with no since is served, then status is 400 bad_request and the queryer is not reached", func() {
+			assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		})
+	})
+
+	convey.Convey("Given the samples-with-data list endpoint over a fake queryer whose list func panics if reached", t, func() {
+		queryer := &serverFakeQueryer{}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/S1/samples-with-data?until="+validUntil)
+
+		convey.Convey("when GET ...?until=<valid> with no since is served, then status is 400 bad_request and the queryer is not reached", func() {
+			assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		})
+	})
+}
+
 // B1 acceptance test 4: a never-synced cache returns an error satisfying both
 // ErrCacheNeverSynced and ErrNotFound.
 func TestStudyOverviewNeverSyncedReturnsJoinedSentinel(t *testing.T) {
@@ -285,6 +319,34 @@ func TestRunOverviewNeverSyncedReturnsJoinedSentinel(t *testing.T) {
 			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
 			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
 			convey.So(overview, convey.ShouldResemble, RunOverview{})
+		})
+	})
+}
+
+// A direct Client caller that passes an until WITHOUT a since gets a clear error
+// rather than the silently-wrong all-time result: until is only meaningful as the
+// upper bound of a [since, until) window, so the typed methods reject it defensively
+// (the same rule the HTTP handler enforces with a 400). The empty-both case keeps
+// reusing the all-time path (covered by the *WithoutSinceMatchesAllTime tests), so
+// the error must NOT fire there. No cache is needed: the guard precedes any query.
+func TestSamplesWithDataSinceUntilWithoutSinceReturnsError(t *testing.T) {
+	const validUntil = "2026-06-01T00:00:00Z"
+
+	convey.Convey("Given a Client and a valid until with an empty since", t, func() {
+		client := &Client{}
+
+		convey.Convey("when CountSamplesWithDataSince is called with an empty since and that until, then it returns errUntilRequiresSince", func() {
+			count, err := client.CountSamplesWithDataSince(context.Background(), "S1", "", validUntil)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(errors.Is(err, errUntilRequiresSince), convey.ShouldBeTrue)
+			convey.So(count, convey.ShouldResemble, Count{})
+		})
+
+		convey.Convey("when SamplesWithDataSince is called with an empty since and that until, then it returns errUntilRequiresSince", func() {
+			list, err := client.SamplesWithDataSince(context.Background(), "S1", "", validUntil, availabilityFetchAll, 0)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(errors.Is(err, errUntilRequiresSince), convey.ShouldBeTrue)
+			convey.So(list, convey.ShouldBeNil)
 		})
 	})
 }
