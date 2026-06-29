@@ -157,8 +157,12 @@ var runOverviewFeedingTables = []string{
 
 // studyOverviewLibrariesCacheSQL counts the distinct libraries for the study using
 // the same (pipeline_id_lims, library_id, id_library_lims) grouping as
-// LibrariesForStudy, so the figure agrees with /study/:id/libraries.
-const studyOverviewLibrariesCacheSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT pipeline_id_lims, library_id, id_library_lims FROM library_samples WHERE id_study_lims = ?)`
+// LibrariesForStudy, so the figure agrees with /study/:id/libraries. It reuses
+// countLibrariesForStudyCacheSQL verbatim so the two cannot drift, and so the
+// derived table keeps its `AS distinct_libraries` alias: MySQL requires every
+// derived table to be aliased (Error 1248), and an unaliased subquery here was a
+// MySQL-only failure invisible to the SQLite-backed tests.
+const studyOverviewLibrariesCacheSQL = countLibrariesForStudyCacheSQL
 
 // studyOverviewLibraryTypesCacheSQL lists the distinct library types (pipeline LIMS
 // ids) present in the study, sorted, the same library-type notion as

@@ -747,7 +747,7 @@ func sqliteLargeCacheReadIndexShape(indexSet syncMirrorIndexSet, actual []string
 }
 
 func iseqProductMetricsSparseReadIndexColumns() []string {
-	return []string{"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index"}
+	return []string{"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_study_lims,id_run,position"}
 }
 
 func sqliteSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table string) bool {

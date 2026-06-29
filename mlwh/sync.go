@@ -294,9 +294,19 @@ var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
 }
 
+// iseqProductMetricsMirrorReadIndexes is the subset of the iseq product-metrics
+// mirror's secondary indexes that the sparse cold-load path recreates immediately
+// (for a mirror too large to rebuild every declared index inline). It MUST include
+// the (id_study_lims, id_run, position) index: without it the id_study_lims-scoped
+// study read/aggregate queries (RunsForStudy, CountRunsForStudy, the study
+// overview, the availability joins) full-scan the ~9M-row mirror (~52s) instead of
+// being index-served (~1s). Omitting it here was the root cause of the slow study
+// pages, because the large-cold-load schema-shape tolerance then accepted the
+// missing index as expected drift.
 var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
 	{Name: "iseq_product_metrics_mirror_id_run_position_tag_index_idx", Column: "id_run, position, tag_index"},
 	{Name: "ipm_mirror_sample_run_position_tag_idx", Column: "id_sample_tmp, id_run, position, tag_index"},
+	{Name: "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx", Column: "id_study_lims, id_run, position"},
 }
 
 var seqProductIRODSLocationsMirrorReadIndexes = []syncIndexSpec{
