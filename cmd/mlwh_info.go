@@ -1295,13 +1295,13 @@ func resolveInfoSince(raw string) (string, error) {
 	return "", fmt.Errorf("invalid --since %q: expected an RFC3339 timestamp or a Go duration (e.g. 168h)", raw)
 }
 
-// populateStudyFeatures fetches and records the new study feature endpoints
-// (overview, status breakdown, samples-with-data all-time + since counts, and
-// samples-without-data count). Each sub-endpoint degrades gracefully: a failure
-// is captured as a per-section warning and does not abort the others.
+// populateStudyFeatures fetches and records the new study feature endpoints. Each
+// sub-endpoint degrades gracefully: a failure is captured as a per-section
+// warning and does not abort the others.
 func populateStudyFeatures(ctx context.Context, client mlwhInfoClient, report *infoReport, studyLimsID, since string) {
 	if overview, err := client.StudyOverview(ctx, studyLimsID); err == nil {
 		report.StudyOverview = &overview
+		report.SamplesWithoutDataCount = &infoCount{Count: overview.SamplesWithoutData}
 	} else if !errors.Is(err, mlwh.ErrNotFound) {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("study overview: %v", err))
 	}
@@ -1313,6 +1313,10 @@ func populateStudyFeatures(ctx context.Context, client mlwhInfoClient, report *i
 	}
 
 	report.SamplesWithDataCount = studySamplesWithDataCount(ctx, client, report, studyLimsID, since)
+
+	if report.SamplesWithoutDataCount != nil {
+		return
+	}
 
 	if rows, err := client.SamplesWithoutData(ctx, studyLimsID, infoMaxRelated, 0); err == nil {
 		report.SamplesWithoutDataCount = &infoCount{Count: len(rows)}

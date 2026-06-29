@@ -911,6 +911,35 @@ func TestMLWHInfoRunIRODSPathsJSON(t *testing.T) {
 	})
 }
 
+func TestMLWHInfoStudyWithoutDataCountUsesOverviewAggregate(t *testing.T) {
+	convey.Convey("Given a study has more without-data samples than the related-row cap, when wa mlwh info runs, then the without-data count reports the full overview aggregate", t, func() {
+		cappedRows := make([]mlwh.SampleWithData, infoMaxRelated)
+		stub := newStudyInfoStub()
+		stub.studyOverview = func(_ context.Context, id string) (mlwh.StudyOverview, error) {
+			return mlwh.StudyOverview{
+				IDStudyLims:        id,
+				SamplesTotal:       120,
+				SamplesWithData:    63,
+				SamplesWithoutData: infoMaxRelated + 7,
+			}, nil
+		}
+		stub.samplesWithoutData = func(_ context.Context, _ string, limit, _ int) ([]mlwh.SampleWithData, error) {
+			convey.So(limit, convey.ShouldEqual, infoMaxRelated)
+
+			return cappedRows, nil
+		}
+
+		withStubMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901", "--type", "study"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "Samples without data:")
+		convey.So(output, convey.ShouldContainSubstring, "count: 57")
+		convey.So(output, convey.ShouldNotContainSubstring, "count: 50")
+	})
+}
+
 func withStubMLWHInfoClient(t *testing.T, stub *stubMLWHInfoClient) {
 	t.Helper()
 	t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(localhost:3306)/mlwarehouse")
@@ -1028,15 +1057,16 @@ func newStudyInfoStub() *stubMLWHInfoClient {
 		},
 		studyOverview: func(_ context.Context, id string) (mlwh.StudyOverview, error) {
 			return mlwh.StudyOverview{
-				IDStudyLims:     id,
-				SamplesTotal:    100,
-				SamplesWithData: 80,
-				DataObjects:     1234,
-				Runs:            5,
-				Libraries:       12,
-				AddedLast7Days:  3,
-				NewestDataAdded: "2026-06-20T00:00:00Z",
-				CacheSyncedAt:   "2026-06-27T00:00:00Z",
+				IDStudyLims:        id,
+				SamplesTotal:       100,
+				SamplesWithData:    80,
+				SamplesWithoutData: 2,
+				DataObjects:        1234,
+				Runs:               5,
+				Libraries:          12,
+				AddedLast7Days:     3,
+				NewestDataAdded:    "2026-06-20T00:00:00Z",
+				CacheSyncedAt:      "2026-06-27T00:00:00Z",
 			}, nil
 		},
 		statusBreakdown: func(_ context.Context, id string) (mlwh.StatusBreakdown, error) {
