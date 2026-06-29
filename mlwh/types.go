@@ -227,14 +227,16 @@ type RunStatusEvent struct {
 // kept, not deduplicated, reordered or forced monotonic); Current is DERIVED from
 // the latest entered_at (never the source iscurrent). The phase vocabulary is an
 // OPEN dict/source pass-through (NOT a frozen list): an unknown native status
-// flows through verbatim. ONT, which has no within-sequencing status, yields
-// empty Events with NotTracked set rather than a false zero (HARD REQ 11).
+// flows through verbatim. ONT has no within-sequencing status: an ONT-only sample
+// has no within-sequencing runs, so SampleProgress (F3) emits no RunStatusTimeline
+// for it (its runs is empty) rather than a false zero (HARD REQ 11), and RunStatus
+// (F2) serves only Illumina runs.
 type RunStatusTimeline struct {
 	IDRun      int              `json:"id_run" doc:"Illumina NPG run id (0/empty for non-Illumina)"`
 	Platform   string           `json:"platform" doc:"platform of the run"`
 	Events     []RunStatusEvent `json:"events" doc:"ordered status events; empty for ONT"`
 	Current    string           `json:"current" doc:"phase of the event with the latest entered_at (derived, not source iscurrent)"`
-	NotTracked string           `json:"not_tracked,omitempty" doc:"set to a reason when status is not tracked for the platform"`
+	NotTracked string           `json:"not_tracked,omitempty" doc:"reserved reason for a platform that reports an explicitly-untracked within-sequencing status; currently always empty/omitted (no supported platform sets it)"`
 }
 
 // Milestone is one wet-lab/sequencing milestone on the sample-progress timeline

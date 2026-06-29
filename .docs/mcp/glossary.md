@@ -166,9 +166,10 @@ products in (Illumina, PacBio, Elembio, or Ultimagen), with ONT derived from
 sample appears in, never from the iRODS `seq_platform_name` source string.
 Negatives are platform-qualified so a "no data" answer
 always names the platform it applies to. ONT is a special case: only a sample's
-identity and study are tracked for ONT, so its availability, QC, and
-within-sequencing status are reported as `not_tracked` rather than as a false
-zero.
+identity and study are tracked for ONT, so rather than a false zero its QC is
+reported as `not_tracked`, its availability is reported by listing the sample
+among samples-without-data with platform `["ONT"]`, and its within-sequencing
+status is simply absent (sample progress returns empty `runs` for ONT).
 
 ## Identifier kinds
 

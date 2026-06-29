@@ -892,8 +892,8 @@ func (c *Client) RunStatus(ctx context.Context, idRun string) (RunStatusTimeline
 // by construction. F3 obtains timelines for a sample's runs through this builder
 // (Illumina) and, for the other platforms, by feeding their own status/dates
 // through the shared platform-agnostic normalizeRunStatusTimeline; ONT has no
-// within-sequencing status, so F3 reports an empty-events RunStatusTimeline with
-// NotTracked set rather than a false zero (HARD REQ 11).
+// within-sequencing runs, so F3 emits no RunStatusTimeline for an ONT sample (its
+// runs is empty) rather than a false zero (HARD REQ 11).
 func (c *Client) runStatusTimelineForIlluminaRun(ctx context.Context, idRun int) (RunStatusTimeline, error) {
 	events, err := c.illuminaRunStatusEvents(ctx, idRun)
 	if err != nil {
