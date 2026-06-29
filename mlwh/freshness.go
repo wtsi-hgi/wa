@@ -132,12 +132,19 @@ func (c *Client) Freshness(ctx context.Context) (Freshness, error) {
 	return Freshness{Tables: tables}, nil
 }
 
-// formatFreshnessTime parses a stored sync_state timestamp and re-renders it as UTC
-// RFC3339 ending in Z, normalising any stored zone offset to UTC. A zero time renders
-// as the empty string: an interrupted cold load can persist a sync_state row whose
-// high_water is the formatted zero time ("0001-01-01T00:00:00Z"), and the contract is
-// that an absent meaningful timestamp is reported empty rather than as year 0001.
+// formatFreshnessTime parses a stored timestamp and re-renders it as UTC RFC3339
+// ending in Z, normalising any stored zone offset to UTC. An absent meaningful
+// timestamp renders as the empty string rather than year 0001: a SQL NULL (raw
+// is nil) reports empty, which is how a NULL MIN/MAX(created) aggregate (every
+// matching iRODS row has an unknown creation time) flows through to an empty
+// sequencing_date_range / newest_data_added / delivered_at; likewise a zero time,
+// which an interrupted cold load can persist as the formatted zero time
+// ("0001-01-01T00:00:00Z") in a sync_state high_water.
 func formatFreshnessTime(raw any) (string, error) {
+	if raw == nil {
+		return "", nil
+	}
+
 	parsed, err := parseSyncTimeValue(raw)
 	if err != nil {
 		return "", err

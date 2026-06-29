@@ -191,7 +191,7 @@ const sampleSearchTokenPageQuery = `SELECT id_sample_tmp, name, supplier_name, c
 // and seq_platform_name ride along from seq_product_irods_locations (spi) itself
 // so the mirror can store the iRODS creation time and the authoritative platform.
 // irods_data_relative_path is nullable upstream (e.g. the Ultimagen iRODS rows
-// store NULL), so it is COALESCEd to '' to keep the string scan target and the
+// store NULL), so it is COALESCEd to ” to keep the string scan target and the
 // NOT NULL mirror column happy rather than failing with "converting NULL to
 // string is unsupported".
 const seqProductIRODSLocationsSelectColumns = `spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, COALESCE(spi.irods_data_relative_path, '') AS irods_data_relative_path, recovery.id_sample_tmp, recovery.id_study_lims, spi.last_changed, spi.created, spi.seq_platform_name`
@@ -723,6 +723,18 @@ type syncStateRecord struct {
 	ResumeCursor   *string
 	IndexesDropped bool
 	Exists         bool
+}
+
+// formatNullableSyncTime renders an optional sync timestamp as an RFC3339 string
+// argument, or nil (SQL NULL) when the value is absent. It keeps a NULL upstream
+// created from being stored as the zero time ("0001-01-01T00:00:00Z"), so the
+// downstream MIN/MAX(created) aggregates and recency filter ignore it.
+func formatNullableSyncTime(value sql.NullTime) any {
+	if !value.Valid {
+		return nil
+	}
+
+	return formatSyncTime(value.Time)
 }
 
 // Querier provides the upstream MLWH query surface used by sync.
@@ -2567,7 +2579,7 @@ type seqProductIRODSLocationsSyncRow struct {
 	IDSampleTmp           int64
 	IDStudyLims           string
 	LastUpdated           time.Time
-	Created               time.Time
+	Created               sql.NullTime
 	Platform              string
 }
 
@@ -2694,14 +2706,19 @@ func scanSeqProductIRODSLocationsSyncRow(rows *sql.Rows) (seqProductIRODSLocatio
 	}
 	row.LastUpdated = parsed
 
-	// created is nullable upstream (default CURRENT_TIMESTAMP); a NULL value
-	// rides along as the zero time so the NOT NULL mirror column still stores a
-	// valid RFC3339 string rather than failing the insert.
+	// created is nullable upstream (default CURRENT_TIMESTAMP); a NULL value is
+	// mirrored as NULL (the mirror's created column is nullable) rather than the
+	// zero time, so the downstream MIN/MAX(created) aggregates and the
+	// created >= since recency filter naturally ignore unknown-creation rows
+	// instead of skewing date ranges / delivered_at to year 0001. Existence-based
+	// counts (data_objects, samples_with_data) still include the row because they
+	// never read created.
 	if created != nil {
-		row.Created, err = parseSyncTimeValue(created)
-		if err != nil {
-			return seqProductIRODSLocationsSyncRow{}, fmt.Errorf("mlwh: parse seq_product_irods_locations created: %w", err)
+		parsedCreated, parseErr := parseSyncTimeValue(created)
+		if parseErr != nil {
+			return seqProductIRODSLocationsSyncRow{}, fmt.Errorf("mlwh: parse seq_product_irods_locations created: %w", parseErr)
 		}
+		row.Created = sql.NullTime{Time: parsedCreated, Valid: true}
 	}
 
 	return row, nil
@@ -2772,7 +2789,7 @@ func seqProductIRODSLocationsMirrorRowArgs(row seqProductIRODSLocationsSyncRow) 
 		row.IDSampleTmp,
 		row.IDStudyLims,
 		formatSyncTime(row.LastUpdated),
-		formatSyncTime(row.Created),
+		formatNullableSyncTime(row.Created),
 		row.Platform,
 	}
 }

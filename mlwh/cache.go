@@ -51,7 +51,13 @@ const (
 	mysqlSyncLockNamePrefix        = "wa_mlwh_sync_"
 
 	// CacheSchemaVersion is the embedded cache schema version supported by OpenCache.
-	CacheSchemaVersion = 9
+	// Bumped to 10 to make the seq_product_irods_locations_mirror.created column
+	// nullable: the cache schema-shape drift check compares column type families,
+	// indexes and unique constraints but not column nullability, so a NOT NULL ->
+	// nullable change is invisible to it and an existing cache would otherwise keep
+	// the old NOT NULL column. The version bump forces migrateCacheSchema to
+	// recreate the mirror tables with the new shape.
+	CacheSchemaVersion = 10
 )
 
 var (

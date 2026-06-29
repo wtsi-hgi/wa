@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS seq_product_irods_locations_mirror (
 	id_sample_tmp            INTEGER NOT NULL,
 	id_study_lims            TEXT    NOT NULL COLLATE NOCASE,
 	last_updated             TEXT    NOT NULL,
-	created                  TEXT    NOT NULL,
+	created                  TEXT,
 	platform                 TEXT    NOT NULL,
 	CHECK(id_study_lims <> '')
 );

@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS seq_product_irods_locations_mirror (
 	id_sample_tmp            BIGINT       NOT NULL,
 	id_study_lims            VARCHAR(255) NOT NULL COLLATE {{MYSQL_TEXT_COLLATION}},
 	last_updated             VARCHAR(255) NOT NULL,
-	created                  VARCHAR(255) NOT NULL,
+	created                  VARCHAR(255),
 	platform                 VARCHAR(255) NOT NULL,
 	CHECK(id_study_lims <> '')
 );

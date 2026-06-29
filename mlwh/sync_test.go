@@ -2956,7 +2956,7 @@ func openSparseProductMirrorReplacementDBForTest(t *testing.T) *sql.DB {
 
 	statements := []string{
 		`CREATE TABLE iseq_product_metrics_mirror(id_iseq_product TEXT NOT NULL, id_iseq_flowcell_tmp INTEGER NOT NULL, id_run INTEGER NOT NULL, position INTEGER NOT NULL, tag_index INTEGER NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL, qc INTEGER NOT NULL, qc_lib INTEGER NOT NULL, qc_seq INTEGER NOT NULL, last_updated TEXT NOT NULL)`,
-		`CREATE TABLE seq_product_irods_locations_mirror(id_iseq_product TEXT NOT NULL, irods_root_collection TEXT NOT NULL, irods_data_relative_path TEXT NOT NULL, irods_collection TEXT NOT NULL, irods_file_name TEXT NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL, last_updated TEXT NOT NULL, created TEXT NOT NULL, platform TEXT NOT NULL)`,
+		`CREATE TABLE seq_product_irods_locations_mirror(id_iseq_product TEXT NOT NULL, irods_root_collection TEXT NOT NULL, irods_data_relative_path TEXT NOT NULL, irods_collection TEXT NOT NULL, irods_file_name TEXT NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL, last_updated TEXT NOT NULL, created TEXT, platform TEXT NOT NULL)`,
 	}
 	for _, statement := range statements {
 		if _, err = db.Exec(statement); err != nil {

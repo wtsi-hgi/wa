@@ -28,6 +28,7 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"net/http"
 	"testing"
@@ -1203,6 +1204,101 @@ func seedB1OverviewScenario(t *testing.T, db *sql.DB) {
 	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "1601", "/seq/52553", "52553_3#1.cram", b1SharedWithS2Only, "S2", b1CreatedNewest, "illumina")
 
 	seedB1OverviewSyncState(t, db)
+}
+
+// TestSyncNullUpstreamCreatedDoesNotPoisonAggregates is a regression test for the
+// PR #24 review finding: when an upstream seq_product_irods_locations row has a
+// NULL created, it must be mirrored as NULL (not the zero time), so that the
+// MIN/MAX(created) aggregates feeding sequencing_date_range, newest_data_added and
+// a sample's delivered_at reflect only real timestamps and are never skewed to
+// year 0001 by a single unknown-creation row. The existence-based counts
+// (data_objects, samples_with_data) must still include the NULL-created row,
+// because a NULL creation time does not mean "no data".
+func TestSyncNullUpstreamCreatedDoesNotPoisonAggregates(t *testing.T) {
+	convey.Convey("Given upstream iRODS rows with a mix of real and NULL created times", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		realCreated := time.Date(2026, time.June, 20, 9, 0, 0, 0, time.UTC)
+		lastUpdated := time.Date(2026, time.June, 20, 12, 0, 0, 0, time.UTC)
+
+		// Study S1: one sample with a real-created iRODS row AND a NULL-created
+		// iRODS row. Study S2: one sample whose ONLY iRODS row has a NULL created.
+		const (
+			s1Sample = int64(7001)
+			s2Sample = int64(7002)
+		)
+
+		seedHierarchyStudy(t, cache.DB(), 701, "S1")
+		seedHierarchyStudy(t, cache.DB(), 702, "S2")
+		seedHierarchySample(t, cache.DB(), s1Sample, "S1", "null-created-s1")
+		seedHierarchySample(t, cache.DB(), s2Sample, "S2", "null-created-s2")
+		seedLibrarySample(t, cache.DB(), "Standard", s1Sample, "S1")
+		seedLibrarySample(t, cache.DB(), "Standard", s2Sample, "S2")
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 7101, s1Sample, 70001, 1, 1, "S1")
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 7201, s2Sample, 70002, 1, 1, "S2")
+		seedB1OverviewSyncState(t, cache.DB())
+
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSeqProductIRODSLocations: {
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows: [][]driver.Value{
+					{int64(1), "p-s1-real", "/seq/70001", "70001#1.cram", s1Sample, "S1", formatSyncTime(lastUpdated), formatSyncTime(realCreated), "illumina"},
+					{int64(2), "p-s1-null", "/seq/70001", "70001#2.cram", s1Sample, "S1", formatSyncTime(lastUpdated), nil, "illumina"},
+					{int64(3), "p-s2-null", "/seq/70002", "70002#1.cram", s2Sample, "S2", formatSyncTime(lastUpdated), nil, "illumina"},
+				},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true, now: func() time.Time { return b1NowFixed }}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+
+		convey.Convey("then the NULL-created rows are mirrored as NULL, not the zero time", func() {
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 3)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE created IS NULL`), convey.ShouldEqual, 2)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE created = ?`, "0001-01-01T00:00:00Z"), convey.ShouldEqual, 0)
+		})
+
+		convey.Convey("then S1's existence counts include the NULL-created row but its date range reflects only the real created", func() {
+			overview, overviewErr := client.StudyOverview(context.Background(), "S1")
+			convey.So(overviewErr, convey.ShouldBeNil)
+			convey.So(overview.DataObjects, convey.ShouldEqual, 2)
+			convey.So(overview.SamplesWithData, convey.ShouldEqual, 1)
+
+			convey.So(overview.SequencingDateRange, convey.ShouldNotBeNil)
+			convey.So(overview.SequencingDateRange.Earliest, convey.ShouldEqual, "2026-06-20T09:00:00Z")
+			convey.So(overview.SequencingDateRange.Latest, convey.ShouldEqual, "2026-06-20T09:00:00Z")
+			convey.So(overview.NewestDataAdded, convey.ShouldEqual, "2026-06-20T09:00:00Z")
+		})
+
+		convey.Convey("then S2 (only NULL-created data) counts the row but omits the date range and newest_data_added", func() {
+			overview, overviewErr := client.StudyOverview(context.Background(), "S2")
+			convey.So(overviewErr, convey.ShouldBeNil)
+			convey.So(overview.DataObjects, convey.ShouldEqual, 1)
+			convey.So(overview.SamplesWithData, convey.ShouldEqual, 1)
+
+			convey.So(overview.SequencingDateRange, convey.ShouldBeNil)
+			convey.So(overview.NewestDataAdded, convey.ShouldBeEmpty)
+		})
+
+		convey.Convey("then the S2 sample is delivered but its delivered_at is empty, not year 0001", func() {
+			baseline, baselineErr := client.deriveSampleBaseline(context.Background(), s2Sample)
+			convey.So(baselineErr, convey.ShouldBeNil)
+			convey.So(baseline.BaselinePhase, convey.ShouldEqual, "delivered")
+			convey.So(baseline.DeliveredAt, convey.ShouldBeEmpty)
+		})
+
+		convey.Convey("then the S1 sample's delivered_at is the real created, not the zero time", func() {
+			baseline, baselineErr := client.deriveSampleBaseline(context.Background(), s1Sample)
+			convey.So(baselineErr, convey.ShouldBeNil)
+			convey.So(baseline.BaselinePhase, convey.ShouldEqual, "delivered")
+			convey.So(baseline.DeliveredAt, convey.ShouldEqual, "2026-06-20T09:00:00Z")
+		})
+	})
 }
 
 // B1 acceptance test 5: an unknown study id on a synced cache returns ErrNotFound
