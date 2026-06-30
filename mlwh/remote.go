@@ -329,9 +329,10 @@ func (rc *RemoteClient) IRODSPathsForRun(ctx context.Context, idRun, fileType st
 	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForRun", []string{idRun}, remotePaginationWithFileType(limit, offset, fileType))
 }
 
-// IRODSPathsForRunPage is the Page[IRODSPath] variant of IRODSPathsForRun: it
-// returns the same page of rows (Page.Items) plus the list-sizing metadata from
-// the X-Total-Count / X-Next-Offset response headers (Page.Total / Page.NextOffset).
+// IRODSPathsForRunPage returns an unfiltered all-file-types page of iRODS data
+// objects for a run, plus the list-sizing metadata from the X-Total-Count /
+// X-Next-Offset response headers (Page.Total / Page.NextOffset). It does not
+// accept a file-type filter.
 func (rc *RemoteClient) IRODSPathsForRunPage(ctx context.Context, idRun string, limit, offset int) (Page[IRODSPath], error) {
 	return remoteCallPage[IRODSPath](rc, ctx, "IRODSPathsForRun", []string{idRun}, remotePagination(limit, offset))
 }
