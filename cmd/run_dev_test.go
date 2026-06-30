@@ -62,6 +62,11 @@ const (
 	runDevSnapshotStartupGraceForTest          = 45 * time.Second
 )
 
+var (
+	runDevAllocatedPortsMu sync.Mutex
+	runDevAllocatedPorts   = map[int]struct{}{}
+)
+
 type runDevEnvSnapshot struct {
 	ResultsBackendURL string `json:"WA_RESULTS_BACKEND_URL"`
 	ResultsCACert     string `json:"WA_RESULTS_BACKEND_CA_CERT"`
@@ -2970,13 +2975,30 @@ func runDevRepoRootForTest(t *testing.T) string {
 func runDevFreePortForTest(t *testing.T) int {
 	t.Helper()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("allocate port: %v", err)
-	}
-	defer func() { _ = listener.Close() }()
+	for range 100 {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("allocate port: %v", err)
+		}
 
-	return listener.Addr().(*net.TCPAddr).Port
+		port := listener.Addr().(*net.TCPAddr).Port
+		_ = listener.Close()
+
+		runDevAllocatedPortsMu.Lock()
+		_, used := runDevAllocatedPorts[port]
+		if !used {
+			runDevAllocatedPorts[port] = struct{}{}
+		}
+		runDevAllocatedPortsMu.Unlock()
+
+		if !used {
+			return port
+		}
+	}
+
+	t.Fatal("allocate unique port")
+
+	return 0
 }
 
 func startStaticEndpointServerForTest(t *testing.T, port int, responses map[string][]byte) {
