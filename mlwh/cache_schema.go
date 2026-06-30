@@ -68,6 +68,7 @@ var schemaStatementOrder = []string{
 	"iseq_run_status_mirror",
 	"iseq_run_status_dict_mirror",
 	"seq_ops_tracking_per_sample_mirror",
+	"study_users_mirror",
 	"sample_search_token",
 	"sync_state",
 	"schema_version",
@@ -91,6 +92,7 @@ var cacheMigrationRecreateTables = []string{
 	"seq_ops_tracking_per_sample_mirror",
 	"seq_product_irods_locations_mirror",
 	"study_mirror",
+	"study_users_mirror",
 	"useq_product_metrics_mirror",
 	"useq_run_metrics_mirror",
 }
@@ -116,6 +118,7 @@ var cacheMigrationSyncStateTables = []string{
 	"iseq_run_status",
 	"iseq_run_status_dict",
 	"seq_ops_tracking_per_sample",
+	"study_users",
 }
 
 var cacheMigrationDropTables = []string{
@@ -136,6 +139,7 @@ var cacheMigrationDropTables = []string{
 	"iseq_run_status_mirror",
 	"iseq_run_status_dict_mirror",
 	"seq_ops_tracking_per_sample_mirror",
+	"study_users_mirror",
 	"negative_cache",
 	"enrich_cache",
 	"watermarks",

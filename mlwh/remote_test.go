@@ -469,6 +469,32 @@ func TestRemoteClientIRODSPathsForStudyPageReadsSizingHeadersE2(t *testing.T) {
 	})
 }
 
+// B3: the RemoteClient run-scope Page variant reads the X-Total-Count /
+// X-Next-Offset sizing headers into Page.Total / Page.NextOffset and its Items
+// equal the bare-slice IRODSPathsForRun result, exactly like the study Page
+// variant. newListSizingClientForTest seeds 25 iRODS objects on run 99000.
+func TestRemoteClientIRODSPathsForRunPageReadsSizingHeadersB3(t *testing.T) {
+	convey.Convey("B3 (irods-run): Given a RemoteClient Page variant against a server returning the sizing headers", t, func() {
+		local := newListSizingClientForTest(t, "SZ", 25)
+		defer closeParityClientForTest(t, local)
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		convey.Convey("when IRODSPathsForRunPage runs with limit=10&offset=0, then Total==25, NextOffset==10, and Items equals the bare-slice IRODSPathsForRun result", func() {
+			page, err := remote.IRODSPathsForRunPage(context.Background(), "99000", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(page.Total, convey.ShouldEqual, 25)
+			convey.So(page.NextOffset, convey.ShouldEqual, 10)
+			convey.So(page.Items, convey.ShouldHaveLength, 10)
+
+			bare, err := remote.IRODSPathsForRun(context.Background(), "99000", "", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.Items, convey.ShouldResemble, bare)
+		})
+	})
+}
+
 func TestRemoteClientSamplesWithDataPageReadsSizingHeadersE2(t *testing.T) {
 	convey.Convey("E2.3 (samples-with-data): Given a RemoteClient Page variant over the feature's new paginated list", t, func() {
 		local := newListSizingClientForTest(t, "SZ", 25)
@@ -507,6 +533,65 @@ func TestRemoteClientSamplesWithoutDataPageReadsSizingHeadersE2(t *testing.T) {
 			convey.So(page.Items, convey.ShouldHaveLength, 0)
 
 			bare, err := remote.SamplesWithoutData(context.Background(), "SZ", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.Items, convey.ShouldResemble, bare)
+		})
+	})
+}
+
+// G1 acceptance test 3 (the three new people Page variants): each
+// RemoteClient Page variant reads the X-Total-Count / X-Next-Offset sizing
+// headers into Page.Total / Page.NextOffset and its Items equal the bare-slice
+// result of the matching list method. seedCarlResolveFixture seeds 91 SQSCP
+// studies whose faculty_sponsor is "Carl Anderson", with a study_users owner row
+// (login ca3) on 59 of them, so the sponsor list totals 91, the user list totals
+// 59 and resolve-person totals 2 candidates -- each total exceeds its page, so
+// NextOffset is a real next page, not the -1 end-of-list marker.
+func TestRemoteClientPeoplePageReadsSizingHeadersG1(t *testing.T) {
+	convey.Convey("G1 (people): Given a RemoteClient over a Client whose cache has the Carl people fixture", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedCarlResolveFixture(t, cache)
+
+		local := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		convey.Convey("when StudiesForFacultySponsorPage runs with limit=10&offset=0, then Total==91, NextOffset==10, and Items equals the bare-slice result", func() {
+			page, err := remote.StudiesForFacultySponsorPage(context.Background(), "Carl", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(page.Total, convey.ShouldEqual, 91)
+			convey.So(page.NextOffset, convey.ShouldEqual, 10)
+			convey.So(page.Items, convey.ShouldHaveLength, 10)
+
+			bare, err := remote.StudiesForFacultySponsor(context.Background(), "Carl", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.Items, convey.ShouldResemble, bare)
+		})
+
+		convey.Convey("when StudiesForUserPage runs with limit=10&offset=0, then Total==59, NextOffset==10, and Items equals the bare-slice result", func() {
+			page, err := remote.StudiesForUserPage(context.Background(), "ca3", "", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(page.Total, convey.ShouldEqual, 59)
+			convey.So(page.NextOffset, convey.ShouldEqual, 10)
+			convey.So(page.Items, convey.ShouldHaveLength, 10)
+
+			bare, err := remote.StudiesForUser(context.Background(), "ca3", "", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.Items, convey.ShouldResemble, bare)
+		})
+
+		convey.Convey("when ResolvePersonPage runs with limit=1&offset=0, then Total==2, NextOffset==1, and Items equals the bare-slice result", func() {
+			page, err := remote.ResolvePersonPage(context.Background(), "carl", 1, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(page.Total, convey.ShouldEqual, 2)
+			convey.So(page.NextOffset, convey.ShouldEqual, 1)
+			convey.So(page.Items, convey.ShouldHaveLength, 1)
+
+			bare, err := remote.ResolvePerson(context.Background(), "carl", 1, 0)
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(page.Items, convey.ShouldResemble, bare)
 		})

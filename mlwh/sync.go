@@ -56,6 +56,7 @@ const (
 	syncTableUseqProductMetrics       = "useq_product_metrics"
 	syncTableUseqRunMetrics           = "useq_run_metrics"
 	syncTableOseqFlowcell             = "oseq_flowcell"
+	syncTableStudyUsers               = "study_users"
 	syncTableIseqRunStatus            = "iseq_run_status"
 	syncTableIseqRunStatusDict        = "iseq_run_status_dict"
 	syncTableSeqOpsTrackingPerSample  = "seq_ops_tracking_per_sample"
@@ -96,6 +97,7 @@ var supportedSyncTables = []string{
 	syncTableIseqRunStatus,
 	syncTableIseqRunStatusDict,
 	syncTableOseqFlowcell,
+	syncTableStudyUsers,
 	syncTablePacBioRunWellMetrics,
 	syncTableEseqRun,
 	syncTableEseqRunLaneMetrics,
@@ -162,6 +164,7 @@ var iseqProductMetricsMirrorColumns = []string{
 }
 
 var seqProductIRODSLocationsMirrorColumns = []string{
+	"id_seq_product_irods_locations_tmp",
 	"id_iseq_product",
 	"irods_root_collection",
 	"irods_data_relative_path",
@@ -172,6 +175,10 @@ var seqProductIRODSLocationsMirrorColumns = []string{
 	"last_updated",
 	"created",
 	"platform",
+}
+
+var seqProductIRODSLocationsMirrorKeyColumns = []string{
+	"id_seq_product_irods_locations_tmp",
 }
 
 var syncStateColumns = []string{"table_name", "high_water", "last_run", "resume_cursor", "indexes_dropped"}
@@ -279,6 +286,7 @@ var iseqProductMetricsMirrorSecondaryIndexes = []syncIndexSpec{
 	{Name: "iseq_product_metrics_mirror_id_run_position_tag_index_idx", Column: "id_run, position, tag_index"},
 	{Name: "ipm_mirror_sample_run_position_tag_idx", Column: "id_sample_tmp, id_run, position, tag_index"},
 	{Name: "iseq_product_metrics_mirror_id_iseq_flowcell_tmp_idx", Column: "id_iseq_flowcell_tmp"},
+	{Name: "ipm_mirror_iseq_product_idx", Column: "id_iseq_product"},
 	{Name: "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx", Column: "id_study_lims, id_run, position"},
 }
 
@@ -290,9 +298,12 @@ var iseqProductMetricsMirrorIndexSet = syncMirrorIndexSet{
 }
 
 var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
+	{Name: "spi_mirror_source_row_idx", Column: "id_seq_product_irods_locations_tmp"},
 	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
+	{Name: "spi_mirror_sample_tmp_iseq_product_idx", Column: "id_sample_tmp, id_iseq_product"},
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_iseq_product_idx", Column: "id_study_lims, id_iseq_product"},
+	{Name: "spi_mirror_iseq_product_idx", Column: "id_iseq_product"},
 }
 
 // iseqProductMetricsMirrorReadIndexes is the subset of the iseq product-metrics
@@ -307,22 +318,31 @@ var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
 var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
 	{Name: "iseq_product_metrics_mirror_id_run_position_tag_index_idx", Column: "id_run, position, tag_index"},
 	{Name: "ipm_mirror_sample_run_position_tag_idx", Column: "id_sample_tmp, id_run, position, tag_index"},
+	{Name: "ipm_mirror_iseq_product_idx", Column: "id_iseq_product"},
 	{Name: "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx", Column: "id_study_lims, id_run, position"},
 }
 
 // seqProductIRODSLocationsMirrorReadIndexes is the subset of the iRODS-locations
 // mirror's secondary indexes that the sparse cold-load path recreates immediately
-// (the mirror is too large -- ~7M rows -- to rebuild every declared index inline).
+// (the mirror is too large -- ~9M rows -- to rebuild every declared index inline).
+// It includes the upstream source-row index so warm incremental replacement can
+// remove stale cached paths by stable source identity without scanning the mirror.
 // It MUST include the (id_study_lims, id_iseq_product) index: the per-platform
 // status-breakdown query joins each platform's product id to spi.id_iseq_product
 // scoped by id_study_lims, and without this index that linkage full-scans the mirror
-// per study (the ~5s study page). Omitting it here would let the large-cold-load
+// per study (the ~5s study page). It MUST also include the (id_iseq_product) index:
+// the D1 run-scoped iRODS join and the D2 manifest per-product iRODS LEFT JOIN match
+// on id_iseq_product alone, so without it those joins full-scan the mirror until the
+// full index set is rebuilt. Omitting either here would let the large-cold-load
 // schema-shape tolerance accept the missing index as expected drift, silently
 // recreating the slow path.
 var seqProductIRODSLocationsMirrorReadIndexes = []syncIndexSpec{
+	{Name: "spi_mirror_source_row_idx", Column: "id_seq_product_irods_locations_tmp"},
 	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
+	{Name: "spi_mirror_sample_tmp_iseq_product_idx", Column: "id_sample_tmp, id_iseq_product"},
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_iseq_product_idx", Column: "id_study_lims, id_iseq_product"},
+	{Name: "spi_mirror_iseq_product_idx", Column: "id_iseq_product"},
 }
 
 var seqProductIRODSLocationsMirrorIndexSet = syncMirrorIndexSet{
@@ -744,6 +764,17 @@ type syncStateRecord struct {
 	ResumeCursor   *string
 	IndexesDropped bool
 	Exists         bool
+}
+
+func seqProductIRODSLocationsBatchDedupeKey(row seqProductIRODSLocationsSyncRow) seqProductIRODSLocationsDedupeKey {
+	return seqProductIRODSLocationsDedupeKey{
+		sourceRowID:     row.SourceRowID,
+		idIseqProduct:   row.IDIseqProduct,
+		idSampleTmp:     row.IDSampleTmp,
+		idStudyLims:     row.IDStudyLims,
+		irodsCollection: row.IRODSCollection,
+		irodsFileName:   row.IRODSFileName,
+	}
 }
 
 // formatNullableSyncTime renders an optional sync timestamp as an RFC3339 string
@@ -1463,6 +1494,15 @@ func syncReconnectBackoff(attempt int) time.Duration {
 	}
 
 	return backoff
+}
+
+type seqProductIRODSLocationsDedupeKey struct {
+	sourceRowID     int64
+	idIseqProduct   string
+	idSampleTmp     int64
+	idStudyLims     string
+	irodsCollection string
+	irodsFileName   string
 }
 
 func (c *Client) emitSyncRetry(table string, attempt int, retryErr error, backoff time.Duration) {
@@ -2381,7 +2421,7 @@ func (c *Client) syncTableData(ctx context.Context, table string, state syncStat
 	case syncTableIseqRunStatus:
 		return syncIseqRunStatusTable(ctx, c.cache, source, state)
 	case syncTablePacBioRunWellMetrics, syncTableEseqRun, syncTableEseqRunLaneMetrics,
-		syncTableUseqRunMetrics, syncTableOseqFlowcell, syncTableIseqRunStatusDict:
+		syncTableUseqRunMetrics, syncTableOseqFlowcell, syncTableStudyUsers, syncTableIseqRunStatusDict:
 		return syncWholesaleMirrorTable(ctx, c.cache, source, state, wholesaleMirrorSpecFor(table))
 	case syncTableSeqOpsTrackingPerSample:
 		return syncSeqOpsTrackingPerSampleTable(ctx, c.cache, source, state)
@@ -2784,7 +2824,7 @@ func insertSeqProductIRODSLocationsMirrorBatch(ctx context.Context, tx *sql.Tx, 
 }
 
 func replaceSeqProductIRODSLocationsMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []seqProductIRODSLocationsSyncRow) error {
-	if err := deleteExistingKeys(ctx, tx, "seq_product_irods_locations_mirror", []string{"id_iseq_product"}, seqProductIRODSLocationsBatchKeys(rows)); err != nil {
+	if err := deleteExistingKeys(ctx, tx, "seq_product_irods_locations_mirror", seqProductIRODSLocationsMirrorKeyColumns, seqProductIRODSLocationsBatchKeys(rows)); err != nil {
 		return err
 	}
 
@@ -2802,6 +2842,7 @@ func seqProductIRODSLocationsMirrorBatchArgs(rows []seqProductIRODSLocationsSync
 
 func seqProductIRODSLocationsMirrorRowArgs(row seqProductIRODSLocationsSyncRow) []any {
 	return []any{
+		row.SourceRowID,
 		row.IDIseqProduct,
 		row.IRODSRootCollection,
 		row.IRODSDataRelativePath,
@@ -3271,10 +3312,10 @@ func dedupeIseqProductMetricsBatch(rows []iseqProductMetricsSyncRow) []iseqProdu
 }
 
 func dedupeSeqProductIRODSLocationsBatch(rows []seqProductIRODSLocationsSyncRow) []seqProductIRODSLocationsSyncRow {
-	indices := make(map[string]int, len(rows))
+	indices := make(map[seqProductIRODSLocationsDedupeKey]int, len(rows))
 	deduped := make([]seqProductIRODSLocationsSyncRow, 0, len(rows))
 	for _, row := range rows {
-		key := seqProductIRODSLocationsKey(row)
+		key := seqProductIRODSLocationsBatchDedupeKey(row)
 		index, ok := indices[key]
 		if ok {
 			deduped[index] = row
@@ -3286,10 +3327,6 @@ func dedupeSeqProductIRODSLocationsBatch(rows []seqProductIRODSLocationsSyncRow)
 	}
 
 	return deduped
-}
-
-func seqProductIRODSLocationsKey(row seqProductIRODSLocationsSyncRow) string {
-	return fmt.Sprintf("%s\x00%d\x00%s", row.IDIseqProduct, row.IDSampleTmp, row.IDStudyLims)
 }
 
 func sampleBatchKeys(rows []sampleSyncRow) [][]any {
@@ -3331,7 +3368,7 @@ func iseqProductMetricsBatchKeys(rows []iseqProductMetricsSyncRow) [][]any {
 func seqProductIRODSLocationsBatchKeys(rows []seqProductIRODSLocationsSyncRow) [][]any {
 	keys := make([][]any, 0, len(rows))
 	for _, row := range rows {
-		keys = append(keys, []any{row.IDIseqProduct})
+		keys = append(keys, []any{row.SourceRowID})
 	}
 
 	return keys
@@ -3524,7 +3561,7 @@ func writeSeqProductIRODSLocationsBatch(ctx context.Context, cache Cache, rows [
 		existing := 0
 		if !assumeInserted {
 			var err error
-			existing, err = countExistingKeys(ctx, tx, "seq_product_irods_locations_mirror", []string{"id_iseq_product"}, seqProductIRODSLocationsBatchKeys(deduped))
+			existing, err = countExistingKeys(ctx, tx, "seq_product_irods_locations_mirror", seqProductIRODSLocationsMirrorKeyColumns, seqProductIRODSLocationsBatchKeys(deduped))
 			if err != nil {
 				return err
 			}

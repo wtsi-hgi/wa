@@ -108,6 +108,57 @@ func TestFreshnessReportsPerTableSyncState(t *testing.T) {
 	})
 }
 
+// A3 acceptance test 3: a never-synced cache reports a study_users entry (the new
+// freshnessSyncTables total includes it) with ever_synced=false, empty timestamps,
+// and no error.
+func TestFreshnessNeverSyncedReportsStudyUsersAbsentA3(t *testing.T) {
+	convey.Convey("A3.3: Given a never-synced cache with no sync_state rows", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		freshness, err := client.Freshness(context.Background())
+
+		convey.Convey("when Freshness runs, then study_users is reported absent with empty timestamps and no error", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(len(freshness.Tables), convey.ShouldEqual, len(freshnessSyncTables))
+
+			byTable := freshnessByTable(freshness)
+			convey.So(byTable, convey.ShouldContainKey, syncTableStudyUsers)
+			convey.So(byTable[syncTableStudyUsers].EverSynced, convey.ShouldBeFalse)
+			convey.So(byTable[syncTableStudyUsers].HighWater, convey.ShouldBeEmpty)
+			convey.So(byTable[syncTableStudyUsers].LastRun, convey.ShouldBeEmpty)
+		})
+	})
+}
+
+// A3 acceptance test 4: a study_users sync_state row is reported by Freshness with
+// its last_run.
+func TestFreshnessStudyUsersSyncStateReportsLastRunA3(t *testing.T) {
+	convey.Convey("A3.4: Given a study_users sync_state row", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		highWater := time.Date(2026, time.June, 18, 9, 0, 0, 0, time.UTC)
+		lastRun := time.Date(2026, time.June, 18, 9, 4, 0, 0, time.UTC)
+		seedSyncStateRun(t, cache.DB(), syncTableStudyUsers, highWater, lastRun)
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		freshness, err := client.Freshness(context.Background())
+
+		convey.Convey("when Freshness runs, then study_users is reported with its last_run", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			byTable := freshnessByTable(freshness)
+			convey.So(byTable, convey.ShouldContainKey, syncTableStudyUsers)
+			convey.So(byTable[syncTableStudyUsers].EverSynced, convey.ShouldBeTrue)
+			convey.So(byTable[syncTableStudyUsers].LastRun, convey.ShouldEqual, "2026-06-18T09:04:00Z")
+		})
+	})
+}
+
 // Every mirrored table must always be reported, in the spec's declared order
 // (the original five first, then the A4/A5 mirrors), regardless of which ones have
 // a sync_state row, so callers get a stable shape.
@@ -141,6 +192,7 @@ func TestFreshnessReportsAllTablesInOrder(t *testing.T) {
 				syncTableIseqRunStatus,
 				syncTableIseqRunStatusDict,
 				syncTableOseqFlowcell,
+				syncTableStudyUsers,
 				syncTablePacBioRunWellMetrics,
 				syncTableEseqRun,
 				syncTableEseqRunLaneMetrics,

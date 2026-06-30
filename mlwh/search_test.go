@@ -329,6 +329,43 @@ func TestSearchStudiesMatchesAcrossAllFourSearchableFields(t *testing.T) {
 	})
 }
 
+// F1 acceptance test 3 (Q5 disambiguation): two studies share the name "Malaria"
+// but have distinct id_study_lims and distinct faculty_sponsor, so a search by
+// name returns rows that carry enough to tell them apart. SearchStudies needs NO
+// SQL change; the full Study rows it already returns carry the three fields.
+func TestSearchStudiesRowsDisambiguateSameNamedStudies(t *testing.T) {
+	convey.Convey("Given two studies both named \"Malaria\" with distinct id_study_lims and faculty_sponsor", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedStudyMirrorSearchRow(t, cache.DB(), 1, "6001", "Malaria", "Resistance markers", "Genomics", "Sponsor Alice")
+		seedStudyMirrorSearchRow(t, cache.DB(), 2, "6002", "Malaria", "Vaccine trial", "Vaccines", "Sponsor Bob")
+		seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		studies, err := client.SearchStudies(context.Background(), "malaria", 100, 0)
+
+		convey.Convey("when SearchStudies runs, then each row carries its distinct id_study_lims, name and faculty_sponsor", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(studies, convey.ShouldHaveLength, 2)
+
+			// Ordered by id_study_lims, so the first row is 6001, the second 6002.
+			convey.So(studies[0].IDStudyLims, convey.ShouldEqual, "6001")
+			convey.So(studies[0].Name, convey.ShouldEqual, "Malaria")
+			convey.So(studies[0].FacultySponsor, convey.ShouldEqual, "Sponsor Alice")
+
+			convey.So(studies[1].IDStudyLims, convey.ShouldEqual, "6002")
+			convey.So(studies[1].Name, convey.ShouldEqual, "Malaria")
+			convey.So(studies[1].FacultySponsor, convey.ShouldEqual, "Sponsor Bob")
+
+			// The shared name does not disambiguate; the distinct id_study_lims and
+			// faculty_sponsor do.
+			convey.So(studies[0].FacultySponsor, convey.ShouldNotEqual, studies[1].FacultySponsor)
+		})
+	})
+}
+
 func TestSearchStudiesShortTermReturnsEmptyWithoutMatching(t *testing.T) {
 	convey.Convey("Given a synced SQLite cache that would otherwise match a 2-char term", t, func() {
 		cache := openSQLiteSyncTestCache(t)

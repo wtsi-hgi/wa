@@ -158,10 +158,11 @@ const sampleEseqLaneMetricsSQL = `SELECT DISTINCT l.run_started, l.run_complete 
 // sample's useq_product_metrics_mirror rows through the shared id_run
 // (useq_product_metrics.id_run -> useq_run_metrics.id_run, where id_run is the
 // run-metrics primary key), the same id_run-keyed model as the Elembio path.
-// Ultimagen carries a native run_status string, passed through verbatim (open
-// vocabulary) for both run-level dated columns. DISTINCT collapses the fan-out so
-// each id_run contributes one timeline source; ordered by id_run then run_start.
-const sampleUseqRunMetricsSQL = `SELECT DISTINCT r.run_status, r.run_start, r.run_complete ` +
+// Ultimagen's real source carries lifecycle dates rather than a native status
+// string, so each date column is labelled by its source lifecycle phase. DISTINCT
+// collapses the fan-out so each id_run contributes one timeline source; ordered by
+// id_run then run_start.
+const sampleUseqRunMetricsSQL = `SELECT DISTINCT r.id_run, r.run_start, r.run_complete ` +
 	`FROM useq_run_metrics_mirror AS r ` +
 	`JOIN useq_product_metrics_mirror AS p ON p.id_run = r.id_run ` +
 	`WHERE p.id_sample_tmp = ? ORDER BY r.id_run, r.run_start`
@@ -175,6 +176,15 @@ const sampleUseqRunMetricsSQL = `SELECT DISTINCT r.run_status, r.run_start, r.ru
 const (
 	elembioRunStartedPhase  = "run started"
 	elembioRunCompletePhase = "run complete"
+)
+
+// Ultimagen run-lifecycle phase labels (open vocabulary). The real
+// useq_run_metrics table has no native run_status column; run_in_progress and
+// run_archived are dated lifecycle columns, so each date's source column gives
+// the phase.
+const (
+	ultimagenRunInProgressPhase = "run in progress"
+	ultimagenRunArchivedPhase   = "run archived"
 )
 
 // sampleProgressFeedingTables are the sync tables whose oldest last_run defines a
@@ -245,6 +255,28 @@ var statusBreakdownFeedingTables = []string{
 	syncTableSeqOpsTrackingPerSample,
 }
 
+// statusBreakdownQCCacheSQL is the ONE grouped query for the QC split of a study's
+// distinct SEQUENCED samples (spec D3/D1q). The inner SELECT rolls each sample's
+// products IN THIS STUDY up to one verdict per sample (GROUP BY id_sample_tmp over
+// studyScopedSampleQCUnion), reproducing rollUpSampleQC's precedence exactly:
+// MIN(qc) = 0 -> fail (SQL MIN ignores NULLs, so a 0 wins), else any qc IS NULL ->
+// pending, else pass. The outer aggregate counts the samples in each bucket. Only
+// samples with >=1 study-scoped product-metrics row appear in the union, so
+// registered-only and ONT samples (no products) contribute to no bucket -- the
+// three counts therefore sum to the sequenced count (samples_total -
+// distinct.registered), never a false pending. Study-scoped (unlike the
+// sample-wide sampleQCRollupSQL), but the per-sample rule is identical, so a
+// single-study sample's study verdict cannot disagree with SampleProgress.qc.
+var statusBreakdownQCCacheSQL = `SELECT ` +
+	`SUM(CASE WHEN verdict = '` + qcPass + `' THEN 1 ELSE 0 END), ` +
+	`SUM(CASE WHEN verdict = '` + qcFail + `' THEN 1 ELSE 0 END), ` +
+	`SUM(CASE WHEN verdict = '` + qcPending + `' THEN 1 ELSE 0 END) ` +
+	`FROM (SELECT id_sample_tmp, CASE ` +
+	`WHEN MIN(qc) = 0 THEN '` + qcFail + `' ` +
+	`WHEN SUM(CASE WHEN qc IS NULL THEN 1 ELSE 0 END) > 0 THEN '` + qcPending + `' ` +
+	`ELSE '` + qcPass + `' END AS verdict ` +
+	`FROM (` + studyScopedSampleQCUnion() + `) AS study_sample_products GROUP BY id_sample_tmp) AS sample_qc`
+
 // statusBreakdownPlatformArm pairs one platform's product-metrics mirror with its
 // product-id column, so the per-platform partition can both establish the
 // platform's membership and test per-platform delivery (the shared product id links
@@ -277,6 +309,25 @@ var statusBreakdownProductPlatformArms = []statusBreakdownPlatformArm{
 func sampleProductMetricsQCUnion() string {
 	arm := func(table string) string {
 		return `SELECT qc FROM ` + table + ` WHERE id_sample_tmp = ?`
+	}
+
+	return strings.Join([]string{
+		arm("iseq_product_metrics_mirror"),
+		arm("pac_bio_product_metrics_mirror"),
+		arm("eseq_product_metrics_mirror"),
+		arm("useq_product_metrics_mirror"),
+	}, " UNION ALL ")
+}
+
+// studyScopedSampleQCUnion is the UNION ALL of (id_sample_tmp, qc) across every
+// platform's product-metrics mirror scoped by id_study_lims, so the study QC
+// roll-up sees only the products a sample has IN THIS STUDY. Each arm binds the
+// study id once; it is the study-scoped counterpart of sampleProductMetricsQCUnion
+// (which is sample-wide). ONT (oseq_flowcell) carries no products and is absent,
+// so an ONT-only sample contributes no rows and is excluded from the QC split.
+func studyScopedSampleQCUnion() string {
+	arm := func(table string) string {
+		return `SELECT id_sample_tmp, qc FROM ` + table + ` WHERE id_study_lims = ?`
 	}
 
 	return strings.Join([]string{
@@ -469,16 +520,17 @@ func eseqLaneEvents(runStarted, runComplete any) ([]runStatusRawEvent, error) {
 }
 
 // useqRunEvents turns one Ultimagen run's dated lifecycle columns into date-ordered
-// raw status events the normalizer consumes: one event per non-NULL dated column
-// (run_start, run_complete), each labelled with the run's native run_status string
-// passed through verbatim (open vocabulary). It is the Ultimagen analogue of
-// pacBioWellEvents -- events are sorted by their date and NULL dates are skipped.
-func useqRunEvents(runStatus string, runStart, runComplete any) ([]runStatusRawEvent, error) {
+// raw status events the normalizer consumes: one event per non-NULL dated column,
+// labelled with the lifecycle phase that source column represents. It is the
+// Ultimagen analogue of eseqLaneEvents: events are sorted by their date and NULL
+// dates are skipped.
+func useqRunEvents(runStart, runComplete any) ([]runStatusRawEvent, error) {
 	dated := []struct {
-		raw any
+		phase string
+		raw   any
 	}{
-		{runStart},
-		{runComplete},
+		{ultimagenRunInProgressPhase, runStart},
+		{ultimagenRunArchivedPhase, runComplete},
 	}
 
 	events := make([]runStatusRawEvent, 0, len(dated))
@@ -492,7 +544,7 @@ func useqRunEvents(runStatus string, runStart, runComplete any) ([]runStatusRawE
 			return nil, fmt.Errorf("mlwh: parse useq run metrics date: %w", err)
 		}
 
-		events = append(events, runStatusRawEvent{Phase: runStatus, EnteredAt: entered})
+		events = append(events, runStatusRawEvent{Phase: entry.phase, EnteredAt: entered})
 	}
 
 	slices.SortStableFunc(events, func(a, b runStatusRawEvent) int {
@@ -1187,8 +1239,8 @@ func (c *Client) sampleEseqRunTimelines(ctx context.Context, idSampleTmp int64) 
 // sampleUseqRunTimelines builds the RunStatusTimeline for each Ultimagen run the
 // sample's products link to, joining useq_product_metrics_mirror.id_run ->
 // useq_run_metrics_mirror.id_run and feeding the run's dated lifecycle columns
-// (run_start, run_complete), each labelled with the native run_status (open
-// vocabulary, verbatim), through the shared normalizeRunStatusTimeline (platform
+// (run_start, run_complete), each labelled with the lifecycle phase its source
+// date represents, through the shared normalizeRunStatusTimeline (platform
 // Ultimagen, IDRun 0). A run with no dated columns yields no timeline.
 func (c *Client) sampleUseqRunTimelines(ctx context.Context, idSampleTmp int64) ([]RunStatusTimeline, error) {
 	db := c.readCacheDB()
@@ -1204,15 +1256,13 @@ func (c *Client) sampleUseqRunTimelines(ctx context.Context, idSampleTmp int64) 
 
 	timelines := make([]RunStatusTimeline, 0)
 	for rows.Next() {
-		var (
-			runStatus             sql.NullString
-			runStart, runComplete any
-		)
-		if err = rows.Scan(&runStatus, &runStart, &runComplete); err != nil {
+		var idRun int64
+		var runStart, runComplete any
+		if err = rows.Scan(&idRun, &runStart, &runComplete); err != nil {
 			return nil, fmt.Errorf("%w: scan sample useq run metrics: %w", ErrUpstreamImpaired, err)
 		}
 
-		events, eventsErr := useqRunEvents(runStatus.String, runStart, runComplete)
+		events, eventsErr := useqRunEvents(runStart, runComplete)
 		if eventsErr != nil {
 			return nil, eventsErr
 		}
@@ -1272,6 +1322,12 @@ func (c *Client) StatusBreakdown(ctx context.Context, studyLimsID string) (Statu
 		return StatusBreakdown{}, err
 	}
 	breakdown.PerPlatform = perPlatform
+
+	qc, err := c.statusBreakdownQC(ctx, studyLimsID)
+	if err != nil {
+		return StatusBreakdown{}, err
+	}
+	breakdown.QC = qc
 
 	withTimeline, err := c.queryCount(ctx, countSamplesWithDetailedTimelineCacheSQL, "count study samples with detailed timeline", studyLimsID)
 	if err != nil {
@@ -1351,6 +1407,37 @@ func (c *Client) statusBreakdownPerPlatform(ctx context.Context, studyLimsID str
 	}
 
 	return ordered, nil
+}
+
+// statusBreakdownQC runs the single grouped QC-split query and returns the
+// qc_pass / qc_fail / qc_pending counts over the study's distinct SEQUENCED
+// samples. The per-sample roll-up is identical to rollUpSampleQC (fail > pending >
+// pass over the study's products), so the three counts sum to the sequenced count
+// (samples_total - distinct.registered); registered-only and ONT samples have no
+// products and are excluded. SUM over an empty inner set (a study whose samples
+// are all registered) yields SQL NULL, scanned as 0, so the QC split is {0,0,0}
+// rather than an error.
+func (c *Client) statusBreakdownQC(ctx context.Context, studyLimsID string) (StudyQCBreakdown, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return StudyQCBreakdown{}, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	args := make([]any, len(statusBreakdownProductPlatformArms))
+	for i := range args {
+		args[i] = studyLimsID
+	}
+
+	var pass, fail, pending sql.NullInt64
+	if err := db.QueryRowContext(ctx, statusBreakdownQCCacheSQL, args...).Scan(&pass, &fail, &pending); err != nil {
+		return StudyQCBreakdown{}, fmt.Errorf("%w: aggregate study status breakdown qc split: %w", ErrUpstreamImpaired, err)
+	}
+
+	return StudyQCBreakdown{
+		QCPass:    int(pass.Int64),
+		QCFail:    int(fail.Int64),
+		QCPending: int(pending.Int64),
+	}, nil
 }
 
 // statusBreakdownForEmptyStudy resolves a StatusBreakdown when no samples are linked

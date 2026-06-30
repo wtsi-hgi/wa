@@ -58,7 +58,26 @@ type Queryer interface {
 	LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]Lane, error)
 	IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]IRODSPath, error)
 	IRODSPathsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]IRODSPath, error)
+	IRODSPathsForRun(ctx context.Context, idRun, fileType string, limit, offset int) ([]IRODSPath, error)
+	StudyManifest(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (StudyManifest, error)
 	StudiesForSample(ctx context.Context, sangerName string) ([]Study, error)
+
+	// People to studies (a named PI/sponsor to their studies; name is a path
+	// param; limit/offset pagination).
+	StudiesForFacultySponsor(ctx context.Context, name string, limit, offset int) ([]PersonStudy, error)
+	CountStudiesForFacultySponsor(ctx context.Context, name string) (Count, error)
+
+	// People to studies by study_users role membership (person is a path param
+	// matched as a substring of name/login/email; role is the raw comma-separated
+	// override of the default role set; limit/offset pagination).
+	StudiesForUser(ctx context.Context, person, role string, limit, offset int) ([]PersonStudy, error)
+	CountStudiesForUser(ctx context.Context, person, role string) (Count, error)
+
+	// People directory: distinct candidate people (faculty_sponsor and study_users)
+	// matching a partial term as a case-insensitive substring (term is a path
+	// param; limit/offset pagination).
+	ResolvePerson(ctx context.Context, term string, limit, offset int) ([]PersonCandidate, error)
+	CountResolvePerson(ctx context.Context, term string) (Count, error)
 
 	// Sample finders.
 	FindSamplesBySangerID(ctx context.Context, sangerID string) ([]Sample, error)
@@ -83,10 +102,12 @@ type Queryer interface {
 	CountSamplesForLibraryLimsID(ctx context.Context, idLibraryLims string) (Count, error)
 	CountSamplesForLibraryType(ctx context.Context, pipelineIDLims string) (Count, error)
 	CountRunsForStudy(ctx context.Context, studyLimsID string) (Count, error)
+	CountStudyManifest(ctx context.Context, studyLimsID string) (Count, error)
 	CountLibrariesForStudy(ctx context.Context, studyLimsID string) (Count, error)
 	CountLanesForSample(ctx context.Context, sangerName string) (Count, error)
 	CountIRODSPathsForSample(ctx context.Context, sangerName string) (Count, error)
 	CountIRODSPathsForStudy(ctx context.Context, studyLimsID string) (Count, error)
+	CountIRODSPathsForRun(ctx context.Context, idRun, fileType string) (Count, error)
 	CountFindSamplesBySangerID(ctx context.Context, sangerID string) (Count, error)
 	CountFindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) (Count, error)
 	CountFindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) (Count, error)

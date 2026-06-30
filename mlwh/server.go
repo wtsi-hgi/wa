@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -56,6 +57,85 @@ const SearchMaxLimit = 1000
 // internal references; it shares SearchMaxLimit's single source of truth so the
 // enforced ceiling and the public symbol can never drift.
 const mlwhSearchMaxLimit = SearchMaxLimit
+
+// irodsPathsByFileTypeQueryer is the file-type-filter capability the iRODS list
+// and count handlers need when a file_type query param is supplied. It is
+// satisfied by *Client and *RemoteClient. Like samplesWithDataSinceQueryer, it is
+// a narrow capability interface rather than a Queryer member because the filtered
+// variants share the bare endpoints' single Registry entries (parameterised by
+// the file_type query param), so they are not distinct endpoints on the query
+// surface (preserving the 1:1 Method<->Registry invariant). A queryer that does
+// not satisfy it never receives a file_type (the handler 400s an invalid one and
+// otherwise only dispatches the filtered path when fileType != "").
+type irodsPathsByFileTypeQueryer interface {
+	IRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, fileType string, limit, offset int) ([]IRODSPath, error)
+	IRODSPathsForSampleByFileType(ctx context.Context, sangerName, fileType string, limit, offset int) ([]IRODSPath, error)
+	CountIRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, fileType string) (Count, error)
+	CountIRODSPathsForSampleByFileType(ctx context.Context, sangerName, fileType string) (Count, error)
+}
+
+// Both the local Client and the RemoteClient provide the file-type-filtered iRODS
+// variants, so a server over either dispatches a file_type query param to the
+// filtered path.
+var (
+	_ irodsPathsByFileTypeQueryer = (*Client)(nil)
+	_ irodsPathsByFileTypeQueryer = (*RemoteClient)(nil)
+)
+
+// irodsPathsForSampleResult dispatches the shared /sample/:id/irods list endpoint
+// the same way as irodsPathsForStudyResult.
+func irodsPathsForSampleResult(c *gin.Context, queryer Queryer, id, fileType string, pagination mlwhPagination) ([]IRODSPath, error) {
+	if fileType != "" {
+		if filtered, ok := queryer.(irodsPathsByFileTypeQueryer); ok {
+			return filtered.IRODSPathsForSampleByFileType(c.Request.Context(), id, fileType, pagination.limit, pagination.offset)
+		}
+	}
+
+	return queryer.IRODSPathsForSample(c.Request.Context(), id, pagination.limit, pagination.offset)
+}
+
+// countIRODSPathsForSampleResult dispatches the /sample/:id/irods/count endpoint
+// and the sample list's total the same way as countIRODSPathsForStudyResult.
+func countIRODSPathsForSampleResult(c *gin.Context, queryer Queryer, id, fileType string) (Count, error) {
+	if fileType != "" {
+		if filtered, ok := queryer.(irodsPathsByFileTypeQueryer); ok {
+			return filtered.CountIRODSPathsForSampleByFileType(c.Request.Context(), id, fileType)
+		}
+	}
+
+	return queryer.CountIRODSPathsForSample(c.Request.Context(), id)
+}
+
+// irodsPathsForStudyResult dispatches the shared /study/:id/irods list endpoint:
+// with no file_type it returns the all-file-types IRODSPathsForStudy, and with a
+// file_type (already normalised and validated by the handler) it returns the
+// filtered IRODSPathsForStudyByFileType when the queryer supports it, falling
+// back to the all-file-types list otherwise. Pagination is applied identically on
+// both paths.
+func irodsPathsForStudyResult(c *gin.Context, queryer Queryer, id, fileType string, pagination mlwhPagination) ([]IRODSPath, error) {
+	if fileType != "" {
+		if filtered, ok := queryer.(irodsPathsByFileTypeQueryer); ok {
+			return filtered.IRODSPathsForStudyByFileType(c.Request.Context(), id, fileType, pagination.limit, pagination.offset)
+		}
+	}
+
+	return queryer.IRODSPathsForStudy(c.Request.Context(), id, pagination.limit, pagination.offset)
+}
+
+// countIRODSPathsForStudyResult dispatches the /study/:id/irods/count and (when
+// it sizes the list) the list endpoint's total: with no file_type it returns the
+// all-file-types count, and with a file_type it returns the filtered count when
+// the queryer supports it, so X-Total-Count tracks the filtered list and the two
+// cannot drift.
+func countIRODSPathsForStudyResult(c *gin.Context, queryer Queryer, id, fileType string) (Count, error) {
+	if fileType != "" {
+		if filtered, ok := queryer.(irodsPathsByFileTypeQueryer); ok {
+			return filtered.CountIRODSPathsForStudyByFileType(c.Request.Context(), id, fileType)
+		}
+	}
+
+	return queryer.CountIRODSPathsForStudy(c.Request.Context(), id)
+}
 
 // Server serves the MLWH read/query REST API.
 type Server struct {
@@ -499,10 +579,13 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			ctx := c.Request.Context()
-			result, err := queryer.IRODSPathsForSample(ctx, id, pagination.limit, pagination.offset)
+			fileType, ok := mlwhFileTypeFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := irodsPathsForSampleResult(c, queryer, id, fileType, pagination)
 			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
-				return countValue(queryer.CountIRODSPathsForSample(ctx, id))
+				return countValue(countIRODSPathsForSampleResult(c, queryer, id, fileType))
 			})
 		}
 	case "IRODSPathsForStudy":
@@ -511,10 +594,49 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			ctx := c.Request.Context()
-			result, err := queryer.IRODSPathsForStudy(ctx, id, pagination.limit, pagination.offset)
+			fileType, ok := mlwhFileTypeFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := irodsPathsForStudyResult(c, queryer, id, fileType, pagination)
 			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
-				return countValue(queryer.CountIRODSPathsForStudy(ctx, id))
+				return countValue(countIRODSPathsForStudyResult(c, queryer, id, fileType))
+			})
+		}
+	case "IRODSPathsForRun":
+		return func(c *gin.Context) {
+			id, pagination, ok := mlwhIDAndPagination(c)
+			if !ok {
+				return
+			}
+			fileType, ok := mlwhFileTypeFromQuery(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.IRODSPathsForRun(ctx, id, fileType, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountIRODSPathsForRun(ctx, id, fileType))
+			})
+		}
+	case "StudyManifest":
+		return func(c *gin.Context) {
+			id, pagination, ok := mlwhIDAndPagination(c)
+			if !ok {
+				return
+			}
+			fileType, ok := mlwhFileTypeFromQuery(c)
+			if !ok {
+				return
+			}
+			withIRODS, ok := mlwhQueryBool(c, "with_irods")
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.StudyManifest(ctx, id, fileType, withIRODS, pagination.limit, pagination.offset)
+			writeMLWHStudyManifest(c, result, err, pagination.offset, func() (int, error) {
+				return studyManifestTotal(ctx, queryer, id)
 			})
 		}
 	case "StudiesForSample":
@@ -524,6 +646,82 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 				return
 			}
 			result, err := queryer.StudiesForSample(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
+	case "StudiesForFacultySponsor":
+		return func(c *gin.Context) {
+			name, ok := mlwhPeopleName(c, "name")
+			if !ok {
+				return
+			}
+			pagination, ok := mlwhSearchPaginationFromQuery(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.StudiesForFacultySponsor(ctx, name, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountStudiesForFacultySponsor(ctx, name))
+			})
+		}
+	case "CountStudiesForFacultySponsor":
+		return func(c *gin.Context) {
+			name, ok := mlwhPeopleName(c, "name")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountStudiesForFacultySponsor(c.Request.Context(), name)
+			writeMLWHResult(c, result, err)
+		}
+	case "StudiesForUser":
+		return func(c *gin.Context) {
+			person, ok := mlwhPeopleName(c, "person")
+			if !ok {
+				return
+			}
+			pagination, ok := mlwhSearchPaginationFromQuery(c)
+			if !ok {
+				return
+			}
+			role := c.Query("role")
+			ctx := c.Request.Context()
+			result, err := queryer.StudiesForUser(ctx, person, role, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountStudiesForUser(ctx, person, role))
+			})
+		}
+	case "CountStudiesForUser":
+		return func(c *gin.Context) {
+			person, ok := mlwhPeopleName(c, "person")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountStudiesForUser(c.Request.Context(), person, c.Query("role"))
+			writeMLWHResult(c, result, err)
+		}
+	case "ResolvePerson":
+		return func(c *gin.Context) {
+			term, ok := mlwhPeopleName(c, "term")
+			if !ok {
+				return
+			}
+			pagination, ok := mlwhSearchPaginationFromQuery(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.ResolvePerson(ctx, term, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountResolvePerson(ctx, term))
+			})
+		}
+	case "CountResolvePerson":
+		return func(c *gin.Context) {
+			term, ok := mlwhPeopleName(c, "term")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountResolvePerson(c.Request.Context(), term)
 			writeMLWHResult(c, result, err)
 		}
 	case "FindSamplesBySangerID":
@@ -764,6 +962,15 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			result, err := queryer.CountRunsForStudy(c.Request.Context(), id)
 			writeMLWHResult(c, result, err)
 		}
+	case "CountStudyManifest":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountStudyManifest(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
 	case "CountLibrariesForStudy":
 		return func(c *gin.Context) {
 			id, ok := mlwhPathParam(c, "id")
@@ -788,7 +995,11 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			result, err := queryer.CountIRODSPathsForSample(c.Request.Context(), id)
+			fileType, ok := mlwhFileTypeFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := countIRODSPathsForSampleResult(c, queryer, id, fileType)
 			writeMLWHResult(c, result, err)
 		}
 	case "CountIRODSPathsForStudy":
@@ -797,7 +1008,24 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			result, err := queryer.CountIRODSPathsForStudy(c.Request.Context(), id)
+			fileType, ok := mlwhFileTypeFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := countIRODSPathsForStudyResult(c, queryer, id, fileType)
+			writeMLWHResult(c, result, err)
+		}
+	case "CountIRODSPathsForRun":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			fileType, ok := mlwhFileTypeFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.CountIRODSPathsForRun(c.Request.Context(), id, fileType)
 			writeMLWHResult(c, result, err)
 		}
 	case "CountFindSamplesBySangerID":
@@ -1008,6 +1236,86 @@ func countSamplesWithoutData(ctx context.Context, queryer Queryer, studyLimsID s
 	}
 
 	return total - withData, nil
+}
+
+// mlwhFileTypeFromQuery reads the optional file_type query param of the iRODS
+// list and count endpoints. It mirrors mlwhQueryRFC3339's contract: an ABSENT
+// param is returned as ("", true) (the all-file-types case, the same as the bare
+// endpoint); a PRESENT param is normalised (strip one leading '.', lowercase) and
+// validated, and an empty/whitespace value or one containing a LIKE wildcard
+// ('%'/'_') or path separator ('/') aborts with the bad_request 400 envelope
+// BEFORE the queryer is reached, reporting false. A present-and-valid value is
+// returned normalised. The present-but-empty case is a 400 (not silently treated
+// as no filter), so `?file_type=` is rejected while an omitted param is allowed.
+func mlwhFileTypeFromQuery(c *gin.Context) (string, bool) {
+	raw, present := c.GetQuery("file_type")
+	if !present {
+		return "", true
+	}
+
+	normalised, err := normaliseFileType(raw)
+	if err != nil || normalised == "" {
+		writeMLWHBadRequest(c, "invalid file_type: must be a non-empty file suffix without '%', '_' or '/'")
+
+		return "", false
+	}
+
+	return normalised, true
+}
+
+// writeMLWHStudyManifest writes the study manifest envelope: on error it writes
+// the error envelope and sets no headers, and on success it sets the
+// X-Total-Count / X-Next-Offset list-sizing headers (sizing the paginated Rows
+// collection by the study's product count, the C2 count grain) before writing the
+// envelope body. The body stays the full StudyManifest object (not a bare array),
+// so unlike the bare-slice lists it cannot reuse writeMLWHPaginatedResult; the
+// header path is the same writeListSizingHeaders, so the manifest's sizing matches
+// every other paginated endpoint. A total error leaves the headers unset rather
+// than reporting a wrong total.
+func writeMLWHStudyManifest(c *gin.Context, manifest StudyManifest, err error, offset int, total func() (int, error)) {
+	if err != nil {
+		writeMLWHError(c, err)
+
+		return
+	}
+
+	if totalRows, totalErr := total(); totalErr == nil {
+		writeListSizingHeaders(c, totalRows, offset, len(manifest.Rows))
+	}
+
+	c.JSON(http.StatusOK, manifest)
+}
+
+// studyManifestTotal resolves the total product count sizing the manifest's Rows
+// collection by reusing Queryer.CountStudyManifest, the same public method backing
+// /study/:id/manifest/count, so X-Total-Count equals the count endpoint for local,
+// remote, and external Queryer implementations.
+func studyManifestTotal(ctx context.Context, queryer Queryer, studyLimsID string) (int, error) {
+	return countValue(queryer.CountStudyManifest(ctx, studyLimsID))
+}
+
+// mlwhPeopleName reads a people-endpoint path param (e.g. the faculty-sponsor
+// :name) and rejects a whitespace-only value with the bad_request 400 envelope
+// BEFORE the queryer is reached, reporting false, so an empty/whitespace term
+// never reaches the query layer. The raw (untrimmed) value is returned on
+// success: the people queries match the term as a case-insensitive substring, so
+// surrounding whitespace is matched literally rather than stripped, and only the
+// whitespace-only case is a 400. The Client method re-validates the same way
+// defensively (returning ErrUnsupportedIdentifier) so a direct caller is not
+// silently wrong.
+func mlwhPeopleName(c *gin.Context, name string) (string, bool) {
+	value, ok := mlwhPathParam(c, name)
+	if !ok {
+		return "", false
+	}
+
+	if strings.TrimSpace(value) == "" {
+		writeMLWHBadRequest(c, "invalid "+name+": must not be empty or whitespace")
+
+		return "", false
+	}
+
+	return value, true
 }
 
 func mlwhKindAndID(c *gin.Context) (IdentifierKind, string, bool) {

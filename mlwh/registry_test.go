@@ -275,13 +275,14 @@ func TestRegistryNewEndpointsAreFullyDocumentedG1(t *testing.T) {
 }
 
 // newAvailabilityRecencyProgressMethods is the closed set of Queryer methods
-// added across Phases 2-4 (the availability / recency / run-overview / budget
-// /count / progress surface). G1's wiring assertions are stated explicitly over
-// this set so a new endpoint that is wired into the Queryer/Registry but left
-// without a Summary, a Description or (when paginated) limit/offset QueryParams
-// fails here. newMethodsExistInRegistry guards that the set is not vacuous: each
-// name must be a live Registry method, so a typo or a removed endpoint surfaces
-// as a missing entry rather than a silently skipped assertion.
+// added across Phases 2-5 (the availability / recency / run-overview / budget
+// /count / progress surface, plus the Phase 2/3/5 run-iRODS, study-manifest and
+// people endpoints). G1's wiring assertions are stated explicitly over this set
+// so a new endpoint that is wired into the Queryer/Registry but left without a
+// Summary, a Description or (when paginated) limit/offset QueryParams fails here.
+// newMethodsExistInRegistry guards that the set is not vacuous: each name must be
+// a live Registry method, so a typo or a removed endpoint surfaces as a missing
+// entry rather than a silently skipped assertion.
 func newAvailabilityRecencyProgressMethods() []string {
 	return []string{
 		// Phase 2: availability (B) + recency (C).
@@ -310,6 +311,17 @@ func newAvailabilityRecencyProgressMethods() []string {
 		"RunStatus",
 		"SampleProgress",
 		"StatusBreakdown",
+		// Phases 2/3/5: run-iRODS, study-manifest and people endpoints (G1).
+		"IRODSPathsForRun",
+		"CountIRODSPathsForRun",
+		"StudyManifest",
+		"CountStudyManifest",
+		"StudiesForFacultySponsor",
+		"CountStudiesForFacultySponsor",
+		"StudiesForUser",
+		"CountStudiesForUser",
+		"ResolvePerson",
+		"CountResolvePerson",
 	}
 }
 
@@ -463,7 +475,7 @@ func TestRegistryCoversQueryer(t *testing.T) {
 		convey.Convey("when compared, then every Queryer method has exactly one Registry entry", func() {
 			missing, duplicate, unknown := registryCoverageIssues(queryer, registryMethods)
 
-			convey.So(Registry, convey.ShouldHaveLength, 63)
+			convey.So(Registry, convey.ShouldHaveLength, 73)
 			convey.So(missing, convey.ShouldBeEmpty)
 			convey.So(duplicate, convey.ShouldBeEmpty)
 			convey.So(unknown, convey.ShouldBeEmpty)

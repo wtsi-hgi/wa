@@ -22,5 +22,8 @@ CREATE INDEX ipm_mirror_sample_run_position_tag_idx
 CREATE INDEX iseq_product_metrics_mirror_id_iseq_flowcell_tmp_idx
 	ON iseq_product_metrics_mirror(id_iseq_flowcell_tmp);
 
+CREATE INDEX ipm_mirror_iseq_product_idx
+	ON iseq_product_metrics_mirror(id_iseq_product);
+
 CREATE INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx
 	ON iseq_product_metrics_mirror(id_study_lims, id_run, position);

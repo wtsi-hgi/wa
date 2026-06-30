@@ -673,8 +673,8 @@ func TestIRODSPathsForSampleReturnsJoinedPaths(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(paths, convey.ShouldResemble, []IRODSPath{
-			{IDProduct: "4001", Collection: "/seq/1234", DataObject: "1234_1#1.cram", IRODSPath: "/seq/1234/1234_1#1.cram"},
-			{IDProduct: "4002", Collection: "/seq/1234", DataObject: "1234_1#2.cram", IRODSPath: "/seq/1234/1234_1#2.cram"},
+			{IDProduct: "4001", Collection: "/seq/1234", DataObject: "1234_1#1.cram", IRODSPath: "/seq/1234/1234_1#1.cram", Platform: "illumina"},
+			{IDProduct: "4002", Collection: "/seq/1234", DataObject: "1234_1#2.cram", IRODSPath: "/seq/1234/1234_1#2.cram", Platform: "illumina"},
 		})
 	})
 }
@@ -717,6 +717,7 @@ func TestIRODSPathsForSampleReturnsCompositeProductPathForEveryLinkedSample(t *t
 			Collection: "/seq/illumina/runs/48/48522/plex1",
 			DataObject: "48522#1.cram",
 			IRODSPath:  "/seq/illumina/runs/48/48522/plex1/48522#1.cram",
+			Platform:   "illumina",
 		}})
 		convey.So(secondErr, convey.ShouldBeNil)
 		convey.So(secondPaths, convey.ShouldHaveLength, 1)
@@ -827,8 +828,8 @@ func TestIRODSPathsForStudyReturnsJoinedPaths(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(paths, convey.ShouldResemble, []IRODSPath{
-			{IDProduct: "5001", Collection: "/seq/5678", DataObject: "5678_1#1.cram", IRODSPath: "/seq/5678/5678_1#1.cram", IDSampleTmp: 91},
-			{IDProduct: "5002", Collection: "/seq/5678", DataObject: "5678_1#2.cram", IRODSPath: "/seq/5678/5678_1#2.cram", IDSampleTmp: 92},
+			{IDProduct: "5001", Collection: "/seq/5678", DataObject: "5678_1#1.cram", IRODSPath: "/seq/5678/5678_1#1.cram", IDSampleTmp: 91, Platform: "illumina"},
+			{IDProduct: "5002", Collection: "/seq/5678", DataObject: "5678_1#2.cram", IRODSPath: "/seq/5678/5678_1#2.cram", IDSampleTmp: 92, Platform: "illumina"},
 		})
 	})
 }
@@ -866,6 +867,407 @@ func TestIRODSPathsForStudyCarrySampleIdentityGroupableBySample(t *testing.T) {
 			_, leaked := bySample[b3SharedWithS2]
 			convey.So(leaked, convey.ShouldBeFalse)
 		})
+	})
+}
+
+// B1 acceptance test 1: a study Illumina iRODS row whose id_iseq_product matches
+// an iseq_product_metrics_mirror row on a run carries that run id and the iRODS
+// row's platform, derived by the LEFT JOIN on id_iseq_product.
+func TestIRODSPathsForStudyCarryIDRunAndPlatformWhenProductMetricsMatch(t *testing.T) {
+	convey.Convey("Given study S1 with an Illumina iRODS row matching a product-metrics run", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 1, "S1", "S1STDY1")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 9001, 1, 52553, 1, 1, "S1")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "9001", "/seq/52553", "52553_1#1.cram", 1, "S1", time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC), "illumina")
+
+		paths, err := client.IRODSPathsForStudy(context.Background(), "S1", 100, 0)
+
+		convey.Convey("when the study iRODS list is fetched, then the row carries id_run=52553 and platform=illumina", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(paths, convey.ShouldResemble, []IRODSPath{{
+				IDProduct:   "9001",
+				Collection:  "/seq/52553",
+				DataObject:  "52553_1#1.cram",
+				IRODSPath:   "/seq/52553/52553_1#1.cram",
+				IDSampleTmp: 1,
+				Name:        "S1STDY1",
+				IDRun:       52553,
+				Platform:    "illumina",
+			}})
+		})
+	})
+}
+
+// B1 acceptance test 2: a study iRODS row (platform ont) whose id_iseq_product
+// matches no iseq_product_metrics_mirror row gets id_run=0 (LEFT JOIN miss) and
+// the platform it was synced with.
+func TestIRODSPathsForStudyUnmatchedRowGetsZeroIDRunAndKeepsPlatform(t *testing.T) {
+	convey.Convey("Given study S1 with an ont iRODS row matching no product-metrics row", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 2, "S1", "S1STDY2")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "ont-9002", "/seq/ont", "ont_run.fast5", 2, "S1", time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC), "ont")
+
+		paths, err := client.IRODSPathsForStudy(context.Background(), "S1", 100, 0)
+
+		convey.Convey("when the study iRODS list is fetched, then the row has id_run=0 and platform=ont", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(paths, convey.ShouldResemble, []IRODSPath{{
+				IDProduct:   "ont-9002",
+				Collection:  "/seq/ont",
+				DataObject:  "ont_run.fast5",
+				IRODSPath:   "/seq/ont/ont_run.fast5",
+				IDSampleTmp: 2,
+				Name:        "S1STDY2",
+				IDRun:       0,
+				Platform:    "ont",
+			}})
+		})
+	})
+}
+
+// B1 acceptance test 3: the id_run/platform additions do not change the row
+// grain, so CountIRODSPathsForStudy still equals len(IRODSPathsForStudy(all)).
+func TestIRODSPathsForStudyCountEqualsListLenAfterIDRunPlatform(t *testing.T) {
+	convey.Convey("Given study S1 with a mix of matched and unmatched iRODS rows", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 1, "S1", "S1STDY1")
+		seedHierarchySample(t, client.cache.DB(), 2, "S1", "S1STDY2")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 9001, 1, 52553, 1, 1, "S1")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "9001", "/seq/52553", "52553_1#1.cram", 1, "S1", time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC), "illumina")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "ont-9002", "/seq/ont", "ont_run.fast5", 2, "S1", time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC), "ont")
+
+		count, countErr := client.CountIRODSPathsForStudy(context.Background(), "S1")
+		paths, listErr := client.IRODSPathsForStudy(context.Background(), "S1", 100, 0)
+
+		convey.Convey("when the count and the all-rows list are taken, then they are equal", func() {
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(listErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(paths))
+			convey.So(count.Count, convey.ShouldEqual, 2)
+		})
+	})
+}
+
+// B2 acceptance test 1: a study iRODS list filtered by file_type=cram returns
+// exactly the two .cram objects of three, and the matching count is 2.
+func TestIRODSPathsForStudyByFileTypeFiltersToSuffix(t *testing.T) {
+	convey.Convey("Given study S1 with a.cram, b.cram and c.bai iRODS objects", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 1, "S1", "S1STDY1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-a", "/seq/s1", "a.cram", 1, "S1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-b", "/seq/s1", "b.cram", 1, "S1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-c", "/seq/s1", "c.bai", 1, "S1")
+
+		paths, listErr := client.IRODSPathsForStudyByFileType(context.Background(), "S1", "cram", 100, 0)
+		count, countErr := client.CountIRODSPathsForStudyByFileType(context.Background(), "S1", "cram")
+
+		convey.Convey("when fetched with file_type=cram, then only the two .cram objects return and the count is 2", func() {
+			convey.So(listErr, convey.ShouldBeNil)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(len(paths), convey.ShouldEqual, 2)
+			objects := []string{paths[0].DataObject, paths[1].DataObject}
+			convey.So(objects, convey.ShouldContain, "a.cram")
+			convey.So(objects, convey.ShouldContain, "b.cram")
+			convey.So(objects, convey.ShouldNotContain, "c.bai")
+			convey.So(count.Count, convey.ShouldEqual, 2)
+			convey.So(count.Count, convey.ShouldEqual, len(paths))
+		})
+	})
+}
+
+// B2 acceptance test 2: file_type=.CRAM (leading dot, mixed case) matches the
+// same two .cram objects (leading dot stripped, case-insensitive).
+func TestIRODSPathsForStudyByFileTypeStripsLeadingDotAndIsCaseInsensitive(t *testing.T) {
+	convey.Convey("Given study S1 with two .cram objects and one .bai object", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 1, "S1", "S1STDY1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-a", "/seq/s1", "a.cram", 1, "S1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-b", "/seq/s1", "b.cram", 1, "S1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-c", "/seq/s1", "c.bai", 1, "S1")
+
+		paths, listErr := client.IRODSPathsForStudyByFileType(context.Background(), "S1", ".CRAM", 100, 0)
+		count, countErr := client.CountIRODSPathsForStudyByFileType(context.Background(), "S1", ".CRAM")
+
+		convey.Convey("when fetched with file_type=.CRAM, then it matches the same two .cram objects", func() {
+			convey.So(listErr, convey.ShouldBeNil)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(len(paths), convey.ShouldEqual, 2)
+			convey.So(count.Count, convey.ShouldEqual, 2)
+			convey.So(count.Count, convey.ShouldEqual, len(paths))
+		})
+	})
+}
+
+// B2 acceptance test 3: file_type=bam (valid but unmatched) on a synced S1
+// yields an empty list and a count of 0 with NO error.
+func TestIRODSPathsForStudyByFileTypeUnmatchedSuffixIsEmptyNotError(t *testing.T) {
+	convey.Convey("Given a synced study S1 with only .cram objects", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedSyncState(t, client.cache.DB(), syncTableSeqProductIRODSLocations, time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC))
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 1, "S1", "S1STDY1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-a", "/seq/s1", "a.cram", 1, "S1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-b", "/seq/s1", "b.cram", 1, "S1")
+
+		paths, listErr := client.IRODSPathsForStudyByFileType(context.Background(), "S1", "bam", 100, 0)
+		count, countErr := client.CountIRODSPathsForStudyByFileType(context.Background(), "S1", "bam")
+
+		convey.Convey("when fetched with file_type=bam, then the list is empty and the count is 0 with no error", func() {
+			convey.So(listErr, convey.ShouldBeNil)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(paths, convey.ShouldBeEmpty)
+			convey.So(count.Count, convey.ShouldEqual, 0)
+			convey.So(count.Count, convey.ShouldEqual, len(paths))
+		})
+	})
+}
+
+// B2 acceptance test 5: a sample with a .cram and a .bai object filtered by
+// file_type=cram returns only the .cram object and its count is 1.
+func TestIRODSPathsForSampleByFileTypeFiltersToSuffix(t *testing.T) {
+	convey.Convey("Given a cached sample with one .cram and one .bai iRODS object", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchySample(t, client.cache.DB(), 31, "6568", "7607STDY14643771")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "4001", "/seq/1234", "1234_1#1.cram", 31, "6568")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "4002", "/seq/1234", "1234_1#1.bai", 31, "6568")
+
+		paths, listErr := client.IRODSPathsForSampleByFileType(context.Background(), "7607STDY14643771", "cram", 100, 0)
+		count, countErr := client.CountIRODSPathsForSampleByFileType(context.Background(), "7607STDY14643771", "cram")
+
+		convey.Convey("when fetched with file_type=cram, then only the .cram object returns and the count is 1", func() {
+			convey.So(listErr, convey.ShouldBeNil)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(len(paths), convey.ShouldEqual, 1)
+			convey.So(paths[0].DataObject, convey.ShouldEqual, "1234_1#1.cram")
+			convey.So(count.Count, convey.ShouldEqual, 1)
+			convey.So(count.Count, convey.ShouldEqual, len(paths))
+		})
+	})
+}
+
+// seedB3RunIRODSScenario seeds run 52553 with six iRODS data objects across its
+// products (four .cram, two .bai) plus a decoy product/iRODS object on a DIFFERENT
+// run (52554), so the run-scope query (B3) must return exactly the run's six rows
+// and never the decoy. The products span two samples to prove the run scope is not
+// study- or sample-scoped: it follows id_iseq_product from the run's
+// iseq_product_metrics rows to the iRODS mirror. It stamps the sync state the
+// run-scope cascade consults so a synced cache reads data rather than the
+// never-synced sentinel.
+func seedB3RunIRODSScenario(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedSyncState(t, db, syncTableIseqProductMetrics, time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC))
+	seedSyncState(t, db, syncTableSeqProductIRODSLocations, time.Date(2026, time.June, 25, 9, 5, 0, 0, time.UTC))
+
+	seedHierarchyStudy(t, db, 101, "S1")
+	seedHierarchySample(t, db, 1, "S1", "S1STDY1")
+	seedHierarchySample(t, db, 2, "S1", "S1STDY2")
+
+	// Run 52553: six iRODS data objects across the run's products (4 .cram, 2 .bai).
+	runProducts := []struct {
+		idIseqProduct int64
+		idSampleTmp   int64
+		position      int
+		fileName      string
+	}{
+		{9001, 1, 1, "52553_1#1.cram"},
+		{9002, 1, 1, "52553_1#1.bai"},
+		{9003, 1, 2, "52553_1#2.cram"},
+		{9004, 2, 3, "52553_2#1.cram"},
+		{9005, 2, 3, "52553_2#1.bai"},
+		{9006, 2, 4, "52553_2#2.cram"},
+	}
+	for _, product := range runProducts {
+		seedIseqProductMetricsMirrorRow(t, db, product.idIseqProduct, product.idSampleTmp, 52553, product.position, 1, "S1")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, formatInt(product.idIseqProduct), "/seq/52553", product.fileName, product.idSampleTmp, "S1", time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC), "illumina")
+	}
+
+	// A decoy product + iRODS object on a different run; the run-scope query must
+	// exclude it.
+	seedIseqProductMetricsMirrorRow(t, db, 9999, 1, 52554, 1, 1, "S1")
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "9999", "/seq/52554", "52554_1#1.cram", 1, "S1", time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC), "illumina")
+}
+
+// B3 acceptance test 1: the run iRODS list returns one row per iRODS data object
+// on the run (six here), each carrying id_run = the run, derived by joining the
+// run's iseq_product_metrics rows to the iRODS mirror on id_iseq_product.
+func TestIRODSPathsForRunReturnsRunDataObjects(t *testing.T) {
+	convey.Convey("Given run 52553 with six iRODS data objects across its products", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedB3RunIRODSScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		paths, err := client.IRODSPathsForRun(context.Background(), "52553", "", availabilityFetchAll, 0)
+
+		convey.Convey("when the run iRODS list is fetched, then 6 rows return, each with id_run=52553", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(len(paths), convey.ShouldEqual, 6)
+
+			wrongRun := 0
+			for _, path := range paths {
+				if path.IDRun != 52553 {
+					wrongRun++
+				}
+				convey.So(path.IRODSPath, convey.ShouldStartWith, "/seq/52553/")
+			}
+			convey.So(wrongRun, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+// B3 acceptance test 2 (list half): the run iRODS list filtered by file_type=cram
+// returns exactly the four .cram objects of the six on the run.
+func TestIRODSPathsForRunByFileTypeFiltersToSuffix(t *testing.T) {
+	convey.Convey("Given run 52553 with four .cram and two .bai iRODS objects", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedB3RunIRODSScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		paths, err := client.IRODSPathsForRun(context.Background(), "52553", "cram", availabilityFetchAll, 0)
+
+		convey.Convey("when fetched with file_type=cram, then exactly the 4 .cram objects return", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(len(paths), convey.ShouldEqual, 4)
+
+			nonCram := 0
+			for _, path := range paths {
+				if !strings.HasSuffix(path.DataObject, ".cram") {
+					nonCram++
+				}
+			}
+			convey.So(nonCram, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+// B3 acceptance test 4: a non-numeric run id is an unsupported identifier; a
+// numeric run absent from a SYNCED cache is not_found; a never-synced cache yields
+// an error satisfying BOTH ErrCacheNeverSynced AND ErrNotFound. This mirrors the
+// run space's ResolveRun cascade exactly (the same as RunOverview / SamplesForRun).
+func TestIRODSPathsForRunResolveCascade(t *testing.T) {
+	ctx := context.Background()
+
+	convey.Convey("Given a non-numeric run id on any cache", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		_, err := client.IRODSPathsForRun(ctx, "not-a-run", "", availabilityFetchAll, 0)
+
+		convey.Convey("when called, then ErrUnsupportedIdentifier", func() {
+			convey.So(errors.Is(err, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+		})
+	})
+
+	convey.Convey("Given a numeric run absent from a synced cache", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedB3RunIRODSScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		_, err := client.IRODSPathsForRun(ctx, "70000", "", availabilityFetchAll, 0)
+
+		convey.Convey("when called, then ErrNotFound (and NOT the never-synced sentinel)", func() {
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeFalse)
+		})
+	})
+
+	convey.Convey("Given a never-synced cache", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		_, err := client.IRODSPathsForRun(ctx, "52553", "", availabilityFetchAll, 0)
+
+		convey.Convey("when called, then the error satisfies both ErrCacheNeverSynced and ErrNotFound", func() {
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		})
+	})
+}
+
+// B2: the bare IRODSPathsForStudy / IRODSPathsForSample methods must keep their
+// signatures and behave exactly like the ByFileType variants with fileType="".
+func TestIRODSPathsBareMethodsDelegateWithEmptyFileType(t *testing.T) {
+	convey.Convey("Given study S1 and sample with mixed-suffix iRODS objects", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 1, "S1", "S1STDY1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-a", "/seq/s1", "a.cram", 1, "S1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-c", "/seq/s1", "c.bai", 1, "S1")
+
+		bareStudy, bareStudyErr := client.IRODSPathsForStudy(context.Background(), "S1", 100, 0)
+		emptyFTStudy, emptyFTStudyErr := client.IRODSPathsForStudyByFileType(context.Background(), "S1", "", 100, 0)
+		bareSample, bareSampleErr := client.IRODSPathsForSample(context.Background(), "S1STDY1", 100, 0)
+		emptyFTSample, emptyFTSampleErr := client.IRODSPathsForSampleByFileType(context.Background(), "S1STDY1", "", 100, 0)
+
+		convey.Convey("when the bare and empty-file-type variants are compared, then they return the same rows", func() {
+			convey.So(bareStudyErr, convey.ShouldBeNil)
+			convey.So(emptyFTStudyErr, convey.ShouldBeNil)
+			convey.So(bareSampleErr, convey.ShouldBeNil)
+			convey.So(emptyFTSampleErr, convey.ShouldBeNil)
+			convey.So(bareStudy, convey.ShouldResemble, emptyFTStudy)
+			convey.So(bareSample, convey.ShouldResemble, emptyFTSample)
+			convey.So(len(bareStudy), convey.ShouldEqual, 2)
+		})
+	})
+}
+
+// B2: a normalised file_type that is empty after trimming (whitespace or a lone
+// dot) or contains a LIKE wildcard or path separator is rejected with
+// ErrUnsupportedIdentifier by the queryer too (defensive re-validation), so a
+// direct Go caller is not silently wrong. The empty-string fileType is the
+// no-filter sentinel (the bare methods delegate with it) and is NOT rejected
+// here; rejecting a present-but-empty HTTP file_type is the handler's job.
+func TestIRODSPathsByFileTypeRejectsInvalidTokenDefensively(t *testing.T) {
+	convey.Convey("Given a study and sample with iRODS objects", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 1, "S1", "S1STDY1")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "p-a", "/seq/s1", "a.cram", 1, "S1")
+
+		for _, invalid := range []string{"   ", ".", "%", "a%b", "a_b", "a/b"} {
+			_, studyListErr := client.IRODSPathsForStudyByFileType(context.Background(), "S1", invalid, 100, 0)
+			_, studyCountErr := client.CountIRODSPathsForStudyByFileType(context.Background(), "S1", invalid)
+			_, sampleListErr := client.IRODSPathsForSampleByFileType(context.Background(), "S1STDY1", invalid, 100, 0)
+			_, sampleCountErr := client.CountIRODSPathsForSampleByFileType(context.Background(), "S1STDY1", invalid)
+
+			convey.So(errors.Is(studyListErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+			convey.So(errors.Is(studyCountErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+			convey.So(errors.Is(sampleListErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+			convey.So(errors.Is(sampleCountErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+		}
 	})
 }
 
@@ -1647,7 +2049,8 @@ func seedIRODSLocationMirrorRowWithCreatedPlatform(t *testing.T, db *sql.DB, idI
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO seq_product_irods_locations_mirror(id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO seq_product_irods_locations_mirror(id_seq_product_irods_locations_tmp, id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		int64(0),
 		idIseqProduct,
 		"/seq",
 		fileName,

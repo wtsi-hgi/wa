@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS study_mirror (
 	name                       TEXT    NOT NULL COLLATE NOCASE,
 	accession_number           TEXT    NOT NULL COLLATE NOCASE,
 	study_title                TEXT    NOT NULL,
-	faculty_sponsor            TEXT    NOT NULL,
+	faculty_sponsor            TEXT    NOT NULL COLLATE NOCASE,
 	state                      TEXT    NOT NULL,
 	data_release_strategy      TEXT    NOT NULL,
 	data_access_group          TEXT    NOT NULL,
@@ -34,3 +34,6 @@ CREATE INDEX IF NOT EXISTS study_mirror_accession_number_idx
 
 CREATE INDEX IF NOT EXISTS study_mirror_name_idx
 	ON study_mirror(name);
+
+CREATE INDEX IF NOT EXISTS study_mirror_faculty_sponsor_idx
+	ON study_mirror(faculty_sponsor);

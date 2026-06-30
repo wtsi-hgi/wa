@@ -90,6 +90,29 @@ type Study struct {
 	DataReleaseTiming        string `json:"data_release_timing" doc:"timing of data release for the study"`
 }
 
+// PersonStudy is one studies-by-person result row: the study plus the matched
+// role (D4). Role is empty for the faculty-sponsor endpoint (sponsor is not a
+// study_users role) and is the study_users role for the user endpoint.
+type PersonStudy struct {
+	Study Study  `json:"study" doc:"the study the person is associated with"`
+	Role  string `json:"role,omitempty" doc:"study_users role matched (empty for the faculty-sponsor endpoint)"`
+}
+
+// PersonCandidate is one distinct candidate person from the resolve-person
+// directory (D4): a canonical stored form plus how many studies it covers, so a
+// caller can disambiguate a partial/spoken name before running a studies query.
+// Source is "faculty_sponsor" (Name carries the free-text sponsor; Login/Email
+// empty) or "study_users" (Name/Login/Email/Role carry the stored study_users
+// identity).
+type PersonCandidate struct {
+	Source     string `json:"source" doc:"faculty_sponsor or study_users"`
+	Name       string `json:"name" doc:"canonical stored full name"`
+	Login      string `json:"login,omitempty" doc:"Sanger username (study_users only)"`
+	Email      string `json:"email,omitempty" doc:"email (study_users only)"`
+	Role       string `json:"role,omitempty" doc:"study_users role (study_users only)"`
+	StudyCount int    `json:"study_count" doc:"distinct studies for this candidate"`
+}
+
 // Lane identifies a run/lane/tag combination linked to a sample.
 type Lane struct {
 	IDRun    int `json:"id_run" doc:"sequencing run identifier"`
@@ -99,7 +122,13 @@ type Lane struct {
 
 // IRODSPath identifies a product path exported from MLWH joins. IDSampleTmp and
 // Name identify the sample the data object belongs to, so a study iRODS listing
-// is aggregatable by sample without a second query.
+// is aggregatable by sample without a second query. IDRun is the Illumina NPG run
+// id, derived by LEFT JOIN id_iseq_product -> iseq_product_metrics_mirror.id_run;
+// it is 0 when not derivable (non-Illumina / unmatched), matching the existing
+// RunOverview.IDRun / RunStatusTimeline.IDRun "0 for non-Illumina" convention.
+// Platform is the iRODS row's mirrored platform string (the source
+// seq_platform_name, e.g. "illumina"), so a 0 id_run reads as ONT / non-Illumina
+// rather than ambiguous. Both fields are additive; existing fields unchanged.
 type IRODSPath struct {
 	IDProduct   string `json:"id_product" doc:"product identifier of the iRODS data object"`
 	Collection  string `json:"collection" doc:"iRODS collection containing the data object"`
@@ -107,6 +136,37 @@ type IRODSPath struct {
 	IRODSPath   string `json:"irods_path" doc:"full iRODS path of the data object"`
 	IDSampleTmp int64  `json:"id_sample_tmp" doc:"internal MLWH surrogate key of the sample the data object belongs to"`
 	Name        string `json:"name" doc:"Sanger sample name of the sample the data object belongs to; empty when the sample is not present in the sample mirror"`
+	IDRun       int    `json:"id_run" doc:"Illumina NPG run id of the data object; 0 when not derivable (non-Illumina or unmatched)"`
+	Platform    string `json:"platform" doc:"platform string the iRODS row was synced with (source seq_platform_name); disambiguates a 0 id_run as ONT/non-Illumina"`
+}
+
+// ManifestRow is one row of a study's data manifest: one sequencing product
+// (run x position x tag) joined to its sample's identity, plus the study-level
+// metadata carried once in the envelope (not per row). When the file-type / iRODS
+// path is requested, IRODSPath is the data object for that product matching the
+// suffix filter (empty string when the product has no matching iRODS object).
+type ManifestRow struct {
+	Name            string `json:"name" doc:"Sanger sample name"`
+	SupplierName    string `json:"supplier_name" doc:"supplier-given sample name"`
+	AccessionNumber string `json:"accession_number" doc:"sample public archive accession number"`
+	SangerSampleID  string `json:"sanger_sample_id" doc:"Sanger sample id"`
+	IDRun           int    `json:"id_run" doc:"Illumina NPG run id of the product"`
+	Position        int    `json:"lane" doc:"lane position of the product"`
+	TagIndex        int    `json:"tag_index" doc:"multiplexing tag index of the product"`
+	IRODSPath       string `json:"irods_path,omitempty" doc:"iRODS path of the product's data object matching the file-type filter; present only when with_irods is set"`
+}
+
+// StudyManifest is the manifest envelope: the study-level metadata once, plus the
+// page of product rows. The page is bounded/pageable; the study fields answer Q3's
+// "study details" without repeating per row (D2/D5).
+type StudyManifest struct {
+	IDStudyLims     string        `json:"id_study_lims" doc:"LIMS study id"`
+	Name            string        `json:"name" doc:"study name"`
+	AccessionNumber string        `json:"accession_number" doc:"study accession number"`
+	FacultySponsor  string        `json:"faculty_sponsor" doc:"study faculty sponsor"`
+	DataAccessGroup string        `json:"data_access_group" doc:"study data access group"`
+	Rows            []ManifestRow `json:"rows" doc:"page of per-product manifest rows"`
+	CacheSyncedAt   string        `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
 }
 
 // SampleWithData is the enriched list row for the samples-with-data and
@@ -139,6 +199,10 @@ type DateRange struct {
 // SamplesSequencedNoData and so is not part of that partition.
 type StudyOverview struct {
 	IDStudyLims            string     `json:"id_study_lims" doc:"LIMS study id"`
+	Name                   string     `json:"name" doc:"study name"`
+	AccessionNumber        string     `json:"accession_number" doc:"study accession number"`
+	FacultySponsor         string     `json:"faculty_sponsor" doc:"study faculty sponsor"`
+	DataAccessGroup        string     `json:"data_access_group" doc:"study data access group governing data access"`
 	SamplesTotal           int        `json:"samples_total" doc:"distinct samples linked via library_samples"`
 	SamplesWithData        int        `json:"samples_with_data" doc:"distinct samples with >=1 study-scoped iRODS row"`
 	SamplesWithoutData     int        `json:"samples_without_data" doc:"samples_total minus samples_with_data"`
@@ -187,6 +251,17 @@ type PlatformPhaseLadder struct {
 	Ladder   PhaseLadder `json:"ladder" doc:"buckets summing to this platform's sample count"`
 }
 
+// StudyQCBreakdown is the QC split of a study's SEQUENCED (distinct) samples
+// (D3): qc_pass/qc_fail/qc_pending partition the sequenced samples using the same
+// per-sample roll-up progress.go applies (fail > pending > pass), so the three
+// sum to "sequenced" (= samples_total - the registered bucket). not_tracked
+// samples (no products, incl. ONT) are NOT sequenced and are excluded here.
+type StudyQCBreakdown struct {
+	QCPass    int `json:"qc_pass" doc:"distinct sequenced samples whose roll-up QC is pass"`
+	QCFail    int `json:"qc_fail" doc:"distinct sequenced samples whose roll-up QC is fail"`
+	QCPending int `json:"qc_pending" doc:"distinct sequenced samples whose roll-up QC is pending"`
+}
+
 // StatusBreakdown is the per-baseline-phase study rollup (spec F4, layer P3),
 // answering "how many of my samples are at each phase" without a per-sample
 // fan-out. It carries TWO denominators. Distinct is the distinct-sample
@@ -198,14 +273,16 @@ type PlatformPhaseLadder struct {
 // sample count but the grand total across platforms may EXCEED samples_total (a
 // multi-platform sample is counted under every platform it spans). Samples with
 // no product-metrics, including ONT, are registered (never folded into a separate
-// without-data negative). WithDetailedTimeline is the count of the study's
-// samples also present in the seq_ops_tracking_per_sample mirror. CacheSyncedAt
-// is the oldest last_run across the feeding tables, distinct from any data
-// timestamp (the freshness caveat).
+// without-data negative). QC is the QC split of the SEQUENCED distinct samples
+// (qc_pass/qc_fail/qc_pending), summing to samples_total - distinct.registered.
+// WithDetailedTimeline is the count of the study's samples also present in the
+// seq_ops_tracking_per_sample mirror. CacheSyncedAt is the oldest last_run across
+// the feeding tables, distinct from any data timestamp (the freshness caveat).
 type StatusBreakdown struct {
 	IDStudyLims          string                `json:"id_study_lims" doc:"LIMS study id"`
 	Distinct             PhaseLadder           `json:"distinct" doc:"distinct-sample partition, sums to samples_total"`
 	PerPlatform          []PlatformPhaseLadder `json:"per_platform" doc:"per-platform partition; grand total may exceed samples_total"`
+	QC                   StudyQCBreakdown      `json:"qc" doc:"QC split of the sequenced (distinct) samples; sums to samples_total - registered"`
 	WithDetailedTimeline int                   `json:"with_detailed_timeline" doc:"samples also present in the tracking mirror"`
 	CacheSyncedAt        string                `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
 }

@@ -39,6 +39,20 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
+// studyUsersExpectedSourceColumns are the seven columns the study_users wholesale
+// source SELECT must name, matching studyUsersWholesaleSpec().mirrorColumns. They
+// are asserted explicitly (below) so a successful PREPARE of the study_users query
+// against the real source proves study_users carries exactly these columns.
+var studyUsersExpectedSourceColumns = []string{
+	"id_study_users_tmp",
+	"id_study_tmp",
+	"role",
+	"login",
+	"email",
+	"name",
+	"last_updated",
+}
+
 // TestSyncSourceSchemaMatchesRealMLWH is a runtime-skipped (NOT build-tagged)
 // integration test: it validates that the source schema the rest of the suite
 // assumes is the schema the REAL upstream MLWH actually has. It connects with the
@@ -67,6 +81,83 @@ func TestSyncSourceSchemaMatchesRealMLWH(t *testing.T) {
 			for _, query := range queries {
 				prepareAndCloseSourceQuery(t, db, query)
 			}
+		})
+	})
+}
+
+// TestStudyUsersSyncSourceQueryCovered asserts -- WITHOUT a live source, so it
+// always runs -- that the new study_users wholesale source SELECT is registered in
+// AllSyncSourceQueries() and that study_users is in supportedSyncTables and counted
+// by the supported-tables coverage check. This makes I2.1 genuinely tested rather
+// than only incidentally covered: if study_users were dropped from
+// wholesaleMirrorTables()/supportedSyncTables (so the generic
+// TestSyncSourceSchemaMatchesRealMLWH stopped PREPAREing and covering it), this
+// test fails. It also pins the seven columns the study_users source SELECT names,
+// so the live PREPARE in TestSyncSourceSchemaMatchesRealMLWH proves study_users has
+// exactly them.
+func TestStudyUsersSyncSourceQueryCovered(t *testing.T) {
+	convey.Convey("Given the registered sync source queries and supported tables", t, func() {
+		convey.Convey("then study_users is a supported sync table", func() {
+			convey.So(supportedSyncTables, convey.ShouldContain, "study_users")
+		})
+
+		convey.Convey("then AllSyncSourceQueries includes the study_users wholesale source SELECT", func() {
+			queries := AllSyncSourceQueries()
+
+			var studyUsersQuery *SyncSourceQuery
+
+			for i := range queries {
+				if queries[i].Name == "study_users" {
+					studyUsersQuery = &queries[i]
+
+					break
+				}
+			}
+
+			convey.So(studyUsersQuery, convey.ShouldNotBeNil)
+			convey.So(queryReferencesTable(studyUsersQuery.Query, "study_users"), convey.ShouldBeTrue)
+
+			for _, column := range studyUsersExpectedSourceColumns {
+				convey.So(studyUsersQuery.Query, convey.ShouldContainSubstring, column)
+			}
+		})
+
+		convey.Convey("then the supported-tables coverage check counts study_users as covered", func() {
+			queries := AllSyncSourceQueries()
+
+			covered := false
+
+			for _, query := range queries {
+				if queryReferencesTable(query.Query, sourceTableForSyncTable("study_users")) {
+					covered = true
+
+					break
+				}
+			}
+
+			convey.So(covered, convey.ShouldBeTrue)
+		})
+	})
+}
+
+// TestRealMLWHSourceHasNewColumns is a runtime-skipped (NOT build-tagged)
+// integration test (skipping when WA_MLWH_DSN is absent, like
+// TestSyncSourceSchemaMatchesRealMLWH) that PREPAREs a probe SELECT naming the new
+// source columns the rest of the suite assumes -- study.faculty_sponsor,
+// study.data_access_group and iseq_product_metrics.qc. A successful PREPARE forces
+// the server to validate every named column without reading rows, so it proves
+// those three columns exist on the real source.
+func TestRealMLWHSourceHasNewColumns(t *testing.T) {
+	db := openRealMLWHSourceOrSkip(t)
+
+	convey.Convey("Given a live connection to the real upstream MLWH source", t, func() {
+		convey.Convey("when a probe SELECT naming the new source columns is prepared, then it validates", func() {
+			probe := SyncSourceQuery{
+				Name:  "new-source-columns probe",
+				Query: `SELECT study.faculty_sponsor, study.data_access_group, iseq_product_metrics.qc FROM study, iseq_product_metrics WHERE 1 = 0`,
+			}
+
+			prepareAndCloseSourceQuery(t, db, probe)
 		})
 	})
 }

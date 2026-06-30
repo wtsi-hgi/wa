@@ -350,6 +350,10 @@ func newMLWHCommand() *cobra.Command {
 	command.AddCommand(newMLWHSyncCommand())
 	command.AddCommand(newMLWHInfoCommand())
 	command.AddCommand(newMLWHSearchCommand())
+	command.AddCommand(newMLWHIRODSCommand())
+	command.AddCommand(newMLWHManifestCommand())
+	command.AddCommand(newMLWHStudiesCommand())
+	command.AddCommand(newMLWHPeopleCommand())
 	command.AddCommand(newMLWHServeCommand())
 
 	return command

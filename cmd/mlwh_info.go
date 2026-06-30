@@ -70,6 +70,7 @@ type mlwhInfoClient interface {
 	StudiesForSample(ctx context.Context, sangerName string) ([]mlwh.Study, error)
 	LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error)
 	IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error)
+	IRODSPathsForRun(ctx context.Context, idRun, fileType string, limit, offset int) ([]mlwh.IRODSPath, error)
 	LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error)
 	RunsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Run, error)
 	SamplesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
@@ -470,6 +471,14 @@ func writeListField(out io.Writer, style infoStyle, label, value string, index, 
 	_, _ = fmt.Fprintf(out, "  %s\n", infoField(style, shown, value, labelWidth))
 }
 
+func writeKV(out io.Writer, key, value string) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "%s: %s\n", key, value)
+}
+
 func writeCacheSyncedLine(out io.Writer, style infoStyle, synced string) {
 	date := infoCompactDate(synced)
 	if date == "" {
@@ -492,21 +501,44 @@ func sampleCacheSyncedAt(report infoReport) string {
 func writeStudyPanel(out io.Writer, report infoReport, style infoStyle) {
 	writeInfoTitle(out, style, "Study", report)
 
-	study := report.Study
 	const labelWidth = 12
 
-	writeStudyMetaFields(out, style, study, labelWidth)
+	writeStudyMetaFields(out, style, report, labelWidth)
 	writeStudySamplesBlock(out, report, style, labelWidth)
 	writeStudyDataBlock(out, report, style, labelWidth)
 	writeStudyListColumns(out, report, style)
 	writeCacheSyncedLine(out, style, studyCacheSyncedAt(report))
 }
 
-func writeStudyMetaFields(out io.Writer, style infoStyle, study *mlwh.Study, labelWidth int) {
+func writeStudyMetaFields(out io.Writer, style infoStyle, report infoReport, labelWidth int) {
+	study := report.Study
+	overview := report.StudyOverview
+
+	name := study.Name
+	accession := study.AccessionNumber
+	sponsor := study.FacultySponsor
+	dataAccessGroup := study.DataAccessGroup
+	if overview != nil {
+		if strings.TrimSpace(name) == "" {
+			name = overview.Name
+		}
+		if strings.TrimSpace(accession) == "" {
+			accession = overview.AccessionNumber
+		}
+		if strings.TrimSpace(sponsor) == "" {
+			sponsor = overview.FacultySponsor
+		}
+		if strings.TrimSpace(overview.DataAccessGroup) != "" {
+			dataAccessGroup = overview.DataAccessGroup
+		}
+	}
+
 	for _, field := range []struct{ label, value string }{
-		{"Accession", study.AccessionNumber},
+		{"Name", name},
+		{"Accession", accession},
 		{"Programme", study.Programme},
-		{"Sponsor", study.FacultySponsor},
+		{"Sponsor", sponsor},
+		{"Data Access", dataAccessGroup},
 		{"Title", study.StudyTitle},
 		{"UUID", study.UUIDStudyLims},
 	} {
@@ -551,6 +583,7 @@ func writeStudySamplesBlock(out io.Writer, report infoReport, style infoStyle, l
 	if breakdown != nil {
 		writeStudyDistinctBars(out, breakdown.Distinct, total)
 		writeStudyPlatformSummary(out, style, breakdown.PerPlatform)
+		writeStudyQCSummary(out, style, breakdown.QC)
 		if breakdown.WithDetailedTimeline > 0 {
 			_, _ = fmt.Fprintf(out, "    %s\n", style.dim(fmt.Sprintf("detailed timeline for %s samples", infoInt(breakdown.WithDetailedTimeline))))
 		}
@@ -560,8 +593,9 @@ func writeStudySamplesBlock(out io.Writer, report infoReport, style infoStyle, l
 // infoStudySampleTotals reconciles the authoritative figures: the distinct
 // partition from StatusBreakdown sums to samples_total and supplies the with-data
 // count (so the summary line agrees with the distinct bars drawn from the same
-// ladder); the StudyOverview gives the total, the recency count, and the with-data
-// count only as a fallback when there is no StatusBreakdown.
+// ladder). The StudyOverview gives the total and recency count, and the
+// SamplesWithoutDataCount endpoint/overview aggregate gives the authoritative
+// without-data count when available (rather than the capped related-row length).
 func infoStudySampleTotals(report infoReport) (total, withData, withoutData, recency int) {
 	if report.StatusBreakdown != nil {
 		ladder := report.StatusBreakdown.Distinct
@@ -583,9 +617,16 @@ func infoStudySampleTotals(report infoReport) (total, withData, withoutData, rec
 		recency = overview.AddedLast7Days
 	}
 
-	withoutData = total - withData
-	if withoutData < 0 {
-		withoutData = 0
+	if report.SamplesWithoutDataCount != nil {
+		withoutData = report.SamplesWithoutDataCount.Count
+	} else {
+		withoutData = total - withData
+		if withoutData < 0 {
+			withoutData = 0
+		}
+	}
+	if total == 0 && (withData > 0 || withoutData > 0) {
+		total = withData + withoutData
 	}
 
 	return total, withData, withoutData, recency
@@ -688,6 +729,19 @@ func writeStudyPlatformSummary(out io.Writer, style infoStyle, platforms []mlwh.
 	}
 
 	_, _ = fmt.Fprintf(out, "    %s\n", style.dim("by platform: "+strings.Join(parts, ", ")))
+}
+
+func writeStudyQCSummary(out io.Writer, style infoStyle, qc mlwh.StudyQCBreakdown) {
+	if qc.QCPass == 0 && qc.QCFail == 0 && qc.QCPending == 0 {
+		return
+	}
+
+	parts := []string{
+		style.qcColour("pass", fmt.Sprintf("pass %s", infoInt(qc.QCPass))),
+		style.qcColour("fail", fmt.Sprintf("fail %s", infoInt(qc.QCFail))),
+		style.qcColour("pending", fmt.Sprintf("pending %s", infoInt(qc.QCPending))),
+	}
+	_, _ = fmt.Fprintf(out, "    %s\n", infoJoinNonEmpty(style.dim(" · "), "QC", strings.Join(parts, style.dim(" · "))))
 }
 
 // writeStudyDataBlock summarises the study's sequencing data once: object, run
@@ -828,6 +882,7 @@ func writeRunPanel(out io.Writer, report infoReport, style infoStyle) {
 
 	writeRunContents(out, report, style)
 	writeRunStatusSection(out, report.RunStatus, style)
+	writeRunIRODSPathsSection(out, report.RunIRODSPaths, style)
 
 	total := 0
 	if report.RunOverview != nil {
@@ -873,6 +928,25 @@ func runCacheSyncedAt(report infoReport) string {
 	}
 
 	return ""
+}
+
+// writeRunIRODSPathsSection renders the run-scoped iRODS data objects. It is
+// always emitted for a resolved run; an empty list prints "none" so a synced run
+// with no data objects remains a successful lookup.
+func writeRunIRODSPathsSection(out io.Writer, paths []mlwh.IRODSPath, style infoStyle) {
+	_, _ = fmt.Fprintf(out, "\n  %s\n", style.section(infoListHeading("iRODS paths", len(paths), 0)))
+	if len(paths) == 0 {
+		_, _ = fmt.Fprintf(out, "    %s\n", style.dim("none"))
+
+		return
+	}
+
+	for _, path := range paths {
+		details := infoJoinNonEmpty(style.dim(" · "),
+			fmt.Sprintf("id_run=%d", path.IDRun),
+			"platform="+path.Platform)
+		_, _ = fmt.Fprintf(out, "    %s  %s\n", path.IRODSPath, details)
+	}
 }
 
 func writeLibraryPanel(out io.Writer, report infoReport, style infoStyle) {
@@ -1231,13 +1305,13 @@ func resolveInfoSince(raw string) (string, error) {
 	return "", fmt.Errorf("invalid --since %q: expected an RFC3339 timestamp or a Go duration (e.g. 168h)", raw)
 }
 
-// populateStudyFeatures fetches and records the new study feature endpoints
-// (overview, status breakdown, samples-with-data all-time + since counts, and
-// samples-without-data count). Each sub-endpoint degrades gracefully: a failure
-// is captured as a per-section warning and does not abort the others.
+// populateStudyFeatures fetches and records the new study feature endpoints. Each
+// sub-endpoint degrades gracefully: a failure is captured as a per-section
+// warning and does not abort the others.
 func populateStudyFeatures(ctx context.Context, client mlwhInfoClient, report *infoReport, studyLimsID, since string) {
 	if overview, err := client.StudyOverview(ctx, studyLimsID); err == nil {
 		report.StudyOverview = &overview
+		report.SamplesWithoutDataCount = &infoCount{Count: overview.SamplesWithoutData}
 	} else if !errors.Is(err, mlwh.ErrNotFound) {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("study overview: %v", err))
 	}
@@ -1249,6 +1323,10 @@ func populateStudyFeatures(ctx context.Context, client mlwhInfoClient, report *i
 	}
 
 	report.SamplesWithDataCount = studySamplesWithDataCount(ctx, client, report, studyLimsID, since)
+
+	if report.SamplesWithoutDataCount != nil {
+		return
+	}
 
 	if rows, err := client.SamplesWithoutData(ctx, studyLimsID, infoMaxRelated, 0); err == nil {
 		report.SamplesWithoutDataCount = &infoCount{Count: len(rows)}
@@ -1300,13 +1378,20 @@ func populateRunFeatures(ctx context.Context, client mlwhInfoClient, report *inf
 	// empty timeline ("none") rather than omitting it, mirroring the API's own
 	// not-tracked semantics.
 	status, err := client.RunStatus(ctx, idRun)
-	if err != nil && !errors.Is(err, mlwh.ErrNotFound) {
+	switch {
+	case err == nil || errors.Is(err, mlwh.ErrNotFound):
+		report.RunStatus = &status
+	default:
 		report.Warnings = append(report.Warnings, fmt.Sprintf("run status: %v", err))
-
-		return
 	}
 
-	report.RunStatus = &status
+	// An empty file type lists every data object for the run; a run with no
+	// iRODS rows yet yields an empty list rendered as "none".
+	if paths, err := client.IRODSPathsForRun(ctx, idRun, "", infoMaxRelated, 0); err == nil {
+		report.RunIRODSPaths = paths
+	} else if !errors.Is(err, mlwh.ErrNotFound) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("irods paths for run: %v", err))
+	}
 }
 
 // infoReport is the JSON-friendly shape of `wa mlwh info` results.
@@ -1332,6 +1417,7 @@ type infoReport struct {
 	SampleProgress          *mlwh.SampleProgress      `json:"sample_progress,omitempty"`
 	RunOverview             *mlwh.RunOverview         `json:"run_overview,omitempty"`
 	RunStatus               *mlwh.RunStatusTimeline   `json:"run_status,omitempty"`
+	RunIRODSPaths           []mlwh.IRODSPath          `json:"run_irods_paths,omitempty"`
 
 	Warnings []string `json:"warnings,omitempty"`
 }

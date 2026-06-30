@@ -54,6 +54,7 @@ var freshnessSyncTables = []string{
 	syncTableIseqRunStatus,
 	syncTableIseqRunStatusDict,
 	syncTableOseqFlowcell,
+	syncTableStudyUsers,
 	syncTablePacBioRunWellMetrics,
 	syncTableEseqRun,
 	syncTableEseqRunLaneMetrics,

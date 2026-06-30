@@ -167,6 +167,23 @@ func TestEndpointReferenceIncludesParamsDescriptionAndResponseG1(t *testing.T) {
 	})
 }
 
+func TestEndpointReferenceEscapesMarkdownControlCharactersG1(t *testing.T) {
+	// Registry descriptions include source identifiers and literal Markdown
+	// control characters that are plain prose, not emphasis. The generated
+	// reference preserves identifier underscores, escapes ambiguous controls, and
+	// leaves inline code spans as source text so formatters cannot reinterpret the
+	// document and make the committed golden file drift.
+	convey.Convey("Given descriptions with underscores and stars, when the endpoint reference is generated, then prose is escaped and code spans stay literal", t, func() {
+		reference := EndpointReference()
+
+		convey.So(reference, convey.ShouldContainSubstring, "Set file_type to restrict")
+		convey.So(reference, convey.ShouldContainSubstring, "COUNT(\\*) over that same SELECT")
+		convey.So(reference, convey.ShouldContainSubstring, "containing '%', '\\_' or '/'")
+		convey.So(reference, convey.ShouldContainSubstring, "`.<file_type>`")
+		convey.So(reference, convey.ShouldNotContainSubstring, "Set file*type to restrict")
+	})
+}
+
 // registryEntrySectionForTest returns the slice of the reference between the
 // heading that introduces the given path and the next entry heading, so an
 // assertion about one entry cannot accidentally match text from another.
@@ -262,6 +279,35 @@ func TestGlossaryDefinesAvailabilityConceptsG2(t *testing.T) {
 		} {
 			convey.So(terms, convey.ShouldContainKey, strings.ToLower(want))
 		}
+	})
+}
+
+func TestGlossaryDefinesPeopleAndManifestConceptsG2(t *testing.T) {
+	// G2 acceptance test 3: the glossary defines the study-metadata, manifest,
+	// file-type, QC and people concepts introduced by this feature - "data
+	// manifest" and "file-type filter" are called out by the spec, plus "faculty
+	// sponsor", "study_users / role membership", "manual QC", and "data access
+	// group". Each must be a genuine glossary term (a heading), not a passing
+	// mention, so the document truly defines them.
+	convey.Convey("Given the glossary document, when read, then it defines the manifest, file-type, QC and people concepts", t, func() {
+		glossary := readGlossaryForTest(t)
+		terms := glossaryTermsForTest(glossary)
+
+		convey.Convey("it defines data manifest and file-type filter (the spec's named terms)", func() {
+			convey.So(terms, convey.ShouldContainKey, "data manifest")
+			convey.So(terms, convey.ShouldContainKey, "file-type filter (filename suffix)")
+		})
+
+		convey.Convey("it defines the remaining G2 study-metadata and people concepts", func() {
+			for _, want := range []string{
+				"faculty sponsor",
+				"study_users / role membership",
+				"manual qc",
+				"data access group",
+			} {
+				convey.So(terms, convey.ShouldContainKey, want)
+			}
+		})
 	})
 }
 

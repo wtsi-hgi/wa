@@ -274,12 +274,41 @@ func (rc *RemoteClient) LanesForSample(ctx context.Context, sangerName string, l
 
 // IRODSPathsForSample lists iRODS paths for a sample through the remote server.
 func (rc *RemoteClient) IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]IRODSPath, error) {
-	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForSample", []string{sangerName}, remotePagination(limit, offset))
+	return rc.IRODSPathsForSampleByFileType(ctx, sangerName, "", limit, offset)
+}
+
+// IRODSPathsForSampleByFileType lists iRODS paths for a sample through the remote
+// server, optionally filtered to a file-type suffix. It is the filtered variant
+// of IRODSPathsForSample and issues the same /sample/:id/irods endpoint with the
+// file_type query param alongside limit/offset (so there is one endpoint,
+// parameterised by the filter); an empty fileType requests all file types. The
+// server validates the file_type and returns 400 for an invalid value.
+func (rc *RemoteClient) IRODSPathsForSampleByFileType(ctx context.Context, sangerName, fileType string, limit, offset int) ([]IRODSPath, error) {
+	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForSample", []string{sangerName}, remotePaginationWithFileType(limit, offset, fileType))
+}
+
+// remotePaginationWithFileType builds the query values for an iRODS list: the
+// limit/offset pagination controls plus the optional file_type filter, an empty
+// fileType omitted (matching the all-file-types call).
+func remotePaginationWithFileType(limit, offset int, fileType string) url.Values {
+	values := remotePagination(limit, offset)
+	if fileType != "" {
+		values.Set("file_type", fileType)
+	}
+
+	return values
 }
 
 // IRODSPathsForStudy lists iRODS paths for a study through the remote server.
 func (rc *RemoteClient) IRODSPathsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]IRODSPath, error) {
-	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
+	return rc.IRODSPathsForStudyByFileType(ctx, studyLimsID, "", limit, offset)
+}
+
+// IRODSPathsForStudyByFileType lists iRODS paths for a study through the remote
+// server, optionally filtered to a file-type suffix, the same way as
+// IRODSPathsForSampleByFileType.
+func (rc *RemoteClient) IRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, fileType string, limit, offset int) ([]IRODSPath, error) {
+	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForStudy", []string{studyLimsID}, remotePaginationWithFileType(limit, offset, fileType))
 }
 
 // IRODSPathsForStudyPage is the Page[IRODSPath] variant of IRODSPathsForStudy: it
@@ -290,9 +319,152 @@ func (rc *RemoteClient) IRODSPathsForStudyPage(ctx context.Context, studyLimsID 
 	return remoteCallPage[IRODSPath](rc, ctx, "IRODSPathsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
 }
 
+// IRODSPathsForRun lists the iRODS data objects on a run through the remote server
+// (spec B3), optionally filtered to a file-type suffix. It issues the
+// /run/:id/irods endpoint with the file_type query param alongside limit/offset (so
+// there is one endpoint, parameterised by the filter); an empty fileType requests
+// all file types. The server validates the file_type and returns 400 for an invalid
+// value, and resolves :id through the run space (ResolveRun).
+func (rc *RemoteClient) IRODSPathsForRun(ctx context.Context, idRun, fileType string, limit, offset int) ([]IRODSPath, error) {
+	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForRun", []string{idRun}, remotePaginationWithFileType(limit, offset, fileType))
+}
+
+// IRODSPathsForRunPage returns an unfiltered all-file-types page of iRODS data
+// objects for a run, plus the list-sizing metadata from the X-Total-Count /
+// X-Next-Offset response headers (Page.Total / Page.NextOffset). It does not
+// accept a file-type filter.
+func (rc *RemoteClient) IRODSPathsForRunPage(ctx context.Context, idRun string, limit, offset int) (Page[IRODSPath], error) {
+	return remoteCallPage[IRODSPath](rc, ctx, "IRODSPathsForRun", []string{idRun}, remotePagination(limit, offset))
+}
+
+// StudyManifest returns a study's product manifest envelope through the remote
+// server. It is a PLAIN remoteCall returning the StudyManifest envelope (not a
+// bare-slice Page[T]), since the manifest is an envelope (study metadata once plus
+// the page of product rows). The query forwards the limit/offset pagination plus
+// the optional with_irods flag (omitted when false) and file_type filter (omitted
+// when empty), so the server applies the same product-grain list and the same
+// sizing headers; the server validates the file_type and returns 400 for an
+// invalid value.
+func (rc *RemoteClient) StudyManifest(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (StudyManifest, error) {
+	return remoteCall[StudyManifest](rc, ctx, "StudyManifest", []string{studyLimsID}, remoteManifestQuery(limit, offset, withIRODS, fileType))
+}
+
+// remoteManifestQuery builds the query values for the study manifest list: the
+// limit/offset pagination controls plus the optional with_irods flag (set only
+// when true) and file_type filter (set only when non-empty), matching the
+// bare/with-irods/filtered call forms.
+func remoteManifestQuery(limit, offset int, withIRODS bool, fileType string) url.Values {
+	values := remotePaginationWithFileType(limit, offset, fileType)
+	if withIRODS {
+		values.Set("with_irods", "true")
+	}
+
+	return values
+}
+
 // StudiesForSample lists studies for a sample through the remote server.
 func (rc *RemoteClient) StudiesForSample(ctx context.Context, sangerName string) ([]Study, error) {
 	return remoteCall[[]Study](rc, ctx, "StudiesForSample", []string{sangerName}, nil)
+}
+
+// StudiesForFacultySponsor lists the studies of a named PI/sponsor through the
+// remote server (the named study.faculty_sponsor, case-insensitive substring),
+// each as a PersonStudy with an empty Role.
+func (rc *RemoteClient) StudiesForFacultySponsor(ctx context.Context, name string, limit, offset int) ([]PersonStudy, error) {
+	return remoteCall[[]PersonStudy](rc, ctx, "StudiesForFacultySponsor", []string{name}, remotePagination(limit, offset))
+}
+
+// StudiesForFacultySponsorPage is the Page[PersonStudy] variant of
+// StudiesForFacultySponsor: it returns the same page of rows (Page.Items) plus
+// the list-sizing metadata from the X-Total-Count / X-Next-Offset response
+// headers (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) StudiesForFacultySponsorPage(ctx context.Context, name string, limit, offset int) (Page[PersonStudy], error) {
+	return remoteCallPage[PersonStudy](rc, ctx, "StudiesForFacultySponsor", []string{name}, remotePagination(limit, offset))
+}
+
+// CountStudiesForFacultySponsor counts the studies of a named PI/sponsor through
+// the remote server, the count counterpart of StudiesForFacultySponsor (the same
+// faculty_sponsor case-insensitive substring match with no LIMIT), so it equals
+// that list's length when all rows are fetched.
+func (rc *RemoteClient) CountStudiesForFacultySponsor(ctx context.Context, name string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudiesForFacultySponsor", []string{name}, nil)
+}
+
+// StudiesForUser lists the studies a person is a study_users role member of
+// through the remote server (matched case-insensitively as a substring of
+// name/login/email), each as a PersonStudy carrying the matched role. role is the
+// raw, comma-separated override of the default role set, forwarded as the role
+// query param (omitted when empty so the server applies the default set); the same
+// study may appear under multiple roles, de-duplicated to one row per
+// (id_study_lims, role).
+func (rc *RemoteClient) StudiesForUser(ctx context.Context, person, role string, limit, offset int) ([]PersonStudy, error) {
+	return remoteCall[[]PersonStudy](rc, ctx, "StudiesForUser", []string{person}, remotePaginationWithRole(limit, offset, role))
+}
+
+// remotePaginationWithRole builds the query values for the studies-by-user list:
+// the limit/offset pagination controls plus the optional role override, an empty
+// role omitted (matching the default-role-set call).
+func remotePaginationWithRole(limit, offset int, role string) url.Values {
+	values := remotePagination(limit, offset)
+	if role != "" {
+		values.Set("role", role)
+	}
+
+	return values
+}
+
+// StudiesForUserPage is the Page[PersonStudy] variant of StudiesForUser: it
+// returns the same page of rows (Page.Items) plus the list-sizing metadata from
+// the X-Total-Count / X-Next-Offset response headers (Page.Total /
+// Page.NextOffset).
+func (rc *RemoteClient) StudiesForUserPage(ctx context.Context, person, role string, limit, offset int) (Page[PersonStudy], error) {
+	return remoteCallPage[PersonStudy](rc, ctx, "StudiesForUser", []string{person}, remotePaginationWithRole(limit, offset, role))
+}
+
+// CountStudiesForUser counts the studies a person is a study_users role member of
+// through the remote server, the count counterpart of StudiesForUser (the same
+// name/login/email substring match and role filter, counting the distinct
+// (id_study_lims, role) matches with no LIMIT), so it equals that list's length
+// when all rows are fetched. role is forwarded as the role query param (omitted
+// when empty so the server applies the default set).
+func (rc *RemoteClient) CountStudiesForUser(ctx context.Context, person, role string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudiesForUser", []string{person}, remoteRole(role))
+}
+
+// remoteRole builds the role query values for a studies-by-user count, omitting an
+// empty role so a default-role-set request sends no query string (matching the
+// bare default call).
+func remoteRole(role string) url.Values {
+	values := url.Values{}
+	if role != "" {
+		values.Set("role", role)
+	}
+
+	return values
+}
+
+// ResolvePerson lists the distinct candidate people (faculty_sponsor and
+// study_users) matching the term as a case-insensitive substring through the remote
+// server, each as a PersonCandidate carrying its source, stored form and distinct
+// study count.
+func (rc *RemoteClient) ResolvePerson(ctx context.Context, term string, limit, offset int) ([]PersonCandidate, error) {
+	return remoteCall[[]PersonCandidate](rc, ctx, "ResolvePerson", []string{term}, remotePagination(limit, offset))
+}
+
+// ResolvePersonPage is the Page[PersonCandidate] variant of ResolvePerson: it
+// returns the same page of candidates (Page.Items) plus the list-sizing metadata
+// from the X-Total-Count / X-Next-Offset response headers (Page.Total /
+// Page.NextOffset).
+func (rc *RemoteClient) ResolvePersonPage(ctx context.Context, term string, limit, offset int) (Page[PersonCandidate], error) {
+	return remoteCallPage[PersonCandidate](rc, ctx, "ResolvePerson", []string{term}, remotePagination(limit, offset))
+}
+
+// CountResolvePerson counts the distinct candidate people matching the term across
+// both sources through the remote server, the count counterpart of ResolvePerson
+// (the same case-insensitive substring match with no LIMIT), so it equals that
+// list's length when all rows are fetched.
+func (rc *RemoteClient) CountResolvePerson(ctx context.Context, term string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountResolvePerson", []string{term}, nil)
 }
 
 // FindSamplesBySangerID finds samples by Sanger sample ID through the remote server.
@@ -426,6 +598,15 @@ func (rc *RemoteClient) CountRunsForStudy(ctx context.Context, studyLimsID strin
 	return remoteCall[Count](rc, ctx, "CountRunsForStudy", []string{studyLimsID}, nil)
 }
 
+// CountStudyManifest counts the distinct products in a study's manifest through
+// the remote server (spec C2), the count counterpart of StudyManifest. It is a
+// plain remoteCall returning the Count envelope; the figure is product-grained
+// (unaffected by the manifest's with_irods / file_type options, which this
+// endpoint does not take), so it equals the manifest list's row count.
+func (rc *RemoteClient) CountStudyManifest(ctx context.Context, studyLimsID string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudyManifest", []string{studyLimsID}, nil)
+}
+
 // CountLibrariesForStudy counts the distinct libraries for a study through the remote server.
 func (rc *RemoteClient) CountLibrariesForStudy(ctx context.Context, studyLimsID string) (Count, error) {
 	return remoteCall[Count](rc, ctx, "CountLibrariesForStudy", []string{studyLimsID}, nil)
@@ -438,12 +619,51 @@ func (rc *RemoteClient) CountLanesForSample(ctx context.Context, sangerName stri
 
 // CountIRODSPathsForSample counts the distinct iRODS data objects for a sample through the remote server.
 func (rc *RemoteClient) CountIRODSPathsForSample(ctx context.Context, sangerName string) (Count, error) {
-	return remoteCall[Count](rc, ctx, "CountIRODSPathsForSample", []string{sangerName}, nil)
+	return rc.CountIRODSPathsForSampleByFileType(ctx, sangerName, "")
+}
+
+// CountIRODSPathsForSampleByFileType counts the distinct iRODS data objects for a
+// sample through the remote server, optionally filtered to a file-type suffix. It
+// is the filtered variant of CountIRODSPathsForSample and issues the same
+// /sample/:id/irods/count endpoint with the file_type query param (so there is
+// one endpoint, parameterised by the filter); an empty fileType requests an
+// all-file-types count. The server validates the file_type and returns 400 for an
+// invalid value.
+func (rc *RemoteClient) CountIRODSPathsForSampleByFileType(ctx context.Context, sangerName, fileType string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountIRODSPathsForSample", []string{sangerName}, remoteFileType(fileType))
+}
+
+// remoteFileType builds the file_type query values for a filtered iRODS count,
+// omitting an empty fileType so an all-file-types request sends no query string
+// (matching the bare count call).
+func remoteFileType(fileType string) url.Values {
+	values := url.Values{}
+	if fileType != "" {
+		values.Set("file_type", fileType)
+	}
+
+	return values
 }
 
 // CountIRODSPathsForStudy counts the distinct iRODS data objects for a study through the remote server.
 func (rc *RemoteClient) CountIRODSPathsForStudy(ctx context.Context, studyLimsID string) (Count, error) {
-	return remoteCall[Count](rc, ctx, "CountIRODSPathsForStudy", []string{studyLimsID}, nil)
+	return rc.CountIRODSPathsForStudyByFileType(ctx, studyLimsID, "")
+}
+
+// CountIRODSPathsForStudyByFileType counts the distinct iRODS data objects for a
+// study through the remote server, optionally filtered to a file-type suffix, the
+// same way as CountIRODSPathsForSampleByFileType.
+func (rc *RemoteClient) CountIRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, fileType string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountIRODSPathsForStudy", []string{studyLimsID}, remoteFileType(fileType))
+}
+
+// CountIRODSPathsForRun counts the iRODS data objects on a run through the remote
+// server (spec B3), optionally filtered to a file-type suffix. It issues the
+// /run/:id/irods/count endpoint with the file_type query param; an empty fileType
+// counts all file types. The server validates the file_type and resolves :id
+// through the run space (ResolveRun).
+func (rc *RemoteClient) CountIRODSPathsForRun(ctx context.Context, idRun, fileType string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountIRODSPathsForRun", []string{idRun}, remoteFileType(fileType))
 }
 
 // CountFindSamplesBySangerID counts the samples matching a Sanger sample id through the remote server.

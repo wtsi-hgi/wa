@@ -60,6 +60,20 @@ func seedRealMLWHOseqFlowcellRow(t *testing.T, db *sql.DB, idOseqFlowcellTmp, id
 	}
 }
 
+// seedRealMLWHStudyUsersRow inserts a study_users role assignment linked to a
+// study via id_study_tmp. login/email/name are passed as *string so a nil
+// pointer seeds an upstream NULL (which the wholesale scan COALESCEs to empty string).
+func seedRealMLWHStudyUsersRow(t *testing.T, db *sql.DB, idStudyUsersTmp, idStudyTmp int64, role string, login, email, name *string, lastUpdated time.Time) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO study_users(id_study_users_tmp, id_study_tmp, last_updated, role, login, email, name) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		idStudyUsersTmp, idStudyTmp, formatSyncTime(lastUpdated), role, login, email, name,
+	); err != nil {
+		t.Fatalf("seedRealMLWHStudyUsersRow: %v", err)
+	}
+}
+
 func seedRealMLWHTrackingRow(t *testing.T, db *sql.DB, idSampleLims, studyID string, manifestCreated time.Time) {
 	t.Helper()
 
@@ -214,6 +228,33 @@ func TestClientSyncSeqProductIRODSLocationsToleratesNullRelativePath(t *testing.
 			convey.So(row.idSampleTmp, convey.ShouldEqual, 931)
 			convey.So(row.idStudyLims, convey.ShouldEqual, "7301")
 			convey.So(row.platform, convey.ShouldEqual, "ultimagen")
+		})
+	})
+}
+
+func TestClientSyncSeqProductIRODSLocationsKeepsDuplicatePathsWithDifferentSourceRows(t *testing.T) {
+	convey.Convey("Given two source iRODS rows with the same product path and different source row IDs", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.June, 5, 9, 0, 0, 0, time.UTC)
+		created := time.Date(2026, time.June, 29, 8, 0, 0, 0, time.UTC)
+		seedRealMLWHStudyRow(t, source, 74, "SQSCP", "7401", "uuid-study-74", "Study Duplicate Path", "acc-st-74", base)
+		seedRealMLWHFlowcellRow(t, source, 7401, "Standard", 741, 74, base.Add(time.Minute))
+		seedRealMLWHProductMetricRow(t, source, 74001, 7401, 48100, 1, 1, 1, 1, 1, base.Add(2*time.Minute))
+		seedRealMLWHIRODSLocationPlatformRow(t, source, 84001, "product-74001", "illumina", "/seq/illumina/runs/48/48100", "plex1/48100#1.cram", created, base.Add(3*time.Minute))
+		seedRealMLWHIRODSLocationPlatformRow(t, source, 84002, "product-74001", "illumina", "/seq/illumina/runs/48/48100", "plex1/48100#1.cram", created.Add(time.Minute), base.Add(4*time.Minute))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.Convey("when the iRODS table syncs, then both source rows survive even though the path identity matches", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 2)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ? AND id_sample_tmp = ? AND id_study_lims = ? AND irods_collection = ? AND irods_file_name = ?`, "product-74001", 741, "7401", "/seq/illumina/runs/48/48100/plex1", "48100#1.cram"), convey.ShouldEqual, 2)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_seq_product_irods_locations_tmp IN (?, ?)`, 84001, 84002), convey.ShouldEqual, 2)
 		})
 	})
 }
@@ -408,6 +449,8 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 				Collection: "/seq/run",
 				DataObject: "1",
 				IRODSPath:  "/seq/run/1",
+				IDRun:      9001,
+				Platform:   "Illumina",
 			}})
 
 			var studyLimsForSample1 string
@@ -705,6 +748,19 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 		ega_policy_accession_number TEXT,
 		data_release_timing         TEXT,
 		last_updated                TEXT NOT NULL
+	)`)
+
+	// study_users carries per-study role assignments and links to study via
+	// id_study_tmp; it is mirrored wholesale. login/email/name are nullable
+	// upstream (the wholesale scan COALESCEs NULL to '').
+	mustExec(t, db, `CREATE TABLE study_users (
+		id_study_users_tmp INTEGER PRIMARY KEY,
+		id_study_tmp       INTEGER NOT NULL,
+		last_updated       TEXT NOT NULL,
+		role               TEXT,
+		login              TEXT,
+		email              TEXT,
+		name               TEXT
 	)`)
 
 	mustExec(t, db, `CREATE TABLE iseq_flowcell (

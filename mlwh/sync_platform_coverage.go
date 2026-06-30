@@ -585,6 +585,7 @@ func wholesaleMirrorTables() []string {
 	return []string{
 		syncTableIseqRunStatusDict,
 		syncTableOseqFlowcell,
+		syncTableStudyUsers,
 		syncTablePacBioRunWellMetrics,
 		syncTableEseqRun,
 		syncTableEseqRunLaneMetrics,
@@ -598,6 +599,8 @@ func wholesaleMirrorSpecFor(table string) wholesaleMirrorSpec {
 		return iseqRunStatusDictWholesaleSpec()
 	case syncTableOseqFlowcell:
 		return oseqFlowcellWholesaleSpec()
+	case syncTableStudyUsers:
+		return studyUsersWholesaleSpec()
 	case syncTablePacBioRunWellMetrics:
 		return pacBioRunWellMetricsWholesaleSpec()
 	case syncTableEseqRun:
@@ -647,6 +650,33 @@ func oseqFlowcellWholesaleSpec() wholesaleMirrorSpec {
 			}
 
 			return []any{idOseqFlowcellTmp, idSampleTmp, idStudyLims}, nil
+		},
+	}
+}
+
+// studyUsersWholesaleSpec mirrors study_users wholesale, INNER JOINing to study
+// on id_study_tmp AND id_lims = 'SQSCP' so only rows whose study is an SQSCP
+// study mirror (preserving the id_lims = 'SQSCP' invariant and ensuring the
+// study_mirror.id_study_tmp link always resolves). The nullable login/email/name
+// columns are scanned via sql.NullString and COALESCEd to empty string for the NOT NULL
+// mirror columns; a row whose id_study_tmp is 0 is skipped.
+func studyUsersWholesaleSpec() wholesaleMirrorSpec {
+	return wholesaleMirrorSpec{
+		syncTable:     syncTableStudyUsers,
+		mirrorTable:   "study_users_mirror",
+		mirrorColumns: []string{"id_study_users_tmp", "id_study_tmp", "role", "login", "email", "name", "last_updated"},
+		sourceQuery:   `SELECT su.id_study_users_tmp, su.id_study_tmp, su.role, su.login, su.email, su.name, su.last_updated FROM study_users su INNER JOIN study ON study.id_study_tmp = su.id_study_tmp AND study.id_lims = 'SQSCP' ORDER BY su.id_study_users_tmp`,
+		scan: func(rows *sql.Rows) ([]any, error) {
+			var idStudyUsersTmp, idStudyTmp int64
+			var role, login, email, name, lastUpdated sql.NullString
+			if err := rows.Scan(&idStudyUsersTmp, &idStudyTmp, &role, &login, &email, &name, &lastUpdated); err != nil {
+				return nil, fmt.Errorf("mlwh: scan study_users sync row: %w", err)
+			}
+			if idStudyTmp == 0 {
+				return nil, nil
+			}
+
+			return []any{idStudyUsersTmp, idStudyTmp, role.String, login.String, email.String, name.String, normalizeWholesaleTime(lastUpdated)}, nil
 		},
 	}
 }
@@ -726,9 +756,10 @@ func eseqRunLaneMetricsWholesaleSpec() wholesaleMirrorSpec {
 // real table has NO id_useq_run_metrics_tmp (its primary key is id_run), NO
 // run_name, and NO run_status / run_start / run_complete columns: the run-level
 // lifecycle is the dated run_in_progress (start) and run_archived (the only later
-// run-level date) columns. run_folder_name supplies the mirror run_name; Ultimagen
-// has no native run-status string, so the mirror run_status is empty. last_changed
-// feeds the mirror last_updated.
+// run-level date) columns. run_folder_name supplies the mirror run_name; the
+// mirror run_status is the most advanced dated lifecycle phase present, so synced
+// rows have a meaningful status even though the real source has no status column.
+// last_changed feeds the mirror last_updated.
 func useqRunMetricsWholesaleSpec() wholesaleMirrorSpec {
 	return wholesaleMirrorSpec{
 		syncTable:     syncTableUseqRunMetrics,
@@ -743,9 +774,20 @@ func useqRunMetricsWholesaleSpec() wholesaleMirrorSpec {
 				return nil, fmt.Errorf("mlwh: scan useq_run_metrics sync row: %w", err)
 			}
 
-			return []any{idRun, runFolderName, "", runInProgress, runArchived, normalizeWholesaleTime(lastChanged)}, nil
+			return []any{idRun, runFolderName, useqRunMetricsStatus(runInProgress, runArchived), runInProgress, runArchived, normalizeWholesaleTime(lastChanged)}, nil
 		},
 	}
+}
+
+func useqRunMetricsStatus(runInProgress, runArchived sql.NullString) string {
+	if runArchived.Valid && runArchived.String != "" {
+		return ultimagenRunArchivedPhase
+	}
+	if runInProgress.Valid && runInProgress.String != "" {
+		return ultimagenRunInProgressPhase
+	}
+
+	return ""
 }
 
 // normalizeWholesaleTime renders a nullable source timestamp as an RFC3339 string
@@ -918,7 +960,7 @@ func seqOpsTrackingPerSampleMirrorRowArgs(row seqOpsTrackingPerSampleSyncRow) []
 // source rewrites the qualifier away (it has no schemas).
 // The context/lookup string columns (everything except the id_sample_lims primary
 // key and the nullable milestone datetimes) are nullable in the real
-// mlwh_reporting table, so they are COALESCEd to '' to keep the plain-string scan
+// mlwh_reporting table, so they are COALESCEd to empty string to keep the plain-string scan
 // targets and the NOT NULL mirror columns happy rather than failing with
 // "converting NULL to string is unsupported".
 const seqOpsTrackingPerSampleSourceQuery = `SELECT id_sample_lims, COALESCE(sanger_sample_id, '') AS sanger_sample_id, COALESCE(sanger_sample_name, '') AS sanger_sample_name, COALESCE(study_id, '') AS study_id, COALESCE(programme, '') AS programme, COALESCE(faculty_sponsor, '') AS faculty_sponsor, COALESCE(library_type, '') AS library_type, COALESCE(platform, '') AS platform, manifest_created, manifest_uploaded, labware_received, order_made, working_dilution, library_start, library_complete, sequencing_run_start, sequencing_qc_complete FROM mlwh_reporting.seq_ops_tracking_per_sample`
