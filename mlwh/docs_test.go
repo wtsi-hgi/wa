@@ -167,6 +167,23 @@ func TestEndpointReferenceIncludesParamsDescriptionAndResponseG1(t *testing.T) {
 	})
 }
 
+func TestEndpointReferenceEscapesMarkdownControlCharactersG1(t *testing.T) {
+	// Registry descriptions include source identifiers and literal Markdown
+	// control characters that are plain prose, not emphasis. The generated
+	// reference preserves identifier underscores, escapes ambiguous controls, and
+	// leaves inline code spans as source text so formatters cannot reinterpret the
+	// document and make the committed golden file drift.
+	convey.Convey("Given descriptions with underscores and stars, when the endpoint reference is generated, then prose is escaped and code spans stay literal", t, func() {
+		reference := EndpointReference()
+
+		convey.So(reference, convey.ShouldContainSubstring, "Set file_type to restrict")
+		convey.So(reference, convey.ShouldContainSubstring, "COUNT(\\*) over that same SELECT")
+		convey.So(reference, convey.ShouldContainSubstring, "containing '%', '\\_' or '/'")
+		convey.So(reference, convey.ShouldContainSubstring, "`.<file_type>`")
+		convey.So(reference, convey.ShouldNotContainSubstring, "Set file*type to restrict")
+	})
+}
+
 // registryEntrySectionForTest returns the slice of the reference between the
 // heading that introduces the given path and the next entry heading, so an
 // assertion about one entry cannot accidentally match text from another.

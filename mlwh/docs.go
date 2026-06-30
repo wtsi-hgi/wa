@@ -80,7 +80,7 @@ func EndpointReference() string {
 func writeEndpointReferenceEntry(builder *strings.Builder, entry Endpoint) {
 	fmt.Fprintf(builder, "### `%s %s`\n\n", entry.Verb, entry.Path)
 	fmt.Fprintf(builder, "%s\n\n", entry.Summary)
-	fmt.Fprintf(builder, "%s\n\n", entry.Description)
+	fmt.Fprintf(builder, "%s\n\n", endpointReferenceMarkdownText(entry.Description))
 
 	fmt.Fprintf(builder, "- Path parameters: %s\n", endpointReferencePathParams(entry))
 	fmt.Fprintf(builder, "- Query parameters: %s\n", endpointReferenceQueryParams(entry))
@@ -111,10 +111,53 @@ func endpointReferenceQueryParams(entry Endpoint) string {
 
 	rendered := make([]string, 0, len(entry.QueryParams))
 	for _, param := range entry.QueryParams {
-		rendered = append(rendered, fmt.Sprintf("`%s` (%s): %s", param.Name, param.Type, param.Description))
+		rendered = append(rendered, fmt.Sprintf("`%s` (%s): %s", param.Name, param.Type, endpointReferenceMarkdownText(param.Description)))
 	}
 
 	return strings.Join(rendered, "; ")
+}
+
+// endpointReferenceMarkdownText escapes prose characters that Markdown can
+// reinterpret as emphasis, while leaving inline code spans as source text.
+func endpointReferenceMarkdownText(text string) string {
+	runes := []rune(text)
+	var builder strings.Builder
+	builder.Grow(len(text))
+
+	inCodeSpan := false
+	for index, char := range runes {
+		switch char {
+		case '`':
+			inCodeSpan = !inCodeSpan
+			builder.WriteRune(char)
+		case '_':
+			if !inCodeSpan && !endpointReferenceInnerWordChar(runes, index) {
+				builder.WriteRune('\\')
+			}
+			builder.WriteRune(char)
+		case '*':
+			if !inCodeSpan {
+				builder.WriteRune('\\')
+			}
+			builder.WriteRune(char)
+		default:
+			builder.WriteRune(char)
+		}
+	}
+
+	return builder.String()
+}
+
+func endpointReferenceInnerWordChar(runes []rune, index int) bool {
+	return index > 0 && index+1 < len(runes) &&
+		endpointReferenceWordChar(runes[index-1]) &&
+		endpointReferenceWordChar(runes[index+1])
+}
+
+func endpointReferenceWordChar(char rune) bool {
+	return (char >= 'a' && char <= 'z') ||
+		(char >= 'A' && char <= 'Z') ||
+		(char >= '0' && char <= '9')
 }
 
 // endpointResponseTypeName derives the human response-type label for an entry
