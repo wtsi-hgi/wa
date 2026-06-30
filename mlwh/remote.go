@@ -328,6 +328,14 @@ func remotePaginationWithAddedWindow(limit, offset int, since, until string) url
 	return values
 }
 
+// SamplesWithDataSincePage is the Page[SampleWithData] variant of
+// SamplesWithDataSince: it returns the same windowed page of rows (Page.Items)
+// plus the list-sizing metadata from the X-Total-Count / X-Next-Offset response
+// headers (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) SamplesWithDataSincePage(ctx context.Context, studyLimsID, since, until string, limit, offset int) (Page[SampleWithData], error) {
+	return remoteCallPage[SampleWithData](rc, ctx, "SamplesWithData", []string{studyLimsID}, remotePaginationWithAddedWindow(limit, offset, since, until))
+}
+
 // LanesForSample lists lanes for a sample through the remote server.
 func (rc *RemoteClient) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]Lane, error) {
 	return remoteCall[[]Lane](rc, ctx, "LanesForSample", []string{sangerName}, remotePagination(limit, offset))
@@ -367,6 +375,21 @@ func remotePaginationWithFileType(limit, offset int, fileType string) url.Values
 	return values
 }
 
+// IRODSPathsForSamplePage is the Page[IRODSPath] variant of
+// IRODSPathsForSample: it returns the same page of rows (Page.Items) plus the
+// list-sizing metadata from the X-Total-Count / X-Next-Offset response headers
+// (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) IRODSPathsForSamplePage(ctx context.Context, sangerName string, limit, offset int) (Page[IRODSPath], error) {
+	return remoteCallPage[IRODSPath](rc, ctx, "IRODSPathsForSample", []string{sangerName}, remotePagination(limit, offset))
+}
+
+// IRODSPathsForSampleByFileTypePage is the Page[IRODSPath] variant of
+// IRODSPathsForSampleByFileType: it returns the filtered rows plus the filtered
+// list-sizing metadata from the X-Total-Count / X-Next-Offset response headers.
+func (rc *RemoteClient) IRODSPathsForSampleByFileTypePage(ctx context.Context, sangerName, fileType string, limit, offset int) (Page[IRODSPath], error) {
+	return remoteCallPage[IRODSPath](rc, ctx, "IRODSPathsForSample", []string{sangerName}, remotePaginationWithFileType(limit, offset, fileType))
+}
+
 // IRODSPathsForStudy lists iRODS paths for a study through the remote server.
 func (rc *RemoteClient) IRODSPathsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]IRODSPath, error) {
 	return rc.IRODSPathsForStudyByFileType(ctx, studyLimsID, "", limit, offset)
@@ -377,6 +400,13 @@ func (rc *RemoteClient) IRODSPathsForStudy(ctx context.Context, studyLimsID stri
 // IRODSPathsForSampleByFileType.
 func (rc *RemoteClient) IRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, fileType string, limit, offset int) ([]IRODSPath, error) {
 	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForStudy", []string{studyLimsID}, remotePaginationWithFileType(limit, offset, fileType))
+}
+
+// IRODSPathsForStudyByFileTypePage is the Page[IRODSPath] variant of
+// IRODSPathsForStudyByFileType: it returns the filtered rows plus the filtered
+// list-sizing metadata from the X-Total-Count / X-Next-Offset response headers.
+func (rc *RemoteClient) IRODSPathsForStudyByFileTypePage(ctx context.Context, studyLimsID, fileType string, limit, offset int) (Page[IRODSPath], error) {
+	return remoteCallPage[IRODSPath](rc, ctx, "IRODSPathsForStudy", []string{studyLimsID}, remotePaginationWithFileType(limit, offset, fileType))
 }
 
 // IRODSPathsForStudyPage is the Page[IRODSPath] variant of IRODSPathsForStudy: it
@@ -397,10 +427,16 @@ func (rc *RemoteClient) IRODSPathsForRun(ctx context.Context, idRun, fileType st
 	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForRun", []string{idRun}, remotePaginationWithFileType(limit, offset, fileType))
 }
 
+// IRODSPathsForRunByFileTypePage is the Page[IRODSPath] variant of
+// IRODSPathsForRun: it returns the filtered rows plus the filtered list-sizing
+// metadata from the X-Total-Count / X-Next-Offset response headers.
+func (rc *RemoteClient) IRODSPathsForRunByFileTypePage(ctx context.Context, idRun, fileType string, limit, offset int) (Page[IRODSPath], error) {
+	return remoteCallPage[IRODSPath](rc, ctx, "IRODSPathsForRun", []string{idRun}, remotePaginationWithFileType(limit, offset, fileType))
+}
+
 // IRODSPathsForRunPage returns an unfiltered all-file-types page of iRODS data
 // objects for a run, plus the list-sizing metadata from the X-Total-Count /
-// X-Next-Offset response headers (Page.Total / Page.NextOffset). It does not
-// accept a file-type filter.
+// X-Next-Offset response headers (Page.Total / Page.NextOffset).
 func (rc *RemoteClient) IRODSPathsForRunPage(ctx context.Context, idRun string, limit, offset int) (Page[IRODSPath], error) {
 	return remoteCallPage[IRODSPath](rc, ctx, "IRODSPathsForRun", []string{idRun}, remotePagination(limit, offset))
 }

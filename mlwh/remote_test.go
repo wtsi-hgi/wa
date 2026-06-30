@@ -576,6 +576,206 @@ func seedRemoteB1ListSizingExtras(t *testing.T, client *Client) {
 	rebuildSampleSearchIndexForTest(t, client.cache.DB())
 }
 
+func TestRemoteClientIRODSPathsForSampleByFileTypePageC2(t *testing.T) {
+	convey.Convey("C2.1: Given a stub server returning one sample-scoped IRODS path and sizing headers", t, func() {
+		requestURIs := make(chan string, 1)
+		paths := []IRODSPath{{IDProduct: "p1", Collection: "/seq", DataObject: "S1.cram", IRODSPath: "/seq/S1.cram"}}
+		server := newRemoteClientJSONHeaderServerForTest(requestURIs, paths, http.Header{
+			"X-Total-Count": {"4"},
+			"X-Next-Offset": {"2"},
+		})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when IRODSPathsForSampleByFileTypePage runs with cram, then it sends file_type with pagination and reads the sizing headers", func() {
+			page, err := client.IRODSPathsForSampleByFileTypePage(context.Background(), "S1", "cram", 1, 1)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page, convey.ShouldResemble, Page[IRODSPath]{Items: paths, Total: 4, NextOffset: 2})
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "sample request URI"), convey.ShouldEqual, "/sample/S1/irods?file_type=cram&limit=1&offset=1")
+		})
+	})
+}
+
+func TestRemoteClientIRODSPathsForStudyAndRunByFileTypePageC2(t *testing.T) {
+	convey.Convey("C2.2: Given a stub server returning one IRODS path and sizing headers", t, func() {
+		paths := []IRODSPath{{IDProduct: "p1", Collection: "/seq", DataObject: "52553.cram", IRODSPath: "/seq/52553.cram"}}
+		cases := []struct {
+			name        string
+			expectedURI string
+			call        func(context.Context, *RemoteClient) (Page[IRODSPath], error)
+		}{
+			{
+				name:        "study",
+				expectedURI: "/study/ST1/irods?file_type=cram&limit=1&offset=1",
+				call: func(ctx context.Context, client *RemoteClient) (Page[IRODSPath], error) {
+					return client.IRODSPathsForStudyByFileTypePage(ctx, "ST1", "cram", 1, 1)
+				},
+			},
+			{
+				name:        "run",
+				expectedURI: "/run/52553/irods?file_type=cram&limit=1&offset=1",
+				call: func(ctx context.Context, client *RemoteClient) (Page[IRODSPath], error) {
+					return client.IRODSPathsForRunByFileTypePage(ctx, "52553", "cram", 1, 1)
+				},
+			},
+		}
+
+		for _, tc := range cases {
+			tc := tc
+			convey.Convey("when the "+tc.name+" filtered page method runs with cram, then it sends file_type with pagination and reads the sizing headers", func() {
+				requestURIs := make(chan string, 1)
+				server := newRemoteClientJSONHeaderServerForTest(requestURIs, paths, http.Header{
+					"X-Total-Count": {"4"},
+					"X-Next-Offset": {"2"},
+				})
+				defer server.Close()
+
+				client := newRemoteClientForTest(t, server.URL, "")
+				defer closeRemoteClientForTest(t, client)
+
+				page, err := tc.call(context.Background(), client)
+
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(page, convey.ShouldResemble, Page[IRODSPath]{Items: paths, Total: 4, NextOffset: 2})
+				convey.So(receiveRemoteClientTestValue(t, requestURIs, tc.name+" request URI"), convey.ShouldEqual, tc.expectedURI)
+			})
+		}
+	})
+}
+
+func TestRemoteClientIRODSPathsByFileTypePageOmitsEmptyFileTypeC2(t *testing.T) {
+	convey.Convey("C2.3: Given a stub server returning one IRODS path and sizing headers", t, func() {
+		paths := []IRODSPath{{IDProduct: "p1", Collection: "/seq", DataObject: "all.bam", IRODSPath: "/seq/all.bam"}}
+		cases := []struct {
+			name           string
+			expectedURI    string
+			filteredPage   func(context.Context, *RemoteClient) (Page[IRODSPath], error)
+			unfilteredPage func(context.Context, *RemoteClient) (Page[IRODSPath], error)
+		}{
+			{
+				name:        "sample",
+				expectedURI: "/sample/S1/irods?limit=1&offset=1",
+				filteredPage: func(ctx context.Context, client *RemoteClient) (Page[IRODSPath], error) {
+					return client.IRODSPathsForSampleByFileTypePage(ctx, "S1", "", 1, 1)
+				},
+				unfilteredPage: func(ctx context.Context, client *RemoteClient) (Page[IRODSPath], error) {
+					return client.IRODSPathsForSamplePage(ctx, "S1", 1, 1)
+				},
+			},
+			{
+				name:        "study",
+				expectedURI: "/study/ST1/irods?limit=1&offset=1",
+				filteredPage: func(ctx context.Context, client *RemoteClient) (Page[IRODSPath], error) {
+					return client.IRODSPathsForStudyByFileTypePage(ctx, "ST1", "", 1, 1)
+				},
+				unfilteredPage: func(ctx context.Context, client *RemoteClient) (Page[IRODSPath], error) {
+					return client.IRODSPathsForStudyPage(ctx, "ST1", 1, 1)
+				},
+			},
+			{
+				name:        "run",
+				expectedURI: "/run/52553/irods?limit=1&offset=1",
+				filteredPage: func(ctx context.Context, client *RemoteClient) (Page[IRODSPath], error) {
+					return client.IRODSPathsForRunByFileTypePage(ctx, "52553", "", 1, 1)
+				},
+				unfilteredPage: func(ctx context.Context, client *RemoteClient) (Page[IRODSPath], error) {
+					return client.IRODSPathsForRunPage(ctx, "52553", 1, 1)
+				},
+			},
+		}
+
+		for _, tc := range cases {
+			tc := tc
+			convey.Convey("when the "+tc.name+" filtered page method receives an empty fileType, then file_type is omitted and the result equals the unfiltered page method", func() {
+				requestURIs := make(chan string, 2)
+				server := newRemoteClientJSONHeaderServerForTest(requestURIs, paths, http.Header{
+					"X-Total-Count": {"4"},
+					"X-Next-Offset": {"2"},
+				})
+				defer server.Close()
+
+				client := newRemoteClientForTest(t, server.URL, "")
+				defer closeRemoteClientForTest(t, client)
+
+				filteredPage, filteredErr := tc.filteredPage(context.Background(), client)
+				unfilteredPage, unfilteredErr := tc.unfilteredPage(context.Background(), client)
+
+				convey.So(filteredErr, convey.ShouldBeNil)
+				convey.So(unfilteredErr, convey.ShouldBeNil)
+				convey.So(filteredPage, convey.ShouldResemble, unfilteredPage)
+				convey.So(receiveRemoteClientTestValue(t, requestURIs, tc.name+" filtered request URI"), convey.ShouldEqual, tc.expectedURI)
+				convey.So(receiveRemoteClientTestValue(t, requestURIs, tc.name+" unfiltered request URI"), convey.ShouldEqual, tc.expectedURI)
+			})
+		}
+	})
+}
+
+func TestRemoteClientIRODSPathsByFileTypePageInvalidFileTypeErrorC2(t *testing.T) {
+	convey.Convey("C2.4: Given the upstream server rejects an invalid file_type", t, func() {
+		cases := []struct {
+			name        string
+			expectedURI string
+			call        func(context.Context, *RemoteClient) (Page[IRODSPath], error)
+		}{
+			{
+				name:        "sample",
+				expectedURI: "/sample/S1/irods?file_type=bad%2Ftype&limit=1&offset=1",
+				call: func(ctx context.Context, client *RemoteClient) (Page[IRODSPath], error) {
+					return client.IRODSPathsForSampleByFileTypePage(ctx, "S1", "bad/type", 1, 1)
+				},
+			},
+			{
+				name:        "study",
+				expectedURI: "/study/ST1/irods?file_type=bad%2Ftype&limit=1&offset=1",
+				call: func(ctx context.Context, client *RemoteClient) (Page[IRODSPath], error) {
+					return client.IRODSPathsForStudyByFileTypePage(ctx, "ST1", "bad/type", 1, 1)
+				},
+			},
+			{
+				name:        "run",
+				expectedURI: "/run/52553/irods?file_type=bad%2Ftype&limit=1&offset=1",
+				call: func(ctx context.Context, client *RemoteClient) (Page[IRODSPath], error) {
+					return client.IRODSPathsForRunByFileTypePage(ctx, "52553", "bad/type", 1, 1)
+				},
+			},
+		}
+
+		for _, tc := range cases {
+			tc := tc
+			convey.Convey("when the "+tc.name+" filtered page method receives the 400 response, then it returns the remote error and an empty page", func() {
+				requestURIs := make(chan string, 1)
+				server := newRemoteClientRecordingErrorServerForTest(requestURIs, http.StatusBadRequest, "bad_request")
+				defer server.Close()
+
+				client := newRemoteClientForTest(t, server.URL, "")
+				defer closeRemoteClientForTest(t, client)
+
+				page, err := tc.call(context.Background(), client)
+
+				convey.So(page, convey.ShouldResemble, Page[IRODSPath]{})
+				convey.So(err, convey.ShouldNotBeNil)
+				convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+				convey.So(receiveRemoteClientTestValue(t, requestURIs, tc.name+" invalid request URI"), convey.ShouldEqual, tc.expectedURI)
+			})
+		}
+	})
+}
+
+func newRemoteClientRecordingErrorServerForTest(requestURIs chan<- string, status int, code string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURIs <- r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		writeRemoteClientJSONForTest(w, map[string]string{
+			"code":    code,
+			"message": fmt.Sprintf("server returned %s", code),
+		})
+	}))
+}
+
 func TestRemoteClientSearchPageMethodsSendExplicitZeroPaginationB1(t *testing.T) {
 	convey.Convey("B1.5: Given stub search servers", t, func() {
 		cases := []struct {
@@ -623,6 +823,221 @@ func TestRemoteClientSearchPageMethodsSendExplicitZeroPaginationB1(t *testing.T)
 			})
 		}
 	})
+}
+
+func TestRemoteClientSamplesWithDataSincePageReadsHeadersAndWindowQueryC1(t *testing.T) {
+	convey.Convey("C1.1: Given a stub server returning one windowed SampleWithData row and sizing headers", t, func() {
+		requestURIs := make(chan string, 1)
+		rows := []SampleWithData{
+			{Sample: Sample{IDSampleTmp: 1, Name: "Alpha"}, Platforms: []string{"Illumina"}},
+		}
+		server := newRemoteClientJSONHeaderServerForTest(requestURIs, rows, http.Header{
+			"X-Total-Count": {"3"},
+			"X-Next-Offset": {"2"},
+		})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when SamplesWithDataSincePage runs, then it sends the windowed query and exposes header metadata", func() {
+			page, err := client.SamplesWithDataSincePage(
+				context.Background(),
+				"S1",
+				"2026-06-01T00:00:00Z",
+				"2026-06-02T00:00:00Z",
+				1,
+				1,
+			)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page, convey.ShouldResemble, Page[SampleWithData]{
+				Items:      rows,
+				Total:      3,
+				NextOffset: 2,
+			})
+
+			uri, err := url.ParseRequestURI(receiveRemoteClientTestValue(t, requestURIs, "request URI"))
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(uri.Path, convey.ShouldEqual, "/study/S1/samples-with-data")
+			convey.So(uri.Query(), convey.ShouldResemble, url.Values{
+				"limit":  {"1"},
+				"offset": {"1"},
+				"since":  {"2026-06-01T00:00:00Z"},
+				"until":  {"2026-06-02T00:00:00Z"},
+			})
+		})
+	})
+}
+
+func TestRemoteClientSamplesWithDataSincePageOmitsEmptyWindowQueryC1(t *testing.T) {
+	convey.Convey("C1.2: Given a stub server returning an empty samples-with-data page", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONHeaderServerForTest(requestURIs, []SampleWithData{}, nil)
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when SamplesWithDataSincePage runs with empty since and until, then only limit and offset are sent", func() {
+			page, err := client.SamplesWithDataSincePage(context.Background(), "S1", "", "", 5, 10)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page, convey.ShouldResemble, Page[SampleWithData]{
+				Items:      []SampleWithData{},
+				Total:      0,
+				NextOffset: -1,
+			})
+
+			uri, err := url.ParseRequestURI(receiveRemoteClientTestValue(t, requestURIs, "request URI"))
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(uri.Path, convey.ShouldEqual, "/study/S1/samples-with-data")
+			convey.So(uri.Query(), convey.ShouldResemble, url.Values{
+				"limit":  {"5"},
+				"offset": {"10"},
+			})
+		})
+	})
+}
+
+func TestRemoteClientSamplesWithDataSincePagePreservesBadRequestC1(t *testing.T) {
+	convey.Convey("C1.3: Given upstream bad_request responses that also carry sizing headers", t, func() {
+		requestURIs := make(chan string, 2)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestURIs <- r.URL.RequestURI()
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Total-Count", "99")
+			w.Header().Set("X-Next-Offset", "50")
+			w.WriteHeader(http.StatusBadRequest)
+			writeRemoteClientJSONForTest(w, map[string]string{
+				"code":    "bad_request",
+				"message": "invalid window",
+			})
+		}))
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when invalid timestamps or until without since are sent, then the empty Page and existing remote bad-request error are returned", func() {
+			invalidPage, invalidErr := client.SamplesWithDataSincePage(context.Background(), "S1", "not-a-date", "", 1, 0)
+
+			convey.So(invalidPage, convey.ShouldResemble, Page[SampleWithData]{})
+			convey.So(invalidErr, convey.ShouldNotBeNil)
+			convey.So(errors.Is(invalidErr, ErrUpstreamImpaired), convey.ShouldBeTrue)
+
+			invalidURI, err := url.ParseRequestURI(receiveRemoteClientTestValue(t, requestURIs, "invalid timestamp request URI"))
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(invalidURI.Query(), convey.ShouldResemble, url.Values{
+				"limit":  {"1"},
+				"offset": {"0"},
+				"since":  {"not-a-date"},
+			})
+
+			untilOnlyPage, untilOnlyErr := client.SamplesWithDataSincePage(context.Background(), "S1", "", "2026-06-02T00:00:00Z", 1, 0)
+
+			convey.So(untilOnlyPage, convey.ShouldResemble, Page[SampleWithData]{})
+			convey.So(untilOnlyErr, convey.ShouldNotBeNil)
+			convey.So(errors.Is(untilOnlyErr, ErrUpstreamImpaired), convey.ShouldBeTrue)
+
+			untilOnlyURI, err := url.ParseRequestURI(receiveRemoteClientTestValue(t, requestURIs, "until-only request URI"))
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(untilOnlyURI.Query(), convey.ShouldResemble, url.Values{
+				"limit":  {"1"},
+				"offset": {"0"},
+				"until":  {"2026-06-02T00:00:00Z"},
+			})
+		})
+	})
+}
+
+func TestRemoteClientPeoplePageMethodsReadHeadersC3(t *testing.T) {
+	cases := []struct {
+		name        string
+		response    any
+		headers     http.Header
+		expectedURI string
+		expected    any
+		call        func(context.Context, *RemoteClient) (any, error)
+	}{
+		{
+			name: "StudiesForFacultySponsorPage",
+			response: []PersonStudy{
+				{Study: Study{IDStudyLims: "S1", Name: "Alpha"}},
+			},
+			headers: http.Header{
+				"X-Total-Count": {"3"},
+				"X-Next-Offset": {"1"},
+			},
+			expectedURI: "/studies/faculty-sponsor/carl?limit=1&offset=0",
+			expected: Page[PersonStudy]{
+				Items:      []PersonStudy{{Study: Study{IDStudyLims: "S1", Name: "Alpha"}}},
+				Total:      3,
+				NextOffset: 1,
+			},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.StudiesForFacultySponsorPage(ctx, "carl", 1, 0)
+			},
+		},
+		{
+			name: "StudiesForUserPage",
+			response: []PersonStudy{
+				{Study: Study{IDStudyLims: "S2"}, Role: "follower"},
+			},
+			headers: http.Header{
+				"X-Total-Count": {"1"},
+				"X-Next-Offset": {"-1"},
+			},
+			expectedURI: "/studies/user/ca3?limit=1&offset=0&role=follower",
+			expected: Page[PersonStudy]{
+				Items:      []PersonStudy{{Study: Study{IDStudyLims: "S2"}, Role: "follower"}},
+				Total:      1,
+				NextOffset: -1,
+			},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.StudiesForUserPage(ctx, "ca3", "follower", 1, 0)
+			},
+		},
+		{
+			name: "ResolvePersonPage",
+			response: []PersonCandidate{
+				{Source: "faculty_sponsor", Name: "Rosa King", StudyCount: 2},
+			},
+			headers: http.Header{
+				"X-Total-Count": {"2"},
+				"X-Next-Offset": {"1"},
+			},
+			expectedURI: "/resolve-person/rosa?limit=1&offset=0",
+			expected: Page[PersonCandidate]{
+				Items:      []PersonCandidate{{Source: "faculty_sponsor", Name: "Rosa King", StudyCount: 2}},
+				Total:      2,
+				NextOffset: 1,
+			},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.ResolvePersonPage(ctx, "rosa", 1, 0)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		convey.Convey("C3: Given "+tc.name+" receives people rows and sizing headers from a stub server", t, func() {
+			requestURIs := make(chan string, 1)
+			server := newRemoteClientJSONHeaderServerForTest(requestURIs, tc.response, tc.headers)
+			defer server.Close()
+
+			client := newRemoteClientForTest(t, server.URL, "")
+			defer closeRemoteClientForTest(t, client)
+
+			convey.Convey("when the page method runs, then it returns the decoded rows, headers, and expected filtered URI", func() {
+				page, err := tc.call(context.Background(), client)
+
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(page, convey.ShouldResemble, tc.expected)
+				convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, tc.expectedURI)
+			})
+		})
+	}
 }
 
 func newRemoteClientJSONHeaderServerForTest[T any](requestURIs chan<- string, result T, headers http.Header) *httptest.Server {
@@ -750,6 +1165,154 @@ func newRecordingMLWHServerForRemoteTest(queryer Queryer, requestURIs chan<- str
 		requestURIs <- r.URL.RequestURI()
 		router.ServeHTTP(w, r)
 	}))
+}
+
+func TestRemoteClientPeoplePageMethodsMatchBodyOnlyC3(t *testing.T) {
+	convey.Convey("C3: Given a RemoteClient over a Client whose cache has the Carl people fixture", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedCarlResolveFixture(t, cache)
+
+		local := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		convey.Convey("when StudiesForFacultySponsorPage runs with limit=10&offset=0, then Total==91, NextOffset==10, and Items equals the bare-slice result", func() {
+			page, err := remote.StudiesForFacultySponsorPage(context.Background(), "Carl", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(page.Total, convey.ShouldEqual, 91)
+			convey.So(page.NextOffset, convey.ShouldEqual, 10)
+			convey.So(page.Items, convey.ShouldHaveLength, 10)
+
+			bare, err := remote.StudiesForFacultySponsor(context.Background(), "Carl", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.Items, convey.ShouldResemble, bare)
+		})
+
+		convey.Convey("when StudiesForUserPage runs with limit=10&offset=0, then Total==59, NextOffset==10, and Items equals the bare-slice result", func() {
+			page, err := remote.StudiesForUserPage(context.Background(), "ca3", "", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(page.Total, convey.ShouldEqual, 59)
+			convey.So(page.NextOffset, convey.ShouldEqual, 10)
+			convey.So(page.Items, convey.ShouldHaveLength, 10)
+
+			bare, err := remote.StudiesForUser(context.Background(), "ca3", "", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.Items, convey.ShouldResemble, bare)
+		})
+
+		convey.Convey("when ResolvePersonPage runs with limit=1&offset=0, then Total==2, NextOffset==1, and Items equals the bare-slice result", func() {
+			page, err := remote.ResolvePersonPage(context.Background(), "carl", 1, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(page.Total, convey.ShouldEqual, 2)
+			convey.So(page.NextOffset, convey.ShouldEqual, 1)
+			convey.So(page.Items, convey.ShouldHaveLength, 1)
+
+			bare, err := remote.ResolvePerson(context.Background(), "carl", 1, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.Items, convey.ShouldResemble, bare)
+		})
+	})
+}
+
+func TestRemoteClientPeoplePageMethodsPreserveSentinelsC3(t *testing.T) {
+	cases := []struct {
+		name      string
+		emptyPage any
+		emptyBare any
+		page      func(context.Context, *RemoteClient) (any, error)
+		bare      func(context.Context, *RemoteClient) (any, error)
+	}{
+		{
+			name:      "StudiesForFacultySponsorPage",
+			emptyPage: Page[PersonStudy]{},
+			emptyBare: []PersonStudy(nil),
+			page: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.StudiesForFacultySponsorPage(ctx, "carl", 1, 0)
+			},
+			bare: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.StudiesForFacultySponsor(ctx, "carl", 1, 0)
+			},
+		},
+		{
+			name:      "StudiesForUserPage",
+			emptyPage: Page[PersonStudy]{},
+			emptyBare: []PersonStudy(nil),
+			page: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.StudiesForUserPage(ctx, "ca3", "follower", 1, 0)
+			},
+			bare: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.StudiesForUser(ctx, "ca3", "follower", 1, 0)
+			},
+		},
+		{
+			name:      "ResolvePersonPage",
+			emptyPage: Page[PersonCandidate]{},
+			emptyBare: []PersonCandidate(nil),
+			page: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.ResolvePersonPage(ctx, "rosa", 1, 0)
+			},
+			bare: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.ResolvePerson(ctx, "rosa", 1, 0)
+			},
+		},
+	}
+
+	envelopes := []struct {
+		name   string
+		status int
+		code   string
+		check  func(error)
+	}{
+		{
+			name:   "bad_request",
+			status: http.StatusBadRequest,
+			code:   "bad_request",
+			check: func(err error) {
+				convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+				convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeFalse)
+				convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeFalse)
+			},
+		},
+		{
+			name:   "cache_never_synced",
+			status: http.StatusServiceUnavailable,
+			code:   "cache_never_synced",
+			check: func(err error) {
+				convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+				convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		for _, envelope := range envelopes {
+			envelope := envelope
+			convey.Convey("C3: Given "+tc.name+" receives a remote "+envelope.name+" envelope", t, func() {
+				server := newRemoteClientErrorServerForTest(envelope.status, envelope.code)
+				defer server.Close()
+
+				client := newRemoteClientForTest(t, server.URL, "")
+				defer closeRemoteClientForTest(t, client)
+
+				convey.Convey("when the page method runs, then it returns an empty Page and the same sentinel behavior as the body-only method", func() {
+					page, pageErr := tc.page(context.Background(), client)
+					bare, bareErr := tc.bare(context.Background(), client)
+
+					convey.So(page, convey.ShouldResemble, tc.emptyPage)
+					convey.So(bare, convey.ShouldResemble, tc.emptyBare)
+					convey.So(pageErr, convey.ShouldNotBeNil)
+					convey.So(bareErr, convey.ShouldNotBeNil)
+					envelope.check(pageErr)
+					envelope.check(bareErr)
+				})
+			})
+		}
+	}
 }
 
 func newRemoteClientErrorServerForTest(status int, code string) *httptest.Server {
@@ -1143,65 +1706,6 @@ func TestRemoteClientSamplesWithoutDataPageReadsSizingHeadersE2(t *testing.T) {
 			convey.So(page.Items, convey.ShouldHaveLength, 0)
 
 			bare, err := remote.SamplesWithoutData(context.Background(), "SZ", 10, 0)
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(page.Items, convey.ShouldResemble, bare)
-		})
-	})
-}
-
-// G1 acceptance test 3 (the three new people Page variants): each
-// RemoteClient Page variant reads the X-Total-Count / X-Next-Offset sizing
-// headers into Page.Total / Page.NextOffset and its Items equal the bare-slice
-// result of the matching list method. seedCarlResolveFixture seeds 91 SQSCP
-// studies whose faculty_sponsor is "Carl Anderson", with a study_users owner row
-// (login ca3) on 59 of them, so the sponsor list totals 91, the user list totals
-// 59 and resolve-person totals 2 candidates -- each total exceeds its page, so
-// NextOffset is a real next page, not the -1 end-of-list marker.
-func TestRemoteClientPeoplePageReadsSizingHeadersG1(t *testing.T) {
-	convey.Convey("G1 (people): Given a RemoteClient over a Client whose cache has the Carl people fixture", t, func() {
-		cache := openSQLiteSyncTestCache(t)
-		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
-		seedCarlResolveFixture(t, cache)
-
-		local := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
-		remote := newParityRemoteClientForTest(t, local)
-		defer closeRemoteClientForTest(t, remote)
-
-		convey.Convey("when StudiesForFacultySponsorPage runs with limit=10&offset=0, then Total==91, NextOffset==10, and Items equals the bare-slice result", func() {
-			page, err := remote.StudiesForFacultySponsorPage(context.Background(), "Carl", 10, 0)
-			convey.So(err, convey.ShouldBeNil)
-
-			convey.So(page.Total, convey.ShouldEqual, 91)
-			convey.So(page.NextOffset, convey.ShouldEqual, 10)
-			convey.So(page.Items, convey.ShouldHaveLength, 10)
-
-			bare, err := remote.StudiesForFacultySponsor(context.Background(), "Carl", 10, 0)
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(page.Items, convey.ShouldResemble, bare)
-		})
-
-		convey.Convey("when StudiesForUserPage runs with limit=10&offset=0, then Total==59, NextOffset==10, and Items equals the bare-slice result", func() {
-			page, err := remote.StudiesForUserPage(context.Background(), "ca3", "", 10, 0)
-			convey.So(err, convey.ShouldBeNil)
-
-			convey.So(page.Total, convey.ShouldEqual, 59)
-			convey.So(page.NextOffset, convey.ShouldEqual, 10)
-			convey.So(page.Items, convey.ShouldHaveLength, 10)
-
-			bare, err := remote.StudiesForUser(context.Background(), "ca3", "", 10, 0)
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(page.Items, convey.ShouldResemble, bare)
-		})
-
-		convey.Convey("when ResolvePersonPage runs with limit=1&offset=0, then Total==2, NextOffset==1, and Items equals the bare-slice result", func() {
-			page, err := remote.ResolvePersonPage(context.Background(), "carl", 1, 0)
-			convey.So(err, convey.ShouldBeNil)
-
-			convey.So(page.Total, convey.ShouldEqual, 2)
-			convey.So(page.NextOffset, convey.ShouldEqual, 1)
-			convey.So(page.Items, convey.ShouldHaveLength, 1)
-
-			bare, err := remote.ResolvePerson(context.Background(), "carl", 1, 0)
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(page.Items, convey.ShouldResemble, bare)
 		})

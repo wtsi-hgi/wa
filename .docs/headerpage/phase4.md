@@ -29,8 +29,8 @@ tests in `mlwh/remote_test.go` for populated windows, empty
 `since`/`until`, header metadata, and upstream bad-request handling.
 Covers all 3 acceptance tests from C1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.2: C2 - iRODS file-type page variants [parallel with 4.1, 4.3]
 
@@ -46,8 +46,8 @@ for sample, study, and run URIs, empty `fileType` omission and parity,
 header values, and invalid `file_type` errors. Covers all 4 acceptance
 tests from C2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.3: C3 - Existing filtered page coverage [parallel with 4.1, 4.2]
 
@@ -60,8 +60,8 @@ and add coverage in `mlwh/remote_test.go` for
 header values, and remote `bad_request` / `cache_never_synced`
 sentinels. Covers all 5 acceptance tests from C3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all
