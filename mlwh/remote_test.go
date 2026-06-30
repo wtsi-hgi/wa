@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
@@ -1040,6 +1041,214 @@ func TestRemoteClientPeoplePageMethodsReadHeadersC3(t *testing.T) {
 	}
 }
 
+func TestRemoteClientStudyDetailWithOptionsReadsHeadersD2(t *testing.T) {
+	convey.Convey("D2.1: Given a RemoteClient over a server returning non-lean StudyDetail and sizing headers", t, func() {
+		requestURIs := make(chan string, 1)
+		detail := StudyDetail{
+			Study:     Study{IDStudyLims: "S1"},
+			Libraries: []LibraryDetail{{Library: Library{LibraryID: "L1"}}},
+		}
+		server := newRemoteClientJSONHeaderServerForTest(requestURIs, detail, http.Header{
+			"X-Total-Count": {"12"},
+			"X-Next-Offset": {"5"},
+		})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when StudyDetailWithOptions runs without lean, then it sends limit/offset and returns the body plus header totals", func() {
+			page, err := client.StudyDetailWithOptions(context.Background(), "S1", DetailOptions{Limit: 5, Offset: 0})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page, convey.ShouldResemble, PagedStudyDetail{
+				StudyDetail: detail,
+				Total:       12,
+				NextOffset:  5,
+			})
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/study/S1/detail?limit=5&offset=0")
+		})
+	})
+}
+
+func TestRemoteClientStudyDetailWithOptionsLeanQueryD2(t *testing.T) {
+	convey.Convey("D2.2: Given a RemoteClient over a server returning lean StudyDetail and sizing headers", t, func() {
+		requestURIs := make(chan string, 1)
+		detail := StudyDetail{
+			Study:     Study{IDStudyLims: "S1"},
+			SampleIDs: []string{"A"},
+			Lean:      true,
+		}
+		server := newRemoteClientJSONHeaderServerForTest(requestURIs, detail, http.Header{
+			"X-Total-Count": {"12"},
+			"X-Next-Offset": {"-1"},
+		})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when StudyDetailWithOptions runs with lean, then it sends lean=true with limit/offset and returns the lean body plus header totals", func() {
+			page, err := client.StudyDetailWithOptions(context.Background(), "S1", DetailOptions{Limit: 5, Offset: 0, Lean: true})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.StudyDetail.Lean, convey.ShouldBeTrue)
+			convey.So(page, convey.ShouldResemble, PagedStudyDetail{
+				StudyDetail: detail,
+				Total:       12,
+				NextOffset:  -1,
+			})
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/study/S1/detail?lean=true&limit=5&offset=0")
+		})
+	})
+}
+
+func TestRemoteClientRunDetailWithOptionsQueriesD2(t *testing.T) {
+	cases := []struct {
+		name        string
+		detail      RunDetail
+		options     DetailOptions
+		expectedURI string
+		nextOffset  int
+	}{
+		{
+			name: "non-lean",
+			detail: RunDetail{
+				Run:     Run{IDRun: 52553},
+				Samples: []Sample{{Name: "A"}},
+			},
+			options:     DetailOptions{Limit: 5, Offset: 0},
+			expectedURI: "/run/52553/detail?limit=5&offset=0",
+			nextOffset:  5,
+		},
+		{
+			name: "lean",
+			detail: RunDetail{
+				Run:       Run{IDRun: 52553},
+				SampleIDs: []string{"A"},
+				StudyIDs:  []string{"S1"},
+				Lean:      true,
+			},
+			options:     DetailOptions{Limit: 5, Offset: 0, Lean: true},
+			expectedURI: "/run/52553/detail?lean=true&limit=5&offset=0",
+			nextOffset:  -1,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		convey.Convey("D2.3: Given a RemoteClient over a server returning "+tc.name+" RunDetail and sizing headers", t, func() {
+			requestURIs := make(chan string, 1)
+			server := newRemoteClientJSONHeaderServerForTest(requestURIs, tc.detail, http.Header{
+				"X-Total-Count": {"12"},
+				"X-Next-Offset": {strconv.Itoa(tc.nextOffset)},
+			})
+			defer server.Close()
+
+			client := newRemoteClientForTest(t, server.URL, "")
+			defer closeRemoteClientForTest(t, client)
+
+			convey.Convey("when RunDetailWithOptions runs, then it sends the expected query and returns the body plus header totals", func() {
+				page, err := client.RunDetailWithOptions(context.Background(), "52553", tc.options)
+
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(page, convey.ShouldResemble, PagedRunDetail{
+					RunDetail:  tc.detail,
+					Total:      12,
+					NextOffset: tc.nextOffset,
+				})
+				convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, tc.expectedURI)
+			})
+		})
+	}
+}
+
+func TestRemoteClientDetailBodyOnlyMethodsKeepURIsD2(t *testing.T) {
+	cases := []struct {
+		name        string
+		response    any
+		expectedURI string
+		call        func(context.Context, *RemoteClient) (any, error)
+	}{
+		{
+			name:        "StudyDetail",
+			response:    StudyDetail{Study: Study{IDStudyLims: "S1"}},
+			expectedURI: "/study/S1/detail",
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.StudyDetail(ctx, "S1")
+			},
+		},
+		{
+			name:        "RunDetail",
+			response:    RunDetail{Run: Run{IDRun: 52553}},
+			expectedURI: "/run/52553/detail",
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.RunDetail(ctx, "52553")
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		convey.Convey("D2.4: Given a RemoteClient over a server returning "+tc.name, t, func() {
+			requestURIs := make(chan string, 1)
+			server := newRemoteClientJSONServerForTest(requestURIs, tc.response)
+			defer server.Close()
+
+			client := newRemoteClientForTest(t, server.URL, "")
+			defer closeRemoteClientForTest(t, client)
+
+			convey.Convey("when the existing body-only method runs, then it sends no query params and returns the unchanged body type", func() {
+				result, err := tc.call(context.Background(), client)
+
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(result, convey.ShouldResemble, tc.response)
+				convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, tc.expectedURI)
+			})
+		})
+	}
+}
+
+func TestRemoteClientDetailWithOptionsUsesHeaderFallbacksD2(t *testing.T) {
+	convey.Convey("D2.5: Given RemoteClients over servers returning detail bodies without sizing headers", t, func() {
+		studyURIs := make(chan string, 1)
+		studyDetail := StudyDetail{Study: Study{IDStudyLims: "S1"}}
+		studyServer := newRemoteClientJSONHeaderServerForTest(studyURIs, studyDetail, nil)
+		defer studyServer.Close()
+
+		runURIs := make(chan string, 1)
+		runDetail := RunDetail{Run: Run{IDRun: 52553}}
+		runServer := newRemoteClientJSONHeaderServerForTest(runURIs, runDetail, nil)
+		defer runServer.Close()
+
+		studyClient := newRemoteClientForTest(t, studyServer.URL, "")
+		defer closeRemoteClientForTest(t, studyClient)
+		runClient := newRemoteClientForTest(t, runServer.URL, "")
+		defer closeRemoteClientForTest(t, runClient)
+
+		convey.Convey("when the options methods run, then the bodies decode and missing headers fall back to Total 0 and NextOffset -1", func() {
+			studyPage, studyErr := studyClient.StudyDetailWithOptions(context.Background(), "S1", DetailOptions{Limit: 5, Offset: 0})
+			runPage, runErr := runClient.RunDetailWithOptions(context.Background(), "52553", DetailOptions{Limit: 5, Offset: 0})
+
+			convey.So(studyErr, convey.ShouldBeNil)
+			convey.So(studyPage, convey.ShouldResemble, PagedStudyDetail{
+				StudyDetail: studyDetail,
+				Total:       0,
+				NextOffset:  -1,
+			})
+			convey.So(receiveRemoteClientTestValue(t, studyURIs, "study request URI"), convey.ShouldEqual, "/study/S1/detail?limit=5&offset=0")
+
+			convey.So(runErr, convey.ShouldBeNil)
+			convey.So(runPage, convey.ShouldResemble, PagedRunDetail{
+				RunDetail:  runDetail,
+				Total:      0,
+				NextOffset: -1,
+			})
+			convey.So(receiveRemoteClientTestValue(t, runURIs, "run request URI"), convey.ShouldEqual, "/run/52553/detail?limit=5&offset=0")
+		})
+	})
+}
+
 func newRemoteClientJSONHeaderServerForTest[T any](requestURIs chan<- string, result T, headers http.Header) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestURIs <- r.URL.RequestURI()
@@ -1312,6 +1521,63 @@ func TestRemoteClientPeoplePageMethodsPreserveSentinelsC3(t *testing.T) {
 				})
 			})
 		}
+	}
+}
+
+func TestRemoteClientDetailWithOptionsErrorsD2(t *testing.T) {
+	cases := []struct {
+		name        string
+		empty       any
+		expectedURI string
+		call        func(context.Context, *RemoteClient) (any, error)
+	}{
+		{
+			name:        "StudyDetailWithOptions",
+			empty:       PagedStudyDetail{},
+			expectedURI: "/study/S1/detail?limit=-1&offset=0",
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.StudyDetailWithOptions(ctx, "S1", DetailOptions{Limit: -1, Offset: 0})
+			},
+		},
+		{
+			name:        "RunDetailWithOptions",
+			empty:       PagedRunDetail{},
+			expectedURI: "/run/52553/detail?limit=5&offset=-1",
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.RunDetailWithOptions(ctx, "52553", DetailOptions{Limit: 5, Offset: -1})
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		convey.Convey("D2.6: Given "+tc.name+" receives an upstream bad_request envelope with sizing headers", t, func() {
+			requestURIs := make(chan string, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requestURIs <- r.URL.RequestURI()
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Total-Count", "12")
+				w.Header().Set("X-Next-Offset", "5")
+				w.WriteHeader(http.StatusBadRequest)
+				writeRemoteClientJSONForTest(w, map[string]string{
+					"code":    "bad_request",
+					"message": "server returned bad_request",
+				})
+			}))
+			defer server.Close()
+
+			client := newRemoteClientForTest(t, server.URL, "")
+			defer closeRemoteClientForTest(t, client)
+
+			convey.Convey("when the options method runs, then it returns the existing remote error and no fabricated header metadata", func() {
+				page, err := tc.call(context.Background(), client)
+
+				convey.So(page, convey.ShouldResemble, tc.empty)
+				convey.So(err, convey.ShouldNotBeNil)
+				convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+				convey.So(receiveRemoteClientTestValue(t, requestURIs, tc.name+" request URI"), convey.ShouldEqual, tc.expectedURI)
+			})
+		})
 	}
 }
 

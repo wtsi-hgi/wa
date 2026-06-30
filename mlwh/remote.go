@@ -466,6 +466,27 @@ func remoteManifestQuery(limit, offset int, withIRODS bool, fileType string) url
 	return values
 }
 
+// StudyManifestPage returns a study's product manifest envelope plus the
+// list-sizing metadata from the X-Total-Count / X-Next-Offset response headers.
+func (rc *RemoteClient) StudyManifestPage(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (PagedStudyManifest, error) {
+	manifest, total, nextOffset, err := remoteCallEnvelopePage[StudyManifest](
+		rc,
+		ctx,
+		"StudyManifest",
+		[]string{studyLimsID},
+		remoteManifestQuery(limit, offset, withIRODS, fileType),
+	)
+	if err != nil {
+		return PagedStudyManifest{}, err
+	}
+
+	return PagedStudyManifest{
+		StudyManifest: manifest,
+		Total:         total,
+		NextOffset:    nextOffset,
+	}, nil
+}
+
 // StudiesForSample lists studies for a sample through the remote server.
 func (rc *RemoteClient) StudiesForSample(ctx context.Context, sangerName string) ([]Study, error) {
 	return remoteCall[[]Study](rc, ctx, "StudiesForSample", []string{sangerName}, nil)
@@ -829,9 +850,60 @@ func (rc *RemoteClient) StudyDetail(ctx context.Context, studyLimsID string) (St
 	return remoteCall[StudyDetail](rc, ctx, "StudyDetail", []string{studyLimsID}, nil)
 }
 
+// StudyDetailWithOptions returns study detail plus nested-list sizing metadata
+// from the X-Total-Count / X-Next-Offset response headers.
+func (rc *RemoteClient) StudyDetailWithOptions(ctx context.Context, studyLimsID string, opts DetailOptions) (PagedStudyDetail, error) {
+	detail, total, nextOffset, err := remoteCallEnvelopePage[StudyDetail](
+		rc,
+		ctx,
+		"StudyDetail",
+		[]string{studyLimsID},
+		remoteDetailQuery(opts),
+	)
+	if err != nil {
+		return PagedStudyDetail{}, err
+	}
+
+	return PagedStudyDetail{
+		StudyDetail: detail,
+		Total:       total,
+		NextOffset:  nextOffset,
+	}, nil
+}
+
+func remoteDetailQuery(opts DetailOptions) url.Values {
+	values := remotePagination(opts.Limit, opts.Offset)
+	if opts.Lean {
+		values.Set("lean", "true")
+	}
+
+	return values
+}
+
 // RunDetail returns run detail through the remote server.
 func (rc *RemoteClient) RunDetail(ctx context.Context, idRun string) (RunDetail, error) {
 	return remoteCall[RunDetail](rc, ctx, "RunDetail", []string{idRun}, nil)
+}
+
+// RunDetailWithOptions returns run detail plus nested-list sizing metadata from
+// the X-Total-Count / X-Next-Offset response headers.
+func (rc *RemoteClient) RunDetailWithOptions(ctx context.Context, idRun string, opts DetailOptions) (PagedRunDetail, error) {
+	detail, total, nextOffset, err := remoteCallEnvelopePage[RunDetail](
+		rc,
+		ctx,
+		"RunDetail",
+		[]string{idRun},
+		remoteDetailQuery(opts),
+	)
+	if err != nil {
+		return PagedRunDetail{}, err
+	}
+
+	return PagedRunDetail{
+		RunDetail:  detail,
+		Total:      total,
+		NextOffset: nextOffset,
+	}, nil
 }
 
 // LibraryDetail returns library detail through the remote server.
@@ -1043,6 +1115,28 @@ func remoteHeaderInt(header http.Header, name string, fallback int) int {
 	}
 
 	return value
+}
+
+// remoteCallEnvelopePage is the header-aware counterpart for paginated endpoints
+// whose body is an object envelope instead of a bare JSON array. It returns the
+// decoded envelope plus X-Total-Count and X-Next-Offset values.
+func remoteCallEnvelopePage[T any](rc *RemoteClient, ctx context.Context, method string, pathParams []string, query url.Values) (T, int, int, error) {
+	var zero T
+
+	result, header, err := rc.do(ctx, method, pathParams, query)
+	if err != nil {
+		return zero, 0, 0, err
+	}
+
+	typed, ok := result.(*T)
+	if !ok {
+		return zero, 0, 0, fmt.Errorf("%w: registry result for %s has type %T", ErrUpstreamImpaired, method, result)
+	}
+
+	return *typed,
+		remoteHeaderInt(header, "X-Total-Count", 0),
+		remoteHeaderInt(header, "X-Next-Offset", -1),
+		nil
 }
 
 // RemoteConfig configures a RemoteClient.

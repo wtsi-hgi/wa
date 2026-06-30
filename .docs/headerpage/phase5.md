@@ -31,8 +31,8 @@ for query strings, omitted optional params, missing headers, errors, and
 body-only behavior. Covers D1 acceptance tests 1 through 5; phase 1
 covers acceptance test 6.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 5.2: D2 - Study and run detail options with headers
 
@@ -51,5 +51,5 @@ no-header fallbacks, unchanged body-only URIs, and errors. Do not add a
 sample detail options method. Covers D2 acceptance tests 1 through 6;
 phase 1 covers acceptance test 7. Depends on item 5.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
