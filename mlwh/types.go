@@ -156,9 +156,11 @@ type ManifestRow struct {
 	IRODSPath       string `json:"irods_path,omitempty" doc:"iRODS path of the product's data object matching the file-type filter; present only when with_irods is set"`
 }
 
-// StudyManifest is the manifest envelope: the study-level metadata once, plus the
-// page of product rows. The page is bounded/pageable; the study fields answer Q3's
-// "study details" without repeating per row (D2/D5).
+// StudyManifest is the manifest response body: the study-level metadata once,
+// plus the page of product rows. The page is bounded/pageable; remote callers use
+// PagedStudyManifest when they also need the X-Total-Count / X-Next-Offset
+// sizing headers. The study fields answer Q3's "study details" without
+// repeating per row (D2/D5).
 type StudyManifest struct {
 	IDStudyLims     string        `json:"id_study_lims" doc:"LIMS study id"`
 	Name            string        `json:"name" doc:"study name"`
@@ -169,8 +171,9 @@ type StudyManifest struct {
 	CacheSyncedAt   string        `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
 }
 
-// PagedStudyManifest wraps a StudyManifest with list-sizing metadata from the
-// paginated remote manifest response headers.
+// PagedStudyManifest is the header-aware remote result for StudyManifest. It
+// keeps the manifest body unchanged and adds Total and NextOffset from the
+// X-Total-Count and X-Next-Offset response headers.
 type PagedStudyManifest struct {
 	StudyManifest StudyManifest `json:"study_manifest" doc:"study manifest response body"`
 	Total         int           `json:"total" doc:"total number of matching manifest rows"`
@@ -390,14 +393,15 @@ type LibraryDetail struct {
 	Samples []Sample `json:"samples" doc:"samples covered by the library"`
 }
 
-// StudyDetail groups a study with its library details. To keep the response
-// bounded it is de-duplicated: each distinct study and library is carried once
-// in StudyLookup / LibraryLookup (keyed by id), and the nested sample rows under
+// StudyDetail is the study detail response body. To keep the response bounded it
+// is de-duplicated: each distinct study and library is carried once in
+// StudyLookup / LibraryLookup (keyed by id), and the nested sample rows under
 // library_details reference those by id rather than re-embedding the same study
-// and library objects under every sample. When the lean query param is set the
-// heavy library_details / lookup tables are dropped and only the flat SampleIDs
-// and LibraryIDs lists are returned, so the serialized response is strictly
-// smaller.
+// and library objects under every sample. Remote callers use PagedStudyDetail
+// when they also need the X-Total-Count / X-Next-Offset sizing headers. When the
+// lean query param is set the heavy library_details / lookup tables are dropped
+// and only the flat SampleIDs and LibraryIDs lists are returned, so the
+// serialized response is strictly smaller.
 type StudyDetail struct {
 	Study         Study              `json:"study" doc:"the study these details describe"`
 	Libraries     []LibraryDetail    `json:"library_details,omitempty" doc:"per-library detail for the study (omitted when lean); nested sample rows reference the study/library lookups by id rather than re-embedding them"`
@@ -408,13 +412,15 @@ type StudyDetail struct {
 	Lean          bool               `json:"lean,omitempty" doc:"true when the heavy nested objects were dropped in favour of the flat id lists"`
 }
 
-// RunDetail groups a run with its related studies and samples. Like StudyDetail
-// it is de-duplicated: each distinct study and library referenced by the run's
+// RunDetail is the run detail response body. Like StudyDetail it is
+// de-duplicated: each distinct study and library referenced by the run's
 // per-study detail is carried once in StudyLookup / LibraryLookup (keyed by id)
 // and the nested sample rows reference them by id rather than re-embedding them.
-// When the lean query param is set the heavy samples / studies / study_details
-// and the lookup tables are dropped and only the flat SampleIDs / StudyIDs lists
-// are returned, so the serialized response is strictly smaller.
+// Remote callers use PagedRunDetail when they also need the X-Total-Count /
+// X-Next-Offset sizing headers. When the lean query param is set the heavy
+// samples / studies / study_details and the lookup tables are dropped and only
+// the flat SampleIDs / StudyIDs lists are returned, so the serialized response is
+// strictly smaller.
 type RunDetail struct {
 	Run           Run                `json:"run" doc:"the run these details describe"`
 	Samples       []Sample           `json:"samples,omitempty" doc:"samples sequenced on the run (omitted when lean); each carries no studies/libraries sub-object, those being in the lookups"`
@@ -427,16 +433,18 @@ type RunDetail struct {
 	Lean          bool               `json:"lean,omitempty" doc:"true when the heavy nested objects were dropped in favour of the flat id lists"`
 }
 
-// PagedStudyDetail wraps a StudyDetail with list-sizing metadata from the
-// paginated remote detail response headers.
+// PagedStudyDetail is the header-aware remote result for StudyDetail. It keeps
+// the detail body unchanged and adds Total and NextOffset from the X-Total-Count
+// and X-Next-Offset response headers.
 type PagedStudyDetail struct {
 	StudyDetail StudyDetail `json:"study_detail" doc:"study detail response body"`
 	Total       int         `json:"total" doc:"total number of matching nested detail rows"`
 	NextOffset  int         `json:"next_offset" doc:"offset of the next page, or -1 on the last page"`
 }
 
-// PagedRunDetail wraps a RunDetail with list-sizing metadata from the
-// paginated remote detail response headers.
+// PagedRunDetail is the header-aware remote result for RunDetail. It keeps the
+// detail body unchanged and adds Total and NextOffset from the X-Total-Count and
+// X-Next-Offset response headers.
 type PagedRunDetail struct {
 	RunDetail  RunDetail `json:"run_detail" doc:"run detail response body"`
 	Total      int       `json:"total" doc:"total number of matching nested detail rows"`
@@ -444,7 +452,9 @@ type PagedRunDetail struct {
 }
 
 // DetailOptions configures remote study and run detail calls with explicit
-// pagination and an optional lean response shape.
+// pagination and an optional lean response shape. Zero Limit or Offset values are
+// sent literally; use the body-only detail methods when no detail query should be
+// sent.
 type DetailOptions struct {
 	Limit  int
 	Offset int
@@ -489,14 +499,11 @@ type EnrichmentResult struct {
 	Missing    []MissingHop    `json:"missing,omitempty" doc:"hops that failed or were truncated, when partial"`
 }
 
-// Page is the typed paged variant exposing the list-sizing metadata that the
-// paginated list endpoints additionally report via the X-Total-Count and
-// X-Next-Offset response headers (the bodies stay bare JSON arrays). Items is
-// the page of rows (identical to the bare-slice method's result for the same
-// args), Total is the total number of matching rows (the X-Total-Count value,
-// equal to the corresponding /count endpoint), and NextOffset is the offset of
-// the next page (the X-Next-Offset value: offset+len(Items) when more rows
-// remain, else -1 for the last page).
+// Page is the header-aware result for paginated list endpoints whose response
+// bodies stay bare JSON arrays. Items is the decoded page of rows, identical to
+// the bare-slice method's result for the same args. Total and NextOffset come
+// from the X-Total-Count and X-Next-Offset response headers; when the remote
+// server omits or misformats them they default to 0 and -1.
 type Page[T any] struct {
 	Items      []T `json:"items" doc:"the page of rows"`
 	Total      int `json:"total" doc:"total number of matching rows"`

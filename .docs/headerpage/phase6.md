@@ -33,5 +33,5 @@ This item verifies the completed A1, B1, C1, C2, C3, D1, and D2 work and
 covers the final Implementation Order check; it has no standalone story
 acceptance tests.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

@@ -45,7 +45,9 @@ const remoteClientDefaultTimeout = 30 * time.Second
 
 var _ Queryer = (*RemoteClient)(nil)
 
-// RemoteClient queries an mlwh REST server through the Queryer interface.
+// RemoteClient queries an mlwh REST server. It satisfies Queryer with the
+// body-only methods and also exposes header-aware helpers for callers that need
+// pagination metadata from X-Total-Count and X-Next-Offset.
 type RemoteClient struct {
 	baseURL    string
 	httpClient *http.Client
@@ -442,13 +444,12 @@ func (rc *RemoteClient) IRODSPathsForRunPage(ctx context.Context, idRun string, 
 }
 
 // StudyManifest returns a study's product manifest envelope through the remote
-// server. It is a PLAIN remoteCall returning the StudyManifest envelope (not a
-// bare-slice Page[T]), since the manifest is an envelope (study metadata once plus
-// the page of product rows). The query forwards the limit/offset pagination plus
-// the optional with_irods flag (omitted when false) and file_type filter (omitted
-// when empty), so the server applies the same product-grain list and the same
-// sizing headers; the server validates the file_type and returns 400 for an
-// invalid value.
+// server. The body is an object envelope, not a bare slice, so this body-only
+// method returns StudyManifest directly and ignores any sizing headers. Use
+// StudyManifestPage when X-Total-Count and X-Next-Offset are needed.
+//
+// The query sends limit/offset plus optional with_irods and file_type filters.
+// Empty optional values are omitted, and the server validates file_type.
 func (rc *RemoteClient) StudyManifest(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (StudyManifest, error) {
 	return remoteCall[StudyManifest](rc, ctx, "StudyManifest", []string{studyLimsID}, remoteManifestQuery(limit, offset, withIRODS, fileType))
 }
@@ -466,8 +467,9 @@ func remoteManifestQuery(limit, offset int, withIRODS bool, fileType string) url
 	return values
 }
 
-// StudyManifestPage returns a study's product manifest envelope plus the
-// list-sizing metadata from the X-Total-Count / X-Next-Offset response headers.
+// StudyManifestPage returns a study's product manifest envelope plus
+// list-sizing metadata from the X-Total-Count and X-Next-Offset response
+// headers. It sends the same query values as StudyManifest.
 func (rc *RemoteClient) StudyManifestPage(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (PagedStudyManifest, error) {
 	manifest, total, nextOffset, err := remoteCallEnvelopePage[StudyManifest](
 		rc,
@@ -637,9 +639,10 @@ func (rc *RemoteClient) SearchStudies(ctx context.Context, term string, limit, o
 	return remoteCall[[]Study](rc, ctx, "SearchStudies", []string{term}, remotePagination(limit, offset))
 }
 
-// SearchStudiesPage is the Page[Study] variant of SearchStudies: it returns the
-// same page of rows (Page.Items) plus the list-sizing metadata from the
-// X-Total-Count / X-Next-Offset response headers (Page.Total / Page.NextOffset).
+// SearchStudiesPage is the Page[Study] variant of SearchStudies. It sends the
+// supplied limit and offset literally and returns the same page of rows
+// (Page.Items) plus list-sizing metadata from the X-Total-Count and
+// X-Next-Offset response headers.
 func (rc *RemoteClient) SearchStudiesPage(ctx context.Context, term string, limit, offset int) (Page[Study], error) {
 	return remoteCallPage[Study](rc, ctx, "SearchStudies", []string{term}, remotePagination(limit, offset))
 }
@@ -649,9 +652,10 @@ func (rc *RemoteClient) SearchSamples(ctx context.Context, term string, limit, o
 	return remoteCall[[]Sample](rc, ctx, "SearchSamples", []string{term}, remotePagination(limit, offset))
 }
 
-// SearchSamplesPage is the Page[Sample] variant of SearchSamples: it returns the
-// same page of rows (Page.Items) plus the list-sizing metadata from the
-// X-Total-Count / X-Next-Offset response headers (Page.Total / Page.NextOffset).
+// SearchSamplesPage is the Page[Sample] variant of SearchSamples. It sends the
+// supplied limit and offset literally and returns the same page of rows
+// (Page.Items) plus list-sizing metadata from the X-Total-Count and
+// X-Next-Offset response headers.
 func (rc *RemoteClient) SearchSamplesPage(ctx context.Context, term string, limit, offset int) (Page[Sample], error) {
 	return remoteCallPage[Sample](rc, ctx, "SearchSamples", []string{term}, remotePagination(limit, offset))
 }
@@ -845,13 +849,17 @@ func (rc *RemoteClient) SampleDetail(ctx context.Context, sangerName string) (Sa
 	return remoteCall[SampleDetail](rc, ctx, "SampleDetail", []string{sangerName}, nil)
 }
 
-// StudyDetail returns study detail through the remote server.
+// StudyDetail returns study detail through the remote server with the legacy
+// body-only request shape: no detail pagination query is sent and response
+// headers are ignored. Use StudyDetailWithOptions for explicit limit/offset,
+// optional lean output, and header metadata.
 func (rc *RemoteClient) StudyDetail(ctx context.Context, studyLimsID string) (StudyDetail, error) {
 	return remoteCall[StudyDetail](rc, ctx, "StudyDetail", []string{studyLimsID}, nil)
 }
 
 // StudyDetailWithOptions returns study detail plus nested-list sizing metadata
-// from the X-Total-Count / X-Next-Offset response headers.
+// from the X-Total-Count and X-Next-Offset response headers. Limit and Offset
+// are always sent literally, and Lean adds lean=true when requested.
 func (rc *RemoteClient) StudyDetailWithOptions(ctx context.Context, studyLimsID string, opts DetailOptions) (PagedStudyDetail, error) {
 	detail, total, nextOffset, err := remoteCallEnvelopePage[StudyDetail](
 		rc,
@@ -880,13 +888,17 @@ func remoteDetailQuery(opts DetailOptions) url.Values {
 	return values
 }
 
-// RunDetail returns run detail through the remote server.
+// RunDetail returns run detail through the remote server with the legacy
+// body-only request shape: no detail pagination query is sent and response
+// headers are ignored. Use RunDetailWithOptions for explicit limit/offset,
+// optional lean output, and header metadata.
 func (rc *RemoteClient) RunDetail(ctx context.Context, idRun string) (RunDetail, error) {
 	return remoteCall[RunDetail](rc, ctx, "RunDetail", []string{idRun}, nil)
 }
 
 // RunDetailWithOptions returns run detail plus nested-list sizing metadata from
-// the X-Total-Count / X-Next-Offset response headers.
+// the X-Total-Count and X-Next-Offset response headers. Limit and Offset are
+// always sent literally, and Lean adds lean=true when requested.
 func (rc *RemoteClient) RunDetailWithOptions(ctx context.Context, idRun string, opts DetailOptions) (PagedRunDetail, error) {
 	detail, total, nextOffset, err := remoteCallEnvelopePage[RunDetail](
 		rc,
@@ -911,11 +923,11 @@ func (rc *RemoteClient) LibraryDetail(ctx context.Context, pipelineIDLims, study
 	return remoteCall[LibraryDetail](rc, ctx, "LibraryDetail", []string{pipelineIDLims, studyLimsID}, nil)
 }
 
-// Call is the body-only generic counterpart to the typed methods (ResolveSample,
-// AllStudies, ...): instead of selecting an endpoint at compile time, it
-// dispatches to the Registry entry whose Method name equals method. It is for
-// callers that choose an endpoint dynamically by Registry Method name, such as
-// a generic "call any endpoint" tool, without a hand-written switch.
+// Call is the body-only generic counterpart to the typed methods
+// (ResolveSample, AllStudies, ...): instead of selecting an endpoint at compile
+// time, it dispatches to the Registry entry whose Method name equals method. It
+// is for callers that choose an endpoint dynamically by Registry Method name,
+// such as a generic "call any endpoint" tool, without a hand-written switch.
 //
 // pathParams supplies the endpoint's path parameters in declaration order and
 // query supplies any query parameters (e.g. limit/offset for paginated
@@ -933,14 +945,16 @@ func (rc *RemoteClient) Call(ctx context.Context, method string, pathParams []st
 }
 
 // CallWithHeaders is the header-aware generic counterpart to the typed methods.
-// It dispatches to the Registry entry whose Method name equals method and returns
-// the decoded typed result as an any holding a pointer to the endpoint's
+// It dispatches to the Registry entry whose Method name equals method and
+// returns the decoded typed result as an any holding a pointer to the endpoint's
 // NewResult type, plus the HTTP response headers from the remote server.
 //
 // pathParams supplies the endpoint's path parameters in declaration order and
-// query supplies any query parameters. CallWithHeaders surfaces the same errors
-// as Call and the typed methods, including unknown Registry methods,
-// path-param arity mismatches, and decoded remote error envelopes.
+// query supplies any query parameters. Passing an empty or nil query preserves
+// server-side defaults, which differs from typed page methods that send explicit
+// limit/offset values. CallWithHeaders surfaces the same errors as Call and the
+// typed methods, including unknown Registry methods, path-param arity
+// mismatches, and decoded remote error envelopes.
 func (rc *RemoteClient) CallWithHeaders(ctx context.Context, method string, pathParams []string, query url.Values) (any, http.Header, error) {
 	return rc.do(ctx, method, pathParams, query)
 }
