@@ -19,6 +19,9 @@ CREATE INDEX IF NOT EXISTS spi_mirror_source_row_idx
 CREATE INDEX IF NOT EXISTS seq_product_irods_locations_mirror_id_sample_tmp_idx
 	ON seq_product_irods_locations_mirror(id_sample_tmp);
 
+CREATE INDEX IF NOT EXISTS spi_mirror_sample_tmp_iseq_product_idx
+	ON seq_product_irods_locations_mirror(id_sample_tmp, id_iseq_product);
+
 CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_sample_tmp_idx
 	ON seq_product_irods_locations_mirror(id_study_lims, id_sample_tmp);
 

@@ -577,6 +577,19 @@ func prepareCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
 	}
 }
 
+func sqliteMirrorIndexesFullyDroppedForRecovery(ctx context.Context, db *sql.DB, indexSet syncMirrorIndexSet) (bool, error) {
+	if !sqliteSyncStateRecordsDroppedIndexes(ctx, db, indexSet.SyncTable) {
+		return false, nil
+	}
+
+	indexes, _, err := readSQLiteTableIndexes(ctx, db, indexSet.Table)
+	if err != nil {
+		return false, fmt.Errorf("mlwh: inspect sqlite additive cache indexes on %s: %w", indexSet.Table, err)
+	}
+
+	return len(indexes) == 0, nil
+}
+
 func validateCurrentCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
 	expected, err := expectedCacheSchemaShape(dialect)
 	if err != nil {
@@ -609,12 +622,26 @@ func validateCurrentCacheSchema(ctx context.Context, db *sql.DB, dialect string)
 func ensureAdditiveCurrentCacheIndexes(ctx context.Context, db *sql.DB, dialect string) error {
 	switch dialect {
 	case "sqlite":
-		for _, stmt := range []string{
-			`CREATE INDEX IF NOT EXISTS library_samples_library_id_idx ON library_samples(library_id)`,
-			`CREATE INDEX IF NOT EXISTS library_samples_id_library_lims_idx ON library_samples(id_library_lims)`,
-			`CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_iseq_product_idx ON seq_product_irods_locations_mirror(id_study_lims, id_iseq_product)`,
+		for _, spec := range []struct {
+			stmt     string
+			indexSet *syncMirrorIndexSet
+		}{
+			{stmt: `CREATE INDEX IF NOT EXISTS library_samples_library_id_idx ON library_samples(library_id)`},
+			{stmt: `CREATE INDEX IF NOT EXISTS library_samples_id_library_lims_idx ON library_samples(id_library_lims)`},
+			{stmt: `CREATE INDEX IF NOT EXISTS ipm_mirror_iseq_product_idx ON iseq_product_metrics_mirror(id_iseq_product)`, indexSet: &iseqProductMetricsMirrorIndexSet},
+			{stmt: `CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_iseq_product_idx ON seq_product_irods_locations_mirror(id_study_lims, id_iseq_product)`, indexSet: &seqProductIRODSLocationsMirrorIndexSet},
+			{stmt: `CREATE INDEX IF NOT EXISTS spi_mirror_sample_tmp_iseq_product_idx ON seq_product_irods_locations_mirror(id_sample_tmp, id_iseq_product)`, indexSet: &seqProductIRODSLocationsMirrorIndexSet},
 		} {
-			if _, err := db.ExecContext(ctx, stmt); err != nil {
+			if spec.indexSet != nil {
+				skip, err := sqliteMirrorIndexesFullyDroppedForRecovery(ctx, db, *spec.indexSet)
+				if err != nil {
+					return err
+				}
+				if skip {
+					continue
+				}
+			}
+			if _, err := db.ExecContext(ctx, spec.stmt); err != nil {
 				return fmt.Errorf("mlwh: create sqlite additive cache index: %w", err)
 			}
 		}
@@ -629,12 +656,24 @@ func ensureAdditiveCurrentCacheIndexes(ctx context.Context, db *sql.DB, dialect 
 			`CREATE INDEX library_samples_id_library_lims_idx ON library_samples(id_library_lims)`); err != nil {
 			return err
 		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "iseq_product_metrics_mirror", "id_iseq_product",
+			`CREATE INDEX ipm_mirror_iseq_product_idx ON iseq_product_metrics_mirror(id_iseq_product)`); err != nil {
+			return err
+		}
 
 		// The (id_study_lims, id_iseq_product) iRODS-locations index makes the
 		// per-platform status breakdown index-served; add it additively so an existing
 		// current-version cache (too large to re-sync) gains it without a version bump.
-		return ensureAdditiveMySQLIndex(ctx, db, "seq_product_irods_locations_mirror", "id_study_lims,id_iseq_product",
-			`CREATE INDEX spi_mirror_study_lims_iseq_product_idx ON seq_product_irods_locations_mirror(id_study_lims, id_iseq_product)`)
+		if err := ensureAdditiveMySQLIndex(ctx, db, "seq_product_irods_locations_mirror", "id_study_lims,id_iseq_product",
+			`CREATE INDEX spi_mirror_study_lims_iseq_product_idx ON seq_product_irods_locations_mirror(id_study_lims, id_iseq_product)`); err != nil {
+			return err
+		}
+
+		// The sample iRODS listing filters by id_sample_tmp and orders by
+		// id_iseq_product; this composite index prevents MySQL from walking the global
+		// product-id index to satisfy the ORDER BY before the sample predicate.
+		return ensureAdditiveMySQLIndex(ctx, db, "seq_product_irods_locations_mirror", "id_sample_tmp,id_iseq_product",
+			`CREATE INDEX spi_mirror_sample_tmp_iseq_product_idx ON seq_product_irods_locations_mirror(id_sample_tmp, id_iseq_product)`)
 	default:
 		return fmt.Errorf("mlwh: unsupported cache schema dialect %q", dialect)
 	}
@@ -752,9 +791,11 @@ func sqliteLargeCacheReadIndexShape(indexSet syncMirrorIndexSet, actual []string
 		return stringSlicesEqual(actual, []string{"name"})
 	case iseqProductMetricsMirrorIndexSet.Table:
 		return stringSlicesEqual(actual, iseqProductMetricsSparseReadIndexColumns()) ||
+			stringSlicesEqual(actual, []string{"id_iseq_product", "id_sample_tmp,id_run,position,tag_index"}) ||
 			stringSlicesEqual(actual, []string{"id_sample_tmp,id_run,position,tag_index"})
 	case seqProductIRODSLocationsMirrorIndexSet.Table:
 		return stringSlicesEqual(actual, seqProductIRODSLocationsSparseReadIndexColumns()) ||
+			stringSlicesEqual(actual, []string{"id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"}) ||
 			stringSlicesEqual(actual, []string{"id_sample_tmp", "id_study_lims,id_sample_tmp"})
 	default:
 		return false
@@ -762,7 +803,7 @@ func sqliteLargeCacheReadIndexShape(indexSet syncMirrorIndexSet, actual []string
 }
 
 func iseqProductMetricsSparseReadIndexColumns() []string {
-	return []string{"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_study_lims,id_run,position"}
+	return []string{"id_iseq_product", "id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_study_lims,id_run,position"}
 }
 
 // seqProductIRODSLocationsSparseReadIndexColumns is the sorted, comma-joined column
@@ -772,7 +813,7 @@ func iseqProductMetricsSparseReadIndexColumns() []string {
 // id_iseq_product) status-breakdown index, and the (id_iseq_product) D1
 // run-scope / D2 manifest LEFT JOIN index.
 func seqProductIRODSLocationsSparseReadIndexColumns() []string {
-	return []string{"id_iseq_product", "id_sample_tmp", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"}
+	return []string{"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"}
 }
 
 func sqliteSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table string) bool {

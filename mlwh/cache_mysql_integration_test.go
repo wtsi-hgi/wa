@@ -569,6 +569,35 @@ func findExplainPlanRow(plans []mysqlExplainPlanRow, alias string) (mysqlExplain
 	return mysqlExplainPlanRow{}, false
 }
 
+// assertJ1SampleIRODSIndexServed asserts the sample-scoped iRODS query has the
+// composite index matching WHERE id_sample_tmp plus ORDER BY id_iseq_product
+// available, and EXPLAIN does not choose the global product-id index. A
+// single-column id_iseq_product plan can look "indexed" while scanning millions of
+// rows to find 50 paths for one sample, so this pins the bad plan out.
+func assertJ1SampleIRODSIndexServed(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	indexes, _, err := readMySQLTableIndexes(context.Background(), db, "seq_product_irods_locations_mirror")
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(indexes, convey.ShouldContain, "id_sample_tmp,id_iseq_product")
+	indexes, _, err = readMySQLTableIndexes(context.Background(), db, "iseq_product_metrics_mirror")
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(indexes, convey.ShouldContain, "id_iseq_product")
+
+	query, args := irodsFileTypeQuery(irodsPathsForSampleCacheSQLPrefix, irodsPathsForSampleCacheSQLSuffix, "cram", int64(21), availabilityFetchAll, 0)
+	plans := explainPlanRows(t, db, query, args...)
+
+	plan, ok := findExplainPlanRow(plans, "spi")
+	convey.So(ok, convey.ShouldBeTrue)
+	convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+	convey.So(plan.key, convey.ShouldNotEqual, "spi_mirror_iseq_product_idx")
+	convey.So(plan.possibleKeys, convey.ShouldContainSubstring, "spi_mirror_sample_tmp_iseq_product_idx")
+	plan, ok = findExplainPlanRow(plans, "ipm")
+	convey.So(ok, convey.ShouldBeTrue)
+	convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+	convey.So(plan.possibleKeys, convey.ShouldContainSubstring, "ipm_mirror_iseq_product_idx")
+}
+
 // assertJ1StudiesForUserIndexServed asserts EXPLAIN of the /studies/user query
 // (the default-role list query the read path uses) is served by a
 // study_users_mirror lookup index (login/email/name/id_study_tmp/role), not a full
@@ -700,6 +729,7 @@ func TestRealMySQLNewQueryPathsExecuteAndIndexesApplied(t *testing.T) {
 		convey.Convey("I1.1: each new query path returns the SQLite counts/rows on MySQL", func() {
 			assertJ1RunIRODSOnMySQL(ctx, t, cache)
 			assertJ1ManifestOnMySQL(ctx, t, cache)
+			assertJ1SampleIRODSOnMySQL(ctx, t, cache)
 			assertJ1FileTypeStudyIRODSOnMySQL(ctx, t, cache)
 			assertJ1IDRun0OnMySQL(ctx, t, cache)
 			assertJ1StatusBreakdownQCOnMySQL(ctx, t, cache)
@@ -709,6 +739,7 @@ func TestRealMySQLNewQueryPathsExecuteAndIndexesApplied(t *testing.T) {
 		convey.Convey("I1.2: the run-scoped iRODS, manifest and file-type study iRODS queries are index-served (real key, not a full scan)", func() {
 			assertJ1RunIRODSIndexServed(t, writeDB)
 			assertJ1ManifestIndexServed(t, writeDB)
+			assertJ1SampleIRODSIndexServed(t, writeDB)
 			assertJ1FileTypeStudyIRODSIndexServed(t, writeDB)
 		})
 
@@ -992,15 +1023,15 @@ func seedJ1FillerAndSyncStateMySQL(t *testing.T, db *sql.DB) {
 }
 
 // assertJ1RunIRODSOnMySQL asserts IRODSPathsForRun / CountIRODSPathsForRun on
-// MySQL, with and without file_type, return the same rows/counts the SQLite B3
-// tests pin (six data objects on the run, four of them .cram), with the
-// count == len(list) cross-check.
+// MySQL, with and without file_type, return the same rows/counts the combined J1
+// fixture pins (six run-scope objects plus three manifest objects on the same
+// run), with the count == len(list) cross-check.
 func assertJ1RunIRODSOnMySQL(ctx context.Context, t *testing.T, cache *Client) {
 	t.Helper()
 
 	all, err := cache.IRODSPathsForRun(ctx, formatInt(j1Run), "", availabilityFetchAll, 0)
 	convey.So(err, convey.ShouldBeNil)
-	convey.So(len(all), convey.ShouldEqual, 6)
+	convey.So(len(all), convey.ShouldEqual, 9)
 
 	wrongRun := 0
 	for _, path := range all {
@@ -1016,7 +1047,7 @@ func assertJ1RunIRODSOnMySQL(ctx context.Context, t *testing.T, cache *Client) {
 
 	cram, err := cache.IRODSPathsForRun(ctx, formatInt(j1Run), "cram", availabilityFetchAll, 0)
 	convey.So(err, convey.ShouldBeNil)
-	convey.So(len(cram), convey.ShouldEqual, 4)
+	convey.So(len(cram), convey.ShouldEqual, 6)
 
 	cramCount, err := cache.CountIRODSPathsForRun(ctx, formatInt(j1Run), "cram")
 	convey.So(err, convey.ShouldBeNil)
@@ -1051,6 +1082,40 @@ func assertJ1ManifestOnMySQL(ctx context.Context, t *testing.T, cache *Client) {
 	withIRODSCount, err := cache.CountStudyManifest(ctx, j1ManifestStudyLims)
 	convey.So(err, convey.ShouldBeNil)
 	convey.So(withIRODSCount.Count, convey.ShouldEqual, len(withIRODS.Rows))
+}
+
+// assertJ1SampleIRODSOnMySQL asserts IRODSPathsForSample /
+// CountIRODSPathsForSample on MySQL, with and without file_type, return the same
+// rows/counts the SQLite sample iRODS tests pin, while preserving the additive
+// id_run/platform fields.
+func assertJ1SampleIRODSOnMySQL(ctx context.Context, t *testing.T, cache *Client) {
+	t.Helper()
+
+	paths, err := cache.IRODSPathsForSample(ctx, "S1-sample-alpha", availabilityFetchAll, 0)
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(paths, convey.ShouldHaveLength, 3)
+	for _, path := range paths {
+		convey.So(path.IDSampleTmp, convey.ShouldEqual, 0)
+		convey.So(path.Name, convey.ShouldEqual, "")
+		convey.So(path.IDRun, convey.ShouldEqual, j1Run)
+		convey.So(path.Platform, convey.ShouldEqual, "illumina")
+		convey.So(path.IRODSPath, convey.ShouldStartWith, "/seq/52553/")
+	}
+
+	count, err := cache.CountIRODSPathsForSample(ctx, "S1-sample-alpha")
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(count.Count, convey.ShouldEqual, len(paths))
+
+	cram, err := cache.IRODSPathsForSampleByFileType(ctx, "S1-sample-alpha", "cram", availabilityFetchAll, 0)
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(cram, convey.ShouldHaveLength, 2)
+	for _, path := range cram {
+		convey.So(path.DataObject, convey.ShouldEndWith, ".cram")
+	}
+
+	cramCount, err := cache.CountIRODSPathsForSampleByFileType(ctx, "S1-sample-alpha", "cram")
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(cramCount.Count, convey.ShouldEqual, len(cram))
 }
 
 // assertJ1FileTypeStudyIRODSOnMySQL asserts the file-type-filtered study iRODS
