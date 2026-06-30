@@ -12,7 +12,7 @@ subagents follow both.
 This is the foundation phase: every downstream phase reads these tables
 and indexes, so correctness here is load-bearing. The schema change adds
 `study_users_mirror` plus new indexes and bumps `CacheSchemaVersion` 10
--> 11, which triggers the recreate-tables migration (a FULL resync) -- do
+-> 12, which triggers the recreate-tables migration (a FULL resync) -- do
 NOT take the additive `IF NOT EXISTS` no-version-bump path. Keep both
 SQL dialects in parity (the cross-dialect shape test compares them) and
 preserve the `id_lims = 'SQSCP'` invariant in the new wholesale sync. Do
@@ -128,17 +128,17 @@ passes). Depends on 1.2 (the index definition).
 
 spec.md section: A4
 
-Bump `CacheSchemaVersion` from 10 to 11 (`cache.go`). The new
+Bump `CacheSchemaVersion` from 10 to 12 (`cache.go`). The new
 `study_users_mirror` table and all new indexes are created by the
 recreate-tables migration (full resync); do NOT take the additive
 no-version-bump path. `study_users_mirror` is already in
 `cacheMigrationRecreateTables`/`...DropTables` and `study_users` in
 `cacheMigrationSyncStateTables` (from 1.1), so the migration recreates
 the table cleanly and the next sync repopulates it. Covering both
-acceptance tests from A4 (`CacheSchemaVersion == 11`; the existing
+acceptance tests from A4 (`CacheSchemaVersion == 12`; the existing
 recreate-migration test, extended to cover `study_users_mirror`,
 recreates the tables, clears the sync-state rows for the recreated
-tables, and stamps `schema_version` to 11). Depends on 1.1 (table +
+tables, and stamps `schema_version` to 12). Depends on 1.1 (table +
 migration-list registration) and 1.3 (the sync state for `study_users`).
 
 - [x] implemented
@@ -157,7 +157,7 @@ ONE version bump driving ONE full resync, not multiple bumps.
   schema. A4 must be last so the migration lists and sync state for
   `study_users` (from A1/A3) are in place when the version bump triggers
   the recreate migration.
-- The single bump 10 -> 11 drives one full resync that creates
+- The single bump 10 -> 12 drives one full resync that creates
   `study_users_mirror` and the new indexes; reviewers should confirm the
   resync is not split into multiple version bumps and that the additive
   `IF NOT EXISTS` no-version-bump path is NOT used.

@@ -766,6 +766,17 @@ type syncStateRecord struct {
 	Exists         bool
 }
 
+func seqProductIRODSLocationsBatchDedupeKey(row seqProductIRODSLocationsSyncRow) seqProductIRODSLocationsDedupeKey {
+	return seqProductIRODSLocationsDedupeKey{
+		sourceRowID:     row.SourceRowID,
+		idIseqProduct:   row.IDIseqProduct,
+		idSampleTmp:     row.IDSampleTmp,
+		idStudyLims:     row.IDStudyLims,
+		irodsCollection: row.IRODSCollection,
+		irodsFileName:   row.IRODSFileName,
+	}
+}
+
 // formatNullableSyncTime renders an optional sync timestamp as an RFC3339 string
 // argument, or nil (SQL NULL) when the value is absent. It keeps a NULL upstream
 // created from being stored as the zero time ("0001-01-01T00:00:00Z"), so the
@@ -1483,6 +1494,15 @@ func syncReconnectBackoff(attempt int) time.Duration {
 	}
 
 	return backoff
+}
+
+type seqProductIRODSLocationsDedupeKey struct {
+	sourceRowID     int64
+	idIseqProduct   string
+	idSampleTmp     int64
+	idStudyLims     string
+	irodsCollection string
+	irodsFileName   string
 }
 
 func (c *Client) emitSyncRetry(table string, attempt int, retryErr error, backoff time.Duration) {
@@ -3292,10 +3312,10 @@ func dedupeIseqProductMetricsBatch(rows []iseqProductMetricsSyncRow) []iseqProdu
 }
 
 func dedupeSeqProductIRODSLocationsBatch(rows []seqProductIRODSLocationsSyncRow) []seqProductIRODSLocationsSyncRow {
-	indices := make(map[string]int, len(rows))
+	indices := make(map[seqProductIRODSLocationsDedupeKey]int, len(rows))
 	deduped := make([]seqProductIRODSLocationsSyncRow, 0, len(rows))
 	for _, row := range rows {
-		key := seqProductIRODSLocationsKey(row)
+		key := seqProductIRODSLocationsBatchDedupeKey(row)
 		index, ok := indices[key]
 		if ok {
 			deduped[index] = row
@@ -3307,10 +3327,6 @@ func dedupeSeqProductIRODSLocationsBatch(rows []seqProductIRODSLocationsSyncRow)
 	}
 
 	return deduped
-}
-
-func seqProductIRODSLocationsKey(row seqProductIRODSLocationsSyncRow) string {
-	return fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%s", row.IDIseqProduct, row.IDSampleTmp, row.IDStudyLims, row.IRODSCollection, row.IRODSFileName)
 }
 
 func sampleBatchKeys(rows []sampleSyncRow) [][]any {
