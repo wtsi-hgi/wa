@@ -328,6 +328,23 @@ func TestMLWHManifestInvalidFileTypeExitsNonZero(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "a/b")
 		convey.So(output, convey.ShouldNotContainSubstring, "no products")
 	})
+
+	convey.Convey("Given --file-type is whitespace-only and the server rejects it, when wa mlwh manifest runs, then it prints the clear invalid file-type message", t, func() {
+		stub := &stubMLWHManifestClient{
+			manifest: func(context.Context, string, string, bool, int, int) (mlwh.StudyManifest, error) {
+				return mlwh.StudyManifest{}, mlwh.ErrUnsupportedIdentifier
+			},
+		}
+
+		withStubMLWHManifestClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "manifest", "S1", "--with-irods", "--file-type", " "})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "invalid --file-type")
+		convey.So(output, convey.ShouldContainSubstring, `" "`)
+		convey.So(output, convey.ShouldNotContainSubstring, "study manifest for")
+	})
 }
 
 // Paging: --limit/--offset are passed through to StudyManifest unchanged.

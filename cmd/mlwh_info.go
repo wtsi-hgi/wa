@@ -517,7 +517,7 @@ func writeStudyMetaFields(out io.Writer, style infoStyle, report infoReport, lab
 	name := study.Name
 	accession := study.AccessionNumber
 	sponsor := study.FacultySponsor
-	dataAccessGroup := ""
+	dataAccessGroup := study.DataAccessGroup
 	if overview != nil {
 		if strings.TrimSpace(name) == "" {
 			name = overview.Name
@@ -528,7 +528,9 @@ func writeStudyMetaFields(out io.Writer, style infoStyle, report infoReport, lab
 		if strings.TrimSpace(sponsor) == "" {
 			sponsor = overview.FacultySponsor
 		}
-		dataAccessGroup = overview.DataAccessGroup
+		if strings.TrimSpace(overview.DataAccessGroup) != "" {
+			dataAccessGroup = overview.DataAccessGroup
+		}
 	}
 
 	for _, field := range []struct{ label, value string }{

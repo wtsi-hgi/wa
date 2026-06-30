@@ -805,6 +805,38 @@ func TestMLWHInfoStudyOverviewMetadata(t *testing.T) {
 	})
 }
 
+func TestMLWHInfoStudyMetadataFallsBackToBaseStudyDataAccess(t *testing.T) {
+	convey.Convey("Given the base study carries a data access group and the overview endpoint fails, "+
+		"when wa mlwh info <study> runs, then the study section still surfaces the data access group", t, func() {
+		stub := &stubMLWHInfoClient{
+			resolveStudy: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{
+					Kind:      mlwh.KindStudyLimsID,
+					Canonical: raw,
+					Study: &mlwh.Study{
+						IDStudyLims:     raw,
+						Name:            "Lung cancer GWAS",
+						DataAccessGroup: "base-study-grp",
+					},
+				}, nil
+			},
+			studyOverview: func(context.Context, string) (mlwh.StudyOverview, error) {
+				return mlwh.StudyOverview{}, errors.New("overview boom")
+			},
+		}
+
+		withStubMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901", "--type", "study"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "Data Access")
+		convey.So(output, convey.ShouldContainSubstring, "base-study-grp")
+		convey.So(output, convey.ShouldContainSubstring, "Warnings")
+		convey.So(output, convey.ShouldContainSubstring, "overview boom")
+	})
+}
+
 func TestMLWHInfoRunIRODSPathsSection(t *testing.T) {
 	convey.Convey("Given a run with iRODS objects, when wa mlwh info <run> runs, then the run iRODS section lists the capped "+
 		"paths with id_run and platform; given a run with no objects, the section renders \"none\" and exits 0 (H1 acceptance 3)", t, func() {

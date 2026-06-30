@@ -211,7 +211,7 @@ func runMLWHManifest(ctx context.Context, client mlwhManifestClient, out io.Writ
 		// A bad-request-class error here is the file-type filter being invalid (an
 		// input error, not a degradation): name the rejected --file-type value so
 		// the message is clear, and exit non-zero.
-		if errors.Is(err, mlwh.ErrUnsupportedIdentifier) && strings.TrimSpace(fileType) != "" {
+		if errors.Is(err, mlwh.ErrUnsupportedIdentifier) && fileType != "" {
 			return fmt.Errorf("invalid --file-type %q: a filename suffix may not be empty or contain '%%', '_' or '/'", fileType)
 		}
 
