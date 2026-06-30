@@ -33,5 +33,5 @@ missing-header fallback, parity with body-only calls, search-default
 dynamic calls, search max-limit errors, and sentinels. Covers all 7
 acceptance tests from B1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

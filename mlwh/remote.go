@@ -137,6 +137,13 @@ func remotePagination(limit, offset int) url.Values {
 	return values
 }
 
+// AllStudiesPage is the Page[Study] variant of AllStudies: it returns the same
+// page of rows (Page.Items) plus the list-sizing metadata from the X-Total-Count
+// / X-Next-Offset response headers (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) AllStudiesPage(ctx context.Context, limit, offset int) (Page[Study], error) {
+	return remoteCallPage[Study](rc, ctx, "AllStudies", nil, remotePagination(limit, offset))
+}
+
 // SamplesForStudy lists samples for a study through the remote server.
 func (rc *RemoteClient) SamplesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]Sample, error) {
 	return remoteCall[[]Sample](rc, ctx, "SamplesForStudy", []string{studyLimsID}, remotePagination(limit, offset))
@@ -154,9 +161,24 @@ func (rc *RemoteClient) SamplesForRun(ctx context.Context, idRun string, limit, 
 	return remoteCall[[]Sample](rc, ctx, "SamplesForRun", []string{idRun}, remotePagination(limit, offset))
 }
 
+// SamplesForRunPage is the Page[Sample] variant of SamplesForRun: it returns the
+// same page of rows (Page.Items) plus the list-sizing metadata from the
+// X-Total-Count / X-Next-Offset response headers (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) SamplesForRunPage(ctx context.Context, idRun string, limit, offset int) (Page[Sample], error) {
+	return remoteCallPage[Sample](rc, ctx, "SamplesForRun", []string{idRun}, remotePagination(limit, offset))
+}
+
 // SamplesForLibrary lists samples for a library type and study through the remote server.
 func (rc *RemoteClient) SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]Sample, error) {
 	return remoteCall[[]Sample](rc, ctx, "SamplesForLibrary", []string{pipelineIDLims, studyLimsID}, remotePagination(limit, offset))
+}
+
+// SamplesForLibraryPage is the Page[Sample] variant of SamplesForLibrary: it
+// returns the same page of rows (Page.Items) plus the list-sizing metadata from
+// the X-Total-Count / X-Next-Offset response headers (Page.Total /
+// Page.NextOffset).
+func (rc *RemoteClient) SamplesForLibraryPage(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) (Page[Sample], error) {
+	return remoteCallPage[Sample](rc, ctx, "SamplesForLibrary", []string{pipelineIDLims, studyLimsID}, remotePagination(limit, offset))
 }
 
 // SamplesForLibraryID lists samples for a library ID through the remote server.
@@ -164,9 +186,25 @@ func (rc *RemoteClient) SamplesForLibraryID(ctx context.Context, libraryID strin
 	return remoteCall[[]Sample](rc, ctx, "SamplesForLibraryID", []string{libraryID}, remotePagination(limit, offset))
 }
 
+// SamplesForLibraryIDPage is the Page[Sample] variant of SamplesForLibraryID: it
+// returns the same page of rows (Page.Items) plus the list-sizing metadata from
+// the X-Total-Count / X-Next-Offset response headers (Page.Total /
+// Page.NextOffset).
+func (rc *RemoteClient) SamplesForLibraryIDPage(ctx context.Context, libraryID string, limit, offset int) (Page[Sample], error) {
+	return remoteCallPage[Sample](rc, ctx, "SamplesForLibraryID", []string{libraryID}, remotePagination(limit, offset))
+}
+
 // SamplesForLibraryLimsID lists samples for a library LIMS ID through the remote server.
 func (rc *RemoteClient) SamplesForLibraryLimsID(ctx context.Context, idLibraryLims string, limit, offset int) ([]Sample, error) {
 	return remoteCall[[]Sample](rc, ctx, "SamplesForLibraryLimsID", []string{idLibraryLims}, remotePagination(limit, offset))
+}
+
+// SamplesForLibraryLimsIDPage is the Page[Sample] variant of
+// SamplesForLibraryLimsID: it returns the same page of rows (Page.Items) plus the
+// list-sizing metadata from the X-Total-Count / X-Next-Offset response headers
+// (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) SamplesForLibraryLimsIDPage(ctx context.Context, idLibraryLims string, limit, offset int) (Page[Sample], error) {
+	return remoteCallPage[Sample](rc, ctx, "SamplesForLibraryLimsID", []string{idLibraryLims}, remotePagination(limit, offset))
 }
 
 // SamplesForLibraryType lists samples for a library type through the remote server.
@@ -174,14 +212,37 @@ func (rc *RemoteClient) SamplesForLibraryType(ctx context.Context, pipelineIDLim
 	return remoteCall[[]Sample](rc, ctx, "SamplesForLibraryType", []string{pipelineIDLims}, remotePagination(limit, offset))
 }
 
+// SamplesForLibraryTypePage is the Page[Sample] variant of
+// SamplesForLibraryType: it returns the same page of rows (Page.Items) plus the
+// list-sizing metadata from the X-Total-Count / X-Next-Offset response headers
+// (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) SamplesForLibraryTypePage(ctx context.Context, pipelineIDLims string, limit, offset int) (Page[Sample], error) {
+	return remoteCallPage[Sample](rc, ctx, "SamplesForLibraryType", []string{pipelineIDLims}, remotePagination(limit, offset))
+}
+
 // LibrariesForStudy lists libraries for a study through the remote server.
 func (rc *RemoteClient) LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]Library, error) {
 	return remoteCall[[]Library](rc, ctx, "LibrariesForStudy", []string{studyLimsID}, remotePagination(limit, offset))
 }
 
+// LibrariesForStudyPage is the Page[Library] variant of LibrariesForStudy: it
+// returns the same page of rows (Page.Items) plus the list-sizing metadata from
+// the X-Total-Count / X-Next-Offset response headers (Page.Total /
+// Page.NextOffset).
+func (rc *RemoteClient) LibrariesForStudyPage(ctx context.Context, studyLimsID string, limit, offset int) (Page[Library], error) {
+	return remoteCallPage[Library](rc, ctx, "LibrariesForStudy", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
 // RunsForStudy lists runs for a study through the remote server.
 func (rc *RemoteClient) RunsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]Run, error) {
 	return remoteCall[[]Run](rc, ctx, "RunsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// RunsForStudyPage is the Page[Run] variant of RunsForStudy: it returns the same
+// page of rows (Page.Items) plus the list-sizing metadata from the X-Total-Count
+// / X-Next-Offset response headers (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) RunsForStudyPage(ctx context.Context, studyLimsID string, limit, offset int) (Page[Run], error) {
+	return remoteCallPage[Run](rc, ctx, "RunsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
 }
 
 // StudyOverview returns a study's overview aggregate through the remote server.
@@ -270,6 +331,13 @@ func remotePaginationWithAddedWindow(limit, offset int, since, until string) url
 // LanesForSample lists lanes for a sample through the remote server.
 func (rc *RemoteClient) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]Lane, error) {
 	return remoteCall[[]Lane](rc, ctx, "LanesForSample", []string{sangerName}, remotePagination(limit, offset))
+}
+
+// LanesForSamplePage is the Page[Lane] variant of LanesForSample: it returns the
+// same page of rows (Page.Items) plus the list-sizing metadata from the
+// X-Total-Count / X-Next-Offset response headers (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) LanesForSamplePage(ctx context.Context, sangerName string, limit, offset int) (Page[Lane], error) {
+	return remoteCallPage[Lane](rc, ctx, "LanesForSample", []string{sangerName}, remotePagination(limit, offset))
 }
 
 // IRODSPathsForSample lists iRODS paths for a sample through the remote server.
@@ -512,9 +580,23 @@ func (rc *RemoteClient) SearchStudies(ctx context.Context, term string, limit, o
 	return remoteCall[[]Study](rc, ctx, "SearchStudies", []string{term}, remotePagination(limit, offset))
 }
 
+// SearchStudiesPage is the Page[Study] variant of SearchStudies: it returns the
+// same page of rows (Page.Items) plus the list-sizing metadata from the
+// X-Total-Count / X-Next-Offset response headers (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) SearchStudiesPage(ctx context.Context, term string, limit, offset int) (Page[Study], error) {
+	return remoteCallPage[Study](rc, ctx, "SearchStudies", []string{term}, remotePagination(limit, offset))
+}
+
 // SearchSamples runs a sample substring search through the remote server.
 func (rc *RemoteClient) SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
 	return remoteCall[[]Sample](rc, ctx, "SearchSamples", []string{term}, remotePagination(limit, offset))
+}
+
+// SearchSamplesPage is the Page[Sample] variant of SearchSamples: it returns the
+// same page of rows (Page.Items) plus the list-sizing metadata from the
+// X-Total-Count / X-Next-Offset response headers (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) SearchSamplesPage(ctx context.Context, term string, limit, offset int) (Page[Sample], error) {
+	return remoteCallPage[Sample](rc, ctx, "SearchSamples", []string{term}, remotePagination(limit, offset))
 }
 
 // CountStudySearch counts the studies matching term through the remote server.

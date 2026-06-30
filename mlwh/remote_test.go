@@ -36,10 +36,288 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/smartystreets/goconvey/convey"
 )
 
 var _ Queryer = (*RemoteClient)(nil)
+
+type remotePageMethodCase struct {
+	name               string
+	response           any
+	expectedURI        string
+	wantWithHeaders    any
+	wantWithoutHeaders any
+	emptyPage          any
+	call               func(context.Context, *RemoteClient) (any, error)
+}
+
+func b1RemotePageMethodCases() []remotePageMethodCase {
+	studies := []Study{{IDStudyLims: "1", Name: "Alpha"}, {IDStudyLims: "2", Name: "Beta"}}
+	samples := []Sample{{IDSampleTmp: 1, Name: "Alpha"}, {IDSampleTmp: 2, Name: "Beta"}}
+	libraries := []Library{
+		{PipelineIDLims: "Standard", IDStudyLims: "6568", LibraryID: "L1"},
+		{PipelineIDLims: "Custom", IDStudyLims: "6568", LibraryID: "L2"},
+	}
+	runs := []Run{{IDRun: 12345}, {IDRun: 12346}}
+	lanes := []Lane{{IDRun: 12345, Position: 1, TagIndex: 0}, {IDRun: 12346, Position: 2, TagIndex: 1}}
+
+	return []remotePageMethodCase{
+		{
+			name:               "AllStudiesPage",
+			response:           studies,
+			expectedURI:        "/studies?limit=2&offset=2",
+			wantWithHeaders:    Page[Study]{Items: studies, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[Study]{Items: studies, Total: 0, NextOffset: -1},
+			emptyPage:          Page[Study]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.AllStudiesPage(ctx, 2, 2)
+			},
+		},
+		{
+			name:               "SamplesForRunPage",
+			response:           samples,
+			expectedURI:        "/run/12345/samples?limit=2&offset=2",
+			wantWithHeaders:    Page[Sample]{Items: samples, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[Sample]{Items: samples, Total: 0, NextOffset: -1},
+			emptyPage:          Page[Sample]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SamplesForRunPage(ctx, "12345", 2, 2)
+			},
+		},
+		{
+			name:               "SamplesForLibraryPage",
+			response:           samples,
+			expectedURI:        "/library/Standard/study/6568/samples?limit=2&offset=2",
+			wantWithHeaders:    Page[Sample]{Items: samples, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[Sample]{Items: samples, Total: 0, NextOffset: -1},
+			emptyPage:          Page[Sample]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SamplesForLibraryPage(ctx, "Standard", "6568", 2, 2)
+			},
+		},
+		{
+			name:               "SamplesForLibraryIDPage",
+			response:           samples,
+			expectedURI:        "/library-id/LIB123/samples?limit=2&offset=2",
+			wantWithHeaders:    Page[Sample]{Items: samples, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[Sample]{Items: samples, Total: 0, NextOffset: -1},
+			emptyPage:          Page[Sample]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SamplesForLibraryIDPage(ctx, "LIB123", 2, 2)
+			},
+		},
+		{
+			name:               "SamplesForLibraryLimsIDPage",
+			response:           samples,
+			expectedURI:        "/library-lims-id/LIBLIMS123/samples?limit=2&offset=2",
+			wantWithHeaders:    Page[Sample]{Items: samples, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[Sample]{Items: samples, Total: 0, NextOffset: -1},
+			emptyPage:          Page[Sample]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SamplesForLibraryLimsIDPage(ctx, "LIBLIMS123", 2, 2)
+			},
+		},
+		{
+			name:               "SamplesForLibraryTypePage",
+			response:           samples,
+			expectedURI:        "/library-type/Standard/samples?limit=2&offset=2",
+			wantWithHeaders:    Page[Sample]{Items: samples, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[Sample]{Items: samples, Total: 0, NextOffset: -1},
+			emptyPage:          Page[Sample]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SamplesForLibraryTypePage(ctx, "Standard", 2, 2)
+			},
+		},
+		{
+			name:               "LibrariesForStudyPage",
+			response:           libraries,
+			expectedURI:        "/study/6568/libraries?limit=2&offset=2",
+			wantWithHeaders:    Page[Library]{Items: libraries, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[Library]{Items: libraries, Total: 0, NextOffset: -1},
+			emptyPage:          Page[Library]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.LibrariesForStudyPage(ctx, "6568", 2, 2)
+			},
+		},
+		{
+			name:               "RunsForStudyPage",
+			response:           runs,
+			expectedURI:        "/study/6568/runs?limit=2&offset=2",
+			wantWithHeaders:    Page[Run]{Items: runs, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[Run]{Items: runs, Total: 0, NextOffset: -1},
+			emptyPage:          Page[Run]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.RunsForStudyPage(ctx, "6568", 2, 2)
+			},
+		},
+		{
+			name:               "LanesForSamplePage",
+			response:           lanes,
+			expectedURI:        "/sample/S1/lanes?limit=2&offset=2",
+			wantWithHeaders:    Page[Lane]{Items: lanes, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[Lane]{Items: lanes, Total: 0, NextOffset: -1},
+			emptyPage:          Page[Lane]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.LanesForSamplePage(ctx, "S1", 2, 2)
+			},
+		},
+		{
+			name:               "SearchStudiesPage",
+			response:           studies,
+			expectedURI:        "/search/study/malar?limit=2&offset=2",
+			wantWithHeaders:    Page[Study]{Items: studies, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[Study]{Items: studies, Total: 0, NextOffset: -1},
+			emptyPage:          Page[Study]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SearchStudiesPage(ctx, "malar", 2, 2)
+			},
+		},
+		{
+			name:               "SearchSamplesPage",
+			response:           samples,
+			expectedURI:        "/search/sample/acme?limit=2&offset=2",
+			wantWithHeaders:    Page[Sample]{Items: samples, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[Sample]{Items: samples, Total: 0, NextOffset: -1},
+			emptyPage:          Page[Sample]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SearchSamplesPage(ctx, "acme", 2, 2)
+			},
+		},
+	}
+}
+
+type remotePageParityCase struct {
+	name     string
+	pageRows func(context.Context, *RemoteClient) (any, error)
+	bareRows func(context.Context, *RemoteClient) (any, error)
+}
+
+func b1RemotePageParityCases() []remotePageParityCase {
+	return []remotePageParityCase{
+		{
+			name: "AllStudiesPage",
+			pageRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				page, err := client.AllStudiesPage(ctx, 10, 0)
+
+				return page.Items, err
+			},
+			bareRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.AllStudies(ctx, 10, 0)
+			},
+		},
+		{
+			name: "SamplesForRunPage",
+			pageRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				page, err := client.SamplesForRunPage(ctx, "99000", 10, 0)
+
+				return page.Items, err
+			},
+			bareRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SamplesForRun(ctx, "99000", 10, 0)
+			},
+		},
+		{
+			name: "SamplesForLibraryPage",
+			pageRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				page, err := client.SamplesForLibraryPage(ctx, "Standard", "SZ", 10, 0)
+
+				return page.Items, err
+			},
+			bareRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SamplesForLibrary(ctx, "Standard", "SZ", 10, 0)
+			},
+		},
+		{
+			name: "SamplesForLibraryIDPage",
+			pageRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				page, err := client.SamplesForLibraryIDPage(ctx, "LIB-SZ", 10, 0)
+
+				return page.Items, err
+			},
+			bareRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SamplesForLibraryID(ctx, "LIB-SZ", 10, 0)
+			},
+		},
+		{
+			name: "SamplesForLibraryLimsIDPage",
+			pageRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				page, err := client.SamplesForLibraryLimsIDPage(ctx, "LIMS-SZ", 10, 0)
+
+				return page.Items, err
+			},
+			bareRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SamplesForLibraryLimsID(ctx, "LIMS-SZ", 10, 0)
+			},
+		},
+		{
+			name: "SamplesForLibraryTypePage",
+			pageRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				page, err := client.SamplesForLibraryTypePage(ctx, "Standard", 10, 0)
+
+				return page.Items, err
+			},
+			bareRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SamplesForLibraryType(ctx, "Standard", 10, 0)
+			},
+		},
+		{
+			name: "LibrariesForStudyPage",
+			pageRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				page, err := client.LibrariesForStudyPage(ctx, "SZ", 10, 0)
+
+				return page.Items, err
+			},
+			bareRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.LibrariesForStudy(ctx, "SZ", 10, 0)
+			},
+		},
+		{
+			name: "RunsForStudyPage",
+			pageRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				page, err := client.RunsForStudyPage(ctx, "SZ", 10, 0)
+
+				return page.Items, err
+			},
+			bareRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.RunsForStudy(ctx, "SZ", 10, 0)
+			},
+		},
+		{
+			name: "LanesForSamplePage",
+			pageRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				page, err := client.LanesForSamplePage(ctx, "sizing-900000", 10, 0)
+
+				return page.Items, err
+			},
+			bareRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.LanesForSample(ctx, "sizing-900000", 10, 0)
+			},
+		},
+		{
+			name: "SearchStudiesPage",
+			pageRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				page, err := client.SearchStudiesPage(ctx, "Study", 10, 0)
+
+				return page.Items, err
+			},
+			bareRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SearchStudies(ctx, "Study", 10, 0)
+			},
+		},
+		{
+			name: "SearchSamplesPage",
+			pageRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				page, err := client.SearchSamplesPage(ctx, "sizing", 10, 0)
+
+				return page.Items, err
+			},
+			bareRows: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SearchSamples(ctx, "sizing", 10, 0)
+			},
+		},
+	}
+}
 
 func TestRemoteClientSamplesForStudyRoundTrips(t *testing.T) {
 	convey.Convey("Given a RemoteClient pointed at a server returning samples", t, func() {
@@ -196,6 +474,157 @@ func TestRemoteClientCallWrapsCallWithHeadersA1(t *testing.T) {
 	})
 }
 
+func TestRemoteClientSimpleBareListPageMethodsReadHeadersB1(t *testing.T) {
+	for _, tc := range b1RemotePageMethodCases() {
+		tc := tc
+		convey.Convey("B1.1: Given "+tc.name+" receives two bare-list rows and sizing headers", t, func() {
+			requestURIs := make(chan string, 1)
+			server := newRemoteClientJSONHeaderServerForTest(requestURIs, tc.response, http.Header{
+				"X-Total-Count": {"5"},
+				"X-Next-Offset": {"4"},
+			})
+			defer server.Close()
+
+			client := newRemoteClientForTest(t, server.URL, "")
+			defer closeRemoteClientForTest(t, client)
+
+			convey.Convey("when the page method runs with limit=2 and offset=2, then it returns rows, headers, and the body-only endpoint URI", func() {
+				page, err := tc.call(context.Background(), client)
+
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(page, convey.ShouldResemble, tc.wantWithHeaders)
+				convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, tc.expectedURI)
+			})
+		})
+	}
+}
+
+func TestRemoteClientSimpleBareListPageMethodsUseHeaderFallbacksB1(t *testing.T) {
+	for _, tc := range b1RemotePageMethodCases() {
+		tc := tc
+		convey.Convey("B1.3: Given "+tc.name+" receives no sizing headers", t, func() {
+			requestURIs := make(chan string, 1)
+			server := newRemoteClientJSONHeaderServerForTest(requestURIs, tc.response, nil)
+			defer server.Close()
+
+			client := newRemoteClientForTest(t, server.URL, "")
+			defer closeRemoteClientForTest(t, client)
+
+			convey.Convey("when the page method succeeds, then Total is 0 and NextOffset is -1", func() {
+				page, err := tc.call(context.Background(), client)
+
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(page, convey.ShouldResemble, tc.wantWithoutHeaders)
+			})
+		})
+	}
+}
+
+func TestRemoteClientSimpleBareListPageMethodsPreserveSentinelsB1(t *testing.T) {
+	for _, tc := range b1RemotePageMethodCases() {
+		tc := tc
+		convey.Convey("B1.4: Given "+tc.name+" receives a cache_never_synced envelope", t, func() {
+			server := newRemoteClientErrorServerForTest(http.StatusServiceUnavailable, "cache_never_synced")
+			defer server.Close()
+
+			client := newRemoteClientForTest(t, server.URL, "")
+			defer closeRemoteClientForTest(t, client)
+
+			convey.Convey("when the page method runs, then it returns an empty Page and the same sentinels as the body-only list", func() {
+				page, err := tc.call(context.Background(), client)
+
+				convey.So(err, convey.ShouldNotBeNil)
+				convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+				convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+				convey.So(page, convey.ShouldResemble, tc.emptyPage)
+			})
+		})
+	}
+}
+
+func TestRemoteClientSimpleBareListPageMethodsMatchBodyOnlyB1(t *testing.T) {
+	convey.Convey("B1.2: Given a parity server seeded by newListSizingClientForTest", t, func() {
+		local := newListSizingClientForTest(t, "SZ", 25)
+		defer closeParityClientForTest(t, local)
+		seedRemoteB1ListSizingExtras(t, local)
+
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		for _, tc := range b1RemotePageParityCases() {
+			tc := tc
+			convey.Convey("when "+tc.name+" runs against its matching endpoint, then Page.Items equals the body-only result", func() {
+				pageRows, err := tc.pageRows(context.Background(), remote)
+				convey.So(err, convey.ShouldBeNil)
+
+				bareRows, err := tc.bareRows(context.Background(), remote)
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(pageRows, convey.ShouldResemble, bareRows)
+			})
+		}
+	})
+}
+
+func seedRemoteB1ListSizingExtras(t *testing.T, client *Client) {
+	t.Helper()
+
+	_, err := client.cache.DB().Exec(`UPDATE library_samples SET library_id = ?, id_library_lims = ?`, "LIB-SZ", "LIMS-SZ")
+	if err != nil {
+		t.Fatalf("seed B1 library identifiers: %v", err)
+	}
+
+	rebuildSampleSearchIndexForTest(t, client.cache.DB())
+}
+
+func TestRemoteClientSearchPageMethodsSendExplicitZeroPaginationB1(t *testing.T) {
+	convey.Convey("B1.5: Given stub search servers", t, func() {
+		cases := []struct {
+			name        string
+			response    any
+			expectedURI string
+			call        func(context.Context, *RemoteClient) (any, error)
+		}{
+			{
+				name:        "SearchStudiesPage",
+				response:    []Study{{IDStudyLims: "1", Name: "Malaria genomics"}},
+				expectedURI: "/search/study/malar?limit=0&offset=0",
+				call: func(ctx context.Context, client *RemoteClient) (any, error) {
+					return client.SearchStudiesPage(ctx, "malar", 0, 0)
+				},
+			},
+			{
+				name:        "SearchSamplesPage",
+				response:    []Sample{{IDSampleTmp: 1, Name: "acme-1"}},
+				expectedURI: "/search/sample/acme?limit=0&offset=0",
+				call: func(ctx context.Context, client *RemoteClient) (any, error) {
+					return client.SearchSamplesPage(ctx, "acme", 0, 0)
+				},
+			},
+		}
+
+		for _, tc := range cases {
+			tc := tc
+			convey.Convey("when "+tc.name+" runs with limit=0 and offset=0, then it still sends both query params", func() {
+				requestURIs := make(chan string, 1)
+				server := newRemoteClientJSONHeaderServerForTest(requestURIs, tc.response, http.Header{
+					"X-Total-Count": {"1"},
+					"X-Next-Offset": {"-1"},
+				})
+				defer server.Close()
+
+				client := newRemoteClientForTest(t, server.URL, "")
+				defer closeRemoteClientForTest(t, client)
+
+				page, err := tc.call(context.Background(), client)
+
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(page, convey.ShouldNotBeNil)
+				convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, tc.expectedURI)
+			})
+		}
+	})
+}
+
 func newRemoteClientJSONHeaderServerForTest[T any](requestURIs chan<- string, result T, headers http.Header) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestURIs <- r.URL.RequestURI()
@@ -249,6 +678,78 @@ func TestRemoteClientCallWithHeadersErrorsMatchCallA1(t *testing.T) {
 			convey.So(result, convey.ShouldBeNil)
 		})
 	})
+}
+
+func TestRemoteClientCallWithHeadersSearchUsesServerDefaultsB1(t *testing.T) {
+	convey.Convey("B1.6: Given a real MLWH server over a fake search queryer", t, func() {
+		requestURIs := make(chan string, 1)
+		queryer := &serverFakeQueryer{
+			searchStudiesFunc: func(_ context.Context, term string, _, _ int) ([]Study, error) {
+				return []Study{{IDStudyLims: "1", Name: term + "-study"}}, nil
+			},
+			countStudySearchFunc: func(_ context.Context, _ string) (Count, error) {
+				return Count{Count: 7}, nil
+			},
+		}
+		server := newRecordingMLWHServerForRemoteTest(queryer, requestURIs)
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when CallWithHeaders omits SearchStudies query params, then the server applies search defaults and exposes headers", func() {
+			result, headers, err := client.CallWithHeaders(context.Background(), "SearchStudies", []string{"malar"}, nil)
+
+			convey.So(err, convey.ShouldBeNil)
+			studies, ok := result.(*[]Study)
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(*studies, convey.ShouldResemble, []Study{{IDStudyLims: "1", Name: "malar-study"}})
+			convey.So(headers.Get("X-Total-Count"), convey.ShouldEqual, "7")
+			convey.So(headers.Get("X-Next-Offset"), convey.ShouldEqual, "1")
+			convey.So(queryer.searchCall.term, convey.ShouldEqual, "malar")
+			convey.So(queryer.searchCall.limit, convey.ShouldEqual, 100)
+			convey.So(queryer.searchCall.offset, convey.ShouldEqual, 0)
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/search/study/malar")
+		})
+	})
+}
+
+func TestRemoteClientSearchPageMethodsReturnBadRequestForTooLargeLimitB1(t *testing.T) {
+	convey.Convey("B1.7: Given a real MLWH server whose fake search queryer panics if called", t, func() {
+		requestURIs := make(chan string, 2)
+		queryer := &serverFakeQueryer{}
+		server := newRecordingMLWHServerForRemoteTest(queryer, requestURIs)
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when SearchStudiesPage and SearchSamplesPage exceed SearchMaxLimit, then each request returns the existing remote bad_request handling", func() {
+			studyPage, studyErr := client.SearchStudiesPage(context.Background(), "malar", SearchMaxLimit+1, 0)
+			samplePage, sampleErr := client.SearchSamplesPage(context.Background(), "acme", SearchMaxLimit+1, 0)
+
+			convey.So(studyPage, convey.ShouldResemble, Page[Study]{})
+			convey.So(studyErr, convey.ShouldNotBeNil)
+			convey.So(errors.Is(studyErr, ErrUpstreamImpaired), convey.ShouldBeTrue)
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "study request URI"), convey.ShouldEqual, "/search/study/malar?limit=1001&offset=0")
+
+			convey.So(samplePage, convey.ShouldResemble, Page[Sample]{})
+			convey.So(sampleErr, convey.ShouldNotBeNil)
+			convey.So(errors.Is(sampleErr, ErrUpstreamImpaired), convey.ShouldBeTrue)
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "sample request URI"), convey.ShouldEqual, "/search/sample/acme?limit=1001&offset=0")
+		})
+	})
+}
+
+func newRecordingMLWHServerForRemoteTest(queryer Queryer, requestURIs chan<- string) *httptest.Server {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	NewServer(queryer).RegisterRoutes(router, nil)
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURIs <- r.URL.RequestURI()
+		router.ServeHTTP(w, r)
+	}))
 }
 
 func newRemoteClientErrorServerForTest(status int, code string) *httptest.Server {
