@@ -811,6 +811,8 @@ func TestServerIRODSFileTypeBadRequestGuardB2(t *testing.T) {
 		"/study/SZ/irods/count",
 		"/sample/SN/irods",
 		"/sample/SN/irods/count",
+		"/run/52553/irods",
+		"/run/52553/irods/count",
 	}
 
 	for label, query := range invalidFileTypes {
