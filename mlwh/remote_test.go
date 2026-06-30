@@ -142,6 +142,115 @@ func TestRemoteClientMapsUpstreamImpairedEnvelope(t *testing.T) {
 	})
 }
 
+func TestRemoteClientCallWithHeadersReturnsBodyAndHeadersA1(t *testing.T) {
+	convey.Convey("A1.1: Given a stub MLWH server returning one study and sizing headers", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONHeaderServerForTest(requestURIs, []Study{
+			{IDStudyLims: "1"},
+		}, http.Header{
+			"X-Total-Count": {"7"},
+			"X-Next-Offset": {"2"},
+		})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when CallWithHeaders drives AllStudies with limit/offset query values, then it returns the decoded rows and exposes the response headers", func() {
+			result, headers, err := client.CallWithHeaders(context.Background(), "AllStudies", nil, url.Values{"limit": {"1"}, "offset": {"1"}})
+
+			convey.So(err, convey.ShouldBeNil)
+			studies, ok := result.(*[]Study)
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(*studies, convey.ShouldResemble, []Study{{IDStudyLims: "1"}})
+			convey.So(headers.Get("X-Total-Count"), convey.ShouldEqual, "7")
+			convey.So(headers.Get("X-Next-Offset"), convey.ShouldEqual, "2")
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/studies?limit=1&offset=1")
+		})
+	})
+}
+
+func TestRemoteClientCallWrapsCallWithHeadersA1(t *testing.T) {
+	convey.Convey("A1.2: Given the same stub MLWH server returning one study and sizing headers", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONHeaderServerForTest(requestURIs, []Study{
+			{IDStudyLims: "1"},
+		}, http.Header{
+			"X-Total-Count": {"7"},
+			"X-Next-Offset": {"2"},
+		})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when Call drives AllStudies with the same query, then it returns only the decoded body", func() {
+			result, err := client.Call(context.Background(), "AllStudies", nil, url.Values{"limit": {"1"}, "offset": {"1"}})
+
+			convey.So(err, convey.ShouldBeNil)
+			studies, ok := result.(*[]Study)
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(*studies, convey.ShouldResemble, []Study{{IDStudyLims: "1"}})
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/studies?limit=1&offset=1")
+		})
+	})
+}
+
+func newRemoteClientJSONHeaderServerForTest[T any](requestURIs chan<- string, result T, headers http.Header) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURIs <- r.URL.RequestURI()
+		for name, values := range headers {
+			for _, value := range values {
+				w.Header().Add(name, value)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		writeRemoteClientJSONForTest(w, result)
+	}))
+}
+
+func TestRemoteClientCallWithHeadersErrorsMatchCallA1(t *testing.T) {
+	convey.Convey("A1.3: Given a RemoteClient", t, func() {
+		server := newRemoteClientJSONServerForTest(make(chan string, 1), Match{})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when CallWithHeaders is given an unknown Registry method, then it returns nil result and the existing sentinel error", func() {
+			result, _, err := client.CallWithHeaders(context.Background(), "NoSuchMethod", nil, nil)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+			convey.So(result, convey.ShouldBeNil)
+		})
+
+		convey.Convey("when CallWithHeaders is given too few path params, then it returns nil result and the existing sentinel error", func() {
+			result, _, err := client.CallWithHeaders(context.Background(), "ResolveSample", nil, nil)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+			convey.So(result, convey.ShouldBeNil)
+		})
+	})
+
+	convey.Convey("A1.3: Given a remote server returning a not_found envelope", t, func() {
+		server := newRemoteClientErrorServerForTest(http.StatusNotFound, "not_found")
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when CallWithHeaders receives the envelope, then it returns nil result and preserves ErrNotFound", func() {
+			result, _, err := client.CallWithHeaders(context.Background(), "ResolveSample", []string{"missing"}, nil)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(result, convey.ShouldBeNil)
+		})
+	})
+}
+
 func newRemoteClientErrorServerForTest(status int, code string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

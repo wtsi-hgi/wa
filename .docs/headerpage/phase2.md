@@ -26,5 +26,5 @@ discard headers. Preserve existing registry lookup, path-param arity,
 `decodeRemoteError`, and sentinel behavior. Add tests in
 `mlwh/remote_test.go` covering all 3 acceptance tests from A1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

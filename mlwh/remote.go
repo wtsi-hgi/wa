@@ -721,7 +721,7 @@ func (rc *RemoteClient) LibraryDetail(ctx context.Context, pipelineIDLims, study
 	return remoteCall[LibraryDetail](rc, ctx, "LibraryDetail", []string{pipelineIDLims, studyLimsID}, nil)
 }
 
-// Call is the generic counterpart to the typed methods (ResolveSample,
+// Call is the body-only generic counterpart to the typed methods (ResolveSample,
 // AllStudies, ...): instead of selecting an endpoint at compile time, it
 // dispatches to the Registry entry whose Method name equals method. It is for
 // callers that choose an endpoint dynamically by Registry Method name, such as
@@ -734,11 +734,25 @@ func (rc *RemoteClient) LibraryDetail(ctx context.Context, pipelineIDLims, study
 // *[]Study for AllStudies); type-assert it to that pointer to read the value.
 //
 // Call surfaces the same errors as the typed methods, including an unknown or
-// missing Registry method and a path-param arity mismatch.
+// missing Registry method and a path-param arity mismatch. Use CallWithHeaders
+// when response headers such as X-Total-Count or X-Next-Offset are needed.
 func (rc *RemoteClient) Call(ctx context.Context, method string, pathParams []string, query url.Values) (any, error) {
-	result, _, err := rc.do(ctx, method, pathParams, query)
+	result, _, err := rc.CallWithHeaders(ctx, method, pathParams, query)
 
 	return result, err
+}
+
+// CallWithHeaders is the header-aware generic counterpart to the typed methods.
+// It dispatches to the Registry entry whose Method name equals method and returns
+// the decoded typed result as an any holding a pointer to the endpoint's
+// NewResult type, plus the HTTP response headers from the remote server.
+//
+// pathParams supplies the endpoint's path parameters in declaration order and
+// query supplies any query parameters. CallWithHeaders surfaces the same errors
+// as Call and the typed methods, including unknown Registry methods,
+// path-param arity mismatches, and decoded remote error envelopes.
+func (rc *RemoteClient) CallWithHeaders(ctx context.Context, method string, pathParams []string, query url.Values) (any, http.Header, error) {
+	return rc.do(ctx, method, pathParams, query)
 }
 
 // do issues the request for method and returns the decoded typed result, the
