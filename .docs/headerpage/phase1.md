@@ -27,8 +27,8 @@ Do not add the remote method yet. The full D1 story has 6 acceptance
 tests; this item covers the JSON-casing contract from D1 acceptance
 test 6.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.2: D2 - Study and run detail envelope types
 
@@ -40,5 +40,5 @@ Add `PagedStudyDetail`, `PagedRunDetail`, and `DetailOptions` to
 with no JSON contract. The full D2 story has 7 acceptance tests; this
 item covers the type and JSON-casing contract from D2 acceptance test 7.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

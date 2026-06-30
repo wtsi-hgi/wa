@@ -169,6 +169,14 @@ type StudyManifest struct {
 	CacheSyncedAt   string        `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
 }
 
+// PagedStudyManifest wraps a StudyManifest with list-sizing metadata from the
+// paginated remote manifest response headers.
+type PagedStudyManifest struct {
+	StudyManifest StudyManifest `json:"study_manifest" doc:"study manifest response body"`
+	Total         int           `json:"total" doc:"total number of matching manifest rows"`
+	NextOffset    int           `json:"next_offset" doc:"offset of the next page, or -1 on the last page"`
+}
+
 // SampleWithData is the enriched list row for the samples-with-data and
 // samples-without-data partitions. It carries the platforms the sample has
 // products on so every entry is platform-qualified rather than a bare "no data":
@@ -417,6 +425,30 @@ type RunDetail struct {
 	SampleIDs     []string           `json:"sample_ids,omitempty" doc:"flat list of the run's distinct sample ids (lean responses only)"`
 	StudyIDs      []string           `json:"study_ids,omitempty" doc:"flat list of the run's distinct study ids (lean responses only)"`
 	Lean          bool               `json:"lean,omitempty" doc:"true when the heavy nested objects were dropped in favour of the flat id lists"`
+}
+
+// PagedStudyDetail wraps a StudyDetail with list-sizing metadata from the
+// paginated remote detail response headers.
+type PagedStudyDetail struct {
+	StudyDetail StudyDetail `json:"study_detail" doc:"study detail response body"`
+	Total       int         `json:"total" doc:"total number of matching nested detail rows"`
+	NextOffset  int         `json:"next_offset" doc:"offset of the next page, or -1 on the last page"`
+}
+
+// PagedRunDetail wraps a RunDetail with list-sizing metadata from the
+// paginated remote detail response headers.
+type PagedRunDetail struct {
+	RunDetail  RunDetail `json:"run_detail" doc:"run detail response body"`
+	Total      int       `json:"total" doc:"total number of matching nested detail rows"`
+	NextOffset int       `json:"next_offset" doc:"offset of the next page, or -1 on the last page"`
+}
+
+// DetailOptions configures remote study and run detail calls with explicit
+// pagination and an optional lean response shape.
+type DetailOptions struct {
+	Limit  int
+	Offset int
+	Lean   bool
 }
 
 // LibraryLink is a compact library tuple used by the enrichment graph contract.
