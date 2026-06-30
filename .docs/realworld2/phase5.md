@@ -56,7 +56,9 @@ acceptance tests from E1 (`StudiesForFacultySponsor("carl", all)` returns
 the 3 Carl studies case-insensitively, each with full `Study` and empty
 `Role`, count 3; `limit=2&offset=0` gives 2 rows, `X-Total-Count: 3`,
 `X-Next-Offset: 2`; whitespace-only name -> 400; never-synced empty list
-+ both sentinels / synced-no-match empty list no error). Depends on Phase
+
+- both sentinels / synced-no-match empty list no error). Depends on Phase
+
 1.
 
 - [x] implemented
@@ -161,7 +163,7 @@ distinction in the Descriptions, and the E3 count-basis consistency
   are sequenced (5.1 -> 5.2 -> 5.3) to avoid same-file edit conflicts;
   they are otherwise logically independent surfaces.
 - E3 count-basis consistency (Note 2): group candidates by `(name, login,
-  email, role)` but count `StudyCount` per `(login, role)` for the
+email, role)` but count `StudyCount` per `(login, role)` for the
   study_users source, exactly as the spec states.
 - The `/studies/user` query must be served by a `study_users_mirror`
   lookup index (login/email/name or id_study_tmp); the MySQL EXPLAIN

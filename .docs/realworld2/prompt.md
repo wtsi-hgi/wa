@@ -100,15 +100,15 @@ grounded, not guessed):
 
 ## Per-question verdict
 
-| Q   | Question                              | Verdict             | What's needed                                                                                    |
-| --- | ------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------- |
-| 1   | data access groups for a study        | **Handled**         | `Study.data_access_group` is mirrored/exposed; just ensure a **cheap** path surfaces it (D5)     |
-| 2   | iRODS cram path for a run             | **GAP**             | D1: run-scoped iRODS + file-type filter                                                          |
-| 3   | study manifest (run_id, name, supplier_name, accession) | **GAP** | D2: study data-manifest listing (paginated + count)                                  |
-| 4   | manifest + iRODS cram path            | **GAP**             | D2 with the iRODS path column (builds on D1's file-type filter)                                  |
-| 5   | study id for `<name>`                 | **Handled**         | `/search/study/:term` (+`/count`); ensure results carry disambiguation fields (D5/descriptions)  |
-| 6   | not-sequenced / sequenced / QC-passed | **GAP** (aggregate) | D3: study QC-dimension counts (the `qc` data is already mirrored)                                |
-| 7   | studies for `<person>` / my studies   | **Partial**         | faculty-sponsor case already searchable; D4: people→studies (faculty_sponsor + `study_users`)    |
+| Q   | Question                                                | Verdict             | What's needed                                                                                   |
+| --- | ------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------- |
+| 1   | data access groups for a study                          | **Handled**         | `Study.data_access_group` is mirrored/exposed; just ensure a **cheap** path surfaces it (D5)    |
+| 2   | iRODS cram path for a run                               | **GAP**             | D1: run-scoped iRODS + file-type filter                                                         |
+| 3   | study manifest (run_id, name, supplier_name, accession) | **GAP**             | D2: study data-manifest listing (paginated + count)                                             |
+| 4   | manifest + iRODS cram path                              | **GAP**             | D2 with the iRODS path column (builds on D1's file-type filter)                                 |
+| 5   | study id for `<name>`                                   | **Handled**         | `/search/study/:term` (+`/count`); ensure results carry disambiguation fields (D5/descriptions) |
+| 6   | not-sequenced / sequenced / QC-passed                   | **GAP** (aggregate) | D3: study QC-dimension counts (the `qc` data is already mirrored)                               |
+| 7   | studies for `<person>` / my studies                     | **Partial**         | faculty-sponsor case already searchable; D4: people→studies (faculty_sponsor + `study_users`)   |
 
 ## Deliverables (all firm)
 
@@ -194,21 +194,21 @@ grounded, not guessed):
   `faculty_sponsor` is free-text full names (e.g. "Carl Anderson"), and `study_users`
   identifies a person by `name` AND `login` (Sanger username, e.g. "ca3") AND
   `email` (e.g. "ca3@sanger.ac.uk"). So:
-  - The studies-by-person lookups MUST match **case-insensitively** and **across
-    `name`, `login`, and `email`** (substring), so an email/login query and a
-    name query both work — a caller given only an email must not get a false empty
-    result, and vice-versa.
-  - Provide a **people-directory / resolve-person endpoint** that, given a partial
-    term, returns the **distinct candidate people** with their canonical stored
-    forms — distinct `faculty_sponsor` values, and distinct `study_users`
-    `(name, login, email, role)` — plus a study count per candidate. This lets a
-    caller translate a spoken/partial name ("Carl", "Anderson") into the exact stored
-    value before (or instead of) running the studies query, and disambiguate when
-    several people match. It must be cheap and bounded (+`/count`).
-  - The descriptions MUST state these stored forms and the "match across
-    name/login/email; if a narrow term yields nothing or is ambiguous, enumerate
-    candidates rather than dead-ending" behaviour, since the downstream MCP layer
-    relies on this text to guide the agent.
+    - The studies-by-person lookups MUST match **case-insensitively** and **across
+      `name`, `login`, and `email`** (substring), so an email/login query and a
+      name query both work — a caller given only an email must not get a false empty
+      result, and vice-versa.
+    - Provide a **people-directory / resolve-person endpoint** that, given a partial
+      term, returns the **distinct candidate people** with their canonical stored
+      forms — distinct `faculty_sponsor` values, and distinct `study_users`
+      `(name, login, email, role)` — plus a study count per candidate. This lets a
+      caller translate a spoken/partial name ("Carl", "Anderson") into the exact stored
+      value before (or instead of) running the studies query, and disambiguate when
+      several people match. It must be cheap and bounded (+`/count`).
+    - The descriptions MUST state these stored forms and the "match across
+      name/login/email; if a narrow term yields nothing or is ambiguous, enumerate
+      candidates rather than dead-ending" behaviour, since the downstream MCP layer
+      relies on this text to guide the agent.
 
 ### D5 — Cheap study-metadata exposure (Q1, and disambiguation for Q5)
 
@@ -232,9 +232,9 @@ Each new endpoint's results MUST be reachable from the `wa mlwh` CLI
   iRODS (D1) as a section of `wa mlwh info <run>` (respecting size — summarise/limit).
 - **Add a new `wa mlwh <subcommand>`** where the result is NOT info about a single
   identifier:
-  - iRODS paths filtered by file type → e.g. `wa mlwh irods <study|run|sample> [--file-type cram] [--limit/--offset]`.
-  - the study manifest (D2) → e.g. `wa mlwh manifest <study> [--with-irods --file-type cram] [paging]` (tabular output; honour budget/paging).
-  - people→studies (D4) → e.g. `wa mlwh studies --faculty-sponsor "<name>"` and `wa mlwh studies --user <login> [--role owner,manager]` (not an identifier-info call).
+    - iRODS paths filtered by file type → e.g. `wa mlwh irods <study|run|sample> [--file-type cram] [--limit/--offset]`.
+    - the study manifest (D2) → e.g. `wa mlwh manifest <study> [--with-irods --file-type cram] [paging]` (tabular output; honour budget/paging).
+    - people→studies (D4) → e.g. `wa mlwh studies --faculty-sponsor "<name>"` and `wa mlwh studies --user <login> [--role owner,manager]` (not an identifier-info call).
 - The agent building this decides the exact CLI shape, but every new endpoint must be
   demonstrable via the CLI in both local-cache and `--server` modes, with graceful
   degradation (not-found/empty/not-tracked render cleanly, exit 0), matching the
@@ -344,10 +344,10 @@ choices above; they are direct instructions, not open questions.
 - Provide **two separate endpoints**, not one endpoint with a mode/source param, so each
   carries its own description and the faculty_sponsor-vs-study_users routing is
   self-documenting (the MCP layer cannot mis-set a param):
-  - `GET /studies/faculty-sponsor/:name` (+ `/count`) — the named PI/sponsor; free-text
-    case-insensitive substring match on `study.faculty_sponsor`.
-  - `GET /studies/user/:person` (+ `/count`) — `study_users` role membership; matches
-    case-insensitively across `name`, `login`, AND `email` (substring).
+    - `GET /studies/faculty-sponsor/:name` (+ `/count`) — the named PI/sponsor; free-text
+      case-insensitive substring match on `study.faculty_sponsor`.
+    - `GET /studies/user/:person` (+ `/count`) — `study_users` role membership; matches
+      case-insensitively across `name`, `login`, AND `email` (substring).
 - **Default role filter for `/studies/user`** is `owner`, `manager`, and
   `data_access_contact` (the substantive "responsible-for" roles). **Exclude** `follower`
   and the operational roles `slf_manager`, `lab_manager`, `administrator` by default. A

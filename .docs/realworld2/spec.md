@@ -44,34 +44,34 @@ on the overview; disambiguation fields on search rows).
 
 ### New / changed source files
 
-| File                              | Purpose                                                                                                   |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `mlwh/hierarchy.go`               | `id_run`+`platform` on `IRODSPath` rows; file-type filter on study/sample/run iRODS; `IRODSPathsForRun`   |
-| `mlwh/manifest.go` (new)          | study data manifest list + count (one row per product, optional iRODS path)                               |
-| `mlwh/progress.go`                | extend `StatusBreakdown` with study-level `qc_pass`/`qc_fail`/`qc_pending` over sequenced samples         |
-| `mlwh/people.go` (new)            | studies-by-faculty-sponsor, studies-by-user (role-filtered), resolve-person directory                     |
-| `mlwh/availability.go`            | surface `data_access_group`/`faculty_sponsor`/`name`/`accession_number` on `StudyOverview`                |
-| `mlwh/types.go`                   | new result structs + `IRODSPath`/`StatusBreakdown`/`StudyOverview` field additions (additive)             |
-| `mlwh/count.go`                   | `/count` SQL + methods for the new lists                                                                   |
-| `mlwh/registry.go`                | new `Endpoint` entries; extend recency/QC Descriptions                                                     |
-| `mlwh/queryer.go`                 | new `Queryer` members                                                                                     |
-| `mlwh/server.go`                  | one handler `case` per new Method; file-type query parsing; role query parsing                            |
-| `mlwh/remote.go`                  | new `RemoteClient` methods (+ `Page[T]` variants for new paginated lists)                                 |
-| `mlwh/sync.go`                    | `study_users` constant; `studyUsersMirrorColumns`; new index sets; sparse-read decisions; iRODS unchanged |
-| `mlwh/sync_platform_coverage.go`  | `studyUsersWholesaleSpec` + dispatch + `wholesaleMirrorTables` entry                                      |
-| `mlwh/cache_schema.go`            | register `study_users_mirror` in the order/recreate/drop/sync-state lists                                 |
-| `mlwh/cache.go`                   | bump `CacheSchemaVersion` 10 -> 11                                                                        |
-| `mlwh/openapi.go`                 | bump `APIVersion` 1.6.0 -> 1.7.0                                                                           |
-| `mlwh/freshness.go`               | add `study_users` to `freshnessSyncTables`                                                                |
-| `cmd/mlwh_info.go`                | study QC counts + study metadata on `info <study>`; run-scoped iRODS on `info <run>`                      |
-| `cmd/mlwh_irods.go` (new)         | `wa mlwh irods <study\|run\|sample> [--file-type] [paging]`                                               |
-| `cmd/mlwh_manifest.go` (new)      | `wa mlwh manifest <study> [--with-irods --file-type] [paging]`                                            |
-| `cmd/mlwh_studies.go` (new)       | `wa mlwh studies --faculty-sponsor <n> / --user <p> [--role ...]`; `wa mlwh people <term>`                |
+| File                             | Purpose                                                                                                   |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `mlwh/hierarchy.go`              | `id_run`+`platform` on `IRODSPath` rows; file-type filter on study/sample/run iRODS; `IRODSPathsForRun`   |
+| `mlwh/manifest.go` (new)         | study data manifest list + count (one row per product, optional iRODS path)                               |
+| `mlwh/progress.go`               | extend `StatusBreakdown` with study-level `qc_pass`/`qc_fail`/`qc_pending` over sequenced samples         |
+| `mlwh/people.go` (new)           | studies-by-faculty-sponsor, studies-by-user (role-filtered), resolve-person directory                     |
+| `mlwh/availability.go`           | surface `data_access_group`/`faculty_sponsor`/`name`/`accession_number` on `StudyOverview`                |
+| `mlwh/types.go`                  | new result structs + `IRODSPath`/`StatusBreakdown`/`StudyOverview` field additions (additive)             |
+| `mlwh/count.go`                  | `/count` SQL + methods for the new lists                                                                  |
+| `mlwh/registry.go`               | new `Endpoint` entries; extend recency/QC Descriptions                                                    |
+| `mlwh/queryer.go`                | new `Queryer` members                                                                                     |
+| `mlwh/server.go`                 | one handler `case` per new Method; file-type query parsing; role query parsing                            |
+| `mlwh/remote.go`                 | new `RemoteClient` methods (+ `Page[T]` variants for new paginated lists)                                 |
+| `mlwh/sync.go`                   | `study_users` constant; `studyUsersMirrorColumns`; new index sets; sparse-read decisions; iRODS unchanged |
+| `mlwh/sync_platform_coverage.go` | `studyUsersWholesaleSpec` + dispatch + `wholesaleMirrorTables` entry                                      |
+| `mlwh/cache_schema.go`           | register `study_users_mirror` in the order/recreate/drop/sync-state lists                                 |
+| `mlwh/cache.go`                  | bump `CacheSchemaVersion` 10 -> 11                                                                        |
+| `mlwh/openapi.go`                | bump `APIVersion` 1.6.0 -> 1.7.0                                                                          |
+| `mlwh/freshness.go`              | add `study_users` to `freshnessSyncTables`                                                                |
+| `cmd/mlwh_info.go`               | study QC counts + study metadata on `info <study>`; run-scoped iRODS on `info <run>`                      |
+| `cmd/mlwh_irods.go` (new)        | `wa mlwh irods <study\|run\|sample> [--file-type] [paging]`                                               |
+| `cmd/mlwh_manifest.go` (new)     | `wa mlwh manifest <study> [--with-irods --file-type] [paging]`                                            |
+| `cmd/mlwh_studies.go` (new)      | `wa mlwh studies --faculty-sponsor <n> / --user <p> [--role ...]`; `wa mlwh people <term>`                |
 
 ### Existing infrastructure (authoritative; reuse, do not duplicate)
 
 - Registry `Endpoint{Method,Verb,Path,PathParams,Query,Paginated,NewResult,
-  Summary,Description,QueryParams}`; `newResult[T]`, `newSliceResult[T]`,
+Summary,Description,QueryParams}`; `newResult[T]`, `newSliceResult[T]`,
   `fetchAllPaginationParams()`, `searchPaginationParams()`. OpenAPI + endpoint
   reference derive from the Registry; no manual OpenAPI edits beyond
   `APIVersion`.
@@ -86,7 +86,7 @@ on the overview; disambiguation fields on search rows).
 - RemoteClient `remoteCall[T]` / `remoteCallPage[T]` / `remotePagination` /
   `remoteAddedWindow`; dynamic `Call` derived from the Registry.
 - QC roll-up: `sampleProductMetricsQCUnion()`, `rollUpSampleQC(productCount,
-  pending, minQC)`, constants `qcPass`/`qcFail`/`qcPending` (`qc.go`),
+pending, minQC)`, constants `qcPass`/`qcFail`/`qcPending` (`qc.go`),
   `qcNotTracked` (`progress.go`).
 - Study membership: `studyDataMembershipJoin`, `studyScopedIRODSExists(window)`,
   `studyScopedProductMetricsExists()`, `platformsForStudySamplesSQL`,
@@ -294,8 +294,8 @@ Add `cache_schema/{sqlite,mysql}/study_users_mirror.sql` (mirror the
   case-insensitive lookup is index-friendly.
 - indexes (both dialects): `study_users_mirror_id_study_tmp_idx (id_study_tmp)`,
   `study_users_mirror_login_idx (login)`, `study_users_mirror_email_idx
-  (email)`, `study_users_mirror_name_idx (name)`, `study_users_mirror_role_idx
-  (role)`.
+(email)`, `study_users_mirror_name_idx (name)`, `study_users_mirror_role_idx
+(role)`.
 
 Register `study_users_mirror` in `schemaStatementOrder`,
 `cacheMigrationRecreateTables`, and `cacheMigrationDropTables`
@@ -324,14 +324,14 @@ As an implementor, I want indexes backing the new query paths so they are
 index-served (HARD REQ 1).
 
 - Add to `study_mirror.sql` (both dialects): `study_mirror_faculty_sponsor_idx
-  (faculty_sponsor)`. (Backs D4 faculty-sponsor lookup. Substring `LIKE
-  '%term%'` cannot use it for a leading wildcard, but it backs the
+(faculty_sponsor)`. (Backs D4 faculty-sponsor lookup. Substring `LIKE
+'%term%'` cannot use it for a leading wildcard, but it backs the
   resolve-person `GROUP BY faculty_sponsor` distinct enumeration and any
   anchored/equality probe; declare it as the contract.)
 - Add to `seq_product_irods_locations_mirror.sql` (both dialects):
   `spi_mirror_iseq_product_idx (id_iseq_product)`. (Backs D1 run-scoped iRODS:
   filter `iseq_product_metrics_mirror` by `id_run` over its `(id_run, position,
-  tag_index)` index, then join the iRODS mirror on `id_iseq_product` -- without
+tag_index)` index, then join the iRODS mirror on `id_iseq_product` -- without
   this index that join is a full scan of the ~9M-row iRODS mirror. Also backs
   the D2 manifest's per-product iRODS LEFT JOIN.)
 
@@ -357,18 +357,15 @@ role data stays fresh.
   `supportedSyncTables` (`sync.go`) and `freshnessSyncTables` (`freshness.go`)
   in the same position.
 - Add `studyUsersWholesaleSpec()` returning a `wholesaleMirrorSpec` (the
-  `oseqFlowcellWholesaleSpec` pattern):
-  - `mirrorColumns`: `id_study_users_tmp, id_study_tmp, role, login, email,
-    name, last_updated`.
-  - `sourceQuery`: `SELECT su.id_study_users_tmp, su.id_study_tmp, su.role,
-    su.login, su.email, su.name, su.last_updated FROM study_users su INNER JOIN
-    study ON study.id_study_tmp = su.id_study_tmp AND study.id_lims = 'SQSCP'
-    ORDER BY su.id_study_users_tmp` (the INNER JOIN to `study` mirrors the oseq
-    pattern: only rows whose study is an SQSCP study are mirrored, so the link
-    to `study_mirror.id_study_tmp` always resolves; NULL `login`/`email`/`name`
-    are COALESCEd to `''` in the scan).
-  - `scan`: scan the 7 columns (nullable text via `sql.NullString` -> `''`),
-    skip a row whose `id_study_tmp` is 0.
+  `oseqFlowcellWholesaleSpec` pattern): - `mirrorColumns`: `id_study_users_tmp, id_study_tmp, role, login, email,
+name, last_updated`. - `sourceQuery`: `SELECT su.id_study_users_tmp, su.id_study_tmp, su.role,
+su.login, su.email, su.name, su.last_updated FROM study_users su INNER JOIN
+study ON study.id_study_tmp = su.id_study_tmp AND study.id_lims = 'SQSCP'
+ORDER BY su.id_study_users_tmp` (the INNER JOIN to `study` mirrors the oseq
+  pattern: only rows whose study is an SQSCP study are mirrored, so the link
+  to `study_mirror.id_study_tmp` always resolves; NULL `login`/`email`/`name`
+  are COALESCEd to `''` in the scan). - `scan`: scan the 7 columns (nullable text via `sql.NullString` -> `''`),
+  skip a row whose `id_study_tmp` is 0.
 - Add `syncTableStudyUsers` to `wholesaleMirrorTables()` and a `case` to
   `wholesaleMirrorSpecFor` and the `syncTableData` wholesale `case` group.
 
@@ -479,7 +476,7 @@ unchanged so count == len(list)).
    `iseq_product_metrics_mirror` row, when the study iRODS list is fetched, then
    that row has `id_run=0` and `platform="ont"`.
 3. Given `CountIRODSPathsForStudy("S1")` and `len(IRODSPathsForStudy("S1",
-   all))`, when both are taken, then they are equal (the id_run/platform
+all))`, when both are taken, then they are equal (the id_run/platform
    additions did not change the row grain).
 
 ### B2: file-type filter on study/sample/run iRODS lists and counts
@@ -590,7 +587,7 @@ CountIRODSPathsForRun(ctx, idRun, fileType string) (Count, error)
    never-synced cache, then an error satisfying both `ErrCacheNeverSynced` and
    `ErrNotFound`.
 5. Given `CountIRODSPathsForRun("52553", "")` and `len(IRODSPathsForRun("52553",
-   "", all))`, when both taken, then equal.
+"", all))`, when both taken, then equal.
 
 ## C. D2 -- Study data manifest
 
@@ -643,7 +640,7 @@ int) (StudyManifest, error)`
 1. Given study `S1` (study
    `name`/`accession`/`faculty_sponsor`/`data_access_group` set) with 3 Illumina
    products across 2 samples (run/lane/tag distinct), when `StudyManifest("S1",
-   "", false, all)` is called, then the envelope carries the study metadata
+"", false, all)` is called, then the envelope carries the study metadata
    once, `rows` has 3 entries each with the correct `name`, `supplier_name`,
    `accession_number`, `sanger_sample_id`, `id_run`, `lane`, `tag_index`, and no
    `irods_path`, and `cache_synced_at` is populated.
@@ -717,7 +714,7 @@ buckets it:
   sample's study QC verdict cannot disagree with `SampleProgress.qc` for a
   single-study sample.)
 - `qc_pass + qc_fail + qc_pending == sequenced` (= `samples_total -
-  distinct.registered`). not_tracked / registered-only / ONT samples have no
+distinct.registered`). not_tracked / registered-only / ONT samples have no
   products and are excluded from the QC split (they are the not-sequenced
   bucket), never a false zero.
 
@@ -726,11 +723,11 @@ mirrors). Per-platform QC counts are DEFERRED (not added now); the response
 shape leaves room (a future `per_platform[i].qc`) without breaking.
 
 `Description`: state that received = `samples_total`, sequenced = `samples_total
-- registered`, not-sequenced = `registered`; that `qc` is the QC split of the
-SEQUENCED distinct samples using the same per-sample roll-up as
-`/sample/:id/progress` (fail > pending > pass over `iseq_product_metrics.qc`
-1/0/NULL), summing to sequenced; that not_tracked/ONT samples are not-sequenced
-and excluded from the QC split; and the freshness caveat.
+
+- registered`, not-sequenced = `registered`; that `qc`is the QC split of the
+SEQUENCED distinct samples using the same per-sample roll-up as`/sample/:id/progress`(fail > pending > pass over`iseq_product_metrics.qc`
+  1/0/NULL), summing to sequenced; that not_tracked/ONT samples are not-sequenced
+  and excluded from the QC split; and the freshness caveat.
 
 **Package:** `mlwh/`
 **File:** `mlwh/progress.go`
@@ -746,7 +743,7 @@ and excluded from the QC split; and the freshness caveat.
    product `qc` NULL; sample D registered-only (no products); sample E ONT (no
    products), when `StatusBreakdown("S1")` is called, then
    `distinct.registered=2` (D, E), sequenced = `samples_total-2 = 3`, and `qc ==
-   {qc_pass:1, qc_fail:1, qc_pending:1}` summing to 3.
+{qc_pass:1, qc_fail:1, qc_pending:1}` summing to 3.
 2. Given the same study, when the QC sub-struct is summed, then
    `qc_pass+qc_fail+qc_pending == samples_total - distinct.registered` (the
    sequenced count).
@@ -758,7 +755,7 @@ and excluded from the QC split; and the freshness caveat.
    `qc_pending`).
 5. Given a never-synced cache, then both sentinels; an unknown study ->
    `ErrNotFound`; a synced study with no samples -> all-zero ladders AND `qc ==
-   {0,0,0}` with `cache_synced_at` populated.
+{0,0,0}` with `cache_synced_at` populated.
 6. Given the existing `StatusBreakdown` regression tests (distinct /
    per_platform / with_detailed_timeline), when run, then they still pass
    unchanged (the QC field is additive).
@@ -792,6 +789,7 @@ cache with no match returns an empty list (no error).
 **Test file:** `mlwh/people_test.go`
 
 **Method signatures:**
+
 ```go
 StudiesForFacultySponsor(ctx, name string, limit, offset int) ([]PersonStudy, error)
 CountStudiesForFacultySponsor(ctx, name string) (Count, error)
@@ -842,10 +840,12 @@ never-synced; empty list no-error on synced-no-match).
 **Test file:** `mlwh/people_test.go`
 
 **Method signatures:**
+
 ```go
 StudiesForUser(ctx, person, role string, limit, offset int) ([]PersonStudy, error)
 CountStudiesForUser(ctx, person, role string) (Count, error)
 ```
+
 (`role` is the raw comma-separated override, "" for the default set; the handler
 passes the `role` query param through.)
 
@@ -905,6 +905,7 @@ the chosen stored form". Cascade as E1/E2.
 **Test file:** `mlwh/people_test.go`
 
 **Method signatures:**
+
 ```go
 ResolvePerson(ctx, term string, limit, offset int) ([]PersonCandidate, error)
 CountResolvePerson(ctx, term string) (Count, error)
@@ -915,9 +916,9 @@ CountResolvePerson(ctx, term string) (Count, error)
 1. Given `study_mirror` with `faculty_sponsor` "Carl Anderson" on 91 studies
    (and a `study_users` row name "Carl Anderson"/login "ca3"/email
    "ca3@sanger.ac.uk"/role owner on 59 of them), when `ResolvePerson("carl",
-   all)` is called, then it returns a `faculty_sponsor` candidate (`Name="Carl
-   Anderson"`, `StudyCount=91`) AND a `study_users` candidate (`Name="Carl
-   Anderson"`, `Login="ca3"`, `Email="ca3@sanger.ac.uk"`, `Role="owner"`,
+all)` is called, then it returns a `faculty_sponsor` candidate (`Name="Carl
+Anderson"`, `StudyCount=91`) AND a `study_users` candidate (`Name="Carl
+Anderson"`, `Login="ca3"`, `Email="ca3@sanger.ac.uk"`, `Role="owner"`,
    `StudyCount=59`).
 2. Given `ResolvePerson("ca3", all)` (by login fragment), then the `study_users`
    candidate is returned (match across login), enabling translation from a login
@@ -990,18 +991,18 @@ bare slice, so it uses the plain `remoteCall`), the `Registry` `Endpoint`
 
 New endpoint paths (settled):
 
-| Method                          | Verb | Path                                      |
-| ------------------------------- | ---- | ----------------------------------------- |
-| `IRODSPathsForRun`              | GET  | `/run/:id/irods`                          |
-| `CountIRODSPathsForRun`         | GET  | `/run/:id/irods/count`                    |
-| `StudyManifest`                 | GET  | `/study/:id/manifest`                     |
-| `CountStudyManifest`            | GET  | `/study/:id/manifest/count`               |
-| `StudiesForFacultySponsor`      | GET  | `/studies/faculty-sponsor/:name`          |
-| `CountStudiesForFacultySponsor` | GET  | `/studies/faculty-sponsor/:name/count`    |
-| `StudiesForUser`                | GET  | `/studies/user/:person`                   |
-| `CountStudiesForUser`           | GET  | `/studies/user/:person/count`             |
-| `ResolvePerson`                 | GET  | `/resolve-person/:term`                   |
-| `CountResolvePerson`            | GET  | `/resolve-person/:term/count`             |
+| Method                          | Verb | Path                                   |
+| ------------------------------- | ---- | -------------------------------------- |
+| `IRODSPathsForRun`              | GET  | `/run/:id/irods`                       |
+| `CountIRODSPathsForRun`         | GET  | `/run/:id/irods/count`                 |
+| `StudyManifest`                 | GET  | `/study/:id/manifest`                  |
+| `CountStudyManifest`            | GET  | `/study/:id/manifest/count`            |
+| `StudiesForFacultySponsor`      | GET  | `/studies/faculty-sponsor/:name`       |
+| `CountStudiesForFacultySponsor` | GET  | `/studies/faculty-sponsor/:name/count` |
+| `StudiesForUser`                | GET  | `/studies/user/:person`                |
+| `CountStudiesForUser`           | GET  | `/studies/user/:person/count`          |
+| `ResolvePerson`                 | GET  | `/resolve-person/:term`                |
+| `CountResolvePerson`            | GET  | `/resolve-person/:term/count`          |
 
 `file_type` is added as a `Query` param to the existing
 `IRODSPathsForStudy`/`IRODSPathsForSample` (and their `/count`) entries plus the
@@ -1089,7 +1090,7 @@ run-scoped iRODS on `info <run>`.
   already carry them, so no interface change beyond the new struct fields).
 - `info <run>`: add a run-scoped iRODS section (D1), summarised/limited
   (`infoMaxRelated`), via a new `mlwhInfoClient` method `IRODSPathsForRun(ctx,
-  idRun, "", limit, offset)`. Render path + `id_run` + `platform`; an empty
+idRun, "", limit, offset)`. Render path + `id_run` + `platform`; an empty
   result prints "none" (exit 0).
 
 **Package:** `cmd/`
@@ -1099,14 +1100,14 @@ run-scoped iRODS on `info <run>`.
 **Acceptance tests:**
 
 1. Given a fake client returning a `StatusBreakdown` with `qc={pass:40012,
-   fail:200,pending:583}` and `distinct.registered=4482` over
+fail:200,pending:583}` and `distinct.registered=4482` over
    `samples_total=45277`, when `wa mlwh info 7699 --type study` runs, then the
    output shows received 45277, sequenced 40795, not-sequenced 4482, and qc_pass
    40012 / qc_fail 200 / qc_pending 583.
 2. Given a study overview carrying `data_access_group="grp-1"`, when `info
-   <study>` runs, then the output shows the data access group.
+<study>` runs, then the output shows the data access group.
 3. Given a run resolving to 52553 with 6 iRODS objects, when `info 52553 --type
-   run` runs, then a run iRODS section lists the (capped) paths with
+run` runs, then a run iRODS section lists the (capped) paths with
    `id_run`/`platform`; given a run with no iRODS objects, the section renders
    "none" and the command exits 0.
 4. Given a never-synced cache in `--server` mode, when `info <study>` runs, then
@@ -1134,7 +1135,7 @@ matching iRODS paths" line and exits 0; a never-synced cache degrades like
 **Acceptance tests:**
 
 1. Given a fake client returning 2 `.cram` paths for study `S1`, when `wa mlwh
-   irods study S1 --file-type cram` runs, then both paths print with their
+irods study S1 --file-type cram` runs, then both paths print with their
    `id_run`/`platform`, exit 0.
 2. Given `wa mlwh irods run 52553 --file-type bam` returning an empty list, when
    run, then a "no matching iRODS paths" message prints and the command exits 0.
@@ -1199,7 +1200,7 @@ Both follow the `--server`/local + graceful-degradation pattern.
    studies, when `wa mlwh studies --faculty-sponsor carl` runs, then 3 study
    lines print with the total (3) and `faculty_sponsor`, exit 0.
 2. Given `StudiesForUser("ca3", "owner,manager")` returns X,Y,Z, when `wa mlwh
-   studies --user ca3 --role owner,manager` runs, then 3 lines print each with
+studies --user ca3 --role owner,manager` runs, then 3 lines print each with
    its `role`, exit 0.
 3. Given neither/both of `--faculty-sponsor`/`--user`, when run, then a clear
    usage error and non-zero exit.
@@ -1299,7 +1300,7 @@ helpers, extended for the new columns/tables:
   resolve), incl. one Illumina (id_run derivable) and one non-Illumina (id_run
   0).
 - a new `seedStudyUsersMirrorRow(t, db, idStudyUsersTmp, idStudyTmp int64, role,
-  login, email, name string)` and study rows with `id_study_tmp` matching, for
+login, email, name string)` and study rows with `id_study_tmp` matching, for
   the D4 person scenarios (owner/manager/data_access_contact/follower; a person
   who is both owner and data_access_contact of one study; an email/login/name
   variant).

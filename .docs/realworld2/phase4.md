@@ -120,7 +120,7 @@ in the batch together in a single review pass).
   (progress.go), F1 extends `StudyOverview` (availability.go) and adds a
   search confirmation; the two touch disjoint files and structs.
 - SEED FOOTGUN (Note 1): the D3 strict-equality assertion `qc_pass +
-  qc_fail + qc_pending == samples_total - distinct.registered` holds only
+qc_fail + qc_pending == samples_total - distinct.registered` holds only
   because every with_data sample has a product-metrics row. The D3 (and
   any shared J1) fixtures must NOT add an iRODS-only sample lacking a
   product-metrics row; not_tracked/ONT/registered-only samples must have

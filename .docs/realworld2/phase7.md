@@ -26,15 +26,16 @@ query must exist).
 
 CAUTION (Note 1, D3 SEED FOOTGUN -- applies to the J1 seed used by I1):
 the D1q.2 strict equality `qc_pass + qc_fail + qc_pending == samples_total
-- distinct.registered` holds in production ONLY because the iRODS mirror
+
+- distinct.registered`holds in production ONLY because the iRODS mirror
 is populated exclusively via INNER JOINs to the product-metrics source
-tables (every `with_data` sample has a product-metrics row). The J1
+tables (every`with_data`sample has a product-metrics row). The J1
 scenario seed and the I1 MySQL fixtures must NOT introduce an iRODS-only
-sample lacking a product-metrics row (e.g. the artificial `ont`-platform
-iRODS row used for B1.2 in Phase 2) into the QC-count fixtures, or the
-strict-equality assertion will spuriously fail on MySQL. The
-not_tracked / ONT / registered-only samples must have NO product-metrics
-rows and no iRODS row in the QC scenario.
+sample lacking a product-metrics row (e.g. the artificial`ont`-platform
+  iRODS row used for B1.2 in Phase 2) into the QC-count fixtures, or the
+  strict-equality assertion will spuriously fail on MySQL. The
+  not_tracked / ONT / registered-only samples must have NO product-metrics
+  rows and no iRODS row in the QC scenario.
 
 ## Items
 
