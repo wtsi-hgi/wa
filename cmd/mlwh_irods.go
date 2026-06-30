@@ -153,13 +153,18 @@ func newMLWHIRODSCommand() *cobra.Command {
 				return err
 			}
 
+			normalisedFileType, err := normaliseIRODSFileTypeFlag(fileType, cmd.Flags().Changed("file-type"))
+			if err != nil {
+				return err
+			}
+
 			client, err := openMLWHIRODSConfiguredClient(cmd.Context(), serverURL)
 			if err != nil {
 				return fmt.Errorf("open mlwh client: %w", err)
 			}
 			defer func() { _ = client.Close() }()
 
-			return runMLWHIRODS(cmd.Context(), client, cmd.OutOrStdout(), scope, identifier, fileType, limit, offset, jsonOut)
+			return runMLWHIRODS(cmd.Context(), client, cmd.OutOrStdout(), scope, identifier, normalisedFileType, limit, offset, jsonOut)
 		},
 	}
 
@@ -194,23 +199,30 @@ func parseIRODSScopeArgs(args []string) (scope, identifier string, err error) {
 	}
 }
 
+func normaliseIRODSFileTypeFlag(raw string, present bool) (string, error) {
+	if !present {
+		return "", nil
+	}
+
+	normalised := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(raw), "."))
+	if normalised == "" || strings.ContainsAny(normalised, `%_/`) {
+		return "", fmt.Errorf("invalid --file-type %q: a filename suffix may not be empty or contain '%%', '_' or '/'", raw)
+	}
+
+	return normalised, nil
+}
+
 // runMLWHIRODS dispatches to the scope's iRODS query and renders the result. It
 // applies the soft-failure policy: a never-synced cache (ErrCacheNeverSynced) is a
-// neutral cache-unavailable result (exit 0), an empty/unmatched list prints the
-// neutral no-match line (exit 0), and an invalid file type (ErrUnsupportedIdentifier,
-// a bad-request-class input error) returns a clear error (non-zero exit).
+// neutral cache-unavailable result (exit 0), and an empty/unmatched list prints
+// the neutral no-match line (exit 0). The caller validates and normalises the
+// optional file-type filter before dispatch, so query-level ErrUnsupportedIdentifier
+// remains an identifier error.
 func runMLWHIRODS(ctx context.Context, client mlwhIRODSClient, out io.Writer, scope, identifier, fileType string, limit, offset int, jsonOut bool) error {
 	paths, err := dispatchIRODSScope(ctx, client, scope, identifier, fileType, limit, offset)
 	if err != nil {
 		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
 			return writeIRODSCacheUnavailable(out, jsonOut)
-		}
-
-		// A bad-request-class error here is the file-type filter being invalid (an
-		// input error, not a degradation): name the rejected --file-type value so
-		// the message is clear, and exit non-zero.
-		if errors.Is(err, mlwh.ErrUnsupportedIdentifier) && strings.TrimSpace(fileType) != "" {
-			return fmt.Errorf("invalid --file-type %q: a filename suffix may not be empty or contain '%%', '_' or '/'", fileType)
 		}
 
 		return fmt.Errorf("irods paths for %s %q: %w", scope, identifier, err)

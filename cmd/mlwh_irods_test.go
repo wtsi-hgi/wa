@@ -29,6 +29,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -123,7 +124,7 @@ func TestMLWHIRODSCommandRequiresScopeAndIdentifier(t *testing.T) {
 // AT1: a fake client returning 2 .cram paths for study S1 prints both paths with
 // their id_run/platform and exits 0.
 func TestMLWHIRODSStudyPrintsPaths(t *testing.T) {
-	convey.Convey("Given a fake client returning 2 cram paths for study S1, when wa mlwh irods study S1 --file-type cram runs, then both paths print with id_run/platform, exit 0 (H2 acceptance 1)", t, func() {
+	convey.Convey("Given a fake client returning 2 cram paths for study S1, when wa mlwh irods study S1 --file-type .CRAM runs, then both paths print with id_run/platform, exit 0 (H2 acceptance 1)", t, func() {
 		var capturedFileType string
 		stub := &stubMLWHIRODSClient{
 			study: func(_ context.Context, id, fileType string, _, _ int) ([]mlwh.IRODSPath, error) {
@@ -149,7 +150,7 @@ func TestMLWHIRODSStudyPrintsPaths(t *testing.T) {
 
 		withStubMLWHIRODSClient(t, stub)
 
-		output, err := executeRootCommandForTest(t, []string{"mlwh", "irods", "study", "S1", "--file-type", "cram"})
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "irods", "study", "S1", "--file-type", ".CRAM"})
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(capturedFileType, convey.ShouldEqual, "cram")
@@ -232,13 +233,15 @@ func TestMLWHIRODSEmptyJSONIsArray(t *testing.T) {
 	})
 }
 
-// AT4: an invalid file type yields a bad-request-class error; the CLI prints a clear
+// AT4: an invalid file type is rejected before dispatch; the CLI prints a clear
 // message and exits non-zero (input error, not a degradation).
 func TestMLWHIRODSInvalidFileTypeExitsNonZero(t *testing.T) {
-	convey.Convey("Given --file-type a/b yields a bad-request-class error, when wa mlwh irods runs, then it prints a clear message and exits non-zero (H2 acceptance 4)", t, func() {
+	convey.Convey("Given --file-type a/b, when wa mlwh irods runs, then it prints a clear message and exits non-zero without dispatching (H2 acceptance 4)", t, func() {
 		stub := &stubMLWHIRODSClient{
 			study: func(context.Context, string, string, int, int) ([]mlwh.IRODSPath, error) {
-				return nil, mlwh.ErrUnsupportedIdentifier
+				t.Fatalf("invalid --file-type should be rejected before dispatch")
+
+				return nil, nil
 			},
 		}
 
@@ -249,6 +252,28 @@ func TestMLWHIRODSInvalidFileTypeExitsNonZero(t *testing.T) {
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(output, convey.ShouldContainSubstring, "a/b")
 		convey.So(output, convey.ShouldNotContainSubstring, "no matching iRODS paths")
+	})
+}
+
+func TestMLWHIRODSRunUnsupportedIdentifierKeepsRunError(t *testing.T) {
+	convey.Convey("Given a valid --file-type and an unsupported run identifier, when wa mlwh irods runs, then it reports the run error rather than a file-type error", t, func() {
+		stub := &stubMLWHIRODSClient{
+			run: func(_ context.Context, idRun, fileType string, _, _ int) ([]mlwh.IRODSPath, error) {
+				convey.So(idRun, convey.ShouldEqual, "not-a-run")
+				convey.So(fileType, convey.ShouldEqual, "cram")
+
+				return nil, fmt.Errorf("%w: invalid run identifier", mlwh.ErrUnsupportedIdentifier)
+			},
+		}
+
+		withStubMLWHIRODSClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "irods", "run", "not-a-run", "--file-type", "cram"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(output, convey.ShouldContainSubstring, `irods paths for run "not-a-run"`)
+		convey.So(output, convey.ShouldContainSubstring, "invalid run identifier")
+		convey.So(output, convey.ShouldNotContainSubstring, "invalid --file-type")
 	})
 }
 
