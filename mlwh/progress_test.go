@@ -829,6 +829,62 @@ func TestSampleProgressEmbedsUltimagenRunFromRunMetrics(t *testing.T) {
 	})
 }
 
+// F3 per-platform run regression (Ultimagen): when a sample is linked to two
+// distinct Ultimagen runs that happen to carry the same run_start/run_complete
+// values, SampleProgress still embeds one RunStatusTimeline per run. The
+// externally reported IDRun remains 0 for non-Illumina timelines.
+func TestSampleProgressKeepsDistinctUltimagenRunsWithIdenticalDates(t *testing.T) {
+	convey.Convey("Given an Ultimagen sample linked to two distinct runs with matching lifecycle dates", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedF3ProgressScenario(t, cache.DB())
+
+		secondIDRun := int64(f3UltimagenIDRun + 1)
+		seedUseqProductMetricsMirrorRow(t, cache.DB(), "useq-"+formatInt(f3Ultimagen)+"-repeat", secondIDRun, f3Ultimagen, "S1")
+		seedUseqRunMetricsMirrorRow(t, cache.DB(), secondIDRun, f3UltimagenRunArchivedPhase, map[string]time.Time{
+			"run_start":    f3UltimagenStatusBase,
+			"run_complete": f3UltimagenStatusBase.Add(time.Hour),
+		})
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		progress, err := client.SampleProgress(context.Background(), "sample-"+formatInt(f3Ultimagen))
+
+		convey.Convey("when SampleProgress is called, then both Ultimagen timelines are returned even though their dates are identical", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			ultimagenRuns := make([]RunStatusTimeline, 0, len(progress.Runs))
+			for _, run := range progress.Runs {
+				if run.Platform == "Ultimagen" {
+					ultimagenRuns = append(ultimagenRuns, run)
+				}
+			}
+			convey.So(ultimagenRuns, convey.ShouldHaveLength, 2)
+
+			idRuns := make([]int, len(ultimagenRuns))
+			eventPhases := make([][]string, len(ultimagenRuns))
+			firstEnteredAt := make([]string, len(ultimagenRuns))
+			for i, run := range ultimagenRuns {
+				idRuns[i] = run.IDRun
+				for _, event := range run.Events {
+					eventPhases[i] = append(eventPhases[i], event.Phase)
+				}
+				firstEnteredAt[i] = run.Events[0].EnteredAt
+			}
+			convey.So(idRuns, convey.ShouldResemble, []int{0, 0})
+			convey.So(eventPhases, convey.ShouldResemble, [][]string{
+				{f3UltimagenRunInProgressPhase, f3UltimagenRunArchivedPhase},
+				{f3UltimagenRunInProgressPhase, f3UltimagenRunArchivedPhase},
+			})
+			convey.So(firstEnteredAt, convey.ShouldResemble, []string{
+				f3UltimagenStatusBase.Format(utcRFC3339Layout),
+				f3UltimagenStatusBase.Format(utcRFC3339Layout),
+			})
+		})
+	})
+}
+
 // seedF3ProgressScenario extends the reusable HARD REQ 7 scenario seed (the F1
 // baseline + F2 run-status portions) for the unified-progress endpoint: it adds
 // seq_ops_tracking_per_sample_mirror rows (the delivered sample filled

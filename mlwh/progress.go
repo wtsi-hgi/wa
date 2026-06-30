@@ -162,7 +162,7 @@ const sampleEseqLaneMetricsSQL = `SELECT DISTINCT l.run_started, l.run_complete 
 // string, so each date column is labelled by its source lifecycle phase. DISTINCT
 // collapses the fan-out so each id_run contributes one timeline source; ordered by
 // id_run then run_start.
-const sampleUseqRunMetricsSQL = `SELECT DISTINCT r.run_start, r.run_complete ` +
+const sampleUseqRunMetricsSQL = `SELECT DISTINCT r.id_run, r.run_start, r.run_complete ` +
 	`FROM useq_run_metrics_mirror AS r ` +
 	`JOIN useq_product_metrics_mirror AS p ON p.id_run = r.id_run ` +
 	`WHERE p.id_sample_tmp = ? ORDER BY r.id_run, r.run_start`
@@ -1256,8 +1256,9 @@ func (c *Client) sampleUseqRunTimelines(ctx context.Context, idSampleTmp int64) 
 
 	timelines := make([]RunStatusTimeline, 0)
 	for rows.Next() {
+		var idRun int64
 		var runStart, runComplete any
-		if err = rows.Scan(&runStart, &runComplete); err != nil {
+		if err = rows.Scan(&idRun, &runStart, &runComplete); err != nil {
 			return nil, fmt.Errorf("%w: scan sample useq run metrics: %w", ErrUpstreamImpaired, err)
 		}
 
