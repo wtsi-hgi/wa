@@ -91,7 +91,7 @@ wrapper that discards headers.
 1. Given a stub server returning `[]Study{{IDStudyLims: "1"}}` with
    `X-Total-Count: 7` and `X-Next-Offset: 2`, when
    `CallWithHeaders(ctx, "AllStudies", nil,
-   url.Values{"limit": {"1"}, "offset": {"1"}})` runs, then the request URI
+url.Values{"limit": {"1"}, "offset": {"1"}})` runs, then the request URI
    is `/studies?limit=1&offset=1`, the result is `*[]Study` with one row,
    returned headers contain `X-Total-Count == "7"` and
    `X-Next-Offset == "2"`, and error is nil.
@@ -190,7 +190,7 @@ when query params are omitted by dynamic callers, and for the `SearchMaxLimit`
    `/search/sample/acme?limit=0&offset=0`; typed methods do not omit params to
    request search defaults.
 6. Given a real MLWH server over a fake queryer, when `CallWithHeaders(ctx,
-   "SearchStudies", []string{"malar"}, nil)` runs, then URI is
+"SearchStudies", []string{"malar"}, nil)` runs, then URI is
    `/search/study/malar`, the queryer receives `limit == 100` and
    `offset == 0`, the decoded result is `*[]Study`, and returned headers are
    exposed.
@@ -227,7 +227,7 @@ Use Registry method `SamplesWithData` with
 1. Given a stub server returning one `SampleWithData` with headers
    `X-Total-Count: 3`, `X-Next-Offset: 2`, when
    `SamplesWithDataSincePage(ctx, "S1", "2026-06-01T00:00:00Z",
-   "2026-06-02T00:00:00Z", 1, 1)` runs, then URI path is
+"2026-06-02T00:00:00Z", 1, 1)` runs, then URI path is
    `/study/S1/samples-with-data`, query values are exactly `limit=1`,
    `offset=1`, `since=2026-06-01T00:00:00Z`, and
    `until=2026-06-02T00:00:00Z`; `Total == 3`, `NextOffset == 2`, and
@@ -336,17 +336,17 @@ func (rc *RemoteClient) ResolvePersonPage(
 **Acceptance tests:**
 
 1. Given a stub server returning `[]PersonStudy{{Study: Study{IDStudyLims:
-   "S1", Name: "Alpha"}}}` with headers `X-Total-Count: 3`,
+"S1", Name: "Alpha"}}}` with headers `X-Total-Count: 3`,
    `X-Next-Offset: 1`, when `StudiesForFacultySponsorPage(ctx, "carl", 1, 0)`
    runs, then URI is `/studies/faculty-sponsor/carl?limit=1&offset=0`,
    `Items` equals the decoded row, `Total == 3`, and `NextOffset == 1`.
 2. Given a stub server returning `[]PersonStudy{{Study: Study{IDStudyLims:
-   "S2"}, Role: "follower"}}` with headers `X-Total-Count: 1`,
+"S2"}, Role: "follower"}}` with headers `X-Total-Count: 1`,
    `X-Next-Offset: -1`, when `StudiesForUserPage(ctx, "ca3", "follower", 1, 0)`
    runs, then URI is `/studies/user/ca3?limit=1&offset=0&role=follower`,
    `Items` equals the decoded row, `Total == 1`, and `NextOffset == -1`.
 3. Given a stub server returning `[]PersonCandidate{{Source:
-   "faculty_sponsor", Name: "Rosa King", StudyCount: 2}}` with headers
+"faculty_sponsor", Name: "Rosa King", StudyCount: 2}}` with headers
    `X-Total-Count: 2`, `X-Next-Offset: 1`, when
    `ResolvePersonPage(ctx, "rosa", 1, 0)` runs, then URI is
    `/resolve-person/rosa?limit=1&offset=0`, `Items` equals the decoded row,
@@ -394,7 +394,7 @@ Use Registry method `StudyManifest` and `remoteManifestQuery`. Keep existing
 3. Given the same server body, when existing `StudyManifest` runs, then it still
    returns only `StudyManifest` and ignores headers.
 4. Given a stub server returning `StudyManifest{IDStudyLims: "S1",
-   Rows: []ManifestRow{{Name: "A"}}}` with no sizing headers, when
+Rows: []ManifestRow{{Name: "A"}}}` with no sizing headers, when
    `StudyManifestPage(ctx, "S1", "", false, 1, 0)` runs, then the manifest body
    is decoded, `Total == 0`, `NextOffset == -1`, and error is nil.
 5. Given upstream `not_found` or `cache_never_synced` envelopes, when
@@ -439,9 +439,9 @@ sample detail options method.
    runs, then URI is `/study/S1/detail?limit=5&offset=0`, returned detail
    matches the body, `Total == 12`, and `NextOffset == 5`.
 2. Given a stub server returning `StudyDetail{Lean: true, SampleIDs:
-   []string{"A"}}` with headers `X-Total-Count: 12`,
+[]string{"A"}}` with headers `X-Total-Count: 12`,
    `X-Next-Offset: -1`, when `StudyDetailWithOptions(ctx, "S1",
-   DetailOptions{Limit: 5, Offset: 0, Lean: true})` runs, then URI is
+DetailOptions{Limit: 5, Offset: 0, Lean: true})` runs, then URI is
    `/study/S1/detail?lean=true&limit=5&offset=0`, `StudyDetail.Lean` is true,
    `Total == 12`, and `NextOffset == -1`.
 3. Given equivalent run detail stubs, when `RunDetailWithOptions` runs with

@@ -82,28 +82,28 @@ The spec should cover, at minimum, these missing page variants:
 - `AllStudiesPage(ctx, limit, offset) (Page[Study], error)`.
 - `SamplesForRunPage(ctx, idRun, limit, offset) (Page[Sample], error)`.
 - `SamplesForLibraryPage(ctx, pipelineIDLims, studyLimsID, limit, offset)
-  (Page[Sample], error)`.
+(Page[Sample], error)`.
 - `SamplesForLibraryIDPage(ctx, libraryID, limit, offset)
-  (Page[Sample], error)`.
+(Page[Sample], error)`.
 - `SamplesForLibraryLimsIDPage(ctx, idLibraryLims, limit, offset)
-  (Page[Sample], error)`.
+(Page[Sample], error)`.
 - `SamplesForLibraryTypePage(ctx, pipelineIDLims, limit, offset)
-  (Page[Sample], error)`.
+(Page[Sample], error)`.
 - `LibrariesForStudyPage(ctx, studyLimsID, limit, offset)
-  (Page[Library], error)`.
+(Page[Library], error)`.
 - `RunsForStudyPage(ctx, studyLimsID, limit, offset) (Page[Run], error)`.
 - `SamplesWithDataSincePage(ctx, studyLimsID, since, until, limit, offset)
-  (Page[SampleWithData], error)`.
+(Page[SampleWithData], error)`.
 - `LanesForSamplePage(ctx, sangerName, limit, offset) (Page[Lane], error)`.
 - `IRODSPathsForSamplePage(ctx, sangerName, limit, offset)
-  (Page[IRODSPath], error)`.
+(Page[IRODSPath], error)`.
 - `IRODSPathsForSampleByFileTypePage(ctx, sangerName, fileType, limit, offset)
-  (Page[IRODSPath], error)`.
+(Page[IRODSPath], error)`.
 - `IRODSPathsForStudyByFileTypePage(ctx, studyLimsID, fileType, limit, offset)
-  (Page[IRODSPath], error)`.
+(Page[IRODSPath], error)`.
 - A filter-aware run iRODS page method. Prefer adding
   `IRODSPathsForRunByFileTypePage(ctx, idRun, fileType, limit, offset)
-  (Page[IRODSPath], error)` and keeping the existing
+(Page[IRODSPath], error)` and keeping the existing
   `IRODSPathsForRunPage(ctx, idRun, limit, offset)` as the unfiltered
   convenience wrapper.
 - `StudiesForFacultySponsorPage`, `StudiesForUserPage`, and
