@@ -86,6 +86,147 @@ func TestRemoteClientStudyManifestRoundTripsC1(t *testing.T) {
 	})
 }
 
+func TestRemoteClientStudyManifestPageReadsHeadersD1(t *testing.T) {
+	convey.Convey("D1.1: Given a RemoteClient over a server returning a StudyManifest and sizing headers", t, func() {
+		requestURIs := make(chan string, 1)
+		manifest := StudyManifest{
+			IDStudyLims: "S1",
+			Rows: []ManifestRow{
+				{Name: "A"},
+				{Name: "B"},
+			},
+		}
+		server := newRemoteClientJSONHeaderServerForTest(requestURIs, manifest, http.Header{
+			"X-Total-Count": {"3"},
+			"X-Next-Offset": {"2"},
+		})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when StudyManifestPage runs with file type, irods and paging options, then it returns the manifest body plus header totals", func() {
+			page, err := client.StudyManifestPage(context.Background(), "S1", "cram", true, 2, 0)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.StudyManifest.IDStudyLims, convey.ShouldEqual, "S1")
+			convey.So(page.StudyManifest.Rows, convey.ShouldHaveLength, 2)
+			convey.So(page.Total, convey.ShouldEqual, 3)
+			convey.So(page.NextOffset, convey.ShouldEqual, 2)
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/study/S1/manifest?file_type=cram&limit=2&offset=0&with_irods=true")
+		})
+	})
+}
+
+func TestRemoteClientStudyManifestPageOmitsOptionalQueryParamsD1(t *testing.T) {
+	convey.Convey("D1.2: Given a RemoteClient over a server returning a StudyManifest", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONHeaderServerForTest(requestURIs, StudyManifest{IDStudyLims: "S1"}, nil)
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when StudyManifestPage runs without optional filters, then file_type and with_irods are omitted", func() {
+			_, err := client.StudyManifestPage(context.Background(), "S1", "", false, 5, 10)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/study/S1/manifest?limit=5&offset=10")
+		})
+	})
+}
+
+func TestRemoteClientStudyManifestIgnoresSizingHeadersD1(t *testing.T) {
+	convey.Convey("D1.3: Given a RemoteClient over a server returning a StudyManifest and sizing headers", t, func() {
+		requestURIs := make(chan string, 1)
+		expected := StudyManifest{
+			IDStudyLims: "S1",
+			Rows: []ManifestRow{
+				{Name: "A"},
+				{Name: "B"},
+			},
+		}
+		server := newRemoteClientJSONHeaderServerForTest(requestURIs, expected, http.Header{
+			"X-Total-Count": {"99"},
+			"X-Next-Offset": {"50"},
+		})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when the existing StudyManifest method runs, then it returns only the body envelope using the same body-only URI", func() {
+			manifest, err := client.StudyManifest(context.Background(), "S1", "cram", true, 2, 0)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(manifest, convey.ShouldResemble, expected)
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/study/S1/manifest?file_type=cram&limit=2&offset=0&with_irods=true")
+		})
+	})
+}
+
+func TestRemoteClientStudyManifestPageUsesHeaderFallbacksD1(t *testing.T) {
+	convey.Convey("D1.4: Given a RemoteClient over a server returning a StudyManifest without sizing headers", t, func() {
+		requestURIs := make(chan string, 1)
+		manifest := StudyManifest{
+			IDStudyLims: "S1",
+			Rows:        []ManifestRow{{Name: "A"}},
+		}
+		server := newRemoteClientJSONHeaderServerForTest(requestURIs, manifest, nil)
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when StudyManifestPage runs, then the body is decoded and missing headers fall back to Total 0 and NextOffset -1", func() {
+			page, err := client.StudyManifestPage(context.Background(), "S1", "", false, 1, 0)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page, convey.ShouldResemble, PagedStudyManifest{
+				StudyManifest: manifest,
+				Total:         0,
+				NextOffset:    -1,
+			})
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/study/S1/manifest?limit=1&offset=0")
+		})
+	})
+}
+
+func TestRemoteClientStudyManifestPagePreservesErrorSentinelsD1(t *testing.T) {
+	cases := []struct {
+		name     string
+		status   int
+		code     string
+		sentinel error
+	}{
+		{name: "not_found", status: http.StatusNotFound, code: "not_found", sentinel: ErrNotFound},
+		{name: "cache_never_synced", status: http.StatusServiceUnavailable, code: "cache_never_synced", sentinel: ErrCacheNeverSynced},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		convey.Convey("D1.5: Given StudyManifestPage receives a remote "+tc.name+" envelope", t, func() {
+			server := newRemoteClientErrorServerForTest(tc.status, tc.code)
+			defer server.Close()
+
+			client := newRemoteClientForTest(t, server.URL, "")
+			defer closeRemoteClientForTest(t, client)
+
+			convey.Convey("when StudyManifestPage runs, then it returns an empty page and the same sentinel behavior as StudyManifest", func() {
+				page, pageErr := client.StudyManifestPage(context.Background(), "S1", "", false, 1, 0)
+				_, bodyErr := client.StudyManifest(context.Background(), "S1", "", false, 1, 0)
+
+				convey.So(pageErr, convey.ShouldNotBeNil)
+				convey.So(bodyErr, convey.ShouldNotBeNil)
+				convey.So(page, convey.ShouldResemble, PagedStudyManifest{})
+				convey.So(errors.Is(pageErr, tc.sentinel), convey.ShouldBeTrue)
+				convey.So(errors.Is(pageErr, ErrNotFound), convey.ShouldEqual, errors.Is(bodyErr, ErrNotFound))
+				convey.So(errors.Is(pageErr, ErrCacheNeverSynced), convey.ShouldEqual, errors.Is(bodyErr, ErrCacheNeverSynced))
+			})
+		})
+	}
+}
+
 func TestStudyManifestListsOneRowPerProductWithStudyMetadataC1(t *testing.T) {
 	convey.Convey("Given study S1 with 3 Illumina products across 2 samples", t, func() {
 		cache := openSQLiteSyncTestCache(t)
