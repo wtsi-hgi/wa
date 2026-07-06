@@ -989,6 +989,7 @@ func (rc *RemoteClient) do(ctx context.Context, method string, pathParams []stri
 		request.Header.Set("Authorization", "Bearer "+rc.token)
 	}
 
+	proxyURL := selectedRemoteProxyURL(rc.httpClient, request)
 	response, err := rc.httpClient.Do(request)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %s request failed: %w", ErrUpstreamImpaired, method, err)
@@ -1003,7 +1004,26 @@ func (rc *RemoteClient) do(ctx context.Context, method string, pathParams []stri
 		return result, response.Header, err
 	}
 
-	return nil, response.Header, decodeRemoteError(response, entry)
+	return nil, response.Header, decodeRemoteError(response, entry, proxyURL)
+}
+
+func selectedRemoteProxyURL(client *http.Client, request *http.Request) *url.URL {
+	transport := client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+
+	httpTransport, ok := transport.(*http.Transport)
+	if !ok || httpTransport.Proxy == nil {
+		return nil
+	}
+
+	proxyURL, err := httpTransport.Proxy(request)
+	if err != nil {
+		return nil
+	}
+
+	return proxyURL
 }
 
 func decodeRemoteResult(response *http.Response, entry Endpoint) (any, error) {
@@ -1015,10 +1035,10 @@ func decodeRemoteResult(response *http.Response, entry Endpoint) (any, error) {
 	return result, nil
 }
 
-func decodeRemoteError(response *http.Response, entry Endpoint) error {
+func decodeRemoteError(response *http.Response, entry Endpoint, proxyURL *url.URL) error {
 	var envelope httpErrorEnvelope
 	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
-		return fmt.Errorf("%w: remote %s returned %d without a valid error envelope", ErrUpstreamImpaired, entry.Method, response.StatusCode)
+		return invalidRemoteErrorEnvelopeError(response, entry, proxyURL)
 	}
 
 	sentinel := sentinelForHTTPErrorCode(envelope.Code)
@@ -1160,6 +1180,42 @@ type RemoteConfig struct {
 	Token    string
 	CACert   string
 	CacheTTL time.Duration
+}
+
+func invalidRemoteErrorEnvelopeError(response *http.Response, entry Endpoint, proxyURL *url.URL) error {
+	parts := []string{
+		fmt.Sprintf("remote %s returned %d without a valid MLWH error envelope", entry.Method, response.StatusCode),
+		"response may not have come from the MLWH server",
+	}
+	if contentType := response.Header.Get("Content-Type"); contentType != "" {
+		parts = append(parts, "content-type "+contentType)
+	}
+	if proxyURL != nil {
+		var requestURL *url.URL
+		if response.Request != nil {
+			requestURL = response.Request.URL
+		}
+		parts = append(parts, remoteProxyHint(requestURL, proxyURL))
+	}
+
+	return fmt.Errorf("%w: %s", ErrUpstreamImpaired, strings.Join(parts, "; "))
+}
+
+func remoteProxyHint(requestURL *url.URL, proxyURL *url.URL) string {
+	requestHost := ""
+	if requestURL != nil {
+		requestHost = requestURL.Hostname()
+	}
+
+	if requestHost == "" {
+		return fmt.Sprintf("request used HTTP proxy %s; check HTTP_PROXY/http_proxy, HTTPS_PROXY/https_proxy, and NO_PROXY/no_proxy", proxyURL.Redacted())
+	}
+
+	return fmt.Sprintf(
+		"request used HTTP proxy %s; check HTTP_PROXY/http_proxy, HTTPS_PROXY/https_proxy, and NO_PROXY/no_proxy for %s",
+		proxyURL.Redacted(),
+		requestHost,
+	)
 }
 
 func remoteEndpointMap() map[string]Endpoint {

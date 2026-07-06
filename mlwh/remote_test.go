@@ -421,6 +421,66 @@ func TestRemoteClientMapsUpstreamImpairedEnvelope(t *testing.T) {
 	})
 }
 
+func TestRemoteClientExplainsNonMLWHErrorResponse(t *testing.T) {
+	convey.Convey("Given a server returning a bare HTML 503", t, func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("<html>proxy unavailable</html>"))
+		}))
+		defer server.Close()
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when ResolveStudy runs, then the error says the response was not an MLWH error envelope", func() {
+			_, err := client.ResolveStudy(context.Background(), "7568")
+
+			convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "remote ResolveStudy returned 503 without a valid MLWH error envelope")
+			convey.So(err.Error(), convey.ShouldContainSubstring, "response may not have come from the MLWH server")
+			convey.So(err.Error(), convey.ShouldContainSubstring, "content-type text/html")
+		})
+	})
+}
+
+func TestRemoteClientExplainsNonMLWHErrorResponseSelectedProxy(t *testing.T) {
+	convey.Convey("Given an HTTP proxy returns a bare HTML 503 for an MLWH request", t, func() {
+		requestURIs := make(chan string, 1)
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestURIs <- r.RequestURI
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("proxy unavailable"))
+		}))
+		defer proxy.Close()
+
+		proxyURL, err := url.Parse(proxy.URL)
+		convey.So(err, convey.ShouldBeNil)
+		client := &RemoteClient{
+			baseURL: "http://mlwh.example.test:3673",
+			httpClient: &http.Client{
+				Transport: &http.Transport{
+					Proxy: http.ProxyURL(proxyURL),
+				},
+			},
+			endpoints: remoteEndpointMap(),
+		}
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when ResolveStudy runs, then the error includes a proxy and NO_PROXY hint", func() {
+			_, err := client.ResolveStudy(context.Background(), "7568")
+
+			convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "request used HTTP proxy")
+			convey.So(err.Error(), convey.ShouldContainSubstring, proxyURL.Redacted())
+			convey.So(err.Error(), convey.ShouldContainSubstring, "HTTP_PROXY/http_proxy")
+			convey.So(err.Error(), convey.ShouldContainSubstring, "NO_PROXY/no_proxy")
+			convey.So(err.Error(), convey.ShouldContainSubstring, "mlwh.example.test")
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "proxy request URI"), convey.ShouldEqual, "http://mlwh.example.test:3673/resolve/study/7568")
+		})
+	})
+}
+
 func TestRemoteClientCallWithHeadersReturnsBodyAndHeadersA1(t *testing.T) {
 	convey.Convey("A1.1: Given a stub MLWH server returning one study and sizing headers", t, func() {
 		requestURIs := make(chan string, 1)
