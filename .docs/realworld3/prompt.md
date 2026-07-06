@@ -1,4 +1,4 @@
-# Feature: fast study→iRODS TSV export, iRODS recency, correct prefix/contains/exact search, manual-QC & target-deliverable filtering, and global run aggregation (MLWH realworld3)
+# Feature: fast study→iRODS TSV export, iRODS recency, correct literal-prefix search + a shared exact filter family (organism / library-type / QC / deliverable), and global run aggregation (MLWH realworld3)
 
 ## Summary
 
@@ -12,17 +12,22 @@ real agent transcripts that currently fail, are slow, or give wrong answers:
    `[supplier_sample_name, study_accession_number, sanger_sample_id, manual_qc,
    irods_path]`, primary/target deliverables only."** — today there is no
    column-selectable TSV path; the closest (`wa mlwh manifest --with-irods`) has no
-   `manual_qc`, no target filter, no TSV/column control, and is **~3 s for a large
+   `manual_qc`, no deliverable filter, no TSV/column control, and is **~3 s for a large
    study** (below). This is the flagship deliverable and must get a **dedicated,
    very fast `wa mlwh` subcommand**.
 2. **"Give me all samples that start with `hek_r`."** — should return the **4**
    samples whose supplier name literally starts with `Hek_R` (`Hek_R1`..`Hek_R4`).
    Today `/search/sample/hek_r` returns **55**, because sample search is a
-   word-prefix AND across four fields.
-3. **"Samples whose name contains `<substring>`."** — a true "contains" search.
-   Today `/search/sample/usculus` returns **0**, even though **237,879** samples have
-   `common_name` containing "usculus" (Mus musculus), because word-prefix cannot
-   match a substring inside a word.
+   word-prefix AND across four fields. The fix is to make **literal whole-value prefix
+   the DEFAULT** sample search.
+3. **"The Mus musculus samples" (constrain a search to an organism).** — the mouse
+   samples a user reaches for with the organism word `musculus` (or `mus`, or
+   `mus musculus`). There is no clean, composable way to constrain a search to an
+   organism, nor to use organism as a filter on the TSV. This is an **organism lookup**,
+   not a general free-text substring search: `common_name` is low-cardinality (**16,234**
+   distinct values), so it is served by a dedicated **`--organism` filter** that matches
+   whole words / full names over that small vocabulary — NOT by a general substring
+   index. (A mid-word fragment like `usculus` is deliberately NOT a supported query.)
 4. **"The most recently sequenced sample / the latest iRODS data for study (or lab)
    X."** — one call returning the row(s) behind the recency, with the iRODS `created`
    timestamp, sorted newest-first. Today `IRODSPath` omits `created` and the listings
@@ -34,10 +39,10 @@ Two cross-cutting rules run through all of the above:
 
 - **No "figure out your own SQL" escape hatch as the answer.** Each of these must be
   a first-class, correctly-scoped, indexed endpoint whose semantics (manual QC,
-  target/deliverable, "cram", recency, run date basis, prefix-vs-contains) are baked
-  into the server and stated in the registry description — not left to a caller/LLM
-  to reconstruct in ad-hoc SQL, where it silently gets the target rule wrong, caps at
-  a page, or picks the wrong timestamp.
+  deliverable, "cram", recency, run date basis, the search default vs the exact
+  filters) are baked into the server and stated in the registry description — not left
+  to a caller/LLM to reconstruct in ad-hoc SQL, where it silently gets the deliverable
+  rule wrong, caps at a page, or picks the wrong timestamp.
 - **Correct the mirror where it is wrong or slow.** Comparing our cache to a
   source-direct implementation surfaced concrete schema/query defects (missing
   discriminators, a mis-typed join key, an un-surfaced timestamp, big-study
@@ -54,14 +59,17 @@ and "Notes" sections settle _how_, never _whether_.
 
 ## Authority, and what already landed (reuse — do NOT rebuild)
 
-The only authority is **this repo's Go code** (`mlwh/registry.go`, `mlwh/types.go`,
-`mlwh/manifest.go`, `mlwh/hierarchy.go`, `mlwh/search.go`, `mlwh/people.go`,
-`mlwh/availability.go`, `mlwh/progress.go`, `mlwh/count.go`, `mlwh/sync.go`,
-`mlwh/sync_platform_coverage.go`, `mlwh/cache.go`, `mlwh/cache_schema/{sqlite,mysql}/*.sql`,
-`mlwh/remote.go`, `mlwh/server.go`, `mlwh/openapi.go`, and the `cmd/mlwh_*.go`
-commands). The `.docs/realworld*` specs are background only — verify against code.
-**Current MLWH API version: 1.7.0** (`mlwh/openapi.go` `APIVersion`); **current
-`CacheSchemaVersion`: 12** (`mlwh/cache.go`).
+The only authority for existing behaviour is **this repo's Go code** (`mlwh/registry.go`,
+`mlwh/types.go`, `mlwh/manifest.go`, `mlwh/hierarchy.go`, `mlwh/search.go`,
+`mlwh/people.go`, `mlwh/availability.go`, `mlwh/progress.go`, `mlwh/count.go`,
+`mlwh/sync.go`, `mlwh/sync_platform_coverage.go`, `mlwh/cache.go`,
+`mlwh/cache_schema/{sqlite,mysql}/*.sql`, `mlwh/remote.go`, `mlwh/server.go`,
+`mlwh/openapi.go`, and the `cmd/mlwh_*.go` commands). The `.docs/realworld*` specs are
+background only — verify against code. The **run `date_basis` semantics** are defined by
+the downstream reference `mlwh://reference/sequencing-timestamps`
+(`~/dj3-mlwh-mcp/src/index.ts`), validated against source below. **Current MLWH API
+version: 1.7.0** (`mlwh/openapi.go` `APIVersion`); **current `CacheSchemaVersion`: 12**
+(`mlwh/cache.go`).
 
 Already merged and **reused as-is** (confirm in code before relying on it):
 
@@ -71,9 +79,13 @@ Already merged and **reused as-is** (confirm in code before relying on it):
   `faculty_sponsor`.
 - **`Sample`/`sample_mirror`** carry `name`, `sanger_sample_id`, `supplier_name`,
   `accession_number`, `donor_id`, `common_name`, `taxon_id`, `description`. Indexed:
-  those text columns individually (ci collation).
-- **`sample_search_token`** (derived word-token index; `(token, id_sample_tmp)`)
-  backs `/search/sample` word-prefix matching.
+  those text columns individually (ci collation) — this is what makes literal-prefix
+  and the exact filters fast without any new index.
+- **`sample_search_token`** (derived word-token index; `(token, id_sample_tmp)`;
+  **43.7 M rows**) backs `/search/sample` word-prefix matching. Retained for the opt-in
+  `--words` mode (D3), no longer the default.
+- **`library_samples`** carries `pipeline_id_lims` (**library_type**; 122 distinct
+  values) linked to samples — the existing exact library-type path.
 - **`seq_product_irods_locations_mirror`** already denormalises `id_iseq_product`,
   `irods_root_collection`, `irods_data_relative_path`, `irods_collection`,
   `irods_file_name`, **`id_sample_tmp`**, **`id_study_lims`**, `last_updated`,
@@ -82,38 +94,46 @@ Already merged and **reused as-is** (confirm in code before relying on it):
 - **`iseq_product_metrics_mirror`** mirrors `id_iseq_product`, `id_iseq_flowcell_tmp`,
   `id_run`, `position`, `tag_index`, `id_sample_tmp`, `id_study_lims`, **`qc`**,
   `qc_lib`, `qc_seq`.
+- **`iseq_run_status_mirror` + `iseq_run_status_dict_mirror`** mirror the run-status
+  timeline (`id_run`, `date`, `id_run_status_dict`, `iscurrent`; the dict maps to the
+  status description). This is the run-date source for D5's shared platforms.
 - **`StudyManifest`** (`/study/:id/manifest`, `with_irods`, `file_type`) +
   `CountStudyManifest`; **`/study|sample|run/:id/irods`** (+ counts, `file_type`);
   **`StudyOverview`/`StatusBreakdown`/`SampleProgress`/`RunOverview`/`RunStatus`**;
   people→studies (`/studies/faculty-sponsor/:name`, `/studies/user/:person`,
   `/resolve-person/:term`); the QC roll-up (`qc.go`: `qc` 1/0/NULL → pass/fail/pending,
   precedence fail > pending > pass).
+- **`wa mlwh info <identifier>`** already IS the exact single-identifier lookup: it
+  classifies/resolves sanger id, lims id, accession, supplier name, sample/study UUID,
+  study lims id/accession, library pipeline/library ids and numeric run id (auto or
+  `--type sample|study|run|library`), with NO 3-char minimum. D3 does not duplicate it.
 - CLI already has `wa mlwh {info,search,irods,manifest,studies,sync,serve}`.
 
-## Verified facts (checked against the live source `mlwarehouse` and our MySQL mirror)
+## Verified facts (checked against the live source `mlwarehouse` and our MySQL mirror, 2026-07-02)
 
 These were confirmed directly, so the work is grounded, not guessed. **Cite these in
 the spec; do not silently contradict them.**
 
-- **There is NO scalar `target` column in MLWH.** `iseq_product_metrics` has a family
-  of `target_*`/`mean_bait_target_coverage` columns, but every one is a **bait/capture
-  coverage metric** (`target_length`, `target_mapped_reads`,
-  `target_percent_gt_coverage_threshold`, …), NOT a target-vs-control flag. The
-  "target=1" a user means is the **iRODS metadata AVU** on the CRAM (the primary
-  deliverable, excluding PhiX/controls and non-primary sub-products) — it is not a
-  warehouse column. In the warehouse, the discriminators are: `iseq_flowcell.entity_type`
-  (values incl. `library`, `library_control`, `library_indexed`, `library_indexed_spike`),
-  `iseq_flowcell.is_spiked` / `spiked_phix_*`, and (Element/Ultima)
-  `{eseq,useq}_product_metrics.is_sequencing_control`; product structure is in
-  `iseq_composition_tmp` / `iseq_product_components`. **The mirror does not currently
-  mirror `iseq_flowcell` as a table at all** (only the derived `library_samples`), so
-  it presently CANNOT exclude controls/spikes.
+- **The deliverable discriminator is `iseq_flowcell.entity_type`, NOT `is_spiked`.**
+  There is no scalar `target` column in MLWH: `iseq_product_metrics` has
+  `target_*`/`mean_bait_target_coverage` columns but every one is a bait/capture
+  **coverage metric**, not a target-vs-control flag. The "target=1" a user means is the
+  iRODS metadata AVU on the CRAM (the primary deliverable, excluding PhiX/controls).
+  Confirmed source `iseq_flowcell.entity_type` distribution: `library_indexed`
+  **9,030,465** + `library` **34,708** (the deliverables) vs `library_indexed_spike`
+  **173,739** + `library_control` **3,445** (the spikes/controls to exclude).
+  **`is_spiked` is the WRONG discriminator** — it is `1` for **7,320,389 of 9,242,357
+  rows (79 %)**: it flags lanes/plexes that had PhiX spiked *in*, not products that
+  *are* the spike, so filtering `is_spiked=0` would drop most real libraries.
+  Element/Ultima use `{eseq,useq}_product_metrics.is_sequencing_control` (`=0` for
+  deliverables; confirmed present, indexed). **The mirror does not currently mirror
+  `iseq_flowcell` at all** (only `oseq_flowcell_mirror` for ONT and the derived
+  `library_samples`), so it presently CANNOT exclude controls/spikes — D4 adds it.
 - **`manual_qc` = `iseq_product_metrics.qc`** (`tinyint(1)`; **1 = pass, 0 = fail,
-  NULL = pending/undecided**; DBIx comment: "Overall QC assessment outcome, a logical
-  product of qc_seq and qc_lib …"). Already mirrored as `qc`. `qc_seq`, `qc_lib`,
-  `qc_user` also exist upstream (`qc_user` is NOT currently mirrored). Per-platform:
-  `pac_bio_product_metrics.qc`, `eseq_product_metrics.qc`, `useq_product_metrics.qc`
-  (same 0/1/NULL); ONT (`oseq_flowcell`) has no product/qc.
+  NULL = pending/undecided**; confirmed distribution on a real run slice: 1 ≫ 0 > NULL).
+  Already mirrored as `qc`. Per-platform: `pac_bio_product_metrics.qc`,
+  `eseq_product_metrics.qc`, `useq_product_metrics.qc` (same 0/1/NULL); ONT
+  (`oseq_flowcell`) has no product/qc.
 - **`seq_product_irods_locations`** has `created` AND `last_changed` (both `datetime`),
   and **NO `id_run`, sample, study, or file-type column**; its unique key is
   `(irods_root_collection, id_product)`, so **`id_product` is not unique** — one
@@ -129,8 +149,24 @@ the spec; do not silently contradict them.**
   `newest_data_added`, since/until). The three iRODS list queries select neither
   `created` nor order by it — they `ORDER BY id_iseq_product`. So a path listing
   cannot answer "latest".
-- **Measured performance (source-direct vs our mirror vs current HTTP endpoint),
-  2026-07-02:**
+- **Run `date_basis` per platform (from `mlwh://reference/sequencing-timestamps`,
+  validated against source):** the authoritative "when did the run happen" date is
+  completion-based and, for the three platforms that share `iseq_run_status`, comes from
+  that status timeline, NOT the platform's own run table:
+  - **Illumina & Element Aviti:** `iseq_run_status.date` at status **`run complete`**
+    (Element shares `iseq_run_status`, joined via `eseq_product_metrics.id_run`;
+    Illumina via `iseq_product_metrics.id_run`).
+  - **Ultima:** `iseq_run_status.date` at status **`run archived`** — Ultima runs NEVER
+    reach `run complete` (confirmed: joining `useq_run_metrics` → `iseq_run_status`
+    shows **242 `run archived`** and **0 `run complete`**; `useq_run_metrics` has a
+    `run_archived` column and no `run_complete`).
+  - **PacBio:** `pac_bio_run_well_metrics.well_complete` (or `run_complete`); PacBio is
+    not in `iseq_run_status`.
+  - **ONT:** has **no run-metrics table and no true sequencing date**; the only
+    available field is `oseq_flowcell.last_updated`, which (like `recorded_at`) is a
+    **warehouse-load timestamp, not a sequencing time** — treated as such in D5.
+- **Measured manifest/aggregate performance (source-direct vs our mirror vs current
+  HTTP endpoint):**
   | Query | small study 7556 | big study 7699 |
   | --- | --- | --- |
   | cram manifest — source-direct 5-table join | 0.07 s | **1.7 s** |
@@ -149,24 +185,42 @@ the spec; do not silently contradict them.**
   0.93 s**; runs-for-study = **0.11 s vs 0.34 s**. These are the queries that justify
   the mirror; keep and extend that pattern, and make the compound endpoints actually
   realise it (they don't, at 3 s).
-- **Search reality:** `_` and `%` are already correctly escaped (`escapeLIKELiteral`,
-  `ESCAPE '!'`) — there is NO underscore-wildcard bug. The problems are semantic:
-  `/search/sample/:term` is **word-prefix AND across `name`/`supplier_name`/`common_name`/`donor_id`**,
-  so `hek_r` → `{hek…} AND {r…}` → **55** rows (e.g. `HEK293T_D2_R1`, and a sample
-  named `HGRNA…` whose supplier is `10X_Automation_HEK` with donor `RD_…`), burying
-  the 4 the user wanted. There is **no literal-whole-value prefix mode** and **no
-  substring/contains mode**, and the 3-char free-text minimum blocks controlled short
-  tokens like `gt`. Study/person search uses leading-wildcard `%term%` (full scan of
-  the small `study_mirror`/`study_users_mirror`; acceptable there, but not a model to
-  copy onto large tables).
+- **Measured search/filter reality (the SQSCP sample domain is the WHOLE
+  `sample_mirror` = 10,352,242 rows; earlier "~1.9 M" was stale):**
+  - **Literal-prefix is free and correct:** `hek_r%` over the four text fields
+    (`name`, `supplier_name`, `common_name`, `donor_id`) = the **4** `Hek_R1..4` in
+    **0.07 s**, an index range seek on the existing per-column btree index. No new
+    structure needed. This is the fix for Q2.
+  - **A general "contains" is not worth building:** naive `%substr%` over the four
+    fields = **16–23 s**. MySQL 8.4 InnoDB `ngram` FULLTEXT is fast (~0.27 s) but
+    **incorrect** — boolean/phrase mode **undercounts ~50 %** (false negatives a
+    LIKE-verify cannot recover) and natural-language mode overcounts massively;
+    building it on 10 M rows ran **>7.5 min**. A correct trigram token table would be
+    **~200 M+ rows** (4–6× the existing 43.7 M `sample_search_token`) and as slow to
+    build. **So NO substring / n-gram / FULLTEXT index is built.**
+  - **Organism is low-cardinality → a whole-word filter, not a substring search:**
+    `common_name` has **16,234** distinct values (dominated by "Mus Musculus" 235,447,
+    "Homo sapiens" 1,194,161, empty 6.2 M). Matching the whole organism word/name (e.g.
+    `musculus`, `mus musculus`) against that tiny vocabulary, then an exact indexed
+    lookup by `common_name`, is page-fast and needs no big index. A mid-word fragment
+    (e.g. `usculus`) is out of scope by design. This is the `--organism` filter (D3).
+  - **`library_type` is a clean vocabulary:** `library_samples.pipeline_id_lims` has
+    **122** distinct values — ideal for an exact filter flag.
+  - **ONT is cheap to mirror for identity:** source `oseq_flowcell` is **8,728 rows**
+    with run identity (`run_id`, `run_uuid`, `experiment_name`); its only date is the
+    warehouse-load `last_updated` (see the `date_basis` fact above).
+  - **Escaping is fine:** `_`/`%` are already correctly escaped (`escapeLIKELiteral`,
+    `ESCAPE '!'`) — there is no wildcard bug; today's `hek_r`→55 is the semantic
+    word-prefix problem fixed above. Study/person search keeps its small-table `%term%`
+    substring (fine there; not a model for large tables).
 
 ## Per-question verdict
 
 | Q | Question | Verdict | What's needed |
 | --- | --- | --- | --- |
-| 1 | study cram TSV w/ chosen columns + manual_qc + target, fast | **GAP + PERF** | D1: dedicated fast TSV subcommand + backing export path; D4 manual_qc/target |
-| 2 | "starts with hek_r" → 4 | **WRONG** | D3: literal-prefix mode |
-| 3 | "contains \<substring\>" | **WRONG (0 results)** | D3: indexed contains mode |
+| 1 | study cram TSV w/ chosen columns + manual_qc + deliverable, fast | **GAP + PERF** | D1: dedicated fast TSV subcommand + backing export path; D4 manual_qc/deliverable |
+| 2 | "starts with hek_r" → 4 | **WRONG** | D3: literal-prefix as the DEFAULT search |
+| 3 | constrain a search to an organism (the Mus musculus samples) | **GAP** | D3: `--organism` whole-word/full-name filter over the low-cardinality `common_name` vocabulary |
 | 4 | most-recent sample / latest iRODS for study/lab | **GAP** | D2: expose `created`, recency sort, latest endpoints |
 | 5 | runs/month by manufacturer & platform | **GAP** | D5: global run aggregation |
 | — | big-study aggregates <1 s; per_platform=null bug | **PERF/BUG** | D6 |
@@ -187,21 +241,23 @@ command, not a `--format` flag bolted onto the generic `manifest`). Requirements
   `study_accession_number`, `id_study_lims`, `manual_qc`, `id_run`, `lane`
   (position), `tag_index`, `platform`, `irods_path` (the full path =
   `CONCAT(irods_root_collection, '/', irods_data_relative_path)`). Default column set
-  should cover the flagship query (Q1). Output is real TSV: a header row then
-  tab-separated rows, deterministic order (settle: by `id_run, lane, tag_index,
-  name`), stable across pages.
-- **Filters.** Required study; `--file-type` (default `cram`, filename-suffix
-  semantics as elsewhere); **target/deliverable-only** (D4) **on by default**, with a
-  flag to include controls/sub-products. `manual_qc` should be filterable
-  (`--qc pass|fail|pending`) so "target=1 AND qc pass" is one switch, but filtering
-  and the returned column are independent (Q1 wanted the column, not necessarily the
-  filter).
+  covers Q1 (`supplier_name, study_accession_number, sanger_sample_id, manual_qc,
+  irods_path`). Output is real TSV: a header row then tab-separated rows, deterministic
+  order (settle: by `id_run, lane, tag_index, name`), stable across pages.
+- **Filters (the shared filter family — see D3/D4).** Required study; `--file-type`
+  (default `cram`, filename-suffix semantics as elsewhere); **`--deliverables-only` on
+  by default** for the cram TSV (D4, `entity_type`-based), with a flag to include
+  controls/sub-products; `--qc pass|fail|pending` (here at PRODUCT grain — each TSV row
+  is a product, so it filters on that product's `qc`); and where useful `--library-type
+  <val>` / `--organism <val>`. Filtering and the returned columns are independent (Q1
+  wanted the `manual_qc` column, not necessarily the filter). This is the SAME filter
+  family offered on `wa mlwh search` (D3), differing only in QC grain (see D3).
 - **Speed: <1 s for a bounded page even for the largest studies** (7699-scale). The
   first page must be web-responsive; a `/count` counterpart and sizing headers are
   required. **No silent row cap**: a full-study export MUST be able to stream/emit
   *every* matching row (7699 → 100 k+ rows) via **keyset pagination** (not `LIMIT
   OFFSET`, which degrades on deep pages) or a streaming response. State explicitly in
-  the CLI when output is a bounded page vs the complete set.
+  the CLI when output is a bounded page vs the complete set (`--all` = complete set).
 - **Fix the perf.** Rebuild the backing query/schema so the export is a
   near-single-index-ordered scan:
   - Give `iseq_product_metrics_mirror` a real **PRIMARY KEY** and change
@@ -215,12 +271,14 @@ command, not a `--format` flag bolted onto the generic `manifest`). Requirements
   - If a clean single-scan is not achievable over the current tables, add a
     **denormalised deliverable/export structure** (a mirror table or materialised
     projection keyed by `(id_study_lims, id_run, position, tag_index)` carrying
-    supplier/sanger id/accession/qc/target-flag/irods path) populated during sync, so
-    the TSV is one ordered range scan. Decide in the spec; whichever route, the target
-    is <1 s per page at 7699 scale and correct totals.
-- **Correctness.** `manual_qc` is the `qc` roll-up per product (D4). `irods_path`
-  concatenation must be verified against real paths (e.g. `.../lane6/plex45/51945_6#45.cram`).
-  A study's target cram row count must match the known deliverable count (7556 → 886).
+    supplier/sanger id/accession/qc/deliverable-flag/irods path) populated during sync,
+    so the TSV is one ordered range scan. Decide in the spec; whichever route, the
+    target is <1 s per page at 7699 scale and correct totals.
+- **Correctness.** `manual_qc` is the product's `qc` value rendered pass/fail/pending
+  by `qc.go`. `irods_path` concatenation must be verified against real paths (e.g.
+  `.../lane6/plex45/51945_6#45.cram`). The study 7556 deliverable-only cram count is the
+  `entity_type`-derived count (≈886 — assert the actual figure and document any delta;
+  see D4), controls dropped.
 
 ### D2 — iRODS recency ("latest data" / "most recently sequenced")
 
@@ -233,68 +291,101 @@ command, not a `--format` flag bolted onto the generic `manifest`). Requirements
   and index as needed.
 - **A "latest data" path** so "the most recently sequenced sample for study/lab X" is
   one call, returning the actual row(s): `created`, `irods_path`, `id_study_lims`,
-  study name, sample `name`, `supplier_name`, `id_run`, lane/tag, platform — sorted
-  `created DESC`, returning all rows tied at the max (or a documented tie-break).
-  Support a **faculty-sponsor-scoped** variant (join `study_mirror.faculty_sponsor`)
-  so "latest data for the Anderson lab" does not require the caller to fan out over 91
-  studies and then fail to bridge the timestamp back to a row (the exact realworld
-  trap). Decide the cheap cross-study path (the `(id_study_lims, created)` index is
-  per-study; a small per-study MAX then merge may beat a global filesort — settle with
-  EXPLAIN).
-- Reconcile `StudyOverview.newest_data_added` with this: it must be **followable** to
-  the row(s) that produced it (today it reports a max that `samples-with-data` windows
-  could not reproduce). Document the join basis.
+  study name, sample `name`, `supplier_name`, `id_run`, lane/tag, platform. It returns
+  a **bounded, pageable page ordered `created DESC`** (settle a small default N), ties
+  broken deterministically by `(id_run, id_product)` — NOT an unbounded "all rows tied
+  at MAX(created)" set. Support a **faculty-sponsor-scoped** variant (join
+  `study_mirror.faculty_sponsor`) so "latest data for the Anderson lab" does not
+  require the caller to fan out over 91 studies and then fail to bridge the timestamp
+  back to a row (the exact realworld trap). Decide the cheap cross-study path (the
+  `(id_study_lims, created)` index is per-study; a small per-study MAX then merge may
+  beat a global filesort — settle with EXPLAIN).
+- Reconcile `StudyOverview.newest_data_added` with this: its membership basis is the
+  raw `seq_product_irods_locations_mirror` scan on `(id_study_lims, created)`; document
+  that basis so the "latest data" rows are **followable** to the max the overview
+  reports (today it reports a max that `samples-with-data` windows could not reproduce).
 
-### D3 — Correct, fast search: prefix, contains, and exact as first-class distinct modes
+### D3 — Correct search: literal-prefix default, opt-in word-prefix, and a shared exact filter family
 
 Make search intent explicit and self-documenting so the MCP layer/agent chooses
-correctly, and so none of it depends on the caller crafting `LIKE` patterns.
+correctly, and so none of it depends on the caller crafting `LIKE` patterns. The
+measured evidence above drives this design.
 
-- **Literal whole-value prefix.** "Starts with `hek_r`" must return **exactly** the
-  samples whose selected field (name and/or supplier_name — settle which fields, and
-  whether per-field) literally starts with `hek_r` (the **4** `Hek_R1..4`), fast — an
-  index range seek on the ci text columns (`col LIKE 'hek!_r%' ESCAPE '!'`), NOT the
-  word-prefix AND. This is a **distinct mode** from the existing word-prefix search
-  (keep that available; it is useful, just not what "starts with" means).
-- **True contains / substring.** "Contains `usculus`" must match the substring
-  anywhere, including mid-word (→ 237,879 for Mus musculus), and must be
-  **web-responsive on ~1.9 M samples** — a naive leading-wildcard `%term%` full-scans
-  and is not acceptable at that scale. Provide an **indexed** path: an n-gram/trigram
-  token table populated during sync (mirroring the `sample_search_token` approach but
-  for substrings), MySQL `FULLTEXT`, or an equivalent — settle the mechanism in the
-  spec and prove it index-served with EXPLAIN. Bound it (a count cap like the existing
-  `sampleSearchCountCap`).
-- **Exact / short controlled tokens.** Allow an **exact** lookup (already exists for
-  the `find/sample/*` fields) to be reachable for controlled short tokens like `gt`
-  that the 3-char free-text minimum blocks (e.g. exact `library_type=gt`, exact
-  tag/library ids). Keep the 3-char minimum only on the free-text prefix/contains
-  paths, and say so.
-- **Expose the mode** via CLI (`wa mlwh search --prefix|--contains|--exact`, or
-  scope-specific subcommands) and via endpoint/param, with the registry description
-  stating precisely what each does and over which fields. Do NOT overload one endpoint
-  such that the caller must know to add `%`/anchors.
+- **Default = literal whole-value prefix.** `wa mlwh search hek_r` (no mode flag) must
+  return **exactly** the samples where any of the four text fields (`name`,
+  `supplier_name`, `common_name`, `donor_id`) literally starts with the term
+  (`col LIKE 'hek!_r%' ESCAPE '!'`, an index range seek) — the **4** `Hek_R1..4` — in
+  ~0.07 s. This REPLACES word-prefix AND as the default sample search.
+- **Word-prefix is retained as an opt-in `--words` mode** (keep the `sample_search_token`
+  table). Its one distinct value is separator-agnostic multi-word matching (query
+  `10X Automation HEK` matching stored `10X_Automation_HEK`); it is NOT the default and
+  its cross-field AND behaviour (today's `hek_r`→55) is no longer what a bare search does.
+- **No general contains / no substring index.** Do NOT build an n-gram/trigram/substring
+  token table or a FULLTEXT index (measured: naive is 16–23 s; ngram FULLTEXT is
+  incorrect; a correct trigram table is ~200 M+ rows and slow to build). Mid-word
+  substring matching is explicitly out of scope.
+- **Every sample query carries a search term; the exact filters NARROW it.** There is no
+  termless/filter-only route: a sample query is always `search <term> [filters…]`. "All
+  Mus musculus samples" is `search --words musculus` (word-prefix finds the `musculus`
+  word in `common_name`); the exact filters below refine a term search and gate the TSV.
+- **`--organism` is a whole-word / full-name filter over `common_name`.** It matches the
+  organism word or full name (`mus`, `musculus`, `mus musculus`) against the
+  low-cardinality (~16 k) `common_name` vocabulary, then constrains to samples with a
+  matching `common_name` (indexed). It does NOT do mid-word substring matching (`usculus`
+  matches nothing). Settle the exact word/full-name mechanism (a small distinct-`common_name`
+  helper table, or word tokens scoped to `common_name`) and prove it index-served.
+- **Exact single-identifier lookups stay `wa mlwh info`'s job.** Do NOT add a `--exact`
+  search mode and do NOT add a new `find` command; do NOT duplicate `info`. Short
+  controlled tokens are reached via `info` (single identifier) or via the exact filters
+  below (which are exempt from the 3-char minimum).
+- **The shared exact filter family** — server-side params, AND-combined with the search
+  term and with each other, each a fast indexed path (prove with EXPLAIN), each exempt
+  from the 3-char free-text minimum (which stays only on the free-text search term and
+  `--words`); filters apply to **sample** search (not study search):
+  - `--library-type <val>` — exact `library_samples.pipeline_id_lims` (122-value vocabulary).
+  - `--organism <val>` — the whole-word/full-name `common_name` filter above.
+  - `--qc pass|fail|pending` — **grain-appropriate**: on sample SEARCH it matches the
+    per-sample ROLL-UP verdict (`qc.go` fail>pending>pass; one bucket per sample; agrees
+    with `SampleProgress.qc`/`StatusBreakdown`). On the D1 TSV (rows ARE products) it
+    matches the raw PER-PRODUCT `qc`. State both grains explicitly.
+  - `--deliverables-only` — the D4 deliverable filter (`entity_type`-based).
+  Combining a filter with the term intersects the candidate `id_sample_tmp` set (via
+  `library_samples` for library-type, the `common_name` index for organism, the
+  product/flowcell join for qc/deliverable) — index it so the intersection is not a scan.
+  The SAME family is offered on the D1 `tsv`.
+- **Expose via CLI and endpoint/param**, with the registry description stating precisely
+  what the default does, what `--words` does, and exactly what each filter matches and
+  over which field (incl. the QC grain difference between search and tsv). Do NOT
+  overload one endpoint so the caller must add `%`/anchors.
 
-### D4 — manual_qc & target-deliverable semantics (feeds D1; also the manifest)
+### D4 — manual_qc & deliverable semantics (feeds D1 and the D3 filter family; also the manifest)
 
-- **Expose `manual_qc`** (the `qc` roll-up: pass/fail/pending, or the raw 1/0/NULL —
-  settle the surface form and document it) wherever product/iRODS rows are listed:
-  the D1 TSV, `StudyManifest` rows, and optionally the iRODS listings. Reuse
-  `qc.go`'s roll-up so it can never disagree with `SampleProgress.qc` /
-  `StatusBreakdown`.
-- **Define and implement a correct "primary/target deliverable" filter** in the
-  server (not in caller SQL). It must exclude spiked-in PhiX and control products and
-  non-primary sub-products. Use warehouse-native discriminators — mirror the needed
-  `iseq_flowcell` columns (`entity_type`, `is_spiked`, and enough of the composition/
-  control signal) and the Element/Ultima `is_sequencing_control` — so the filter is a
-  **fast indexed column**, not a runtime heuristic. **Verify** the definition against
-  real studies so the target cram count matches the known deliverable count (7556 →
-  886) and controls are actually dropped where present.
-- **Document the semantics** in the registry text: that `iseq_product_metrics.target_*`
-  are coverage metrics, that there is no scalar warehouse `target` column, that the
-  authoritative ground truth is the iRODS `target=1` AVU which this filter
-  approximates, and exactly what "deliverable-only" includes/excludes. If capturing
-  the true iRODS AVU is feasible within the sync, prefer it and say so; otherwise
-  state the approximation and its known edge cases.
+- **Expose `manual_qc`** (the `qc` roll-up: pass/fail/pending; the raw 1/0/NULL may be
+  offered additionally) wherever product/iRODS rows are listed: the D1 TSV,
+  `StudyManifest` rows, optionally the iRODS listings. Reuse `qc.go`'s roll-up so it can
+  never disagree with `SampleProgress.qc` / `StatusBreakdown`.
+- **Implement the "deliverable" filter server-side using `entity_type` only** (confirmed
+  today; see Verified facts). Mirror a new **`iseq_flowcell`** table carrying
+  `id_iseq_flowcell_tmp` (PK — the join key from
+  `iseq_product_metrics_mirror.id_iseq_flowcell_tmp`), `entity_type`, `pipeline_id_lims`
+  (library_type), `id_sample_tmp`, `id_study_tmp`. A product is a **deliverable** iff its
+  flowcell's `entity_type IN ('library','library_indexed')` (i.e. NOT
+  `library_indexed_spike` / `library_control`); for Element/Ultima, a product is a
+  deliverable iff `is_sequencing_control = 0` on `{eseq,useq}_product_metrics`. Do **NOT**
+  use `iseq_flowcell.is_spiked` (it flags spiked lanes, not spike products — 79 % true).
+  Do **NOT** read the iRODS `target=1` AVU and do **NOT** mirror
+  `iseq_composition_tmp`/component structure this wave; "non-primary sub-product"
+  exclusion is only to the extent `entity_type` expresses it (documented edge case). The
+  filter must be a fast indexed column, proven with EXPLAIN.
+- **Verify** against real studies: study 7556's deliverable-only cram count is the
+  `entity_type`-derived count and known controls/spikes are dropped where present. 886 is
+  the expected figure — assert the actual discriminator-derived count and document any
+  delta from 886 (and from the true iRODS `target=1` AVU) rather than hard-pinning
+  exactly 886.
+- **Document the semantics** in registry text: `iseq_product_metrics.target_*` are
+  coverage metrics; there is no scalar warehouse `target` column; the deliverable filter
+  is an `entity_type`-based approximation of the iRODS `target=1` AVU; exactly what
+  "deliverable-only" includes/excludes and its known edge cases.
 
 ### D5 — Global run aggregation (runs per month by manufacturer & platform)
 
@@ -303,15 +394,30 @@ correctly, and so none of it depends on the caller crafting `LIKE` patterns.
   count, date_basis, cache_synced_at}`, across all platforms (Illumina/Element/
   Ultima/PacBio/ONT). **Manufacturer** is derived from platform (Illumina→Illumina,
   Elembio→Element Biosciences, Ultimagen→Ultima Genomics, PacBio→PacBio,
-  ONT→Oxford Nanopore); state the mapping. **`date_basis`** must be defined per
-  platform (e.g. Illumina/Element "run complete", Ultima/PacBio "run archived"/well
-  complete, ONT best-available) — reuse the run dates already mirrored
-  (`iseq_run_status_mirror.date`, `pac_bio_run_well_metrics_mirror.run_*`,
-  `eseq_run_mirror.run_*`, `useq_run_metrics_mirror.run_*`) and make the chosen basis
-  explicit in the response and description.
-- **A global run listing** for drill-down: one row per run — stable cross-platform run
-  identifier, native run id, platform, manufacturer, run-start / run-complete /
-  archived timestamps where available — bounded, paged, with `/count`. This also
+  ONT→Oxford Nanopore); state the mapping.
+- **`date_basis` per platform is the authoritative reference (validated above), and each
+  response row states which basis it used** (HARD REQ 8):
+  - Illumina & Element: `iseq_run_status` status **`run complete`** date (via each
+    platform's product-metrics `id_run`).
+  - Ultima: `iseq_run_status` status **`run archived`** date (never "completes").
+  - PacBio: `pac_bio_run_well_metrics.well_complete` (or `run_complete`).
+  - **ONT: `oseq_flowcell.last_updated`, labelled `date_basis` = "warehouse load time —
+    not a true sequencing date".** ONT IS included in the monthly buckets under this
+    explicit label (so it is never silently dropped), but the label makes clear its
+    month is a warehouse-load month, not a sequencing month.
+- **Source/mirror notes:** the authoritative run-date source for Illumina/Element/Ultima
+  is `iseq_run_status` (mirrored as `iseq_run_status_mirror` + dict). Ensure the sync
+  includes Element/Ultima `id_run`s in that mirror (else fall back to the platform run
+  mirrors' `run_complete`/`run_archived`). Mirror run dates are stored as **varchar**, so
+  the monthly grouping needs a normalized, indexed date to stay index-served. Extend
+  `oseq_flowcell_mirror` to carry ONT run identity (`run_id`/`run_uuid`/`experiment_name`)
+  and `last_updated`.
+- **A global run listing** for drill-down: one row per run — a **stable cross-platform
+  run identifier that is a composite string `<platform>:<native_id>`** (e.g.
+  `illumina:47409`, `pacbio:<run_name>`, `ont:<run_id>`), with `platform` and the native
+  run id ALSO carried as separate fields; plus manufacturer and the run date(s) with the
+  same per-platform basis (ONT's date carries the "warehouse load" caveat) — bounded,
+  paged, with `/count`. The composite id is the paging cursor / drill-down key. This also
   removes the "there is no all-runs endpoint" gap.
 - Index the run/status mirrors to serve the monthly grouping and the listing without
   full scans; EXPLAIN.
@@ -336,14 +442,18 @@ Every new capability must be reachable from `wa mlwh`, in both local-cache and
 cleanly, exit 0), matching existing `wa mlwh` behaviour:
 
 - **D1:** a dedicated **`wa mlwh tsv <study> [--file-type cram] [--columns …]
-  [--deliverables-only] [--qc pass] [--limit/--offset|--all] [--server]`** emitting
-  TSV to stdout (and `--json` for the structured form). This is the command a user
-  runs to get the exact file from Q1/Q2 of the realworld problem set.
+  [--deliverables-only] [--qc pass] [--library-type X] [--organism Y]
+  [--limit/--offset|--all] [--server] [--json]`** emitting TSV to stdout (and `--json`
+  for the structured form). This is the command a user runs to get the exact file from
+  Q1 of the realworld problem set.
 - **D2:** recency on `wa mlwh irods <scope> <id> [--sort created-desc] [--since/--until]`
   and a `wa mlwh latest <study|--faculty-sponsor NAME> [--file-type cram]` (or an
   `info`/manifest section) for "most recent data".
-- **D3:** `wa mlwh search <term> [--prefix|--contains|--exact] [--type study|sample]`;
-  keep the current default behaviour available but make the modes selectable.
+- **D3:** `wa mlwh search <term> [--words] [--library-type X] [--organism Y]
+  [--qc pass|fail|pending] [--deliverables-only] [--type study|sample]`. The `<term>` is
+  required; default matching is literal-prefix; `--words` selects the retained
+  word-prefix mode; the exact filters are the shared family; exact single-identifier
+  lookups remain `wa mlwh info`.
 - **D5:** `wa mlwh runs --monthly [--since/--until] [--platform …]` (grouped counts)
   and a `wa mlwh runs` listing.
 - **D4:** `manual_qc` column/section wherever product rows render (`info <study>`,
@@ -358,41 +468,59 @@ cleanly, exit 0), matching existing `wa mlwh` behaviour:
    must return the complete set via keyset paging/streaming, or clearly report that
    output is a bounded page plus a total and next cursor. (The comparison
    implementation's silent 1000-row cap is exactly the failure mode to avoid.)
-3. **Correctness baked in, not delegated to caller SQL.** manual_qc, target/deliverable,
-   "cram" (filename suffix), recency basis (`created`), run `date_basis`, and
-   prefix-vs-contains-vs-exact are defined and enforced server-side and stated in the
-   registry text. The generic dynamic-call path is a fallback, never the intended way
-   to answer these five questions.
+3. **Correctness baked in, not delegated to caller SQL.** manual_qc, deliverable,
+   "cram" (filename suffix), recency basis (`created`), run `date_basis`, the search
+   default (literal-prefix), the `--words` mode, and the exact filters
+   (organism/library-type/qc/deliverable) are defined and enforced server-side and
+   stated in the registry text. The generic dynamic-call path is a fallback, never the
+   intended way to answer these five questions.
 4. **Source-true semantics.** `manual_qc` = `iseq_product_metrics.qc` (1/0/NULL),
    rolled up as `qc.go` does. There is no scalar `target` column; deliverable-only is
-   an explicit, documented, verified filter. iRODS `created` = data added;
+   the `entity_type`-based (Illumina) / `is_sequencing_control`-based (Element/Ultima)
+   filter, NOT `is_spiked`. Run `date_basis` follows the per-platform reference (Illumina/
+   Element `run complete`, Ultima `run archived`, PacBio `well_complete`, ONT the
+   `last_updated` warehouse-load fallback, labelled). iRODS `created` = data added;
    `last_changed` = sync key (not surfaced as "new data"); `cache_synced_at` /
    `/freshness` = freshness caveat.
 5. **Platform-aware; never a false "no data".** Keep uniform multi-platform treatment.
-   Where a platform lacks a capability (ONT has no product/qc/iRODS-cram), say so
-   explicitly; never collapse to a bare zero. Run aggregation must cover all platforms
-   with an explicit per-platform date basis.
-6. **Cache correctness.** New mirror columns/tables (`iseq_flowcell` discriminators;
-   any substring/n-gram token table; run-aggregation indexes; the
-   `iseq_product_metrics_mirror` PK/`char(64)` change; any deliverable/export
-   structure) must be added to BOTH `sqlite` and `mysql` schema dialects (kept in
-   parity), to `mlwh/sync.go`'s source selection, AND to the cold-load sparse
-   read-index set where the mirror is large, with a **`CacheSchemaVersion` bump (12 →
-   13; full resync acceptable)**.
+   Where a platform lacks a capability (ONT has no product/qc/iRODS-cram and no true
+   sequencing date), say so explicitly; never collapse to a bare zero or a silent drop.
+   Run aggregation covers all platforms including ONT, whose bucket carries the explicit
+   "warehouse load time — not a true sequencing date" `date_basis` label.
+6. **Cache correctness.** New mirror tables/columns — the new `iseq_flowcell` mirror
+   (`entity_type`, `pipeline_id_lims`, keys); any organism helper structure over
+   `common_name`; the extended `oseq_flowcell_mirror` ONT run columns
+   (`run_id`/`run_uuid`/`experiment_name`/`last_updated`); a normalized+indexed run-date
+   for the monthly grouping; run-aggregation indexes; the `iseq_product_metrics_mirror`
+   PK/`char(64)` change; any deliverable/export structure — must be added to BOTH
+   `sqlite` and `mysql` schema dialects (kept in parity), to `mlwh/sync.go`'s source
+   selection, AND to the cold-load sparse read-index set where the mirror is large, with
+   a **`CacheSchemaVersion` bump (12 → 13; full resync acceptable)**.
 7. **Tests.** TDD with behavioural tests; preserve all existing regressions. Add
    **real-MySQL integration tests** (`mlwh/cache_mysql_integration_test.go` pattern:
    throwaway DB, dropped on cleanup, skipped without creds) asserting the new paths
-   execute on MySQL, are index-served (EXPLAIN), and return correct counts/rows
-   (assert 7556 cram TSV = 886 rows; `hek_r` prefix = 4; `usculus` contains = the
-   real count; deliverable-only drops controls where present); and a **source
-   integration test** (`mlwh/sync_source_integration_test.go` pattern) covering the
-   new source columns/tables (`iseq_flowcell` discriminators, `qc`, run dates) so the
-   schema these tests assume stays true.
+   execute on MySQL, are index-served (EXPLAIN), and return correct counts/rows:
+   - `hek_r` default (literal-prefix) search = the **4** `Hek_R1..4`.
+   - the `--organism musculus` (whole-word) filter matches the Mus musculus samples
+     (assert the actual count the chosen word/name semantics yield — the dominant
+     "Mus Musculus" alone is 235,447), and the mid-word fragment `usculus` matches
+     **nothing** (locks the whole-word semantics).
+   - study 7556 deliverable-only cram TSV = the `entity_type`-derived count (**≈886**;
+     assert the actual figure, document any delta), controls/spikes dropped where present.
+   - a `--qc` filter on sample search buckets by the per-sample roll-up, while `--qc` on
+     the TSV filters per-product (the grain difference).
+
+   Add a **source integration test** (`mlwh/sync_source_integration_test.go` pattern)
+   covering the new source columns/tables (`iseq_flowcell.entity_type`/`pipeline_id_lims`,
+   `{eseq,useq}_product_metrics.is_sequencing_control`, `iseq_product_metrics.qc`, the run
+   dates incl. the `iseq_run_status` `run complete`/`run archived` basis and
+   `oseq_flowcell.last_updated`) so the schema these tests assume stays true.
 8. **Registry descriptions are the contract.** Each new/changed endpoint's
    `Description`/`Summary`/`Query` must precisely state the definition used
-   (manual_qc, deliverable/target, "cram" suffix, `created` recency, run date_basis,
-   prefix vs contains vs exact and the fields searched, and the freshness caveat),
-   because the downstream MCP server surfaces this text verbatim.
+   (manual_qc, deliverable via `entity_type`, "cram" suffix, `created` recency, the
+   per-platform run `date_basis` incl. the ONT warehouse-load caveat, the search default
+   vs `--words` vs the exact filters and the fields each covers, and the freshness
+   caveat), because the downstream MCP server surfaces this text verbatim.
 9. **API version bump** (1.7.0 → 1.8.0) alongside the `CacheSchemaVersion` bump, per
    `openapi.go`'s documented lineage.
 
@@ -401,15 +529,16 @@ cleanly, exit 0), matching existing `wa mlwh` behaviour:
 - The dedicated TSV subcommand's exact name/flags and column vocabulary + defaults;
   whether the backing path reuses/refactors `manifest.go` or adds an export
   structure; the deterministic row order; keyset vs streaming for the full export.
-- The precise definition of "primary/target deliverable" and which `iseq_flowcell`/
-  control columns to mirror to implement it; the surface form of `manual_qc`.
-- The contains-search index mechanism (n-gram token table vs FULLTEXT vs other) and
-  its count cap; which fields prefix/contains apply to; how the mode is expressed
-  (flags vs subcommands vs param).
-- The recency "latest" endpoint shape (per study, per sample, per faculty sponsor)
-  and the cheap cross-study path; the tie-break at the max timestamp.
-- The run-aggregation endpoint shape, the manufacturer mapping, and the per-platform
-  `date_basis`; the global run listing's stable run identifier.
+- The exact `iseq_flowcell` mirror shape and index (the deliverable filter's indexed
+  column and how it joins to products); the surface form of `manual_qc`.
+- The `--organism` filter's exact whole-word / full-name mechanism over `common_name`
+  (a small distinct-`common_name` helper table vs `common_name`-scoped word tokens) and
+  its index; how each shared filter intersects the search candidate set; the flag names.
+- The recency "latest" endpoint shape (per study, per sample, per faculty sponsor),
+  the cheap cross-study path, and the small default page size.
+- The run-aggregation endpoint shape; how the `iseq_run_status` `run complete`/`run
+  archived` date (and the varchar→date normalization/index) is realised in the mirror
+  for Illumina/Element/Ultima; the ONT run key; the composite run-identifier format.
 - Index choices for each new path and the additive-vs-recreate migration detail.
 
 ## Pointers / prior art
@@ -417,61 +546,98 @@ cleanly, exit 0), matching existing `wa mlwh` behaviour:
 - Endpoints + descriptions: `mlwh/registry.go`. Result types/json tags: `mlwh/types.go`.
 - Manifest: `mlwh/manifest.go`. iRODS + list SQL: `mlwh/hierarchy.go`. Counts:
   `mlwh/count.go`. Availability/recency/overview: `mlwh/availability.go`. QC/breakdown/
-  progress: `mlwh/progress.go`, `mlwh/qc.go`. Search: `mlwh/search.go`. People:
-  `mlwh/people.go`.
+  progress: `mlwh/progress.go`, `mlwh/qc.go`. Search (incl. the existing
+  `sampleFullPrefix*` literal-prefix machinery and `sampleSearchCountCap`):
+  `mlwh/search.go`. Exact single-identifier resolution (reused by `info`, not
+  duplicated): `mlwh/resolver.go`, `mlwh/enrich.go`, `mlwh/hierarchy.go`
+  (`FindSamplesBy*`). People: `mlwh/people.go`.
 - Sync source selection + cold-load read-index sets + tokeniser: `mlwh/sync.go`,
   `mlwh/sync_platform_coverage.go`, `mlwh/cache.go`. Schema:
   `mlwh/cache_schema/{sqlite,mysql}/*.sql`, `mlwh/cache_schema.go`. Client + paging:
   `mlwh/remote.go`. CLI: `cmd/mlwh_manifest.go`, `cmd/mlwh_irods.go`,
-  `cmd/mlwh_search.go`, `cmd/mlwh_studies.go`, `cmd/mlwh.go`.
+  `cmd/mlwh_search.go`, `cmd/mlwh_info.go`, `cmd/mlwh_studies.go`, `cmd/mlwh.go`.
+- Run `date_basis` authority: `mlwh://reference/sequencing-timestamps` in
+  `~/dj3-mlwh-mcp/src/index.ts` (and its `AGENTS.md` § Platform-specific schema
+  knowledge) — the per-platform reliable date field and join path; validated against
+  source 2026-07-02.
 - Integration-test patterns: `mlwh/cache_mysql_integration_test.go`,
   `mlwh/sync_source_integration_test.go`. Bugfix checklists: `.docs/bugfixes/`.
 - Source schema (authoritative, for the source integration tests): DBIx::Class result
   classes at `wtsi-npg/ml_warehouse`
-  (`lib/WTSI/DNAP/Warehouse/Schema/Result/{Sample,Study,IseqFlowcell,IseqProductMetric,SeqProductIrodsLocation,...}.pm`);
+  (`lib/WTSI/DNAP/Warehouse/Schema/Result/{Sample,Study,IseqFlowcell,IseqProductMetric,SeqProductIrodsLocation,IseqRunStatus,OseqFlowcell,...}.pm`);
   SQLAlchemy mirror at `wtsi-npg/ml-warehouse-python` (no Element/Ultima tables — use
   Perl for those). The first/second waves (reused, not rebuilt): `.docs/realworld/`,
   `.docs/realworld2/` (background only — code is authority).
 
 ## Notes (settled decisions that govern the spec)
 
-These resolve the important open choices; they are instructions, not questions.
+These resolve the important open choices; they are instructions, not questions. They
+agree with the deliverables above (no overrides needed).
 
 ### Versions and migration
 - Bump `APIVersion` 1.7.0 → **1.8.0** and `CacheSchemaVersion` 12 → **13** together. A
   full resync is acceptable; the recreate-tables migration creates the new
-  `iseq_flowcell`-discriminator columns/table, the substring token table, the
-  run-aggregation indexes, the `iseq_product_metrics_mirror` PK/`char(64)` change, and
-  any export structure. Do NOT take the additive no-version-bump path for the
-  key-type change.
+  `iseq_flowcell` mirror, any organism helper structure over `common_name`, the
+  extended `oseq_flowcell_mirror` ONT run columns, the normalized+indexed run-date for
+  the monthly grouping, the run-aggregation indexes, the `iseq_product_metrics_mirror`
+  PK/`char(64)` change, and any export structure. Do NOT take the additive
+  no-version-bump path for the key-type change.
 
 ### D1 TSV
-- It is a **dedicated subcommand**, not a format flag on `manifest`. Default columns
-  cover Q1 (`supplier_name, study_accession_number, sanger_sample_id, manual_qc,
-  irods_path`); accept `supplier_sample_name` as an alias for `supplier_name`.
-  Deliverable-only defaults **on** for the cram TSV. `manual_qc` is the pass/fail/
-  pending roll-up string (raw-value column may be offered additionally). Full-study
-  export uses **keyset pagination**; the CLI prints the complete set with `--all` and a
-  bounded page otherwise, and always states which it gave.
+- A **dedicated subcommand**, not a format flag on `manifest`. Default columns cover Q1
+  (`supplier_name, study_accession_number, sanger_sample_id, manual_qc, irods_path`);
+  accept `supplier_sample_name` as an alias for `supplier_name`. `--deliverables-only`
+  defaults **on** for the cram TSV. `manual_qc` is the pass/fail/pending roll-up string
+  (raw-value column may be offered additionally). Full-study export uses **keyset
+  pagination**; the CLI prints the complete set with `--all` and a bounded page
+  otherwise, and always states which it gave. It offers the shared filter family (with
+  `--qc` at product grain).
 
-### D3 search
-- Provide **three explicit modes**: literal-prefix (the fix for "starts with"),
-  contains (indexed via a substring/n-gram token table populated in sync), and exact
-  (reachable for short controlled tokens). Keep today's word-prefix as the search
-  default's behaviour but make "starts with" and "contains" selectable and
-  self-documented. Contains is bounded by a count cap.
+### D2 recency
+- The "latest data / most recently sequenced" endpoint(s) return a **bounded, pageable
+  page** ordered `created DESC` (small default N), ties broken by `(id_run, id_product)`
+  — NOT an unbounded "all rows tied at MAX(created)" set. Membership basis = the raw
+  `seq_product_irods_locations_mirror` scan on `(id_study_lims, created)`; document it so
+  the result reconciles with `StudyOverview.newest_data_added`. A faculty-sponsor-scoped
+  variant uses the same shape.
 
-### D4 target
-- The "target/deliverable" filter is server-side and indexed (mirror the required
-  `iseq_flowcell`/control columns). Document it as an approximation of the iRODS
-  `target=1` AVU, verified so 7556 → 886 crams. `iseq_product_metrics.target_*`
-  columns are NOT mirrored for this purpose (they are coverage metrics) — do not
-  confuse them.
+### D3 search + filters
+- **Default sample search = literal whole-value prefix** over `name`, `supplier_name`,
+  `common_name`, `donor_id` (index range seek; fixes `hek_r` → the 4). **Word-prefix is
+  retained as an opt-in `--words` mode** (keep `sample_search_token`), not the default.
+  **No substring / n-gram / FULLTEXT / trigram index is built.** **Every sample query
+  requires a `<term>`; there is no termless/filter-only route** — the exact filters
+  narrow a term search. **Exact single-identifier lookups stay `wa mlwh info`'s job** —
+  no `--exact` mode, no new `find` command.
+- **Shared exact filter family** on both `search` and `tsv`, server-side, AND-combined,
+  fast/indexed (EXPLAIN), exempt from the 3-char minimum: `--library-type` (exact
+  `pipeline_id_lims`), `--organism` (whole-word/full-name over the ~16 k `common_name`
+  vocabulary — NOT mid-word substring; `usculus` matches nothing), `--qc pass|fail|pending`
+  (**grain-appropriate**: per-sample roll-up on search, per-product on the TSV),
+  `--deliverables-only` (D4). Filters apply to sample search, not study search.
+
+### D4 deliverable
+- The deliverable filter is server-side, indexed, and defined by **`iseq_flowcell.entity_type`**
+  (deliverable = `entity_type IN ('library','library_indexed')`; exclude
+  `library_indexed_spike`/`library_control`) and, for Element/Ultima,
+  `is_sequencing_control = 0`. **Do NOT use `is_spiked`** (79 % true; flags spiked lanes,
+  not spike products). Mirror a new `iseq_flowcell` table (do NOT read the iRODS `target=1`
+  AVU; do NOT mirror composition/component structure this wave). Documented as an
+  approximation of the iRODS `target=1` AVU; verified so study 7556 ≈ 886 crams (assert
+  the actual `entity_type`-derived count, document any delta). `iseq_product_metrics.target_*`
+  are coverage metrics — not mirrored for this purpose.
 
 ### D5 run aggregation
 - One grouped monthly-count endpoint (`{month, manufacturer, platform, count,
-  date_basis, cache_synced_at}`) plus one global run listing. Manufacturer derived
-  from platform (state the map). `date_basis` chosen per platform and made explicit.
+  date_basis, cache_synced_at}`) plus one global run listing. Manufacturer derived from
+  platform (state the map). **`date_basis` per platform follows the authoritative
+  reference:** Illumina & Element = `iseq_run_status` `run complete`; Ultima =
+  `iseq_run_status` `run archived` (never completes); PacBio =
+  `pac_bio_run_well_metrics.well_complete`; **ONT = `oseq_flowcell.last_updated` labelled
+  "warehouse load time — not a true sequencing date"**, included in the buckets under
+  that explicit label (never silently dropped). Each response row states its basis. The
+  listing's stable run identifier is the composite string `<platform>:<native_id>`, with
+  platform and native id also carried separately.
 
 ### Perf posture
 - Every study-scoped answer stays a single indexed scan on a denormalised column (the
