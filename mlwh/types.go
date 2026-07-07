@@ -138,6 +138,24 @@ type IRODSPath struct {
 	Name        string `json:"name" doc:"Sanger sample name of the sample the data object belongs to; empty when the sample is not present in the sample mirror"`
 	IDRun       int    `json:"id_run" doc:"Illumina NPG run id of the data object; 0 when not derivable (non-Illumina or unmatched)"`
 	Platform    string `json:"platform" doc:"platform string the iRODS row was synced with (source seq_platform_name); disambiguates a 0 id_run as ONT/non-Illumina"`
+	ManualQC    string `json:"manual_qc" doc:"per-product QC roll-up pass|fail|pending from the denormalized product qc; empty when no product-metrics (e.g. ONT)"`
+}
+
+// IRODSPathOptions carries optional filters for iRODS path listings and their
+// matching counts.
+type IRODSPathOptions struct {
+	FileType         string
+	DeliverablesOnly bool
+}
+
+// SampleSearchOptions carries optional sample-search modes and filters. Phase 2
+// consumes DeliverablesOnly; later realworld3 search phases fill in the rest.
+type SampleSearchOptions struct {
+	Words            bool
+	Organism         string
+	LibraryType      string
+	QC               string
+	DeliverablesOnly bool
 }
 
 // ManifestRow is one row of a study's data manifest: one sequencing product
@@ -153,6 +171,7 @@ type ManifestRow struct {
 	IDRun           int    `json:"id_run" doc:"Illumina NPG run id of the product"`
 	Position        int    `json:"lane" doc:"lane position of the product"`
 	TagIndex        int    `json:"tag_index" doc:"multiplexing tag index of the product"`
+	ManualQC        string `json:"manual_qc" doc:"per-product QC roll-up pass|fail|pending from the product qc"`
 	IRODSPath       string `json:"irods_path,omitempty" doc:"iRODS path of the product's data object matching the file-type filter; present only when with_irods is set"`
 }
 

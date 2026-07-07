@@ -32,11 +32,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/smartystreets/goconvey/convey"
 
 	"github.com/go-sql-driver/mysql"
@@ -67,6 +69,17 @@ const (
 	j1UserDualRole       = 2     // dz9 owner + data_access_contact of one study (E2)
 	j1ResolveBothSources = 2     // ResolvePerson("rosa") faculty_sponsor + study_users candidates (E3)
 	j1ResolveLoginOnly   = 1     // ResolvePerson("rk9") study_users candidate via login fragment (E3)
+)
+
+// These B2.1 constants were validated against the live MLWH source on 2026-07-07:
+// study 7556 has 886 direct Illumina .cram iRODS objects, all under
+// entity_type=library_indexed. The implementation deliberately does not read
+// iRODS AVUs; the second reference records the spec's target=1 AVU figure so the
+// live test logs and asserts the delta from that external reference.
+const (
+	b2Study7556LimsID                      = "7556"
+	b2Study7556LiveEntityTypeCramCount     = 886
+	b2Study7556IRODSTargetAVUReferenceCram = 886
 )
 
 // mysqlExplainRow is the subset of an EXPLAIN row this test asserts on: the chosen
@@ -211,6 +224,151 @@ func TestRealMySQLCacheReadQueriesExecuteAndIndexesApplied(t *testing.T) {
 			convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
 		})
 	})
+}
+
+type b2Study7556LiveCounts struct {
+	allCram               int
+	deliverablesOnlyCram  int
+	nonDeliverableCram    int
+	deltaFromExpected     int
+	deltaFromTargetAVURef int
+}
+
+func readB2Study7556SourceCounts(t *testing.T, ctx context.Context, db *sql.DB) b2Study7556LiveCounts {
+	t.Helper()
+
+	const query = `
+		SELECT
+			COUNT(*) AS all_cram,
+			COALESCE(SUM(entity_type IN ('library', 'library_indexed')), 0) AS deliverables_only_cram,
+			COALESCE(SUM(entity_type NOT IN ('library', 'library_indexed')), 0) AS non_deliverable_cram
+		FROM (
+			SELECT DISTINCT
+				spi.id_product,
+				spi.irods_root_collection,
+				COALESCE(spi.irods_data_relative_path, '') AS rel_path,
+				ifc.entity_type
+			FROM study
+			INNER JOIN iseq_flowcell ifc
+				ON ifc.id_study_tmp = study.id_study_tmp
+			INNER JOIN iseq_product_metrics ipm
+				ON ipm.id_iseq_flowcell_tmp = ifc.id_iseq_flowcell_tmp
+			INNER JOIN seq_product_irods_locations spi
+				ON spi.id_product = ipm.id_iseq_product
+			WHERE study.id_lims = 'SQSCP'
+				AND study.id_study_lims = ?
+				AND LOWER(COALESCE(spi.irods_data_relative_path, '')) LIKE '%.cram'
+		) AS study_cram_paths`
+
+	var counts b2Study7556LiveCounts
+	err := db.QueryRowContext(ctx, query, b2Study7556LimsID).Scan(
+		&counts.allCram,
+		&counts.deliverablesOnlyCram,
+		&counts.nonDeliverableCram,
+	)
+	if err != nil {
+		t.Fatalf("read live B2 study 7556 source counts: %v", err)
+	}
+
+	counts.deltaFromExpected = counts.deliverablesOnlyCram - b2Study7556LiveEntityTypeCramCount
+	counts.deltaFromTargetAVURef = counts.deliverablesOnlyCram - b2Study7556IRODSTargetAVUReferenceCram
+
+	return counts
+}
+
+func TestLiveMySQLB2Study7556EntityTypeDeliverableCramCountIs886(t *testing.T) {
+	sourceDB := openB2LiveMLWHSourceOrSkip(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	counts := readB2Study7556SourceCounts(t, ctx, sourceDB)
+
+	convey.Convey("B2.1: Given live study 7556 direct Illumina cram rows validated on 2026-07-07", t, func() {
+		t.Logf(
+			"study 7556 B2 live counts: all_cram=%d deliverables_only_cram=%d non_deliverable_cram=%d delta_from_886=%+d delta_from_irods_target_1_avu_reference=%+d",
+			counts.allCram,
+			counts.deliverablesOnlyCram,
+			counts.nonDeliverableCram,
+			counts.deltaFromExpected,
+			counts.deltaFromTargetAVURef,
+		)
+
+		convey.Convey("when the deliverables-only cram count is derived from entity_type, then it matches the recorded target=1 AVU reference with no delta", func() {
+			convey.So(counts.allCram, convey.ShouldEqual, b2Study7556LiveEntityTypeCramCount)
+			convey.So(counts.deliverablesOnlyCram, convey.ShouldEqual, b2Study7556LiveEntityTypeCramCount)
+			convey.So(counts.nonDeliverableCram, convey.ShouldEqual, 0)
+			convey.So(counts.deltaFromExpected, convey.ShouldEqual, 0)
+			convey.So(counts.deltaFromTargetAVURef, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func openB2LiveMLWHSourceOrSkip(t *testing.T) *sql.DB {
+	t.Helper()
+
+	config, skipReason := loadB2LiveMLWHSourceConfigForTest(t)
+	if skipReason != "" {
+		t.Skip(skipReason)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	sourceDB, err := openLiveMLWHSourceDBForTest(ctx, config.DSN, config.Password)
+	if err != nil {
+		t.Skipf("could not open live MLWH source for B2 validation (%v)", err)
+	}
+	t.Cleanup(func() { _ = sourceDB.Close() })
+
+	return sourceDB
+}
+
+func loadB2LiveMLWHSourceConfigForTest(t *testing.T) (Config, string) {
+	t.Helper()
+
+	if dsn := strings.TrimSpace(os.Getenv(mlwhDSNEnv)); dsn != "" {
+		return Config{
+			DSN:      dsn,
+			Password: strings.TrimSpace(os.Getenv(mlwhPasswordEnv)),
+		}, ""
+	}
+
+	repoRoot, err := findRepoRootForTest()
+	if err != nil {
+		return Config{}, "skipping B2 live MLWH validation: could not locate repository root to load development env files"
+	}
+
+	envFiles := []string{
+		filepath.Join(repoRoot, ".env.development.local"),
+		filepath.Join(repoRoot, ".env.local"),
+		filepath.Join(repoRoot, ".env.development"),
+		filepath.Join(repoRoot, ".env"),
+	}
+
+	loaded := map[string]string{}
+	for _, envFile := range envFiles {
+		values, readErr := godotenv.Read(envFile)
+		if readErr != nil {
+			continue
+		}
+
+		for key, value := range values {
+			if _, exists := loaded[key]; !exists {
+				loaded[key] = value
+			}
+		}
+	}
+
+	dsn := strings.TrimSpace(loaded[mlwhDSNEnv])
+	if dsn == "" {
+		return Config{}, "skipping B2 live MLWH validation: WA_MLWH_DSN not set in environment or development dotenv files"
+	}
+
+	return Config{
+		DSN:      dsn,
+		Password: strings.TrimSpace(loaded[mlwhPasswordEnv]),
+	}, ""
 }
 
 type mysqlColumnDescription struct {
@@ -822,6 +980,142 @@ func seedA4StudyExportScanScenarioMySQL(t *testing.T, db *sql.DB) {
 
 	if _, err := db.Exec("ANALYZE TABLE seq_product_irods_locations_mirror"); err != nil {
 		t.Fatalf("analyze A4 MySQL fixture table: %v", err)
+	}
+}
+
+func TestRealMySQLB2DeliverablesOnlyUsesIndexedFilters(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	writeDB := cache.cache.DB()
+	seedB2DeliverableFilterScenarioMySQL(t, writeDB)
+
+	convey.Convey("B2.3: Given a throwaway MySQL cache with deliverable and control rows", t, func() {
+		convey.Convey("when EXPLAIN runs the deliverables-only iRODS scan, then the scoped iRODS index serves the denormalized is_deliverable filter", func() {
+			query, args := irodsPathFilterQuery(irodsPathsForStudyCacheSQLPrefix, irodsPathsForStudyCacheSQLSuffix, "cram", true, "B2", 100, 0)
+			convey.So(query, convey.ShouldContainSubstring, "(is_deliverable = 1 OR is_deliverable IS NULL)")
+
+			plans := explainPlanRows(t, writeDB, query, args...)
+			plan, ok := findExplainPlanRow(plans, "spi")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+			convey.So(plan.key, convey.ShouldNotBeBlank)
+			convey.So(plan.key, convey.ShouldContainSubstring, "spi_mirror_study_lims")
+			convey.So(plan.possibleKeys, convey.ShouldContainSubstring, "spi_mirror_study_lims")
+		})
+
+		convey.Convey("when EXPLAIN runs the sample-scoped deliverable filter, then product and flowcell lookups are index-served", func() {
+			query, args := sampleDeliverableFilterQuery([]int64{1, 2, 3, 4})
+			convey.So(query, convey.ShouldContainSubstring, "ifc.entity_type IN ('library', 'library_indexed')")
+
+			plans := explainPlanRows(t, writeDB, query, args...)
+			ipmPlan, ok := findExplainPlanRow(plans, "ipm")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(ipmPlan.scanType), convey.ShouldNotEqual, "all")
+			convey.So(ipmPlan.key, convey.ShouldEqual, "ipm_mirror_sample_run_position_tag_idx")
+			convey.So(ipmPlan.possibleKeys, convey.ShouldContainSubstring, "ipm_mirror_sample_run_position_tag_idx")
+
+			ifcPlan, ok := findExplainPlanRow(plans, "ifc")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(ifcPlan.scanType), convey.ShouldNotEqual, "all")
+			convey.So(ifcPlan.key, convey.ShouldEqual, "PRIMARY")
+			convey.So(ifcPlan.possibleKeys, convey.ShouldContainSubstring, "PRIMARY")
+		})
+	})
+}
+
+func seedB2DeliverableFilterScenarioMySQL(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	base := time.Date(2026, time.July, 1, 12, 0, 0, 0, time.UTC)
+	for i := range 250 {
+		study := "B2-decoy"
+		if i < 20 {
+			study = "B2"
+		}
+		entityType := "library_control"
+		isDeliverable := 0
+		if i%3 == 0 {
+			entityType = "library"
+			isDeliverable = 1
+		}
+		if i%5 == 0 {
+			entityType = "library_indexed"
+			isDeliverable = 1
+		}
+
+		idSampleTmp := int64(i%20 + 1)
+		idFlowcellTmp := int64(10_000 + i)
+		idProduct := fmt.Sprintf("b2-product-%03d", i)
+		_, err := db.Exec(
+			`INSERT INTO iseq_flowcell_mirror(id_iseq_flowcell_tmp, entity_type, pipeline_id_lims, id_sample_tmp, id_study_tmp) VALUES (?, ?, ?, ?, ?)`,
+			idFlowcellTmp,
+			entityType,
+			"LT",
+			idSampleTmp,
+			int64(20_000+i),
+		)
+		if err != nil {
+			t.Fatalf("seed B2 flowcell %d: %v", i, err)
+		}
+		_, err = db.Exec(
+			`INSERT INTO iseq_product_metrics_mirror(id_iseq_product, id_iseq_flowcell_tmp, id_run, position, tag_index, id_sample_tmp, id_study_lims, qc, qc_lib, qc_seq, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			idProduct,
+			idFlowcellTmp,
+			int64(60_000+i%7),
+			int64(i%8+1),
+			int64(i%12+1),
+			idSampleTmp,
+			study,
+			1,
+			1,
+			1,
+			formatSyncTime(base.Add(time.Duration(i)*time.Second)),
+		)
+		if err != nil {
+			t.Fatalf("seed B2 product %d: %v", i, err)
+		}
+		_, err = db.Exec(
+			`INSERT INTO seq_product_irods_locations_mirror(id_seq_product_irods_locations_tmp, id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform, id_run, position, tag_index, qc, is_deliverable, merged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			int64(30_000+i),
+			idProduct,
+			"/seq",
+			fmt.Sprintf("b2/%03d.cram", i),
+			"/seq/b2",
+			fmt.Sprintf("%03d.cram", i),
+			idSampleTmp,
+			study,
+			formatSyncTime(base.Add(time.Duration(i)*time.Second)),
+			formatSyncTime(base.Add(time.Duration(i)*time.Second)),
+			"illumina",
+			int64(60_000+i%7),
+			int64(i%8+1),
+			int64(i%12+1),
+			1,
+			isDeliverable,
+			0,
+		)
+		if err != nil {
+			t.Fatalf("seed B2 irods %d: %v", i, err)
+		}
+	}
+
+	for _, table := range []string{"seq_product_irods_locations_mirror", "iseq_flowcell_mirror", "iseq_product_metrics_mirror"} {
+		if _, err := db.Exec("ANALYZE TABLE " + table); err != nil {
+			t.Fatalf("analyze B2 MySQL fixture table %s: %v", table, err)
+		}
 	}
 }
 

@@ -61,9 +61,11 @@ const (
 	// the product's id_sample_tmp and aggregated with MIN so the projection is one
 	// row per (id_run, position, tag_index) product even if the join were to fan
 	// out; a product whose sample is absent from the mirror yields empty identity
-	// fields rather than dropping the row.
+	// fields rather than dropping the row. The aggregate QC columns preserve the
+	// shared manual_qc roll-up inputs for the grouped product row.
 	manifestListSelectPrefix = `SELECT ipm.id_run, ipm.position, ipm.tag_index, ` +
-		`MIN(sm.name), MIN(sm.supplier_name), MIN(sm.accession_number), MIN(sm.sanger_sample_id)`
+		`MIN(sm.name), MIN(sm.supplier_name), MIN(sm.accession_number), MIN(sm.sanger_sample_id), ` +
+		`COUNT(*), SUM(CASE WHEN ipm.qc IS NULL THEN 1 ELSE 0 END), MIN(ipm.qc)`
 
 	// manifestListIRODSSelect adds the per-product iRODS data-object columns
 	// (collection + file name) for the with_irods path. They come from spi, the
@@ -208,11 +210,25 @@ func scanManifestRow(scan func(dest ...any) error, withIRODS bool) (ManifestRow,
 		supplierName    sql.NullString
 		accessionNumber sql.NullString
 		sangerSampleID  sql.NullString
+		productCount    int
+		pendingQC       sql.NullInt64
+		minQC           sql.NullInt64
 		collection      sql.NullString
 		fileName        sql.NullString
 	)
 
-	dest := []any{&row.IDRun, &row.Position, &row.TagIndex, &name, &supplierName, &accessionNumber, &sangerSampleID}
+	dest := []any{
+		&row.IDRun,
+		&row.Position,
+		&row.TagIndex,
+		&name,
+		&supplierName,
+		&accessionNumber,
+		&sangerSampleID,
+		&productCount,
+		&pendingQC,
+		&minQC,
+	}
 	if withIRODS {
 		dest = append(dest, &collection, &fileName)
 	}
@@ -224,6 +240,7 @@ func scanManifestRow(scan func(dest ...any) error, withIRODS bool) (ManifestRow,
 	row.SupplierName = nullStringValue(supplierName)
 	row.AccessionNumber = nullStringValue(accessionNumber)
 	row.SangerSampleID = nullStringValue(sangerSampleID)
+	row.ManualQC = qcRollupString(productCount, pendingQC, minQC)
 	if withIRODS && collection.Valid && fileName.Valid {
 		row.IRODSPath = strings.TrimRight(collection.String, "/") + "/" + fileName.String
 	}

@@ -90,10 +90,10 @@ const (
 	// countIRODSPathsForSampleCacheSQLPrefix/Suffix size IRODSPathsForSample (the
 	// SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name list): the
 	// distinct iRODS data objects for a sample, via COUNT(*) over the same SELECT
-	// DISTINCT. The file-type filter (B2) is spliced into the inner WHERE between
-	// the parent predicate and the closing paren (irodsCountFileTypeQuery), so the
-	// count honours the same filter as the list and count == len(list) for every
-	// file_type.
+	// DISTINCT. The optional filters are spliced into the inner WHERE between the
+	// parent predicate and the closing paren, so the count honours the same filter
+	// as the list and count == len(list) for every file_type/deliverables-only
+	// combination.
 	countIRODSPathsForSampleCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ?`
 	countIRODSPathsForSampleCacheSQLSuffix = `) AS distinct_sample_irods`
 
@@ -133,18 +133,20 @@ const (
 	countFindSamplesByLibraryTypeSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND sample_mirror.id_lims = 'SQSCP'`
 )
 
-// irodsCountFileTypeQuery assembles an iRODS count query from its prefix and
-// suffix, splicing the file-type filter clause into the inner subquery's WHERE
-// (between the parent predicate and the closing paren) when normalised is
-// non-empty, and returns the query alongside its bound args (the parent id, then
-// the suffix LIKE pattern when filtered). It mirrors irodsFileTypeQuery so the
-// count applies exactly the filter the list does and count == len(list) holds.
-func irodsCountFileTypeQuery(prefix, suffix, normalised string, parent any) (string, []any) {
-	if normalised == "" {
-		return prefix + suffix, []any{parent}
+// irodsCountFilterQuery assembles an iRODS count query with the same optional
+// file-type and deliverables-only clauses used by the matching list query.
+func irodsCountFilterQuery(prefix, suffix, normalised string, deliverablesOnly bool, parent any) (string, []any) {
+	query := prefix
+	args := []any{parent}
+	if normalised != "" {
+		query += irodsFileTypeFilterClause
+		args = append(args, irodsFileTypeLikePattern(normalised))
+	}
+	if deliverablesOnly {
+		query += irodsDeliverablesOnlyFilterClause
 	}
 
-	return prefix + irodsFileTypeFilterClause + suffix, []any{parent, irodsFileTypeLikePattern(normalised)}
+	return query + suffix, args
 }
 
 // Count is the bare count envelope returned by the /count endpoints. It
@@ -498,7 +500,13 @@ func (c *Client) CountIRODSPathsForSample(ctx context.Context, sangerName string
 // rejected with ErrUnsupportedIdentifier. It shares IRODSPathsForSample's
 // sample-resolve / synced-empty / unknown cascade.
 func (c *Client) CountIRODSPathsForSampleByFileType(ctx context.Context, sangerName, fileType string) (Count, error) {
-	normalised, err := normaliseFileType(fileType)
+	return c.CountIRODSPathsForSampleWithOptions(ctx, sangerName, IRODSPathOptions{FileType: fileType})
+}
+
+// CountIRODSPathsForSampleWithOptions counts sample iRODS data objects after the
+// optional file-type and deliverables-only filters.
+func (c *Client) CountIRODSPathsForSampleWithOptions(ctx context.Context, sangerName string, opts IRODSPathOptions) (Count, error) {
+	normalised, err := normaliseFileType(opts.FileType)
 	if err != nil {
 		return Count{}, err
 	}
@@ -516,7 +524,7 @@ func (c *Client) CountIRODSPathsForSampleByFileType(ctx context.Context, sangerN
 		return Count{}, err
 	}
 
-	query, args := irodsCountFileTypeQuery(countIRODSPathsForSampleCacheSQLPrefix, countIRODSPathsForSampleCacheSQLSuffix, normalised, sample.IDSampleTmp)
+	query, args := irodsCountFilterQuery(countIRODSPathsForSampleCacheSQLPrefix, countIRODSPathsForSampleCacheSQLSuffix, normalised, opts.DeliverablesOnly, sample.IDSampleTmp)
 	count, err := c.queryCount(ctx, query, "count sample irods paths", args...)
 	if err != nil {
 		return Count{}, err
@@ -549,7 +557,13 @@ func (c *Client) CountIRODSPathsForStudy(ctx context.Context, studyLimsID string
 // rejected with ErrUnsupportedIdentifier. It shares IRODSPathsForStudy's
 // study-resolve / synced-empty / unknown cascade.
 func (c *Client) CountIRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, fileType string) (Count, error) {
-	normalised, err := normaliseFileType(fileType)
+	return c.CountIRODSPathsForStudyWithOptions(ctx, studyLimsID, IRODSPathOptions{FileType: fileType})
+}
+
+// CountIRODSPathsForStudyWithOptions counts study iRODS data objects after the
+// optional file-type and deliverables-only filters.
+func (c *Client) CountIRODSPathsForStudyWithOptions(ctx context.Context, studyLimsID string, opts IRODSPathOptions) (Count, error) {
+	normalised, err := normaliseFileType(opts.FileType)
 	if err != nil {
 		return Count{}, err
 	}
@@ -567,7 +581,7 @@ func (c *Client) CountIRODSPathsForStudyByFileType(ctx context.Context, studyLim
 		return Count{}, err
 	}
 
-	query, args := irodsCountFileTypeQuery(countIRODSPathsForStudyCacheSQLPrefix, countIRODSPathsForStudyCacheSQLSuffix, normalised, study.IDStudyLims)
+	query, args := irodsCountFilterQuery(countIRODSPathsForStudyCacheSQLPrefix, countIRODSPathsForStudyCacheSQLSuffix, normalised, opts.DeliverablesOnly, study.IDStudyLims)
 	count, err := c.queryCount(ctx, query, "count study irods paths", args...)
 	if err != nil {
 		return Count{}, err
@@ -595,7 +609,13 @@ func (c *Client) CountIRODSPathsForStudyByFileType(ctx context.Context, studyLim
 // rejected with ErrUnsupportedIdentifier. A valid but unmatched suffix, or a run
 // with no iRODS rows yet, yields Count{0} on a synced cache.
 func (c *Client) CountIRODSPathsForRun(ctx context.Context, idRun, fileType string) (Count, error) {
-	normalised, err := normaliseFileType(fileType)
+	return c.CountIRODSPathsForRunWithOptions(ctx, idRun, IRODSPathOptions{FileType: fileType})
+}
+
+// CountIRODSPathsForRunWithOptions counts run iRODS data objects after the
+// optional file-type and deliverables-only filters.
+func (c *Client) CountIRODSPathsForRunWithOptions(ctx context.Context, idRun string, opts IRODSPathOptions) (Count, error) {
+	normalised, err := normaliseFileType(opts.FileType)
 	if err != nil {
 		return Count{}, err
 	}
@@ -605,7 +625,7 @@ func (c *Client) CountIRODSPathsForRun(ctx context.Context, idRun, fileType stri
 		return Count{}, err
 	}
 
-	query, args := irodsCountFileTypeQuery(countIRODSPathsForRunCacheSQLPrefix, countIRODSPathsForRunCacheSQLSuffix, normalised, match.Run.IDRun)
+	query, args := irodsCountFilterQuery(countIRODSPathsForRunCacheSQLPrefix, countIRODSPathsForRunCacheSQLSuffix, normalised, opts.DeliverablesOnly, match.Run.IDRun)
 	count, err := c.queryCount(ctx, query, "count run irods paths", args...)
 	if err != nil {
 		return Count{}, err

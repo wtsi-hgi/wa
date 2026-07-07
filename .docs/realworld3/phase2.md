@@ -46,8 +46,8 @@ re-implement the precedence). Files: `qc.go` (reuse), `manifest.go`,
 `qc=1` -> "pass" not empty; Element and Ultima rows non-blank, ONT row
 empty). Depends on Phase 1 (A3, A4).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.2: B2 - deliverable filter via entity_type; pass-through PacBio/ONT
 
@@ -71,8 +71,8 @@ filtering via the flowcell PK/entity_type index and the denormalised
 a non-empty pass/fail/pending). Depends on 2.1 (shared `hierarchy.go`;
 retained rows must render `manual_qc`) and Phase 1 (A1, A4).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For sequential items, a single review pass after each item is
 acceptable; reviewers must confirm `manual_qc` reuses `qc.go` (agreeing

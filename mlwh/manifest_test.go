@@ -308,6 +308,29 @@ func TestStudyManifestWithIRODSCramAddsPathPerProductC1(t *testing.T) {
 	})
 }
 
+func TestStudyManifestRowsRenderManualQCFromProductQC(t *testing.T) {
+	convey.Convey("B1.1: Given study S1 with products whose qc values are 1, 0 and NULL", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedManifestS1Scenario(t, cache.DB())
+		setIseqProductMetricsMirrorQC(t, cache.DB(), 2101, sql.NullInt64{Int64: 1, Valid: true})
+		setIseqProductMetricsMirrorQC(t, cache.DB(), 2102, sql.NullInt64{Int64: 0, Valid: true})
+		setIseqProductMetricsMirrorQC(t, cache.DB(), 2203, sql.NullInt64{})
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		manifest, err := client.StudyManifest(context.Background(), "S1", "", false, manifestAllRows, 0)
+
+		convey.Convey("when StudyManifest renders the rows, then manual_qc maps them to pass, fail and pending", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(manifest.Rows, convey.ShouldHaveLength, 3)
+			convey.So(manifest.Rows[0].ManualQC, convey.ShouldEqual, "pass")
+			convey.So(manifest.Rows[1].ManualQC, convey.ShouldEqual, "fail")
+			convey.So(manifest.Rows[2].ManualQC, convey.ShouldEqual, "pending")
+		})
+	})
+}
+
 func TestStudyManifestWithIRODSNoFileTypeDoesNotDefaultToCramC1(t *testing.T) {
 	convey.Convey("Given study S1 with a product whose only iRODS object is a .bam (no .cram)", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -582,4 +605,19 @@ func seedManifestIdentitySyncState(t *testing.T, db *sql.DB) {
 	seedSyncStateRun(t, db, syncTableStudy, highWater, oldest)
 	seedSyncStateRun(t, db, syncTableSample, highWater, oldest.Add(1*time.Hour))
 	seedSyncStateRun(t, db, syncTableIseqFlowcell, highWater, oldest.Add(2*time.Hour))
+}
+
+func setIseqProductMetricsMirrorQC(t *testing.T, db *sql.DB, idIseqProduct int64, qc sql.NullInt64) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`UPDATE iseq_product_metrics_mirror SET qc = ?, qc_lib = ?, qc_seq = ? WHERE id_iseq_product = ?`,
+		qc,
+		qc,
+		qc,
+		idIseqProduct,
+	)
+	if err != nil {
+		t.Fatalf("setIseqProductMetricsMirrorQC(): %v", err)
+	}
 }

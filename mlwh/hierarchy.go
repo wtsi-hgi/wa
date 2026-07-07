@@ -48,9 +48,11 @@ const expandIdentifierTTL = 5 * time.Minute
 // the clause and binds the suffix pattern, keeping the row grain (and therefore
 // count == len(list)) identical to the unfiltered query.
 const (
-	irodsPathsForSampleCacheSQLPrefix = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, COALESCE(MIN(ipm.id_run), 0), spi.platform FROM seq_product_irods_locations_mirror spi LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE spi.id_sample_tmp = ?`
+	irodsManualQCAggregateSelect = `, CASE WHEN LOWER(spi.platform) = 'ont' THEN 0 WHEN MAX(CASE WHEN spi.qc IS NOT NULL OR spi.id_run <> 0 OR spi.position <> 0 OR spi.tag_index <> 0 OR spi.merged <> 0 OR LOWER(spi.platform) IN ('elembio', 'ultimagen', 'pacbio') THEN 1 ELSE 0 END) = 1 THEN COUNT(*) ELSE 0 END, SUM(CASE WHEN spi.qc IS NULL THEN 1 ELSE 0 END), MIN(spi.qc)`
+
+	irodsPathsForSampleCacheSQLPrefix = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, COALESCE(MIN(ipm.id_run), 0), spi.platform` + irodsManualQCAggregateSelect + ` FROM seq_product_irods_locations_mirror spi LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE spi.id_sample_tmp = ?`
 	irodsPathsForSampleCacheSQLSuffix = ` GROUP BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.platform ORDER BY spi.id_iseq_product LIMIT ? OFFSET ?`
-	irodsPathsForStudyCacheSQLPrefix  = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, ''), COALESCE(MIN(ipm.id_run), 0), spi.platform FROM seq_product_irods_locations_mirror spi LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE spi.id_study_lims = ?`
+	irodsPathsForStudyCacheSQLPrefix  = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, ''), COALESCE(MIN(ipm.id_run), 0), spi.platform` + irodsManualQCAggregateSelect + ` FROM seq_product_irods_locations_mirror spi LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE spi.id_study_lims = ?`
 	irodsPathsForStudyCacheSQLSuffix  = ` GROUP BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, ''), spi.platform ORDER BY spi.id_iseq_product, spi.id_sample_tmp LIMIT ? OFFSET ?`
 
 	// irodsPathsForRunCacheSQLPrefix/Suffix list the iRODS data objects on a run
@@ -64,7 +66,7 @@ const (
 	// count == len(list). The B2 file-type filter (irodsFileTypeFilterClause) splices
 	// between the id_run predicate and the GROUP BY; irods_file_name is unambiguous
 	// because only seq_product_irods_locations_mirror has that column.
-	irodsPathsForRunCacheSQLPrefix = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, ?, spi.platform FROM seq_product_irods_locations_mirror spi INNER JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE ipm.id_run = ?`
+	irodsPathsForRunCacheSQLPrefix = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, ?, spi.platform` + irodsManualQCAggregateSelect + ` FROM seq_product_irods_locations_mirror spi INNER JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE ipm.id_run = ?`
 	irodsPathsForRunCacheSQLSuffix = ` GROUP BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.platform ORDER BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name LIMIT ? OFFSET ?`
 
 	// irodsFileTypeFilterClause is the WHERE-clause fragment that restricts an
@@ -81,6 +83,11 @@ const (
 	// parent predicate stays the primary, index-served filter; this clause only
 	// narrows the already-scoped rows, so the study-scoped index is preserved.
 	irodsFileTypeFilterClause = ` AND LOWER(irods_file_name) LIKE ?`
+
+	// irodsDeliverablesOnlyFilterClause is the B2 tri-state deliverable filter:
+	// exclude only known controls/spikes (0), retaining known deliverables (1) and
+	// platforms with no deliverable discriminator (NULL, e.g. PacBio/ONT).
+	irodsDeliverablesOnlyFilterClause = ` AND (is_deliverable = 1 OR is_deliverable IS NULL)`
 )
 
 var (
@@ -210,18 +217,28 @@ func normaliseFileType(raw string) (string, error) {
 	return normalised, nil
 }
 
-// irodsFileTypeQuery assembles an iRODS list query from its prefix and suffix,
-// splicing in the file-type filter clause when normalised is non-empty, and
-// returns the query alongside its bound args in the order the SQL expects: the
-// parent id, then (when filtered) the suffix LIKE pattern, then limit and offset.
-// When normalised is empty the query and args are exactly the unfiltered form, so
-// the all-rows path is unchanged.
+// irodsFileTypeQuery assembles an iRODS list query with only the file-type
+// filter. It preserves the historical helper for existing callers/tests.
 func irodsFileTypeQuery(prefix, suffix, normalised string, parent any, limit, offset int) (string, []any) {
-	if normalised == "" {
-		return prefix + suffix, []any{parent, limit, offset}
+	return irodsPathFilterQuery(prefix, suffix, normalised, false, parent, limit, offset)
+}
+
+// irodsPathFilterQuery assembles an iRODS list query from its prefix and suffix,
+// splicing in optional file-type and deliverables-only clauses before the GROUP BY
+// suffix. Args follow the SQL order: parent id, optional file-type LIKE pattern,
+// then limit/offset.
+func irodsPathFilterQuery(prefix, suffix, normalised string, deliverablesOnly bool, parent any, limit, offset int) (string, []any) {
+	query := prefix
+	args := []any{parent}
+	if normalised != "" {
+		query += irodsFileTypeFilterClause
+		args = append(args, irodsFileTypeLikePattern(normalised))
+	}
+	if deliverablesOnly {
+		query += irodsDeliverablesOnlyFilterClause
 	}
 
-	return prefix + irodsFileTypeFilterClause + suffix, []any{parent, irodsFileTypeLikePattern(normalised), limit, offset}
+	return query + suffix, append(args, limit, offset)
 }
 
 // irodsRunFileTypeQuery assembles the run-scoped iRODS list query (B3) from its
@@ -232,12 +249,24 @@ func irodsFileTypeQuery(prefix, suffix, normalised string, parent any, limit, of
 // the suffix LIKE pattern follows the two run binds, then limit and offset; when
 // unfiltered the query and args are exactly the all-rows form.
 func irodsRunFileTypeQuery(normalised string, runID, limit, offset int) (string, []any) {
-	if normalised == "" {
-		return irodsPathsForRunCacheSQLPrefix + irodsPathsForRunCacheSQLSuffix, []any{runID, runID, limit, offset}
+	return irodsRunFilterQuery(normalised, false, runID, limit, offset)
+}
+
+// irodsRunFilterQuery is irodsPathFilterQuery for the run-scoped list query,
+// whose prefix has two leading run placeholders: projected id_run and predicate
+// id_run.
+func irodsRunFilterQuery(normalised string, deliverablesOnly bool, runID, limit, offset int) (string, []any) {
+	query := irodsPathsForRunCacheSQLPrefix
+	args := []any{runID, runID}
+	if normalised != "" {
+		query += irodsFileTypeFilterClause
+		args = append(args, irodsFileTypeLikePattern(normalised))
+	}
+	if deliverablesOnly {
+		query += irodsDeliverablesOnlyFilterClause
 	}
 
-	return irodsPathsForRunCacheSQLPrefix + irodsFileTypeFilterClause + irodsPathsForRunCacheSQLSuffix,
-		[]any{runID, runID, irodsFileTypeLikePattern(normalised), limit, offset}
+	return query + irodsPathsForRunCacheSQLSuffix, append(args, limit, offset)
 }
 
 // irodsFileTypeLikePattern builds the LIKE pattern for a normalised file-type
@@ -1290,7 +1319,13 @@ func (c *Client) IRODSPathsForSample(ctx context.Context, sangerName string, lim
 // HTTP handler returns 400 first; this re-validates defensively). A valid but
 // unmatched suffix yields an empty list (no error) on a synced cache.
 func (c *Client) IRODSPathsForSampleByFileType(ctx context.Context, sangerName, fileType string, limit, offset int) ([]IRODSPath, error) {
-	normalised, err := normaliseFileType(fileType)
+	return c.IRODSPathsForSampleWithOptions(ctx, sangerName, IRODSPathOptions{FileType: fileType}, limit, offset)
+}
+
+// IRODSPathsForSampleWithOptions returns iRODS paths for a sample, applying the
+// optional file-type and deliverables-only filters in SQL.
+func (c *Client) IRODSPathsForSampleWithOptions(ctx context.Context, sangerName string, opts IRODSPathOptions, limit, offset int) ([]IRODSPath, error) {
+	normalised, err := normaliseFileType(opts.FileType)
 	if err != nil {
 		return nil, err
 	}
@@ -1312,7 +1347,7 @@ func (c *Client) IRODSPathsForSampleByFileType(ctx context.Context, sangerName, 
 		return nil, err
 	}
 
-	query, args := irodsFileTypeQuery(irodsPathsForSampleCacheSQLPrefix, irodsPathsForSampleCacheSQLSuffix, normalised, sample.IDSampleTmp, limit, offset)
+	query, args := irodsPathFilterQuery(irodsPathsForSampleCacheSQLPrefix, irodsPathsForSampleCacheSQLSuffix, normalised, opts.DeliverablesOnly, sample.IDSampleTmp, limit, offset)
 	paths, err := c.queryIRODSPaths(ctx, query, args, "query irods paths for sample")
 	if err != nil {
 		return nil, err
@@ -1345,7 +1380,13 @@ func (c *Client) IRODSPathsForStudy(ctx context.Context, studyLimsID string, lim
 // HTTP handler returns 400 first; this re-validates defensively). A valid but
 // unmatched suffix yields an empty list (no error) on a synced cache.
 func (c *Client) IRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, fileType string, limit, offset int) ([]IRODSPath, error) {
-	normalised, err := normaliseFileType(fileType)
+	return c.IRODSPathsForStudyWithOptions(ctx, studyLimsID, IRODSPathOptions{FileType: fileType}, limit, offset)
+}
+
+// IRODSPathsForStudyWithOptions returns iRODS paths for a study, applying the
+// optional file-type and deliverables-only filters in SQL.
+func (c *Client) IRODSPathsForStudyWithOptions(ctx context.Context, studyLimsID string, opts IRODSPathOptions, limit, offset int) ([]IRODSPath, error) {
+	normalised, err := normaliseFileType(opts.FileType)
 	if err != nil {
 		return nil, err
 	}
@@ -1367,7 +1408,7 @@ func (c *Client) IRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, 
 		return nil, err
 	}
 
-	query, args := irodsFileTypeQuery(irodsPathsForStudyCacheSQLPrefix, irodsPathsForStudyCacheSQLSuffix, normalised, study.IDStudyLims, limit, offset)
+	query, args := irodsPathFilterQuery(irodsPathsForStudyCacheSQLPrefix, irodsPathsForStudyCacheSQLSuffix, normalised, opts.DeliverablesOnly, study.IDStudyLims, limit, offset)
 	paths, err := c.queryIRODSPathsWithSample(ctx, query, args, "query irods paths for study")
 	if err != nil {
 		return nil, err
@@ -1400,7 +1441,13 @@ func (c *Client) IRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, 
 // suffix, or a run with no iRODS rows yet, yields an empty list (no error) on a
 // synced cache.
 func (c *Client) IRODSPathsForRun(ctx context.Context, idRun, fileType string, limit, offset int) ([]IRODSPath, error) {
-	normalised, err := normaliseFileType(fileType)
+	return c.IRODSPathsForRunWithOptions(ctx, idRun, IRODSPathOptions{FileType: fileType}, limit, offset)
+}
+
+// IRODSPathsForRunWithOptions returns iRODS paths for a run, applying the
+// optional file-type and deliverables-only filters in SQL.
+func (c *Client) IRODSPathsForRunWithOptions(ctx context.Context, idRun string, opts IRODSPathOptions, limit, offset int) ([]IRODSPath, error) {
+	normalised, err := normaliseFileType(opts.FileType)
 	if err != nil {
 		return nil, err
 	}
@@ -1410,7 +1457,7 @@ func (c *Client) IRODSPathsForRun(ctx context.Context, idRun, fileType string, l
 		return nil, err
 	}
 
-	query, args := irodsRunFileTypeQuery(normalised, match.Run.IDRun, limit, offset)
+	query, args := irodsRunFilterQuery(normalised, opts.DeliverablesOnly, match.Run.IDRun, limit, offset)
 	paths, err := c.queryIRODSPaths(ctx, query, args, "query irods paths for run")
 	if err != nil {
 		return nil, err
@@ -1490,11 +1537,17 @@ func (c *Client) queryIRODSPaths(ctx context.Context, query string, args []any, 
 
 	paths := make([]IRODSPath, 0)
 	for rows.Next() {
-		path := IRODSPath{}
-		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject, &path.IDRun, &path.Platform); err != nil {
+		var (
+			path         IRODSPath
+			productCount int
+			pendingQC    sql.NullInt64
+			minQC        sql.NullInt64
+		)
+		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject, &path.IDRun, &path.Platform, &productCount, &pendingQC, &minQC); err != nil {
 			return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
 		}
 		path.IRODSPath = strings.TrimRight(path.Collection, "/") + "/" + path.DataObject
+		path.ManualQC = qcRollupString(productCount, pendingQC, minQC)
 
 		paths = append(paths, path)
 	}
@@ -1523,11 +1576,17 @@ func (c *Client) queryIRODSPathsWithSample(ctx context.Context, query string, ar
 
 	paths := make([]IRODSPath, 0)
 	for rows.Next() {
-		path := IRODSPath{}
-		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject, &path.IDSampleTmp, &path.Name, &path.IDRun, &path.Platform); err != nil {
+		var (
+			path         IRODSPath
+			productCount int
+			pendingQC    sql.NullInt64
+			minQC        sql.NullInt64
+		)
+		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject, &path.IDSampleTmp, &path.Name, &path.IDRun, &path.Platform, &productCount, &pendingQC, &minQC); err != nil {
 			return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
 		}
 		path.IRODSPath = strings.TrimRight(path.Collection, "/") + "/" + path.DataObject
+		path.ManualQC = qcRollupString(productCount, pendingQC, minQC)
 
 		paths = append(paths, path)
 	}

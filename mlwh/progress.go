@@ -758,16 +758,12 @@ func baselinePhaseFor(productCount int, delivered bool) string {
 // qcFail when any product fails (MIN(qc) == 0, since SQL MIN ignores NULLs),
 // else qcPending when any product's qc is NULL, else qcPass.
 func rollUpSampleQC(productCount int, pending, minQC sql.NullInt64) string {
-	switch {
-	case productCount == 0:
+	qc := qcRollupString(productCount, pending, minQC)
+	if qc == "" {
 		return qcNotTracked
-	case minQC.Valid && minQC.Int64 == 0:
-		return qcFail
-	case pending.Valid && pending.Int64 > 0:
-		return qcPending
-	default:
-		return qcPass
 	}
+
+	return qc
 }
 
 // sampleBaseline is the always-derivable P0 baseline for one sample (spec F1):

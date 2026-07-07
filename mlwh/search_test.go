@@ -1320,6 +1320,45 @@ func TestCountSampleSearchMatchesSearchSamplesCount(t *testing.T) {
 	})
 }
 
+func TestSearchSamplesDeliverablesOnlyRetainsPacBioONTAndDropsControlOnlyIllumina(t *testing.T) {
+	convey.Convey("B2 sample search: Given deliverable, control-only Illumina, PacBio and ONT samples matching one term", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "b2sample-illumina-deliverable", "supplier-1", "common-1", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "b2sample-illumina-control", "supplier-2", "common-2", "donor-2")
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "b2sample-pacbio-only", "supplier-3", "common-3", "donor-3")
+		seedSampleMirrorSearchRow(t, cache.DB(), 4, "b2sample-ont-only", "supplier-4", "common-4", "donor-4")
+		seedIseqFlowcellMirrorSearchRow(t, cache.DB(), 1, 1, "library")
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 1001, 1, 52553, 1, 1, "S1")
+		seedIseqFlowcellMirrorSearchRow(t, cache.DB(), 2, 2, "library_control")
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 1002, 2, 52553, 1, 2, "S1")
+		seedPacBioProductMetricsMirrorRow(t, cache.DB(), "pacbio-search-3", 3, "S1")
+		seedOseqFlowcellMirrorRow(t, cache.DB(), 4004, 4, "S1")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableIseqFlowcell, time.Date(2026, time.May, 6, 17, 1, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 17, 2, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTablePacBioProductMetrics, time.Date(2026, time.May, 6, 17, 3, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableOseqFlowcell, time.Date(2026, time.May, 6, 17, 4, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		all, allErr := client.SearchSamples(context.Background(), "b2sample", 100, 0)
+		filtered, filteredErr := client.SearchSamplesWithOptions(context.Background(), "b2sample", SampleSearchOptions{DeliverablesOnly: true}, 100, 0)
+		count, countErr := client.CountSampleSearchWithOptions(context.Background(), "b2sample", SampleSearchOptions{DeliverablesOnly: true})
+
+		convey.Convey("when deliverables-only is applied to sample search, then only the control-only Illumina sample is dropped", func() {
+			convey.So(allErr, convey.ShouldBeNil)
+			convey.So(filteredErr, convey.ShouldBeNil)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(all), convey.ShouldResemble, []int64{1, 2, 3, 4})
+			convey.So(sampleTmpIDs(filtered), convey.ShouldResemble, []int64{1, 3, 4})
+			convey.So(count, convey.ShouldResemble, Count{Count: 3})
+		})
+	})
+}
+
 func TestIncrementalSyncMakesNewSampleSearchable(t *testing.T) {
 	convey.Convey("Given a SQLite cache cold-synced with sample A, when a second incremental sync adds sample B", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -1583,6 +1622,22 @@ func seedSampleMirrorSearchRow(t *testing.T, db *sql.DB, id int64, name, supplie
 	)
 	if err != nil {
 		t.Fatalf("seedSampleMirrorSearchRow(): %v", err)
+	}
+}
+
+func seedIseqFlowcellMirrorSearchRow(t *testing.T, db *sql.DB, idIseqFlowcellTmp, idSampleTmp int64, entityType string) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO iseq_flowcell_mirror(id_iseq_flowcell_tmp, entity_type, pipeline_id_lims, id_sample_tmp, id_study_tmp) VALUES (?, ?, ?, ?, ?)`,
+		idIseqFlowcellTmp,
+		entityType,
+		"library-type-"+formatInt(idSampleTmp),
+		idSampleTmp,
+		idSampleTmp,
+	)
+	if err != nil {
+		t.Fatalf("seedIseqFlowcellMirrorSearchRow(): %v", err)
 	}
 }
 

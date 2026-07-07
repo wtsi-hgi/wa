@@ -55,6 +55,10 @@ const (
 	sampleSearchTokenPageMargin     = 64
 )
 
+// sampleDeliverableFilterFetchChunk bounds how many unfiltered search candidate
+// ids are checked in one deliverables-only SQL query.
+const sampleDeliverableFilterFetchChunk = 1000
+
 // sampleAnchorFieldFetchChunk bounds how many anchor-matched samples' searchable
 // fields are read per query during the in-memory word-AND verification (Part C). The
 // anchor is the most-selective token, so the candidate set is small; fetching its
@@ -129,6 +133,20 @@ var sampleSearchCountSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT id_sample_tmp 
 // for the degenerate no-upper-bound term (see sampleTokenPrefixLowerClause).
 var sampleSearchCountOpenSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT id_sample_tmp FROM ` + sampleSearchTokenTable +
 	` WHERE ` + sampleTokenPrefixLowerClause + ` LIMIT ?) AS bounded_sample_search`
+
+const sampleDeliverableIDUnionSQLTemplate = `
+	SELECT ipm.id_sample_tmp
+	FROM iseq_product_metrics_mirror ipm
+	INNER JOIN iseq_flowcell_mirror ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp
+	WHERE ipm.id_sample_tmp IN (%[1]s) AND ifc.entity_type IN ('library', 'library_indexed')
+	UNION
+	SELECT id_sample_tmp FROM eseq_product_metrics_mirror WHERE id_sample_tmp IN (%[1]s) AND is_sequencing_control = 0
+	UNION
+	SELECT id_sample_tmp FROM useq_product_metrics_mirror WHERE id_sample_tmp IN (%[1]s) AND is_sequencing_control = 0
+	UNION
+	SELECT id_sample_tmp FROM pac_bio_product_metrics_mirror WHERE id_sample_tmp IN (%[1]s)
+	UNION
+	SELECT id_sample_tmp FROM oseq_flowcell_mirror WHERE id_sample_tmp IN (%[1]s)`
 
 // sampleFullPrefixFields are the four sample_mirror columns whose case-insensitive
 // NOCASE/ci indexes back the full-value PREFIX match: a sample matches when ANY of
@@ -572,6 +590,29 @@ func queryCountRow(ctx context.Context, db *sql.DB, query string, args ...any) (
 	return count, nil
 }
 
+func validatePhase2SampleSearchOptions(opts SampleSearchOptions) error {
+	if opts.Words || opts.Organism != "" || opts.LibraryType != "" || opts.QC != "" {
+		return ErrUnsupportedIdentifier
+	}
+
+	return nil
+}
+
+func sampleDeliverableFilterQuery(ids []int64) (string, []any) {
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids)*5)
+	for index := range ids {
+		placeholders[index] = "?"
+	}
+	for range 5 {
+		for _, id := range ids {
+			args = append(args, id)
+		}
+	}
+
+	return fmt.Sprintf(sampleDeliverableIDUnionSQLTemplate, strings.Join(placeholders, ", ")), args
+}
+
 // sampleSearchUnionIDs returns up to need of the smallest distinct id_sample_tmps
 // matching a multi-token term, in ascending id order: the de-duplicated union of
 // the full-value prefix match (Part A, sampleFullPrefixPage) and the word-token
@@ -778,6 +819,16 @@ func (c *Client) SearchStudies(ctx context.Context, term string, limit, offset i
 // paged in id order. The same path serves both dialects; neither uses FTS, so it
 // works on MariaDB and MySQL < 8 too.
 func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
+	return c.SearchSamplesWithOptions(ctx, term, SampleSearchOptions{}, limit, offset)
+}
+
+// SearchSamplesWithOptions returns samples matching term and optional sample
+// filters. Phase 2 implements DeliverablesOnly; other filters are reserved for
+// the later shared-filter phase.
+func (c *Client) SearchSamplesWithOptions(ctx context.Context, term string, opts SampleSearchOptions, limit, offset int) ([]Sample, error) {
+	if err := validatePhase2SampleSearchOptions(opts); err != nil {
+		return nil, err
+	}
 	if len(term) < searchTermMinLength {
 		return []Sample{}, nil
 	}
@@ -792,7 +843,7 @@ func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset i
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	ids, err := c.sampleSearchIDs(ctx, db, term, tokens, limit, offset)
+	ids, err := c.sampleSearchIDs(ctx, db, term, tokens, opts, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -821,7 +872,15 @@ func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset i
 // every full-value prefix match. A multi-word term pages the de-duplicated union of
 // the full-value prefix match and the word-token AND in id order
 // (sampleSearchUnionIDs), slicing the requested window.
-func (c *Client) sampleSearchIDs(ctx context.Context, db *sql.DB, term string, tokens []string, limit, offset int) ([]int64, error) {
+func (c *Client) sampleSearchIDs(ctx context.Context, db *sql.DB, term string, tokens []string, opts SampleSearchOptions, limit, offset int) ([]int64, error) {
+	if opts.DeliverablesOnly {
+		return c.deliverableSampleSearchIDs(ctx, db, term, tokens, limit, offset)
+	}
+
+	return c.unfilteredSampleSearchIDs(ctx, db, term, tokens, limit, offset)
+}
+
+func (c *Client) unfilteredSampleSearchIDs(ctx context.Context, db *sql.DB, term string, tokens []string, limit, offset int) ([]int64, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
@@ -839,6 +898,76 @@ func (c *Client) sampleSearchIDs(ctx context.Context, db *sql.DB, term string, t
 	}
 
 	return unionIDs[offset:min(offset+limit, len(unionIDs))], nil
+}
+
+func (c *Client) deliverableSampleSearchIDs(ctx context.Context, db *sql.DB, term string, tokens []string, limit, offset int) ([]int64, error) {
+	need := offset + limit
+	if need <= 0 {
+		return nil, nil
+	}
+
+	filtered := make([]int64, 0, need)
+	rawOffset := 0
+	for len(filtered) < need {
+		candidates, err := c.unfilteredSampleSearchIDs(ctx, db, term, tokens, sampleDeliverableFilterFetchChunk, rawOffset)
+		if err != nil {
+			return nil, err
+		}
+		if len(candidates) == 0 {
+			break
+		}
+
+		kept, err := c.filterDeliverableSampleIDs(ctx, db, candidates)
+		if err != nil {
+			return nil, err
+		}
+		filtered = append(filtered, kept...)
+		if len(candidates) < sampleDeliverableFilterFetchChunk {
+			break
+		}
+
+		rawOffset += len(candidates)
+	}
+	if offset >= len(filtered) {
+		return []int64{}, nil
+	}
+
+	return filtered[offset:min(need, len(filtered))], nil
+}
+
+func (c *Client) filterDeliverableSampleIDs(ctx context.Context, db *sql.DB, ids []int64) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	query, args := sampleDeliverableFilterQuery(ids)
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: query deliverable sample filter: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	keptSet := make(map[int64]struct{}, len(ids))
+	for rows.Next() {
+		var id int64
+		if scanErr := rows.Scan(&id); scanErr != nil {
+			return nil, fmt.Errorf("%w: scan deliverable sample filter: %w", ErrUpstreamImpaired, scanErr)
+		}
+
+		keptSet[id] = struct{}{}
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: query deliverable sample filter: %w", ErrUpstreamImpaired, err)
+	}
+
+	kept := make([]int64, 0, len(keptSet))
+	for _, id := range ids {
+		if _, ok := keptSet[id]; ok {
+			kept = append(kept, id)
+		}
+	}
+
+	return kept, nil
 }
 
 // sampleSearchTokenPage returns the distinct id_sample_tmps for the page
@@ -968,6 +1097,15 @@ func (c *Client) CountStudySearch(ctx context.Context, term string) (Count, erro
 // never-synced cache returns Count{} with an error satisfying both
 // ErrCacheNeverSynced and ErrNotFound, mirroring SearchSamples.
 func (c *Client) CountSampleSearch(ctx context.Context, term string) (Count, error) {
+	return c.CountSampleSearchWithOptions(ctx, term, SampleSearchOptions{})
+}
+
+// CountSampleSearchWithOptions counts samples matching term and optional sample
+// filters, bounded by sampleSearchCountCap.
+func (c *Client) CountSampleSearchWithOptions(ctx context.Context, term string, opts SampleSearchOptions) (Count, error) {
+	if err := validatePhase2SampleSearchOptions(opts); err != nil {
+		return Count{}, err
+	}
 	if len(term) < searchTermMinLength {
 		return Count{Count: 0}, nil
 	}
@@ -977,7 +1115,7 @@ func (c *Client) CountSampleSearch(ctx context.Context, term string) (Count, err
 		return Count{Count: 0}, nil
 	}
 
-	count, err := c.countSampleSearch(ctx, term, tokens)
+	count, err := c.countSampleSearch(ctx, term, tokens, opts)
 	if err != nil {
 		return Count{}, err
 	}
@@ -997,7 +1135,20 @@ func (c *Client) CountSampleSearch(ctx context.Context, term string) (Count, err
 // bottom-cap union ids (sampleSearchUnionIDs with need=cap), so the count equals
 // len(SearchSamples(term, all)) below the cap and reports the cap as a floor at or
 // above it.
-func (c *Client) countSampleSearch(ctx context.Context, term string, tokens []string) (int, error) {
+func (c *Client) countSampleSearch(ctx context.Context, term string, tokens []string, opts SampleSearchOptions) (int, error) {
+	if opts.DeliverablesOnly {
+		db := c.readCacheDB()
+		if db == nil {
+			return 0, fmt.Errorf("mlwh: cache reader not configured")
+		}
+
+		ids, err := c.deliverableSampleSearchIDs(ctx, db, term, tokens, sampleSearchCountCap, 0)
+		if err != nil {
+			return 0, err
+		}
+
+		return len(ids), nil
+	}
 	if len(tokens) == 1 {
 		query, args := sampleTokenPrefixQuery(tokens[0], sampleSearchCountSQL, sampleSearchCountOpenSQL)
 
