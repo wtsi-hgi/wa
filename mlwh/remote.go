@@ -695,7 +695,17 @@ func (rc *RemoteClient) CountSampleCRAMsForStudy(ctx context.Context, studyLimsI
 
 // Export projects a supported parent-child relationship through the remote server.
 func (rc *RemoteClient) Export(ctx context.Context, rel ExportRelationship, parentID string, opts ExportOptions) (ExportResult, error) {
+	if opts.All && remoteExportCanPageAll(rel) {
+		return rc.exportAllByRemotePages(ctx, rel, parentID, opts)
+	}
+
 	return remoteCall[ExportResult](rc, ctx, "Export", []string{rel.Children, rel.ParentKind, parentID}, remoteExportQuery(opts))
+}
+
+func remoteExportCanPageAll(rel ExportRelationship) bool {
+	_, kind, err := normaliseExportRelationship(rel)
+
+	return err == nil && kind == exportRelationshipIRODS
 }
 
 func remoteExportQuery(opts ExportOptions) url.Values {
@@ -725,6 +735,93 @@ func remoteExportQuery(opts ExportOptions) url.Values {
 	}
 
 	return query
+}
+
+func (rc *RemoteClient) exportAllByRemotePages(ctx context.Context, rel ExportRelationship, parentID string, opts ExportOptions) (ExportResult, error) {
+	firstOpts := opts
+	firstOpts.All = false
+
+	first, err := rc.exportRemotePage(ctx, rel, parentID, firstOpts)
+	if err != nil {
+		return ExportResult{}, err
+	}
+
+	return ExportResult{
+		Columns:  first.Columns,
+		Rows:     nil,
+		Total:    -1,
+		Complete: true,
+		Format:   first.Format,
+		streamRows: func(streamCtx context.Context, emit func([]string) error) (int, error) {
+			return rc.streamRemoteExportPages(streamCtx, rel, parentID, firstOpts, first, emit)
+		},
+	}, nil
+}
+
+func (rc *RemoteClient) streamRemoteExportPages(
+	ctx context.Context,
+	rel ExportRelationship,
+	parentID string,
+	opts ExportOptions,
+	first ExportResult,
+	emit func([]string) error,
+) (int, error) {
+	total, err := first.ForEachRow(ctx, emit)
+	if err != nil || first.Complete {
+		return total, err
+	}
+
+	pageOpts := opts
+	offset := opts.Offset + len(first.Rows)
+	nextCursor := first.NextCursor
+	useCursor := strings.TrimSpace(opts.Sort) == "" && nextCursor != ""
+	if !useCursor && len(first.Rows) == 0 {
+		return total, remoteExportNoProgressError()
+	}
+
+	for {
+		if err = ctx.Err(); err != nil {
+			return total, err
+		}
+		if useCursor {
+			pageOpts.Cursor = nextCursor
+			pageOpts.Offset = 0
+		} else {
+			pageOpts.Cursor = ""
+			pageOpts.Offset = offset
+		}
+
+		page, pageErr := rc.exportRemotePage(ctx, rel, parentID, pageOpts)
+		if pageErr != nil {
+			return total, pageErr
+		}
+
+		emitted, emitErr := page.ForEachRow(ctx, emit)
+		total += emitted
+		if emitErr != nil || page.Complete {
+			return total, emitErr
+		}
+		if emitted == 0 {
+			return total, remoteExportNoProgressError()
+		}
+
+		offset += emitted
+		if useCursor && page.NextCursor != "" {
+			nextCursor = page.NextCursor
+		} else {
+			useCursor = false
+		}
+	}
+}
+
+func remoteExportNoProgressError() error {
+	return fmt.Errorf("%w: remote Export did not advance while paging --all", ErrUpstreamImpaired)
+}
+
+func (rc *RemoteClient) exportRemotePage(ctx context.Context, rel ExportRelationship, parentID string, opts ExportOptions) (ExportResult, error) {
+	opts.All = false
+
+	return remoteCall[ExportResult](rc, ctx, "Export", []string{rel.Children, rel.ParentKind, parentID}, remoteExportQuery(opts))
 }
 
 // StudiesForFacultySponsor lists the studies of a named PI/sponsor through the

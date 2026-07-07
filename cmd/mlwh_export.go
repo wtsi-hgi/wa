@@ -30,8 +30,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -273,46 +271,7 @@ type mlwhExportRemoteClient struct {
 }
 
 func (c *mlwhExportRemoteClient) Export(ctx context.Context, rel mlwh.ExportRelationship, parentID string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
-	result, _, err := c.remote.CallWithHeaders(ctx, "Export", []string{rel.Children, rel.ParentKind, parentID}, mlwhExportRemoteQuery(opts))
-	if err != nil {
-		return mlwh.ExportResult{}, err
-	}
-
-	export, ok := result.(*mlwh.ExportResult)
-	if !ok || export == nil {
-		return mlwh.ExportResult{}, fmt.Errorf("%w: remote Export returned %T", mlwh.ErrUpstreamImpaired, result)
-	}
-
-	return *export, nil
-}
-
-func mlwhExportRemoteQuery(opts mlwh.ExportOptions) url.Values {
-	query := url.Values{}
-	setNonEmptyQuery(query, "columns", strings.Join(opts.Columns, ","))
-	setNonEmptyQuery(query, "file_type", opts.FileType)
-	setNonEmptyQuery(query, "role", opts.Role)
-	setNonEmptyQuery(query, "qc", opts.QC)
-	setNonEmptyQuery(query, "library_type", opts.LibraryType)
-	setNonEmptyQuery(query, "organism", opts.Organism)
-	setNonEmptyQuery(query, "sort", opts.Sort)
-	setNonEmptyQuery(query, "since", opts.Since)
-	setNonEmptyQuery(query, "until", opts.Until)
-	setNonEmptyQuery(query, "cursor", opts.Cursor)
-	setNonEmptyQuery(query, "format", opts.Format)
-	if opts.DeliverablesOnly != nil {
-		query.Set("deliverables_only", strconv.FormatBool(*opts.DeliverablesOnly))
-	}
-	if opts.Limit > 0 {
-		query.Set("limit", strconv.Itoa(opts.Limit))
-	}
-	if opts.Offset > 0 {
-		query.Set("offset", strconv.Itoa(opts.Offset))
-	}
-	if opts.All {
-		query.Set("all", "true")
-	}
-
-	return query
+	return c.remote.Export(ctx, rel, parentID, opts)
 }
 
 func (c *mlwhExportRemoteClient) Freshness(ctx context.Context) (mlwh.Freshness, error) {
@@ -429,12 +388,6 @@ func mlwhExportFileTypeDefault(rel mlwh.ExportRelationship, fileType string, cha
 	}
 
 	return ""
-}
-
-func setNonEmptyQuery(query url.Values, key, value string) {
-	if strings.TrimSpace(value) != "" {
-		query.Set(key, value)
-	}
 }
 
 func mlwhExportUsesFileType(children string) bool {

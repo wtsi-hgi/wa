@@ -27,7 +27,11 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -247,6 +251,85 @@ func TestMLWHExportAllStatesCompleteSetD1b(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "rows=2")
 		convey.So(capturedOptions.All, convey.ShouldBeTrue)
 	})
+}
+
+func TestMLWHExportAllServerPagesBoundedRequestsP1(t *testing.T) {
+	convey.Convey("P1/server-export-all: Given server-mode --all over a multi-page iRODS export", t, func() {
+		t.Setenv("WA_MLWH_DSN", "")
+		t.Setenv("WA_MLWH_SERVER_URL", "")
+		t.Setenv("WA_MLWH_BACKEND_URL", "")
+		t.Setenv("WA_ENV", "")
+
+		requestURIs := make(chan string, 4)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestURIs <- r.URL.RequestURI()
+			if r.URL.Path != "/export/irods/study/5901" {
+				http.NotFound(w, r)
+
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+
+			result := mlwh.ExportResult{
+				Columns: []string{"irods_path"},
+				Total:   3,
+				Format:  "tsv",
+			}
+			switch {
+			case r.URL.Query().Get("all") == "true":
+				result.Rows = [][]string{{"/seq/a.cram"}, {"/seq/b.cram"}, {"/seq/c.cram"}}
+				result.Total = -1
+				result.Complete = true
+			case r.URL.Query().Get("cursor") == "cursor-2":
+				result.Rows = [][]string{{"/seq/c.cram"}}
+				result.Complete = true
+			default:
+				result.Rows = [][]string{{"/seq/a.cram"}, {"/seq/b.cram"}}
+				result.NextCursor = "cursor-2"
+			}
+
+			_ = json.NewEncoder(w).Encode(result)
+		}))
+		defer server.Close()
+
+		output, err := executeRootCommandForTest(t, []string{
+			"mlwh", "export", "irods", "study", "5901", "--all", "--limit", "2", "--columns", "irods_path", "--server", server.URL,
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "irods_path")
+		convey.So(output, convey.ShouldContainSubstring, "/seq/a.cram")
+		convey.So(output, convey.ShouldContainSubstring, "/seq/b.cram")
+		convey.So(output, convey.ShouldContainSubstring, "/seq/c.cram")
+		convey.So(output, convey.ShouldContainSubstring, "complete set emitted: rows=3")
+
+		requests := drainMLWHExportRequestURIs(requestURIs)
+		convey.So(requests, convey.ShouldHaveLength, 2)
+		convey.So(mlwhExportRequestQueryValue(t, requests[0], "all"), convey.ShouldEqual, "")
+		convey.So(mlwhExportRequestQueryValue(t, requests[1], "all"), convey.ShouldEqual, "")
+		convey.So(mlwhExportRequestQueryValue(t, requests[0], "limit"), convey.ShouldEqual, "2")
+		convey.So(mlwhExportRequestQueryValue(t, requests[1], "limit"), convey.ShouldEqual, "2")
+		convey.So(mlwhExportRequestQueryValue(t, requests[0], "cursor"), convey.ShouldEqual, "")
+		convey.So(mlwhExportRequestQueryValue(t, requests[1], "cursor"), convey.ShouldEqual, "cursor-2")
+	})
+}
+
+func drainMLWHExportRequestURIs(requestURIs <-chan string) []string {
+	requests := make([]string, 0, len(requestURIs))
+	for len(requestURIs) > 0 {
+		requests = append(requests, <-requestURIs)
+	}
+
+	return requests
+}
+
+func mlwhExportRequestQueryValue(t *testing.T, rawURI, key string) string {
+	t.Helper()
+
+	parsed, err := url.ParseRequestURI(rawURI)
+	convey.So(err, convey.ShouldBeNil)
+
+	return parsed.Query().Get(key)
 }
 
 func TestMLWHExportUnknownParentIDIsCleanNotFoundD1b(t *testing.T) {
