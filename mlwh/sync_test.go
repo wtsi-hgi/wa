@@ -213,6 +213,22 @@ func TestSeqProductIRODSLocationsMirrorReadIndexesIncludeIseqProductIndex(t *tes
 	})
 }
 
+func TestIseqProductMetricsMirrorIndexSetsOmitRedundantProductIDIndex(t *testing.T) {
+	convey.Convey("A2: Given the product-metrics mirror index registries", t, func() {
+		redundant := syncIndexSpec{Name: a2RedundantProductIDIndex, Column: a2ProductIDColumn}
+
+		convey.Convey("when inspected, then neither the full rebuild nor sparse read set recreates the primary-key duplicate", func() {
+			convey.So(iseqProductMetricsMirrorSecondaryIndexes, convey.ShouldNotContain, redundant)
+			convey.So(iseqProductMetricsMirrorReadIndexes, convey.ShouldNotContain, redundant)
+		})
+
+		convey.Convey("and required non-redundant product lookup indexes remain available", func() {
+			convey.So(iseqProductMetricsMirrorSecondaryIndexes, convey.ShouldContain, syncIndexSpec{Name: "ipm_mirror_study_sample_product_qc_idx", Column: "id_study_lims, id_sample_tmp, id_iseq_product, qc"})
+			convey.So(iseqProductMetricsMirrorReadIndexes, convey.ShouldContain, syncIndexSpec{Name: "ipm_mirror_study_sample_product_qc_idx", Column: "id_study_lims, id_sample_tmp, id_iseq_product, qc"})
+		})
+	})
+}
+
 func TestA8SparseColdLoadReadIndexesIncludePhase1ReadCriticalIndexes(t *testing.T) {
 	convey.Convey("A8: Given the sparse cold-load read-index registry", t, func() {
 		convey.Convey("when the iRODS-locations read indexes are inspected, then export and recency reads stay index-served after a sparse cold load", func() {
@@ -2879,7 +2895,7 @@ func TestRepairDroppedProductMirrorIndexesCreatesRunLookupIndexWithoutPrimaryKey
 		mock.ExpectBegin()
 		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", iseqProductMetricsMirrorIndexSet.Table))).
 			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME"}).AddRow("ipm_mirror_sample_run_position_tag_idx"))
-		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE iseq_product_metrics_mirror ADD INDEX iseq_product_metrics_mirror_id_run_position_tag_index_idx(id_run, position, tag_index), ADD INDEX ipm_mirror_iseq_product_idx(id_iseq_product), ADD INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx(id_study_lims, id_run, position), ADD INDEX ipm_mirror_study_sample_product_qc_idx(id_study_lims, id_sample_tmp, id_iseq_product, qc)`)).
+		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE iseq_product_metrics_mirror ADD INDEX iseq_product_metrics_mirror_id_run_position_tag_index_idx(id_run, position, tag_index), ADD INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx(id_study_lims, id_run, position), ADD INDEX ipm_mirror_study_sample_product_qc_idx(id_study_lims, id_sample_tmp, id_iseq_product, qc)`)).
 			WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectCommit()
 
@@ -2903,7 +2919,7 @@ func TestRepairDroppedProductMirrorIndexesCreatesRunAndSampleLookupIndexes(t *te
 		mock.ExpectBegin()
 		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", iseqProductMetricsMirrorIndexSet.Table))).
 			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME"}))
-		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE iseq_product_metrics_mirror ADD INDEX iseq_product_metrics_mirror_id_run_position_tag_index_idx(id_run, position, tag_index), ADD INDEX ipm_mirror_sample_run_position_tag_idx(id_sample_tmp, id_run, position, tag_index), ADD INDEX ipm_mirror_iseq_product_idx(id_iseq_product), ADD INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx(id_study_lims, id_run, position), ADD INDEX ipm_mirror_study_sample_product_qc_idx(id_study_lims, id_sample_tmp, id_iseq_product, qc)`)).
+		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE iseq_product_metrics_mirror ADD INDEX iseq_product_metrics_mirror_id_run_position_tag_index_idx(id_run, position, tag_index), ADD INDEX ipm_mirror_sample_run_position_tag_idx(id_sample_tmp, id_run, position, tag_index), ADD INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx(id_study_lims, id_run, position), ADD INDEX ipm_mirror_study_sample_product_qc_idx(id_study_lims, id_sample_tmp, id_iseq_product, qc)`)).
 			WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectCommit()
 
@@ -2930,7 +2946,6 @@ func TestRepairDroppedProductMirrorIndexesDefersLargeSQLiteSecondaryRebuild(t *t
 		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("sqlite", iseqProductMetricsMirrorIndexSet.Table))).WillReturnRows(sqlmock.NewRows([]string{"name"}))
 		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS iseq_product_metrics_mirror_id_run_position_tag_index_idx ON iseq_product_metrics_mirror(id_run, position, tag_index)`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS ipm_mirror_sample_run_position_tag_idx ON iseq_product_metrics_mirror(id_sample_tmp, id_run, position, tag_index)`)).WillReturnResult(sqlmock.NewResult(0, 0))
-		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS ipm_mirror_iseq_product_idx ON iseq_product_metrics_mirror(id_iseq_product)`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS iseq_product_metrics_mirror_id_study_lims_id_run_position_idx ON iseq_product_metrics_mirror(id_study_lims, id_run, position)`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS ipm_mirror_study_sample_product_qc_idx ON iseq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_iseq_product, qc)`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectCommit()
@@ -4003,7 +4018,6 @@ func sampleMirrorSecondaryIndexNames() []string {
 
 func iseqProductMetricsMirrorSecondaryIndexNames() []string {
 	return []string{
-		"ipm_mirror_iseq_product_idx",
 		"ipm_mirror_sample_run_position_tag_idx",
 		"ipm_mirror_study_sample_product_qc_idx",
 		"iseq_product_metrics_mirror_id_iseq_flowcell_tmp_idx",

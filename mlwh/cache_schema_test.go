@@ -108,7 +108,8 @@ const (
 	a2ProductMetricsTable          = "iseq_product_metrics_mirror"
 	a2IRODSLocationsTable          = "seq_product_irods_locations_mirror"
 	a2ProductIDColumn              = "id_iseq_product"
-	a2RedundantMySQLProductIDIndex = "ipm_mirror_iseq_product_idx"
+	a2RedundantProductIDIndex      = "ipm_mirror_iseq_product_idx"
+	a2RedundantMySQLProductIDIndex = a2RedundantProductIDIndex
 )
 
 func TestLoadSchema(t *testing.T) {
@@ -380,7 +381,7 @@ func TestSeqProductIRODSLocationsMirrorMySQLShapeMatchesSQLite(t *testing.T) {
 
 			convey.So(mysqlShape.Tables["seq_product_irods_locations_mirror"], convey.ShouldResemble, sqliteShape.Tables["seq_product_irods_locations_mirror"])
 			convey.So(mysqlShape.Index["seq_product_irods_locations_mirror"], convey.ShouldResemble, sqliteShape.Index["seq_product_irods_locations_mirror"])
-			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
 		})
 	})
 }
@@ -409,8 +410,8 @@ func TestA4MirrorTablesExistWithIndexesAndDialectsCompareEqual(t *testing.T) {
 			}
 		})
 
-		convey.Convey("when the two dialects are compared, then they are structurally equal apart from MySQL's dropped duplicate product-id index", func() {
-			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
+		convey.Convey("when the two dialects are compared, then they are structurally equal", func() {
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
 
 			for table := range a4MirrorTables {
 				convey.So(mysqlShape.Tables[table], convey.ShouldResemble, sqliteShape.Tables[table])
@@ -501,6 +502,31 @@ func TestA1StudyUsersMirrorSQLiteShapeHasColumnsAndIndexes(t *testing.T) {
 	})
 }
 
+func TestA2CrossDialectShapeParityOmitsProductIDPrimaryKeyDuplicate(t *testing.T) {
+	convey.Convey("A2.2: Given both dialect schemas parsed into schemaShapes", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when the full per-table index column lists are compared, then they match without a redundant product-id secondary index", func() {
+			for table, column := range a2NewIndexColumns {
+				convey.So(sqliteShape.Index[table], convey.ShouldContain, column)
+			}
+
+			convey.So(sqliteShape.Index[a2ProductMetricsTable], convey.ShouldNotContain, a2ProductIDColumn)
+			convey.So(mysqlShape.Index[a2ProductMetricsTable], convey.ShouldNotContain, a2ProductIDColumn)
+			convey.So(sqliteShape.Index, convey.ShouldResemble, mysqlShape.Index)
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
+		})
+	})
+}
+
 func TestA1IseqFlowcellMirrorAndPlatformControlColumnsInBothDialects(t *testing.T) {
 	convey.Convey("A1: Given the sqlite and mysql schemas parsed into schemaShapes", t, func() {
 		sqliteSchema, err := loadSchema("sqlite")
@@ -538,7 +564,7 @@ func TestA1IseqFlowcellMirrorAndPlatformControlColumnsInBothDialects(t *testing.
 				convey.So(sqliteShape.Tables[table], convey.ShouldResemble, mysqlShape.Tables[table])
 			}
 
-			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
 		})
 	})
 }
@@ -562,7 +588,7 @@ func TestA1StudyUsersMirrorMySQLShapeMatchesSQLite(t *testing.T) {
 
 			convey.So(mysqlShape.Tables["study_users_mirror"], convey.ShouldResemble, sqliteShape.Tables["study_users_mirror"])
 			convey.So(mysqlShape.Index["study_users_mirror"], convey.ShouldResemble, sqliteShape.Index["study_users_mirror"])
-			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
 		})
 	})
 }
@@ -591,32 +617,7 @@ func TestA2NewLookupIndexesExistInBothDialectsAndCompareEqual(t *testing.T) {
 				convey.So(mysqlShape.Index[table], convey.ShouldResemble, sqliteShape.Index[table])
 			}
 
-			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
-		})
-	})
-}
-
-func TestA2CrossDialectShapeParityAllowsMySQLProductIDPrimaryKeyIndexDrop(t *testing.T) {
-	convey.Convey("A2.2: Given both dialect schemas parsed into schemaShapes", t, func() {
-		sqliteSchema, err := loadSchema("sqlite")
-		convey.So(err, convey.ShouldBeNil)
-		mysqlSchema, err := loadSchema("mysql")
-		convey.So(err, convey.ShouldBeNil)
-
-		sqliteShape, err := parseSchemaShape(sqliteSchema)
-		convey.So(err, convey.ShouldBeNil)
-		mysqlShape, err := parseSchemaShape(mysqlSchema)
-		convey.So(err, convey.ShouldBeNil)
-
-		convey.Convey("when the full per-table index column lists are compared, then they match except for MySQL's dropped redundant product-id secondary index", func() {
-			for table, column := range a2NewIndexColumns {
-				convey.So(sqliteShape.Index[table], convey.ShouldContain, column)
-			}
-
-			convey.So(sqliteShape.Index[a2ProductMetricsTable], convey.ShouldContain, a2ProductIDColumn)
-			convey.So(mysqlShape.Index[a2ProductMetricsTable], convey.ShouldNotContain, a2ProductIDColumn)
-			convey.So(schemaShapeWithA2MySQLProductIDIndexDropped(sqliteShape).Index, convey.ShouldResemble, mysqlShape.Index)
-			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
 		})
 	})
 }
@@ -640,8 +641,66 @@ func TestA7StudyMirrorProgrammeIndexExistsInBothDialectsAndComparesEqual(t *test
 
 		convey.Convey("when the two dialects are compared, then study_mirror indexes and full schema shapes are in parity", func() {
 			convey.So(mysqlShape.Index["study_mirror"], convey.ShouldResemble, sqliteShape.Index["study_mirror"])
-			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
 		})
+	})
+}
+
+func TestA2ProductIDDDLDeclaresPrimaryKeyWithoutRedundantIndex(t *testing.T) {
+	convey.Convey("A2: Given the embedded cache schemas", t, func() {
+		for _, dialect := range []string{"mysql", "sqlite"} {
+			schema, err := loadSchema(dialect)
+			convey.So(err, convey.ShouldBeNil)
+			shape, err := parseSchemaShape(schema)
+			convey.So(err, convey.ShouldBeNil)
+
+			productDDL, err := createTableStatement(schema, a2ProductMetricsTable)
+			convey.So(err, convey.ShouldBeNil)
+			irodsDDL, err := createTableStatement(schema, a2IRODSLocationsTable)
+			convey.So(err, convey.ShouldBeNil)
+			productIndexes, err := createIndexesForTable(schema, a2ProductMetricsTable)
+			convey.So(err, convey.ShouldBeNil)
+
+			productDefinition, ok := createTableColumnDefinition(productDDL, a2ProductIDColumn)
+			convey.So(ok, convey.ShouldBeTrue)
+			irodsDefinition, ok := createTableColumnDefinition(irodsDDL, a2ProductIDColumn)
+			convey.So(ok, convey.ShouldBeTrue)
+
+			convey.Convey("when the "+dialect+" product mirror id_iseq_product column is inspected, then it is the non-null primary key", func() {
+				fields := strings.Fields(productDefinition)
+				convey.So(len(fields), convey.ShouldBeGreaterThanOrEqualTo, 5)
+				if dialect == "mysql" {
+					convey.So(strings.ToUpper(fields[1]), convey.ShouldEqual, "CHAR(64)")
+				} else {
+					convey.So(strings.ToUpper(fields[1]), convey.ShouldEqual, "TEXT")
+				}
+
+				normalized := strings.ToUpper(strings.Join(fields, " "))
+				convey.So(normalized, convey.ShouldContainSubstring, "NOT NULL")
+				convey.So(normalized, convey.ShouldContainSubstring, "PRIMARY KEY")
+			})
+
+			convey.Convey("when the "+dialect+" iRODS mirror id_iseq_product column is inspected, then it is not the primary key", func() {
+				fields := strings.Fields(irodsDefinition)
+				convey.So(len(fields), convey.ShouldBeGreaterThanOrEqualTo, 3)
+
+				normalized := strings.ToUpper(strings.Join(fields, " "))
+				convey.So(normalized, convey.ShouldContainSubstring, "NOT NULL")
+				convey.So(normalized, convey.ShouldNotContainSubstring, "PRIMARY KEY")
+			})
+
+			convey.Convey("when the "+dialect+" product mirror secondary indexes are inspected, then the redundant id_iseq_product index is not declared", func() {
+				_, ok := productIndexes[a2RedundantProductIDIndex]
+				convey.So(ok, convey.ShouldBeFalse)
+
+				for name, columns := range productIndexes {
+					convey.So(name, convey.ShouldNotEqual, a2RedundantProductIDIndex)
+					convey.So(strings.Join(columns, ","), convey.ShouldNotEqual, a2ProductIDColumn)
+				}
+
+				convey.So(shape.Index[a2ProductMetricsTable], convey.ShouldNotContain, a2ProductIDColumn)
+			})
+		}
 	})
 }
 
@@ -668,10 +727,10 @@ func TestParseSchemaShapeParity(t *testing.T) {
 			convey.So(sqliteShape.Tables, convey.ShouldResemble, mysqlShape.Tables)
 		})
 
-		convey.Convey("when comparing the per-table index column lists, then they match across dialects except for MySQL's product-id PK duplicate removal", func() {
+		convey.Convey("when comparing the per-table index column lists, then they match across dialects", func() {
 			convey.So(sqliteErr, convey.ShouldBeNil)
 			convey.So(mysqlErr, convey.ShouldBeNil)
-			convey.So(schemaShapeWithA2MySQLProductIDIndexDropped(sqliteShape).Index, convey.ShouldResemble, mysqlShape.Index)
+			convey.So(sqliteShape.Index, convey.ShouldResemble, mysqlShape.Index)
 			convey.So(sqliteShape.Index["sample_search_token"], convey.ShouldResemble, []string{"token,id_sample_tmp"})
 		})
 
@@ -685,10 +744,10 @@ func TestParseSchemaShapeParity(t *testing.T) {
 			})
 		})
 
-		convey.Convey("when the full schema parity is compared, then tables, columns, indexes, and unique constraints all match after allowing the A2 MySQL-only duplicate-index removal", func() {
+		convey.Convey("when the full schema parity is compared, then tables, columns, indexes, and unique constraints all match", func() {
 			convey.So(sqliteErr, convey.ShouldBeNil)
 			convey.So(mysqlErr, convey.ShouldBeNil)
-			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
 		})
 	})
 }
@@ -911,55 +970,6 @@ func TestSchemaDeclaresCaseInsensitiveLookupCollations(t *testing.T) {
 	})
 }
 
-func TestA2MySQLProductIDDDLDeclaresChar64PrimaryKeyWithoutRedundantIndex(t *testing.T) {
-	convey.Convey("A2: Given the embedded MySQL cache schema", t, func() {
-		mysqlSchema, err := loadSchema("mysql")
-		convey.So(err, convey.ShouldBeNil)
-
-		productDDL, err := createTableStatement(mysqlSchema, a2ProductMetricsTable)
-		convey.So(err, convey.ShouldBeNil)
-		irodsDDL, err := createTableStatement(mysqlSchema, a2IRODSLocationsTable)
-		convey.So(err, convey.ShouldBeNil)
-		productIndexes, err := createIndexesForTable(mysqlSchema, a2ProductMetricsTable)
-		convey.So(err, convey.ShouldBeNil)
-
-		productDefinition, ok := createTableColumnDefinition(productDDL, a2ProductIDColumn)
-		convey.So(ok, convey.ShouldBeTrue)
-		irodsDefinition, ok := createTableColumnDefinition(irodsDDL, a2ProductIDColumn)
-		convey.So(ok, convey.ShouldBeTrue)
-
-		convey.Convey("when the product mirror id_iseq_product column is inspected, then it is CHAR(64) NOT NULL PRIMARY KEY", func() {
-			fields := strings.Fields(productDefinition)
-			convey.So(len(fields), convey.ShouldBeGreaterThanOrEqualTo, 5)
-			convey.So(strings.ToUpper(fields[1]), convey.ShouldEqual, "CHAR(64)")
-
-			normalized := strings.ToUpper(strings.Join(fields, " "))
-			convey.So(normalized, convey.ShouldContainSubstring, "NOT NULL")
-			convey.So(normalized, convey.ShouldContainSubstring, "PRIMARY KEY")
-		})
-
-		convey.Convey("when the iRODS mirror id_iseq_product column is inspected, then it is CHAR(64) too", func() {
-			fields := strings.Fields(irodsDefinition)
-			convey.So(len(fields), convey.ShouldBeGreaterThanOrEqualTo, 3)
-			convey.So(strings.ToUpper(fields[1]), convey.ShouldEqual, "CHAR(64)")
-
-			normalized := strings.ToUpper(strings.Join(fields, " "))
-			convey.So(normalized, convey.ShouldContainSubstring, "NOT NULL")
-			convey.So(normalized, convey.ShouldNotContainSubstring, "PRIMARY KEY")
-		})
-
-		convey.Convey("when product mirror secondary indexes are inspected, then the redundant id_iseq_product index is not declared", func() {
-			_, ok := productIndexes[a2RedundantMySQLProductIDIndex]
-			convey.So(ok, convey.ShouldBeFalse)
-
-			for name, columns := range productIndexes {
-				convey.So(name, convey.ShouldNotEqual, a2RedundantMySQLProductIDIndex)
-				convey.So(strings.Join(columns, ","), convey.ShouldNotEqual, a2ProductIDColumn)
-			}
-		})
-	})
-}
-
 func createTableStatement(stmts []string, table string) (string, error) {
 	for _, group := range stmts {
 		for _, stmt := range splitSQLStatements(group) {
@@ -1034,46 +1044,21 @@ func createTableColumnDefinition(stmt, column string) (string, bool) {
 	return "", false
 }
 
-func cloneSchemaShape(shape schemaShape) schemaShape {
-	clone := schemaShape{
-		Tables:   make(map[string]map[string]string, len(shape.Tables)),
-		Index:    make(map[string][]string, len(shape.Index)),
-		Unique:   make(map[string][]string, len(shape.Unique)),
-		Nullable: make(map[string]map[string]bool, len(shape.Nullable)),
-	}
+func TestA2SQLiteProductIDSchemaCreationDoesNotCreateRedundantIndex(t *testing.T) {
+	convey.Convey("A2: Given an opened ephemeral SQLite cache schema", t, func() {
+		db := openSQLiteSchemaTestDB(t)
 
-	for table, columns := range shape.Tables {
-		clone.Tables[table] = maps.Clone(columns)
-	}
-	for table, indexes := range shape.Index {
-		clone.Index[table] = slices.Clone(indexes)
-	}
-	for table, uniques := range shape.Unique {
-		clone.Unique[table] = slices.Clone(uniques)
-	}
-	for table, nullable := range shape.Nullable {
-		clone.Nullable[table] = maps.Clone(nullable)
-	}
+		convey.Convey("when the product mirror indexes are inspected, then id_iseq_product is served only by the primary key", func() {
+			indexes, _, err := readSQLiteTableIndexes(context.Background(), db, a2ProductMetricsTable)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(indexes, convey.ShouldNotContain, a2ProductIDColumn)
 
-	return clone
-}
-
-func compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape schemaShape) error {
-	sqliteForMySQL := schemaShapeWithA2MySQLProductIDIndexDropped(sqliteShape)
-	if err := compareCacheSchemaShapes(sqliteForMySQL, mysqlShape); err != nil {
-		return err
-	}
-
-	return compareCacheSchemaShapes(mysqlShape, sqliteForMySQL)
-}
-
-func schemaShapeWithA2MySQLProductIDIndexDropped(shape schemaShape) schemaShape {
-	clone := cloneSchemaShape(shape)
-	clone.Index[a2ProductMetricsTable] = slices.DeleteFunc(clone.Index[a2ProductMetricsTable], func(columns string) bool {
-		return columns == a2ProductIDColumn
+			var redundantIndexCount int
+			err = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, a2RedundantProductIDIndex).Scan(&redundantIndexCount)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(redundantIndexCount, convey.ShouldEqual, 0)
+		})
 	})
-
-	return clone
 }
 
 func TestA6MonthlyRunCountSQLitePlansUseNormalisedDateIndexes(t *testing.T) {

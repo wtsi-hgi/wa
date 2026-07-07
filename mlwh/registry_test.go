@@ -161,7 +161,7 @@ func TestCacheSchemaParityTestGuardsAddQuerySchemaStep(t *testing.T) {
 		convey.Convey("when inspected, then it still compares table, column, and index sets across dialects", func() {
 			convey.So(source, convey.ShouldContainSubstring, "TestParseSchemaShapeParity")
 			convey.So(source, convey.ShouldContainSubstring, "sqliteShape.Tables, convey.ShouldResemble, mysqlShape.Tables")
-			convey.So(source, convey.ShouldContainSubstring, "schemaShapeWithA2MySQLProductIDIndexDropped(sqliteShape).Index, convey.ShouldResemble, mysqlShape.Index")
+			convey.So(source, convey.ShouldContainSubstring, "sqliteShape.Index, convey.ShouldResemble, mysqlShape.Index")
 		})
 	})
 }
