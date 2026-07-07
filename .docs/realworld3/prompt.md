@@ -160,11 +160,16 @@ the spec; do not silently contradict them.**
     reach `run complete` (confirmed: joining `useq_run_metrics` → `iseq_run_status`
     shows **242 `run archived`** and **0 `run complete`**; `useq_run_metrics` has a
     `run_archived` column and no `run_complete`).
-  - **PacBio:** `pac_bio_run_well_metrics.well_complete` (or `run_complete`); PacBio is
-    not in `iseq_run_status`.
-  - **ONT:** has **no run-metrics table and no true sequencing date**; the only
-    available field is `oseq_flowcell.last_updated`, which (like `recorded_at`) is a
-    **warehouse-load timestamp, not a sequencing time** — treated as such in D5.
+  - **PacBio:** the run (`pac_bio_run_name`) is dated by
+    `pac_bio_run_well_metrics.run_complete` — a run-level value shared across the run's
+    wells (the per-well `well_complete` differs per well). Example: `TRACTION-RUN-1000`
+    has 8 wells A1–H1 all sharing `run_complete = 2023-12-20`, but `well_complete`
+    spanning 2023-12-13→21. PacBio is not in `iseq_run_status`.
+  - **ONT:** has **no run-metrics table and no true sequencing date**. `oseq_flowcell.run_id`
+    is NULL for all ~8,730 rows, so the run identity is **`experiment_name`** (447 distinct,
+    e.g. `ONTRUN-11`); its only date is `oseq_flowcell.last_updated`, which (like
+    `recorded_at`) is a **warehouse-load timestamp, not a sequencing time** (all flowcell
+    rows of a run share one identical `last_updated`) — treated as such in D5.
 - **Measured manifest/aggregate performance (source-direct vs our mirror vs current
   HTTP endpoint):**
   | Query | small study 7556 | big study 7699 |
@@ -206,9 +211,10 @@ the spec; do not silently contradict them.**
     (e.g. `usculus`) is out of scope by design. This is the `--organism` filter (D3).
   - **`library_type` is a clean vocabulary:** `library_samples.pipeline_id_lims` has
     **122** distinct values — ideal for an exact filter flag.
-  - **ONT is cheap to mirror for identity:** source `oseq_flowcell` is **8,728 rows**
-    with run identity (`run_id`, `run_uuid`, `experiment_name`); its only date is the
-    warehouse-load `last_updated` (see the `date_basis` fact above).
+  - **ONT is cheap to mirror for identity:** source `oseq_flowcell` is **~8,730 rows**;
+    run identity is **`experiment_name`** (447 distinct — `run_id` is NULL for every row,
+    and `flowcell_id`/`run_uuid` are ~24 % null); its only date is the warehouse-load
+    `last_updated` (see the `date_basis` fact above).
   - **Escaping is fine:** `_`/`%` are already correctly escaped (`escapeLIKELiteral`,
     `ESCAPE '!'`) — there is no wildcard bug; today's `hek_r`→55 is the semantic
     word-prefix problem fixed above. Study/person search keeps its small-table `%term%`
@@ -328,12 +334,16 @@ measured evidence above drives this design.
   termless/filter-only route: a sample query is always `search <term> [filters…]`. "All
   Mus musculus samples" is `search --words musculus` (word-prefix finds the `musculus`
   word in `common_name`); the exact filters below refine a term search and gate the TSV.
-- **`--organism` is a whole-word / full-name filter over `common_name`.** It matches the
-  organism word or full name (`mus`, `musculus`, `mus musculus`) against the
-  low-cardinality (~16 k) `common_name` vocabulary, then constrains to samples with a
-  matching `common_name` (indexed). It does NOT do mid-word substring matching (`usculus`
-  matches nothing). Settle the exact word/full-name mechanism (a small distinct-`common_name`
-  helper table, or word tokens scoped to `common_name`) and prove it index-served.
+- **`--organism` is a WORD-MEMBERSHIP filter over `common_name`.** A value matches iff its
+  `common_name` contains the query as a whole word (all query words, for a multi-word
+  query): `--organism musculus` matches every `common_name` containing the word `musculus`
+  — INCLUDING subspecies like `Mus musculus castaneus`; `--organism mus` matches all
+  genus-`Mus` names; `--organism "mus musculus"` requires both words. It is NOT mid-word
+  substring (`usculus` matches nothing) and NOT exact-whole-value (subspecies are
+  included). Resolve against the low-cardinality (~16 k) `common_name` vocabulary, then
+  constrain to samples by the indexed `common_name`. Settle the exact mechanism (a small
+  distinct-`common_name` helper table, or word tokens scoped to `common_name`) and prove
+  it index-served.
 - **Exact single-identifier lookups stay `wa mlwh info`'s job.** Do NOT add a `--exact`
   search mode and do NOT add a new `find` command; do NOT duplicate `info`. Short
   controlled tokens are reached via `info` (single identifier) or via the exact filters
@@ -349,6 +359,9 @@ measured evidence above drives this design.
     with `SampleProgress.qc`/`StatusBreakdown`). On the D1 TSV (rows ARE products) it
     matches the raw PER-PRODUCT `qc`. State both grains explicitly.
   - `--deliverables-only` — the D4 deliverable filter (`entity_type`-based).
+    **Pass-through for platforms with no source discriminator (PacBio, ONT):** it filters
+    only Illumina/Element/Ultima products and leaves PacBio/ONT-only samples unaffected
+    (neither positively kept nor dropped), so they never silently disappear (HARD REQ 5).
   Combining a filter with the term intersects the candidate `id_sample_tmp` set (via
   `library_samples` for library-type, the `common_name` index for organism, the
   product/flowcell join for qc/deliverable) — index it so the intersection is not a scan.
@@ -376,7 +389,11 @@ measured evidence above drives this design.
   Do **NOT** read the iRODS `target=1` AVU and do **NOT** mirror
   `iseq_composition_tmp`/component structure this wave; "non-primary sub-product"
   exclusion is only to the extent `entity_type` expresses it (documented edge case). The
-  filter must be a fast indexed column, proven with EXPLAIN.
+  filter must be a fast indexed column, proven with EXPLAIN. **PacBio and ONT have NO
+  deliverable discriminator in the source** (PacBio has only a `qc` flag and `control_*`
+  read metrics — not a per-product control classifier; ONT has no products at all), so
+  `--deliverables-only` is **pass-through** for them: it never drops PacBio/ONT samples
+  (HARD REQ 5). Document this.
 - **Verify** against real studies: study 7556's deliverable-only cram count is the
   `entity_type`-derived count and known controls/spikes are dropped where present. 886 is
   the expected figure — assert the actual discriminator-derived count and document any
@@ -400,21 +417,30 @@ measured evidence above drives this design.
   - Illumina & Element: `iseq_run_status` status **`run complete`** date (via each
     platform's product-metrics `id_run`).
   - Ultima: `iseq_run_status` status **`run archived`** date (never "completes").
-  - PacBio: `pac_bio_run_well_metrics.well_complete` (or `run_complete`).
+  - PacBio: `pac_bio_run_well_metrics.run_complete` — the run-level value (NOT the
+    per-well `well_complete`), because D5 counts runs (see run grain below).
   - **ONT: `oseq_flowcell.last_updated`, labelled `date_basis` = "warehouse load time —
     not a true sequencing date".** ONT IS included in the monthly buckets under this
     explicit label (so it is never silently dropped), but the label makes clear its
     month is a warehouse-load month, not a sequencing month.
+- **Run grain — one counted "run" is one run identifier, never a sub-run unit:**
+  Illumina/Element/Ultima = one `id_run`; PacBio = one `pac_bio_run_name` (a run has
+  several wells — count it once, dated by the shared run-level `run_complete`; the 8-well
+  `TRACTION-RUN-1000` is one Dec-2023 run, not 8); ONT = one `experiment_name` (a run has
+  several flowcells — count once, dated by `last_updated`). Do NOT count wells/flowcells
+  as runs. Expected magnitudes: PacBio ≈ 2,843 runs (from 12,499 well rows), ONT ≈ 447
+  runs, Ultima `run archived` = 242.
 - **Source/mirror notes:** the authoritative run-date source for Illumina/Element/Ultima
   is `iseq_run_status` (mirrored as `iseq_run_status_mirror` + dict). Ensure the sync
   includes Element/Ultima `id_run`s in that mirror (else fall back to the platform run
   mirrors' `run_complete`/`run_archived`). Mirror run dates are stored as **varchar**, so
   the monthly grouping needs a normalized, indexed date to stay index-served. Extend
-  `oseq_flowcell_mirror` to carry ONT run identity (`run_id`/`run_uuid`/`experiment_name`)
-  and `last_updated`.
+  `oseq_flowcell_mirror` to carry ONT run identity (`experiment_name` — the usable one;
+  `run_id` is NULL for every row) and `last_updated`.
 - **A global run listing** for drill-down: one row per run — a **stable cross-platform
   run identifier that is a composite string `<platform>:<native_id>`** (e.g.
-  `illumina:47409`, `pacbio:<run_name>`, `ont:<run_id>`), with `platform` and the native
+  `illumina:47409`, `pacbio:<run_name>`, `ont:<experiment_name>` — ONT `run_id` is NULL,
+  so `experiment_name` is the identity), with `platform` and the native
   run id ALSO carried as separate fields; plus manufacturer and the run date(s) with the
   same per-platform basis (ONT's date carries the "warehouse load" caveat) — bounded,
   paged, with `/count`. The composite id is the paging cursor / drill-down key. This also
@@ -478,7 +504,7 @@ cleanly, exit 0), matching existing `wa mlwh` behaviour:
    rolled up as `qc.go` does. There is no scalar `target` column; deliverable-only is
    the `entity_type`-based (Illumina) / `is_sequencing_control`-based (Element/Ultima)
    filter, NOT `is_spiked`. Run `date_basis` follows the per-platform reference (Illumina/
-   Element `run complete`, Ultima `run archived`, PacBio `well_complete`, ONT the
+   Element `run complete`, Ultima `run archived`, PacBio `run_complete`, ONT the
    `last_updated` warehouse-load fallback, labelled). iRODS `created` = data added;
    `last_changed` = sync key (not surfaced as "new data"); `cache_synced_at` /
    `/freshness` = freshness caveat.
@@ -487,6 +513,8 @@ cleanly, exit 0), matching existing `wa mlwh` behaviour:
    sequencing date), say so explicitly; never collapse to a bare zero or a silent drop.
    Run aggregation covers all platforms including ONT, whose bucket carries the explicit
    "warehouse load time — not a true sequencing date" `date_basis` label.
+   `--deliverables-only` is pass-through on platforms with no deliverable discriminator
+   (PacBio/ONT) rather than dropping their samples.
 6. **Cache correctness.** New mirror tables/columns — the new `iseq_flowcell` mirror
    (`entity_type`, `pipeline_id_lims`, keys); any organism helper structure over
    `common_name`; the extended `oseq_flowcell_mirror` ONT run columns
@@ -501,14 +529,19 @@ cleanly, exit 0), matching existing `wa mlwh` behaviour:
    throwaway DB, dropped on cleanup, skipped without creds) asserting the new paths
    execute on MySQL, are index-served (EXPLAIN), and return correct counts/rows:
    - `hek_r` default (literal-prefix) search = the **4** `Hek_R1..4`.
-   - the `--organism musculus` (whole-word) filter matches the Mus musculus samples
-     (assert the actual count the chosen word/name semantics yield — the dominant
-     "Mus Musculus" alone is 235,447), and the mid-word fragment `usculus` matches
-     **nothing** (locks the whole-word semantics).
+   - the `--organism musculus` filter matches by WORD-MEMBERSHIP — every `common_name`
+     containing the word `musculus`, INCLUDING subspecies (e.g. `Mus musculus castaneus`),
+     so the count exceeds the dominant `Mus Musculus` value's 235,447 alone; assert the
+     actual word-membership count, and that the mid-word fragment `usculus` matches
+     **nothing** (locks word-membership — not substring, not exact-whole-value).
    - study 7556 deliverable-only cram TSV = the `entity_type`-derived count (**≈886**;
      assert the actual figure, document any delta), controls/spikes dropped where present.
    - a `--qc` filter on sample search buckets by the per-sample roll-up, while `--qc` on
      the TSV filters per-product (the grain difference).
+   - D5 run counts are at RUN grain: PacBio ≈ 2,843 distinct `pac_bio_run_name`s (not
+     12,499 wells), ONT ≈ 447 distinct `experiment_name`s (not per-flowcell), Ultima
+     `run archived` = 242; ONT buckets by the labelled warehouse-load date, and
+     `--deliverables-only` leaves PacBio/ONT samples in (pass-through).
 
    Add a **source integration test** (`mlwh/sync_source_integration_test.go` pattern)
    covering the new source columns/tables (`iseq_flowcell.entity_type`/`pipeline_id_lims`,
@@ -531,7 +564,7 @@ cleanly, exit 0), matching existing `wa mlwh` behaviour:
   structure; the deterministic row order; keyset vs streaming for the full export.
 - The exact `iseq_flowcell` mirror shape and index (the deliverable filter's indexed
   column and how it joins to products); the surface form of `manual_qc`.
-- The `--organism` filter's exact whole-word / full-name mechanism over `common_name`
+- The `--organism` filter's word-membership mechanism over `common_name` (whole-word incl. subspecies; not substring or exact-whole-value)
   (a small distinct-`common_name` helper table vs `common_name`-scoped word tokens) and
   its index; how each shared filter intersects the search candidate set; the flag names.
 - The recency "latest" endpoint shape (per study, per sample, per faculty sponsor),
@@ -611,10 +644,12 @@ agree with the deliverables above (no overrides needed).
   no `--exact` mode, no new `find` command.
 - **Shared exact filter family** on both `search` and `tsv`, server-side, AND-combined,
   fast/indexed (EXPLAIN), exempt from the 3-char minimum: `--library-type` (exact
-  `pipeline_id_lims`), `--organism` (whole-word/full-name over the ~16 k `common_name`
-  vocabulary — NOT mid-word substring; `usculus` matches nothing), `--qc pass|fail|pending`
+  `pipeline_id_lims`), `--organism` (**word-membership** over the ~16 k `common_name`
+  vocabulary — matches whole words incl. subspecies; NOT mid-word substring and NOT
+  exact-whole-value; `usculus` matches nothing), `--qc pass|fail|pending`
   (**grain-appropriate**: per-sample roll-up on search, per-product on the TSV),
-  `--deliverables-only` (D4). Filters apply to sample search, not study search.
+  `--deliverables-only` (D4; **pass-through** for PacBio/ONT, which have no discriminator).
+  Filters apply to sample search, not study search.
 
 ### D4 deliverable
 - The deliverable filter is server-side, indexed, and defined by **`iseq_flowcell.entity_type`**
@@ -630,14 +665,18 @@ agree with the deliverables above (no overrides needed).
 ### D5 run aggregation
 - One grouped monthly-count endpoint (`{month, manufacturer, platform, count,
   date_basis, cache_synced_at}`) plus one global run listing. Manufacturer derived from
-  platform (state the map). **`date_basis` per platform follows the authoritative
+  platform (state the map). **One counted "run" = one run identifier, not a sub-run
+  unit:** Illumina/Element/Ultima = `id_run`; PacBio = `pac_bio_run_name` (dated by the
+  run-level `run_complete`, NOT per-well `well_complete`; ≈2,843 runs); ONT =
+  `experiment_name` (dated by `last_updated`; ≈447 runs — `run_id` is NULL, unusable). Do
+  not count wells/flowcells as runs. **`date_basis` per platform follows the authoritative
   reference:** Illumina & Element = `iseq_run_status` `run complete`; Ultima =
   `iseq_run_status` `run archived` (never completes); PacBio =
-  `pac_bio_run_well_metrics.well_complete`; **ONT = `oseq_flowcell.last_updated` labelled
+  `pac_bio_run_well_metrics.run_complete`; **ONT = `oseq_flowcell.last_updated` labelled
   "warehouse load time — not a true sequencing date"**, included in the buckets under
   that explicit label (never silently dropped). Each response row states its basis. The
-  listing's stable run identifier is the composite string `<platform>:<native_id>`, with
-  platform and native id also carried separately.
+  listing's stable run identifier is the composite `<platform>:<native_id>`
+  (`ont:<experiment_name>`), with platform and native id also carried separately.
 
 ### Perf posture
 - Every study-scoped answer stays a single indexed scan on a denormalised column (the
