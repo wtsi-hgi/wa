@@ -649,11 +649,88 @@ func TestExportRunsPopulatesAdvertisedColumnsD1a(t *testing.T) {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(result.Columns, convey.ShouldResemble, []string{"id_run", "platform", "manufacturer", "run_date", "date_basis"})
 			convey.So(result.Rows, convey.ShouldResemble, [][]string{
-				{"61010", "Illumina", "Illumina", "2026-06-03", exportIlluminaRunDateBasis},
-				{"61011", "Illumina", "Illumina", "2026-06-04", exportIlluminaRunDateBasis},
+				{"61010", "Illumina", "Illumina", "2026-06-03", runDateBasisRunComplete},
+				{"61011", "Illumina", "Illumina", "2026-06-04", runDateBasisRunComplete},
 			})
 		})
 	})
+}
+
+func TestExportRunsIncludesPlatformNativeParentScopedRunsP1(t *testing.T) {
+	convey.Convey("P1/export-runs: Given a study with platform-native runs", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedExportMultiPlatformRunScenario(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "runs", ParentKind: "study"}, "RUNX", ExportOptions{
+			Columns: []string{"id", "native_id", "id_run", "platform", "manufacturer", "run_date", "date_basis"},
+			Limit:   20,
+		})
+
+		convey.Convey("when runs are exported for the study, then every platform contributes rows with authoritative date basis", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"elembio:77010", "77010", "77010", "Elembio", "Element Biosciences", "2026-06-07", runDateBasisRunComplete},
+				{"illumina:61010", "61010", "61010", "Illumina", "Illumina", "2026-06-03", runDateBasisRunComplete},
+				{"ont:ONTRUN-71005", "ONTRUN-71005", "", "ONT", "Oxford Nanopore", "2026-06-10", runDateBasisONTLoadTime},
+				{"pacbio:pb-export-run-1", "pb-export-run-1", "", "PacBio", "PacBio", "2026-06-05", runDateBasisPacBioComplete},
+				{"ultimagen:88010", "88010", "88010", "Ultimagen", "Ultima Genomics", "2026-06-09", runDateBasisRunArchived},
+			})
+			convey.So(result.Total, convey.ShouldEqual, 5)
+		})
+	})
+
+	convey.Convey("P1/export-runs: Given a sample with a PacBio run", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedExportMultiPlatformRunScenario(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "runs", ParentKind: "sample"}, "runs-pacbio", ExportOptions{
+			Columns: []string{"id", "native_id", "platform", "manufacturer", "run_date", "date_basis"},
+			Limit:   10,
+		})
+
+		convey.Convey("when runs are exported for the sample, then non-Illumina runs are included", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{{
+				"pacbio:pb-export-run-1",
+				"pb-export-run-1",
+				"PacBio",
+				"PacBio",
+				"2026-06-05",
+				runDateBasisPacBioComplete,
+			}})
+			convey.So(result.Total, convey.ShouldEqual, 1)
+		})
+	})
+}
+
+func seedExportMultiPlatformRunScenario(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedExportRunScenario(t, db)
+	seedHierarchyStudy(t, db, 710, "RUNX")
+	seedManifestSampleRow(t, db, 71001, "runs-illumina", "runs-illumina-supplier", "EGAN-runs-illumina", "sanger-runs-illumina")
+	seedManifestSampleRow(t, db, 71002, "runs-pacbio", "runs-pacbio-supplier", "EGAN-runs-pacbio", "sanger-runs-pacbio")
+	seedManifestSampleRow(t, db, 71003, "runs-elembio", "runs-elembio-supplier", "EGAN-runs-elembio", "sanger-runs-elembio")
+	seedManifestSampleRow(t, db, 71004, "runs-ultimagen", "runs-ultimagen-supplier", "EGAN-runs-ultimagen", "sanger-runs-ultimagen")
+	seedManifestSampleRow(t, db, 71005, "runs-ont", "runs-ont-supplier", "EGAN-runs-ont", "sanger-runs-ont")
+	for _, sampleID := range []int64{71001, 71002, 71003, 71004, 71005} {
+		seedLibrarySample(t, db, "Standard", sampleID, "RUNX")
+	}
+
+	seedIseqProductMetricsMirrorRow(t, db, 7100101, 71001, 61010, 1, 1, "RUNX")
+	seedExportPacBioRun(t, db)
+	seedEseqProductMetricsMirrorRow(t, db, "eseq-export-77010", 77010, 71003, "RUNX")
+	seedEseqRunLaneMetricsMirrorRow(t, db, 77010, map[string]time.Time{
+		"run_complete": time.Date(2026, time.June, 7, 12, 0, 0, 0, time.UTC),
+	})
+	seedUseqProductMetricsMirrorRow(t, db, "useq-export-88010", 88010, 71004, "RUNX")
+	seedUseqRunMetricsMirrorRow(t, db, 88010, runDateBasisRunArchived, map[string]time.Time{
+		"run_complete": time.Date(2026, time.June, 9, 12, 0, 0, 0, time.UTC),
+	})
+	seedExportONTRun(t, db)
+	seedExportRunAggregationSyncState(t, db)
 }
 
 func TestExportNonSampleRelationshipsRejectSharedFiltersD1aC4(t *testing.T) {
@@ -685,12 +762,67 @@ func seedExportRunScenario(t *testing.T, db *sql.DB) {
 	seedLibrarySample(t, db, "Standard", 31, "RUNS")
 	seedIseqProductMetricsMirrorRow(t, db, 61001, 31, 61010, 1, 1, "RUNS")
 	seedIseqProductMetricsMirrorRow(t, db, 61002, 31, 61011, 2, 1, "RUNS")
-	seedIseqRunStatusDictMirrorRow(t, db, 1, "run pending")
+	seedIseqRunStatusDictMirrorRow(t, db, 1, runDateBasisRunComplete)
 	seedIseqRunStatusMirrorRow(t, db, 1, 61010, time.Date(2026, time.June, 3, 9, 0, 0, 0, time.UTC), 1, 0)
 	seedIseqRunStatusMirrorRow(t, db, 2, 61011, time.Date(2026, time.June, 4, 9, 0, 0, 0, time.UTC), 1, 0)
 	seedExportSyncState(t, db)
 	seedSyncStateRun(t, db, syncTableIseqRunStatus, time.Date(2026, time.June, 4, 9, 0, 0, 0, time.UTC), time.Date(2026, time.June, 4, 10, 0, 0, 0, time.UTC))
 	seedSyncStateRun(t, db, syncTableIseqRunStatusDict, time.Date(2026, time.June, 4, 9, 0, 0, 0, time.UTC), time.Date(2026, time.June, 4, 10, 0, 0, 0, time.UTC))
+}
+
+func seedExportPacBioRun(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	complete := time.Date(2026, time.June, 5, 12, 0, 0, 0, time.UTC)
+	_, err := db.Exec(
+		`INSERT INTO pac_bio_run_well_metrics_mirror(id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, plate_number, run_complete, run_status, well_status, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		int64(71002),
+		"pb-export-run-1",
+		"A01",
+		1,
+		formatSyncTime(complete),
+		"Complete",
+		"Complete",
+		formatSyncTime(complete.Add(time.Hour)),
+		formatSyncDate(complete),
+	)
+	convey.So(err, convey.ShouldBeNil)
+	seedPacBioProductMetricsMirrorRow(t, db, "pb-export-product-1", 71002, "RUNX")
+}
+
+func seedExportONTRun(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	loadTime := time.Date(2026, time.June, 10, 12, 0, 0, 0, time.UTC)
+	_, err := db.Exec(
+		`INSERT INTO oseq_flowcell_mirror(id_oseq_flowcell_tmp, id_sample_tmp, id_study_lims, experiment_name, run_id, run_uuid, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		int64(71005),
+		int64(71005),
+		"RUNX",
+		"ONTRUN-71005",
+		nil,
+		"ont-run-uuid-71005",
+		formatSyncTime(loadTime),
+		formatSyncDate(loadTime),
+	)
+	convey.So(err, convey.ShouldBeNil)
+}
+
+func seedExportRunAggregationSyncState(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	highWater := time.Date(2026, time.June, 10, 12, 0, 0, 0, time.UTC)
+	for offset, table := range []string{
+		syncTablePacBioRunWellMetrics,
+		syncTablePacBioProductMetrics,
+		syncTableEseqRunLaneMetrics,
+		syncTableEseqProductMetrics,
+		syncTableUseqRunMetrics,
+		syncTableUseqProductMetrics,
+		syncTableOseqFlowcell,
+	} {
+		seedSyncStateRun(t, db, table, highWater, highWater.Add(time.Duration(offset)*time.Minute))
+	}
 }
 
 func TestExportStudyIRODSBoundedPageTotalAndCursorD1a(t *testing.T) {

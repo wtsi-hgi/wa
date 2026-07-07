@@ -47,8 +47,6 @@ const (
 	defaultExportAllLimit = 1000
 )
 
-const exportIlluminaRunDateBasis = "iseq_run_status_mirror.normalised_date"
-
 type exportRelationshipKind string
 
 const (
@@ -119,6 +117,8 @@ var (
 	}
 	runExportVocabulary = exportVocabulary{
 		Columns: []exportColumn{
+			{Name: "id", Supported: true},
+			{Name: "native_id", Supported: true},
 			{Name: "id_run", Supported: true},
 			{Name: "platform", Supported: true},
 			{Name: "manufacturer", Supported: true},
@@ -370,7 +370,9 @@ func projectRuns(runs []exportRunRow, columns []exportColumn) [][]string {
 	rows := make([][]string, len(runs))
 	for rowIndex, run := range runs {
 		values := map[string]string{
-			"id_run":       strconv.Itoa(run.IDRun),
+			"id":           run.ID,
+			"native_id":    run.NativeID,
+			"id_run":       run.IDRun,
 			"platform":     run.Platform,
 			"manufacturer": run.Manufacturer,
 			"run_date":     run.RunDate,
@@ -517,15 +519,28 @@ func validateExportRunColumns(rows []exportRunRow, columns []exportColumn) error
 	for _, row := range rows {
 		if row.RunDate == "" {
 			return fmt.Errorf(
-				"%w: export run column \"run_date\" is unavailable for id_run %d because %s has no date for that run; select id_run/platform or sync run-status data",
+				"%w: export run column \"run_date\" is unavailable for run %q because no authoritative %s date is available; select id/native_id/platform or sync run-status data",
 				ErrUnsupportedIdentifier,
-				row.IDRun,
-				exportIlluminaRunDateBasis,
+				row.ID,
+				exportRunExpectedDateBasis(row),
 			)
 		}
 	}
 
 	return nil
+}
+
+func exportRunExpectedDateBasis(row exportRunRow) string {
+	if row.DateBasis != "" {
+		return row.DateBasis
+	}
+	for _, spec := range runAggregationPlatformSpecs {
+		if spec.platform == row.Platform {
+			return spec.dateBasis
+		}
+	}
+
+	return "run"
 }
 
 func vocabularyForExportKind(kind exportRelationshipKind) exportVocabulary {
@@ -1567,7 +1582,7 @@ func (c *Client) runRowsForExport(ctx context.Context, plan exportPlan, parent e
 		return nil, 0, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	query, countQuery, args, countArgs, err := exportRunQueries(plan, parent)
+	query, countQuery, args, countArgs, err := exportRunQueries(plan, parent, c.runListingDialect())
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1577,7 +1592,7 @@ func (c *Client) runRowsForExport(ctx context.Context, plan exportPlan, parent e
 		return nil, 0, err
 	}
 	if len(rows) == 0 {
-		if syncErr := c.requireAnySyncState(ctx, syncTableIseqProductMetrics); syncErr != nil {
+		if syncErr := c.requireAnySyncState(ctx, exportRunSyncTables()...); syncErr != nil {
 			if errors.Is(syncErr, ErrCacheNeverSynced) {
 				return []exportRunRow{}, 0, syncErr
 			}
@@ -1597,28 +1612,116 @@ func (c *Client) runRowsForExport(ctx context.Context, plan exportPlan, parent e
 	return rows, total, nil
 }
 
-func exportRunQueries(plan exportPlan, parent exportParent) (string, string, []any, []any, error) {
-	var where string
-	var value any
-	switch plan.rel.ParentKind {
-	case "study":
-		where = "id_study_lims = ?"
-		value = parent.Canonical
-	case "sample":
-		where = "id_sample_tmp = ?"
-		value = parent.Value
-	default:
-		return "", "", nil, nil, ErrUnsupportedIdentifier
+func exportRunSyncTables() []string {
+	tables := syncTablesForRunAggregationSpecs(runAggregationPlatformSpecs)
+	tables = append(tables, sequencingAggregateProductSyncTables(runAggregationPlatformSpecs)...)
+
+	return uniqueStrings(tables)
+}
+
+func exportRunQueries(plan exportPlan, parent exportParent, dialect string) (string, string, []any, []any, error) {
+	union, args, err := exportRunUnionQuery(plan, parent, dialect)
+	if err != nil {
+		return "", "", nil, nil, err
 	}
 
-	runIDs := `SELECT DISTINCT id_run FROM iseq_product_metrics_mirror WHERE ` + where
-	query := `SELECT run_ids.id_run, COALESCE(MIN(status.normalised_date), '') AS run_date ` +
-		`FROM (` + runIDs + `) AS run_ids ` +
-		`LEFT JOIN iseq_run_status_mirror status ON status.id_run = run_ids.id_run ` +
-		`GROUP BY run_ids.id_run ORDER BY run_ids.id_run LIMIT ? OFFSET ?`
-	countQuery := `SELECT COUNT(*) FROM (` + runIDs + `) AS run_ids`
+	query := `SELECT platform_key, platform, native_id, id_run, manufacturer, run_date, date_basis FROM (` + union + `) AS runs ` +
+		`ORDER BY platform_key, native_id LIMIT ? OFFSET ?`
+	queryArgs := append([]any{}, args...)
+	queryArgs = append(queryArgs, plan.limit, plan.offset)
+	countQuery := `SELECT COUNT(*) FROM (` + union + `) AS runs`
+	countArgs := append([]any{}, args...)
 
-	return query, countQuery, []any{value, plan.limit, plan.offset}, []any{value}, nil
+	return query, countQuery, queryArgs, countArgs, nil
+}
+
+func exportRunUnionQuery(plan exportPlan, parent exportParent, dialect string) (string, []any, error) {
+	arms := make([]string, 0, len(runAggregationPlatformSpecs))
+	args := make([]any, 0, len(runAggregationPlatformSpecs))
+	for _, spec := range runAggregationPlatformSpecs {
+		arm, armArgs, err := exportRunArmQuery(spec, plan, parent, dialect)
+		if err != nil {
+			return "", nil, err
+		}
+		arms = append(arms, arm)
+		args = append(args, armArgs...)
+	}
+
+	return strings.Join(arms, " UNION ALL "), args, nil
+}
+
+func exportRunArmQuery(spec runAggregationPlatformSpec, plan exportPlan, parent exportParent, dialect string) (string, []any, error) {
+	where, value, err := exportRunParentScope(plan, parent)
+	if err != nil {
+		return "", nil, err
+	}
+
+	numericID := func(expr string) string {
+		return runListingIntegerTextExpr(dialect, expr)
+	}
+	args := []any{value}
+
+	switch spec.platform {
+	case platformIllumina:
+		runDate := `MIN(CASE WHEN status_dict.description = '` + runDateBasisRunComplete + `' THEN status.normalised_date ELSE NULL END)`
+		scopedRuns := `SELECT DISTINCT id_run FROM iseq_product_metrics_mirror WHERE ` + where
+		query := `SELECT 'illumina' AS platform_key, '` + platformIllumina + `' AS platform, ` +
+			numericID("run_ids.id_run") + ` AS native_id, ` + numericID("run_ids.id_run") + ` AS id_run, '` +
+			platformIllumina + `' AS manufacturer, COALESCE(` + runDate + `, '') AS run_date, ` +
+			`CASE WHEN ` + runDate + ` IS NULL THEN '' ELSE '` + runDateBasisRunComplete + `' END AS date_basis ` +
+			`FROM (` + scopedRuns + `) AS run_ids ` +
+			`LEFT JOIN iseq_run_status_mirror AS status ON status.id_run = run_ids.id_run ` +
+			`LEFT JOIN iseq_run_status_dict_mirror AS status_dict ON status_dict.id_run_status_dict = status.id_run_status_dict ` +
+			`GROUP BY run_ids.id_run`
+
+		return query, args, nil
+	case platformPacBio:
+		query := `SELECT 'pacbio' AS platform_key, '` + platformPacBio + `' AS platform, pb.pac_bio_run_name AS native_id, ` +
+			`'' AS id_run, '` + platformPacBio + `' AS manufacturer, MIN(pb.normalised_date) AS run_date, '` + runDateBasisPacBioComplete + `' AS date_basis ` +
+			`FROM pac_bio_product_metrics_mirror AS pm ` +
+			`INNER JOIN pac_bio_run_well_metrics_mirror AS pb ON pb.id_pac_bio_rw_metrics_tmp = pm.id_pac_bio_rw_metrics_tmp ` +
+			`WHERE pm.` + where + ` AND pb.normalised_date <> '' GROUP BY pb.pac_bio_run_name`
+
+		return query, args, nil
+	case platformElembio:
+		query := `SELECT 'elembio' AS platform_key, '` + platformElembio + `' AS platform, ` + numericID("er.id_run") + ` AS native_id, ` +
+			numericID("er.id_run") + ` AS id_run, '` + runManufacturerElembio + `' AS manufacturer, MIN(er.normalised_date) AS run_date, '` +
+			runDateBasisRunComplete + `' AS date_basis ` +
+			`FROM eseq_product_metrics_mirror AS pm ` +
+			`INNER JOIN eseq_run_lane_metrics_mirror AS er ON er.id_run = pm.id_run ` +
+			`WHERE pm.` + where + ` AND er.normalised_date <> '' GROUP BY er.id_run`
+
+		return query, args, nil
+	case platformUltimagen:
+		query := `SELECT 'ultimagen' AS platform_key, '` + platformUltimagen + `' AS platform, ` + numericID("ur.id_run") + ` AS native_id, ` +
+			numericID("ur.id_run") + ` AS id_run, '` + runManufacturerUltimagen + `' AS manufacturer, MIN(ur.normalised_date) AS run_date, '` +
+			runDateBasisRunArchived + `' AS date_basis ` +
+			`FROM useq_product_metrics_mirror AS pm ` +
+			`INNER JOIN useq_run_metrics_mirror AS ur ON ur.id_run = pm.id_run ` +
+			`WHERE pm.` + where + ` AND ur.normalised_date <> '' GROUP BY ur.id_run`
+
+		return query, args, nil
+	case platformONT:
+		query := `SELECT 'ont' AS platform_key, '` + platformONT + `' AS platform, ont.experiment_name AS native_id, ` +
+			`'' AS id_run, '` + runManufacturerONT + `' AS manufacturer, MIN(ont.normalised_date) AS run_date, '` +
+			runDateBasisONTLoadTime + `' AS date_basis FROM oseq_flowcell_mirror AS ont ` +
+			`WHERE ont.` + where + ` AND ont.normalised_date <> '' GROUP BY ont.experiment_name`
+
+		return query, args, nil
+	default:
+		return "", nil, fmt.Errorf("%w: unsupported platform %q", ErrUnsupportedIdentifier, spec.platform)
+	}
+}
+
+func exportRunParentScope(plan exportPlan, parent exportParent) (string, any, error) {
+	switch plan.rel.ParentKind {
+	case "study":
+		return "id_study_lims = ?", parent.Canonical, nil
+	case "sample":
+		return "id_sample_tmp = ?", parent.Value, nil
+	default:
+		return "", nil, ErrUnsupportedIdentifier
+	}
 }
 
 type exportCursor struct {
@@ -1720,7 +1823,9 @@ func (c *Client) studiesForExport(ctx context.Context, plan exportPlan, parentID
 }
 
 type exportRunRow struct {
-	IDRun        int
+	ID           string
+	NativeID     string
+	IDRun        string
 	Platform     string
 	Manufacturer string
 	RunDate      string
@@ -1736,18 +1841,17 @@ func (c *Client) queryExportRunRows(ctx context.Context, db *sql.DB, query strin
 
 	exportRows := make([]exportRunRow, 0)
 	for rows.Next() {
-		var row exportRunRow
-		var runDate sql.NullString
-		if err = rows.Scan(&row.IDRun, &runDate); err != nil {
+		var (
+			platformKey string
+			row         exportRunRow
+			runDate     sql.NullString
+		)
+		if err = rows.Scan(&platformKey, &row.Platform, &row.NativeID, &row.IDRun, &row.Manufacturer, &runDate, &row.DateBasis); err != nil {
 			return nil, fmt.Errorf("%w: scan export run row: %w", ErrUpstreamImpaired, err)
 		}
 
-		row.Platform = platformIllumina
-		row.Manufacturer = platformIllumina
+		row.ID = platformKey + ":" + row.NativeID
 		row.RunDate = nullStringValue(runDate)
-		if row.RunDate != "" {
-			row.DateBasis = exportIlluminaRunDateBasis
-		}
 		exportRows = append(exportRows, row)
 	}
 	if err = rows.Err(); err != nil {
