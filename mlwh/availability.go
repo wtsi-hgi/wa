@@ -64,6 +64,14 @@ const (
 // where it is the established join.
 const studyDataMembershipJoin = `library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp`
 
+// studyLinkedSamplesSQL is the distinct linked-sample set shared by the I2
+// overview/status aggregate arms. It is the same membership as
+// CountSamplesForStudy, but materialised once before joining to data/product sets
+// so MySQL can use study-scoped indexes instead of re-running correlated EXISTS
+// predicates per linked sample.
+const studyLinkedSamplesSQL = `SELECT DISTINCT library_samples.id_sample_tmp FROM ` + studyDataMembershipJoin +
+	` WHERE library_samples.id_study_lims = ?`
+
 // samplesWithDataCacheSQL lists the distinct samples that have data for the
 // study (the with-data partition), ordered like the other study fan-outs.
 var samplesWithDataCacheSQL = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM ` + studyDataMembershipJoin +
@@ -85,7 +93,9 @@ var samplesWithoutDataCacheSQL = `SELECT DISTINCT ` + sampleMirrorSelectColumns 
 // cross-check). It counts distinct SAMPLES, never iRODS data objects: a sample
 // with many study-scoped iRODS rows contributes exactly one.
 var countSamplesWithDataCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM ` + studyDataMembershipJoin +
-	` WHERE library_samples.id_study_lims = ? AND EXISTS (` + studyScopedIRODSExists("") + `)`
+	` INNER JOIN seq_product_irods_locations_mirror spi ` +
+	`ON spi.id_sample_tmp = sample_mirror.id_sample_tmp AND spi.id_study_lims = library_samples.id_study_lims ` +
+	`WHERE library_samples.id_study_lims = ?`
 
 // platformCanonicalOrder is the stable order platforms are reported in, so a
 // multi-platform sample's Platforms slice is deterministic across calls.
@@ -106,15 +116,7 @@ var studyOverviewFeedingTables = []string{
 	syncTableSeqProductIRODSLocations,
 }
 
-// countSamplesSequencedNoDataCacheSQL counts the distinct samples linked to the
-// study that have product-metrics in this study but NO study-scoped iRODS row: the
-// sequenced-no-data bucket of the distinct-sample partition (most-advanced-phase
-// precedence with_data > sequenced_no_data > registered). It reuses the shared
-// membership join so it stays a complement of the with-data partition over the
-// same linked-sample set.
-var countSamplesSequencedNoDataCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM ` + studyDataMembershipJoin +
-	` WHERE library_samples.id_study_lims = ? AND NOT EXISTS (` + studyScopedIRODSExists("") + `)` +
-	` AND EXISTS (` + studyScopedProductMetricsExists() + `)`
+var studyOverviewCountsCacheSQL = studyPhaseCountsSQL(true)
 
 // studyOverviewIRODSAggregateSQL is the single study-scoped iRODS aggregate that
 // yields data_objects (row count) and the sequencing date range / newest added
@@ -177,7 +179,9 @@ const studyScopedIRODSAddedWindow = `AND spi.created >= ? AND spi.created < ?`
 // countSamplesAddedSinceCacheSQL counts the distinct samples whose study-scoped
 // iRODS data was added in a half-open [since, until) window on the created column.
 var countSamplesAddedSinceCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM ` + studyDataMembershipJoin +
-	` WHERE library_samples.id_study_lims = ? AND EXISTS (` + studyScopedIRODSExists(studyScopedIRODSAddedWindow) + `)`
+	` INNER JOIN seq_product_irods_locations_mirror spi ` +
+	`ON spi.id_sample_tmp = sample_mirror.id_sample_tmp AND spi.id_study_lims = library_samples.id_study_lims ` +
+	`WHERE library_samples.id_study_lims = ? AND spi.created >= ? AND spi.created < ?`
 
 // samplesAddedSinceCacheSQL lists the distinct samples whose study-scoped iRODS
 // data was added in a half-open [since, until) window on the created column: the
@@ -232,23 +236,57 @@ func studyScopedIRODSExists(window string) string {
 	return predicate
 }
 
-// studyScopedProductMetricsExists is the correlated predicate for "this linked
-// sample has >=1 product-metrics row in this study", across every platform's
-// product-metrics mirror, scoped by the mirror's own id_study_lims (NOT the iRODS
-// row's). ONT (oseq_flowcell) carries no product-metrics, so an ONT-only sample
-// is never counted as sequenced. It anchors samples_sequenced_no_data, which pairs
-// it with NOT EXISTS(study-scoped iRODS).
-func studyScopedProductMetricsExists() string {
-	scoped := func(table string) string {
-		return `SELECT 1 FROM ` + table + ` pm WHERE pm.id_sample_tmp = sample_mirror.id_sample_tmp AND pm.id_study_lims = library_samples.id_study_lims`
+func studyPhaseCountsSQL(includeRecent bool) string {
+	selects := []string{
+		`COUNT(linked.id_sample_tmp)`,
+		`SUM(CASE WHEN data.id_sample_tmp IS NOT NULL THEN 1 ELSE 0 END)`,
+		`SUM(CASE WHEN data.id_sample_tmp IS NULL AND products.id_sample_tmp IS NOT NULL THEN 1 ELSE 0 END)`,
+	}
+	joins := []string{
+		`FROM (` + studyLinkedSamplesSQL + `) AS linked`,
+		`LEFT JOIN (SELECT DISTINCT id_sample_tmp FROM seq_product_irods_locations_mirror WHERE id_study_lims = ?) AS data ` +
+			`ON data.id_sample_tmp = linked.id_sample_tmp`,
+	}
+	if includeRecent {
+		selects = append(selects, `SUM(CASE WHEN recent.id_sample_tmp IS NOT NULL THEN 1 ELSE 0 END)`)
+		joins = append(joins,
+			`LEFT JOIN (SELECT DISTINCT id_sample_tmp FROM seq_product_irods_locations_mirror `+
+				`WHERE id_study_lims = ? AND created >= ? AND created < ?) AS recent `+
+				`ON recent.id_sample_tmp = linked.id_sample_tmp`,
+		)
+	}
+	joins = append(joins,
+		`LEFT JOIN (`+studyProductSampleSetSQL()+`) AS products ON products.id_sample_tmp = linked.id_sample_tmp`,
+	)
+
+	return `SELECT ` + strings.Join(selects, ", ") + " " + strings.Join(joins, " ")
+}
+
+// studyProductSampleSetSQL returns the distinct sample ids with product metrics in
+// one study across all product-bearing platforms. Each arm is study-scoped so the
+// I2 aggregate queries are served by (id_study_lims, id_sample_tmp, product, qc)
+// indexes instead of scanning product mirrors or probing them per sample.
+func studyProductSampleSetSQL() string {
+	arm := func(table string) string {
+		return `SELECT id_sample_tmp FROM ` + table + ` WHERE id_study_lims = ?`
 	}
 
 	return strings.Join([]string{
-		scoped("iseq_product_metrics_mirror"),
-		scoped("pac_bio_product_metrics_mirror"),
-		scoped("eseq_product_metrics_mirror"),
-		scoped("useq_product_metrics_mirror"),
-	}, " UNION ALL ")
+		arm("iseq_product_metrics_mirror"),
+		arm("pac_bio_product_metrics_mirror"),
+		arm("eseq_product_metrics_mirror"),
+		arm("useq_product_metrics_mirror"),
+	}, " UNION ")
+}
+
+func studyOverviewCountsArgs(studyLimsID string, windowArgs []any) []any {
+	args := []any{studyLimsID, studyLimsID, studyLimsID}
+	args = append(args, windowArgs...)
+	for range 4 {
+		args = append(args, studyLimsID)
+	}
+
+	return args
 }
 
 // platformsForStudySamplesSQL returns, for the given sample ids, every (sample,
@@ -684,7 +722,8 @@ func (c *Client) queryRecentDataRows(ctx context.Context, query string, args []a
 // synced study with no samples returns an all-zero overview with cache_synced_at
 // populated.
 func (c *Client) StudyOverview(ctx context.Context, studyLimsID string) (StudyOverview, error) {
-	total, err := c.queryCount(ctx, countSamplesForStudyCacheSQL, "count study samples for overview", studyLimsID)
+	overview := StudyOverview{IDStudyLims: studyLimsID}
+	total, err := c.fillStudyOverviewCounts(ctx, studyLimsID, &overview)
 	if err != nil {
 		return StudyOverview{}, err
 	}
@@ -692,11 +731,7 @@ func (c *Client) StudyOverview(ctx context.Context, studyLimsID string) (StudyOv
 		return c.studyOverviewForEmptyStudy(ctx, studyLimsID)
 	}
 
-	overview := StudyOverview{IDStudyLims: studyLimsID, SamplesTotal: total}
 	if err = c.fillStudyOverviewMetadata(ctx, studyLimsID, &overview); err != nil {
-		return StudyOverview{}, err
-	}
-	if err = c.fillStudyOverviewCounts(ctx, studyLimsID, &overview); err != nil {
 		return StudyOverview{}, err
 	}
 	if err = c.fillStudyOverviewIRODS(ctx, studyLimsID, &overview); err != nil {
@@ -737,33 +772,34 @@ func (c *Client) fillStudyOverviewMetadata(ctx context.Context, studyLimsID stri
 }
 
 // fillStudyOverviewCounts fills the distinct-sample partition and the recency
-// count. samples_with_data and samples_sequenced_no_data are independent indexed
-// aggregates over the shared membership join; without_data and the implied
-// registered bucket derive from the totals (registered = total - with_data -
-// sequenced_no_data), so a sample lands in exactly one bucket.
-func (c *Client) fillStudyOverviewCounts(ctx context.Context, studyLimsID string, overview *StudyOverview) error {
-	withData, err := c.queryCount(ctx, countSamplesWithDataCacheSQL, "count study samples with data for overview", studyLimsID)
-	if err != nil {
-		return err
+// count in one set-at-once aggregate over the distinct linked-sample set. The
+// data/product/recent arms are pre-filtered by study and then joined once, avoiding
+// the repeated correlated EXISTS probes that are too slow for study 7699 scale.
+func (c *Client) fillStudyOverviewCounts(ctx context.Context, studyLimsID string, overview *StudyOverview) (int, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return 0, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	sequencedNoData, err := c.queryCount(ctx, countSamplesSequencedNoDataCacheSQL, "count study samples sequenced without data for overview", studyLimsID)
-	if err != nil {
-		return err
+	var (
+		total           int
+		withData        sql.NullInt64
+		sequencedNoData sql.NullInt64
+		addedLast7Days  sql.NullInt64
+	)
+	args := studyOverviewCountsArgs(studyLimsID, c.studyOverviewWindowArgs())
+	if err := db.QueryRowContext(ctx, studyOverviewCountsCacheSQL, args...).
+		Scan(&total, &withData, &sequencedNoData, &addedLast7Days); err != nil {
+		return 0, fmt.Errorf("%w: aggregate study overview counts: %w", ErrUpstreamImpaired, err)
 	}
 
-	windowArgs := append([]any{studyLimsID}, c.studyOverviewWindowArgs()...)
-	addedLast7Days, err := c.queryCount(ctx, countSamplesAddedSinceCacheSQL, "count study samples added in the last 7 days", windowArgs...)
-	if err != nil {
-		return err
-	}
+	overview.SamplesTotal = total
+	overview.SamplesWithData = int(withData.Int64)
+	overview.SamplesWithoutData = total - int(withData.Int64)
+	overview.SamplesSequencedNoData = int(sequencedNoData.Int64)
+	overview.AddedLast7Days = int(addedLast7Days.Int64)
 
-	overview.SamplesWithData = withData
-	overview.SamplesWithoutData = overview.SamplesTotal - withData
-	overview.SamplesSequencedNoData = sequencedNoData
-	overview.AddedLast7Days = addedLast7Days
-
-	return nil
+	return total, nil
 }
 
 // studyOverviewWindowArgs are the half-open [now-7d, now) bounds for

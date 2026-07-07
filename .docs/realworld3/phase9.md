@@ -37,8 +37,8 @@ holds and downstream validation does not break. File: `progress.go`.
 Covering the single acceptance test from I1 (a study with no products has
 `per_platform == []` (empty array), not null, and JSON serialises `[]`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 9.2: I2 - StudyOverview / StatusBreakdown < 1s at big-study scale
 
@@ -54,8 +54,8 @@ Covering the single acceptance test from I2 (study 7699 on MySQL:
 full scans / correlated subqueries - and each completes < 1s). Depends on
 Phase 1 (A2, A4) and 9.1 (shared `progress.go`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For sequential items, a single review pass after each item is
 acceptable; reviewers must confirm `per_platform` serialises as `[]` (not

@@ -24,3 +24,6 @@ CREATE INDEX iseq_product_metrics_mirror_id_iseq_flowcell_tmp_idx
 
 CREATE INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx
 	ON iseq_product_metrics_mirror(id_study_lims, id_run, position);
+
+CREATE INDEX ipm_mirror_study_sample_product_qc_idx
+	ON iseq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_iseq_product, qc);

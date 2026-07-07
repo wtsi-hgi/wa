@@ -26,3 +26,6 @@ CREATE INDEX IF NOT EXISTS seq_ops_tracking_per_sample_mirror_sanger_sample_name
 
 CREATE INDEX IF NOT EXISTS seq_ops_tracking_per_sample_mirror_study_id_idx
 	ON seq_ops_tracking_per_sample_mirror(study_id);
+
+CREATE INDEX IF NOT EXISTS seq_ops_tracking_per_sample_mirror_study_id_sample_lims_idx
+	ON seq_ops_tracking_per_sample_mirror(study_id, id_sample_lims);

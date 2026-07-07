@@ -209,34 +209,34 @@ var sampleProgressFeedingTables = []string{
 const trackingTimelineReason = "not in tracking window"
 
 // statusBreakdownDistinctCacheSQL is the ONE grouped query for the distinct-sample
-// partition of the study status breakdown (spec F4): a single pass over the shared
-// Phase 2 membership join (studyDataMembershipJoin) that buckets each linked sample
-// by its most-advanced phase via conditional aggregation. with_data counts the
-// distinct samples with >=1 study-scoped iRODS row (studyScopedIRODSExists, the same
-// predicate StudyOverview / SamplesWithData use); sequenced_no_data counts those
-// with NO study-scoped iRODS row but >=1 study-scoped product-metrics row
-// (studyScopedProductMetricsExists); registered counts the rest (no products,
-// including ONT). Each distinct sample satisfies exactly one CASE, so the three
-// COUNT(DISTINCT ...) buckets sum to samples_total -- it is the SAME partition
-// StudyOverview computes (precedence with_data > sequenced_no_data > registered),
-// expressed as one query rather than three counts. No id_lims filter, matching the
-// canonical study membership (CountSamplesForStudy), so the buckets stay a partition
-// of the study's linked samples.
+// partition of the study status breakdown (spec F4). It shares the same I2
+// set-at-once linked-sample/data/product shape as StudyOverview: linked samples
+// are materialised once, study-scoped iRODS/product sample sets are materialised
+// once, and the final SELECT buckets every linked sample by precedence
+// with_data > sequenced_no_data > registered. The leading total lets the caller
+// preserve the CountSamplesForStudy empty/unknown/never-synced cascade without
+// issuing a separate sample-count query.
 var statusBreakdownDistinctCacheSQL = `SELECT ` +
-	`COUNT(DISTINCT CASE WHEN EXISTS (` + studyScopedIRODSExists("") + `) THEN sample_mirror.id_sample_tmp END), ` +
-	`COUNT(DISTINCT CASE WHEN NOT EXISTS (` + studyScopedIRODSExists("") + `) AND EXISTS (` + studyScopedProductMetricsExists() + `) THEN sample_mirror.id_sample_tmp END), ` +
-	`COUNT(DISTINCT CASE WHEN NOT EXISTS (` + studyScopedIRODSExists("") + `) AND NOT EXISTS (` + studyScopedProductMetricsExists() + `) THEN sample_mirror.id_sample_tmp END) ` +
-	`FROM ` + studyDataMembershipJoin + ` WHERE library_samples.id_study_lims = ?`
+	`COUNT(linked.id_sample_tmp), ` +
+	`SUM(CASE WHEN data.id_sample_tmp IS NOT NULL THEN 1 ELSE 0 END), ` +
+	`SUM(CASE WHEN data.id_sample_tmp IS NULL AND products.id_sample_tmp IS NOT NULL THEN 1 ELSE 0 END), ` +
+	`SUM(CASE WHEN data.id_sample_tmp IS NULL AND products.id_sample_tmp IS NULL THEN 1 ELSE 0 END) ` +
+	`FROM (` + studyLinkedSamplesSQL + `) AS linked ` +
+	`LEFT JOIN (SELECT DISTINCT id_sample_tmp FROM seq_product_irods_locations_mirror WHERE id_study_lims = ?) AS data ` +
+	`ON data.id_sample_tmp = linked.id_sample_tmp ` +
+	`LEFT JOIN (` + studyProductSampleSetSQL() + `) AS products ON products.id_sample_tmp = linked.id_sample_tmp`
 
 // countSamplesWithDetailedTimelineCacheSQL counts the study's linked samples that
 // are also present in the seq_ops_tracking_per_sample mirror (spec F4
-// with_detailed_timeline). It reuses the shared membership join and joins the
-// tracking mirror by its sample key (sample_mirror.id_sample_lims =
-// seq_ops_tracking_per_sample_mirror.id_sample_lims) via a correlated EXISTS, so it
-// counts distinct SAMPLES present in tracking, never tracking rows.
-var countSamplesWithDetailedTimelineCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM ` + studyDataMembershipJoin +
-	` WHERE library_samples.id_study_lims = ? AND EXISTS (` +
-	`SELECT 1 FROM seq_ops_tracking_per_sample_mirror t WHERE t.id_sample_lims = sample_mirror.id_sample_lims)`
+// with_detailed_timeline). It reuses the same distinct linked-sample membership as
+// CountSamplesForStudy and joins the tracking mirror set-at-once by (study_id,
+// id_sample_lims), so it counts distinct SAMPLES present in tracking without a
+// per-sample correlated EXISTS.
+var countSamplesWithDetailedTimelineCacheSQL = `SELECT COUNT(DISTINCT linked.id_sample_tmp) ` +
+	`FROM (SELECT DISTINCT library_samples.id_sample_tmp, sample_mirror.id_sample_lims, library_samples.id_study_lims ` +
+	`FROM ` + studyDataMembershipJoin + ` WHERE library_samples.id_study_lims = ?) AS linked ` +
+	`INNER JOIN seq_ops_tracking_per_sample_mirror t ` +
+	`ON t.study_id = linked.id_study_lims AND t.id_sample_lims = linked.id_sample_lims`
 
 // statusBreakdownFeedingTables are the sync tables whose oldest last_run defines a
 // StatusBreakdown's cache_synced_at (spec F4): the study + sample identity tables,
@@ -715,6 +715,15 @@ func buildMilestones(reached []reachedMilestone) []Milestone {
 	}
 
 	return milestones
+}
+
+func statusBreakdownDistinctArgs(studyLimsID string) []any {
+	args := []any{studyLimsID, studyLimsID}
+	for range 4 {
+		args = append(args, studyLimsID)
+	}
+
+	return args
 }
 
 // sampleProductMetricsPlatformsSQL returns the distinct platforms one sample
@@ -1297,7 +1306,7 @@ func (c *Client) sampleUseqRunTimelines(ctx context.Context, idSampleTmp int64) 
 // synced study with no samples returns all-zero ladders with cache_synced_at
 // populated.
 func (c *Client) StatusBreakdown(ctx context.Context, studyLimsID string) (StatusBreakdown, error) {
-	total, err := c.queryCount(ctx, countSamplesForStudyCacheSQL, "count study samples for status breakdown", studyLimsID)
+	total, distinct, err := c.statusBreakdownDistinct(ctx, studyLimsID)
 	if err != nil {
 		return StatusBreakdown{}, err
 	}
@@ -1305,13 +1314,7 @@ func (c *Client) StatusBreakdown(ctx context.Context, studyLimsID string) (Statu
 		return c.statusBreakdownForEmptyStudy(ctx, studyLimsID)
 	}
 
-	breakdown := StatusBreakdown{IDStudyLims: studyLimsID}
-
-	distinct, err := c.statusBreakdownDistinct(ctx, studyLimsID)
-	if err != nil {
-		return StatusBreakdown{}, err
-	}
-	breakdown.Distinct = distinct
+	breakdown := StatusBreakdown{IDStudyLims: studyLimsID, Distinct: distinct}
 
 	perPlatform, err := c.statusBreakdownPerPlatform(ctx, studyLimsID)
 	if err != nil {
@@ -1342,19 +1345,28 @@ func (c *Client) StatusBreakdown(ctx context.Context, studyLimsID string) (Statu
 
 // statusBreakdownDistinct runs the single grouped distinct-partition query and
 // returns the most-advanced-phase ladder summing to samples_total.
-func (c *Client) statusBreakdownDistinct(ctx context.Context, studyLimsID string) (PhaseLadder, error) {
+func (c *Client) statusBreakdownDistinct(ctx context.Context, studyLimsID string) (int, PhaseLadder, error) {
 	db := c.readCacheDB()
 	if db == nil {
-		return PhaseLadder{}, fmt.Errorf("mlwh: cache reader not configured")
+		return 0, PhaseLadder{}, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	var ladder PhaseLadder
-	if err := db.QueryRowContext(ctx, statusBreakdownDistinctCacheSQL, studyLimsID).
-		Scan(&ladder.WithData, &ladder.SequencedNoData, &ladder.Registered); err != nil {
-		return PhaseLadder{}, fmt.Errorf("%w: aggregate study status breakdown distinct partition: %w", ErrUpstreamImpaired, err)
+	var (
+		total           int
+		withData        sql.NullInt64
+		sequencedNoData sql.NullInt64
+		registered      sql.NullInt64
+	)
+	if err := db.QueryRowContext(ctx, statusBreakdownDistinctCacheSQL, statusBreakdownDistinctArgs(studyLimsID)...).
+		Scan(&total, &withData, &sequencedNoData, &registered); err != nil {
+		return 0, PhaseLadder{}, fmt.Errorf("%w: aggregate study status breakdown distinct partition: %w", ErrUpstreamImpaired, err)
 	}
 
-	return ladder, nil
+	return total, PhaseLadder{
+		WithData:        int(withData.Int64),
+		SequencedNoData: int(sequencedNoData.Int64),
+		Registered:      int(registered.Int64),
+	}, nil
 }
 
 // statusBreakdownPerPlatform runs the single grouped per-platform-partition query
@@ -1459,7 +1471,11 @@ func (c *Client) statusBreakdownForEmptyStudy(ctx context.Context, studyLimsID s
 			return StatusBreakdown{}, err
 		}
 
-		return StatusBreakdown{IDStudyLims: studyLimsID, CacheSyncedAt: syncedAt}, nil
+		return StatusBreakdown{
+			IDStudyLims:   studyLimsID,
+			PerPlatform:   []PlatformPhaseLadder{},
+			CacheSyncedAt: syncedAt,
+		}, nil
 	}
 
 	if err := c.requireAnySyncState(ctx, syncTableStudy); err != nil {

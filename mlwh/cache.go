@@ -627,8 +627,14 @@ func ensureAdditiveCurrentCacheIndexes(ctx context.Context, db *sql.DB, dialect 
 		}{
 			{stmt: `CREATE INDEX IF NOT EXISTS library_samples_library_id_idx ON library_samples(library_id)`},
 			{stmt: `CREATE INDEX IF NOT EXISTS library_samples_id_library_lims_idx ON library_samples(id_library_lims)`},
+			{stmt: `CREATE INDEX IF NOT EXISTS library_samples_id_study_lims_id_sample_tmp_idx ON library_samples(id_study_lims, id_sample_tmp)`},
 			{stmt: `CREATE INDEX IF NOT EXISTS pac_bio_product_metrics_mirror_rw_metrics_tmp_idx ON pac_bio_product_metrics_mirror(id_pac_bio_rw_metrics_tmp)`},
 			{stmt: `CREATE INDEX IF NOT EXISTS ipm_mirror_iseq_product_idx ON iseq_product_metrics_mirror(id_iseq_product)`, indexSet: &iseqProductMetricsMirrorIndexSet},
+			{stmt: `CREATE INDEX IF NOT EXISTS ipm_mirror_study_sample_product_qc_idx ON iseq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_iseq_product, qc)`, indexSet: &iseqProductMetricsMirrorIndexSet},
+			{stmt: `CREATE INDEX IF NOT EXISTS pac_bio_product_metrics_mirror_study_sample_product_qc_idx ON pac_bio_product_metrics_mirror(id_study_lims, id_sample_tmp, id_pac_bio_product, qc)`},
+			{stmt: `CREATE INDEX IF NOT EXISTS eseq_product_metrics_mirror_study_sample_product_qc_idx ON eseq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_eseq_product, qc)`},
+			{stmt: `CREATE INDEX IF NOT EXISTS useq_product_metrics_mirror_study_sample_product_qc_idx ON useq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_useq_product, qc)`},
+			{stmt: `CREATE INDEX IF NOT EXISTS seq_ops_tracking_per_sample_mirror_study_id_sample_lims_idx ON seq_ops_tracking_per_sample_mirror(study_id, id_sample_lims)`},
 			{stmt: `CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_iseq_product_idx ON seq_product_irods_locations_mirror(id_study_lims, id_iseq_product)`, indexSet: &seqProductIRODSLocationsMirrorIndexSet},
 			{stmt: `CREATE INDEX IF NOT EXISTS spi_mirror_sample_tmp_iseq_product_idx ON seq_product_irods_locations_mirror(id_sample_tmp, id_iseq_product)`, indexSet: &seqProductIRODSLocationsMirrorIndexSet},
 		} {
@@ -656,12 +662,36 @@ func ensureAdditiveCurrentCacheIndexes(ctx context.Context, db *sql.DB, dialect 
 			`CREATE INDEX library_samples_id_library_lims_idx ON library_samples(id_library_lims)`); err != nil {
 			return err
 		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "library_samples", "id_study_lims,id_sample_tmp",
+			`CREATE INDEX library_samples_id_study_lims_id_sample_tmp_idx ON library_samples(id_study_lims, id_sample_tmp)`); err != nil {
+			return err
+		}
 		if err := ensureAdditiveMySQLIndex(ctx, db, "pac_bio_product_metrics_mirror", "id_pac_bio_rw_metrics_tmp",
 			`CREATE INDEX pac_bio_product_metrics_mirror_rw_metrics_tmp_idx ON pac_bio_product_metrics_mirror(id_pac_bio_rw_metrics_tmp)`); err != nil {
 			return err
 		}
 		if err := ensureAdditiveMySQLIndex(ctx, db, "iseq_product_metrics_mirror", "id_iseq_product",
 			`CREATE INDEX ipm_mirror_iseq_product_idx ON iseq_product_metrics_mirror(id_iseq_product)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "iseq_product_metrics_mirror", "id_study_lims,id_sample_tmp,id_iseq_product,qc",
+			`CREATE INDEX ipm_mirror_study_sample_product_qc_idx ON iseq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_iseq_product, qc)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "pac_bio_product_metrics_mirror", "id_study_lims,id_sample_tmp,id_pac_bio_product,qc",
+			`CREATE INDEX pac_bio_product_metrics_mirror_study_sample_product_qc_idx ON pac_bio_product_metrics_mirror(id_study_lims, id_sample_tmp, id_pac_bio_product, qc)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "eseq_product_metrics_mirror", "id_study_lims,id_sample_tmp,id_eseq_product,qc",
+			`CREATE INDEX eseq_product_metrics_mirror_study_sample_product_qc_idx ON eseq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_eseq_product, qc)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "useq_product_metrics_mirror", "id_study_lims,id_sample_tmp,id_useq_product,qc",
+			`CREATE INDEX useq_product_metrics_mirror_study_sample_product_qc_idx ON useq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_useq_product, qc)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "seq_ops_tracking_per_sample_mirror", "study_id,id_sample_lims",
+			`CREATE INDEX seq_ops_tracking_per_sample_mirror_study_id_sample_lims_idx ON seq_ops_tracking_per_sample_mirror(study_id, id_sample_lims)`); err != nil {
 			return err
 		}
 

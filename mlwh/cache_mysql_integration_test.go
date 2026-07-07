@@ -30,6 +30,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -69,6 +70,12 @@ const (
 	j1UserDualRole       = 2     // dz9 owner + data_access_contact of one study (E2)
 	j1ResolveBothSources = 2     // ResolvePerson("rosa") faculty_sponsor + study_users candidates (E3)
 	j1ResolveLoginOnly   = 1     // ResolvePerson("rk9") study_users candidate via login fragment (E3)
+)
+
+const (
+	i2BigStudyLimsID       = "7699"
+	i2BigStudyMinSamples   = 10_000
+	i2MaxBigStudyReadDelay = time.Second
 )
 
 // These B2.1 constants were validated against the live MLWH source on 2026-07-07:
@@ -913,6 +920,31 @@ func dropThrowawayMySQLCacheDB(t *testing.T, serverDSN, throwawayDB string) {
 	}
 }
 
+type i2BigStudyExplainCase struct {
+	query string
+	args  []any
+}
+
+func i2BigStudyExplainCases(cache *Client) []i2BigStudyExplainCase {
+	overviewArgs := studyOverviewCountsArgs(i2BigStudyLimsID, cache.studyOverviewWindowArgs())
+	perPlatformArgs := make([]any, len(statusBreakdownProductPlatformArms)+1)
+	for i := range perPlatformArgs {
+		perPlatformArgs[i] = i2BigStudyLimsID
+	}
+	qcArgs := make([]any, len(statusBreakdownProductPlatformArms))
+	for i := range qcArgs {
+		qcArgs[i] = i2BigStudyLimsID
+	}
+
+	return []i2BigStudyExplainCase{
+		{query: studyOverviewCountsCacheSQL, args: overviewArgs},
+		{query: statusBreakdownDistinctCacheSQL, args: statusBreakdownDistinctArgs(i2BigStudyLimsID)},
+		{query: statusBreakdownPerPlatformSQL(), args: perPlatformArgs},
+		{query: statusBreakdownQCCacheSQL, args: qcArgs},
+		{query: countSamplesWithDetailedTimelineCacheSQL, args: []any{i2BigStudyLimsID}},
+	}
+}
+
 // mysqlExplainPlanRow is the subset of an EXPLAIN row the new-query-path tests
 // assert on per table: the query alias (table), the select_type (to spot a
 // per-row DEPENDENT SUBQUERY), the access type (a full scan reports "ALL") and the
@@ -1668,6 +1700,18 @@ func assertC4QCPlanUsesSampleIndex(t *testing.T, plans []mysqlExplainPlanRow, ta
 	convey.So(plan.key, convey.ShouldEqual, indexName)
 }
 
+func assertI2BigStudyPlanIndexServed(plans []mysqlExplainPlanRow) {
+	for _, plan := range plans {
+		convey.So(strings.ToUpper(plan.selectType), convey.ShouldNotContainSubstring, "DEPENDENT")
+		if plan.table == "" || strings.HasPrefix(plan.table, "<") {
+			continue
+		}
+
+		convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+		convey.So(plan.key, convey.ShouldNotBeBlank)
+	}
+}
+
 func assertE1IRODSRecencyPlan(t *testing.T, plans []mysqlExplainPlanRow, indexName string) {
 	t.Helper()
 
@@ -2103,6 +2147,69 @@ func f1MonthlyRunCountMySQLPlanCases(since, until string) []a6MonthlyRunCountMyS
 	}
 
 	return cases
+}
+
+func TestRealMySQLI2StudyOverviewAndStatusBreakdown7699UseIndexesAndFinishUnderSecond(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: baseDSN, Password: password})
+	if err != nil {
+		t.Skipf("could not open real MySQL cache (%v); skipping study 7699 performance proof", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Skipf("real cache dialect = %q, want mysql; skipping study 7699 performance proof", cache.cache.Dialect())
+	}
+
+	count, err := cache.CountSamplesForStudy(ctx, i2BigStudyLimsID)
+	if err != nil {
+		if errors.Is(err, ErrCacheNeverSynced) || errors.Is(err, ErrNotFound) {
+			t.Skipf("study %s is not synced in the configured MySQL cache (%v); skipping performance proof", i2BigStudyLimsID, err)
+		}
+		t.Fatalf("CountSamplesForStudy(%s): %v", i2BigStudyLimsID, err)
+	}
+	if count.Count < i2BigStudyMinSamples {
+		t.Skipf("study %s has %d samples in the configured MySQL cache, below the big-study proof floor %d", i2BigStudyLimsID, count.Count, i2BigStudyMinSamples)
+	}
+
+	db := cache.cache.DB()
+	convey.Convey("I2: Given study 7699 is synced in the configured MySQL cache", t, func() {
+		convey.Convey("when EXPLAIN plans the StudyOverview and StatusBreakdown arms, then base mirrors are index-served with no correlated subqueries", func() {
+			for _, planCase := range i2BigStudyExplainCases(cache) {
+				plans := explainPlanRows(t, db, planCase.query, planCase.args...)
+				assertI2BigStudyPlanIndexServed(plans)
+			}
+		})
+
+		convey.Convey("when StudyOverview and StatusBreakdown run, then each completes in under 1s", func() {
+			overviewDelay, overviewErr := measureI2BigStudyRead(func() error {
+				_, readErr := cache.StudyOverview(ctx, i2BigStudyLimsID)
+
+				return readErr
+			})
+			breakdownDelay, breakdownErr := measureI2BigStudyRead(func() error {
+				_, readErr := cache.StatusBreakdown(ctx, i2BigStudyLimsID)
+
+				return readErr
+			})
+
+			convey.So(overviewErr, convey.ShouldBeNil)
+			convey.So(breakdownErr, convey.ShouldBeNil)
+			convey.So(overviewDelay, convey.ShouldBeLessThan, i2MaxBigStudyReadDelay)
+			convey.So(breakdownDelay, convey.ShouldBeLessThan, i2MaxBigStudyReadDelay)
+		})
+	})
+}
+
+func measureI2BigStudyRead(read func() error) (time.Duration, error) {
+	start := time.Now()
+	err := read()
+
+	return time.Since(start), err
 }
 
 func TestRealMySQLE1IRODSCreatedDescUsesRecencyIndexes(t *testing.T) {

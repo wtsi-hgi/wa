@@ -51,17 +51,17 @@ import (
 // source of truth shared by the A4 existence, cross-dialect-equality and
 // per-table assertions below.
 var a4MirrorTables = map[string][]string{
-	"pac_bio_product_metrics_mirror":     {"id_sample_tmp", "id_study_lims"},
+	"pac_bio_product_metrics_mirror":     {"id_pac_bio_rw_metrics_tmp", "id_sample_tmp", "id_study_lims", "id_study_lims,id_sample_tmp,id_pac_bio_product,qc"},
 	"pac_bio_run_well_metrics_mirror":    {"normalised_date", "pac_bio_run_name,well_label"},
-	"eseq_product_metrics_mirror":        {"id_run", "id_sample_tmp", "id_study_lims"},
+	"eseq_product_metrics_mirror":        {"id_run", "id_sample_tmp", "id_study_lims", "id_study_lims,id_sample_tmp,id_eseq_product,qc"},
 	"eseq_run_mirror":                    {"run_name"},
 	"eseq_run_lane_metrics_mirror":       {"id_run", "normalised_date"},
-	"useq_product_metrics_mirror":        {"id_run", "id_sample_tmp", "id_study_lims", "id_useq_wafer_tmp"},
+	"useq_product_metrics_mirror":        {"id_run", "id_sample_tmp", "id_study_lims", "id_study_lims,id_sample_tmp,id_useq_product,qc", "id_useq_wafer_tmp"},
 	"useq_run_metrics_mirror":            {"normalised_date", "run_name"},
 	"oseq_flowcell_mirror":               {"experiment_name", "id_sample_tmp", "id_study_lims", "last_updated", "normalised_date"},
 	"iseq_run_status_mirror":             {"id_run", "id_run,date", "normalised_date,id_run_status_dict,id_run"},
 	"iseq_run_status_dict_mirror":        nil,
-	"seq_ops_tracking_per_sample_mirror": {"id_sample_lims", "sanger_sample_name", "study_id"},
+	"seq_ops_tracking_per_sample_mirror": {"id_sample_lims", "sanger_sample_name", "study_id", "study_id,id_sample_lims"},
 }
 
 // studyUsersMirrorColumns is the column set study_users_mirror declares in both
@@ -440,7 +440,7 @@ func TestA4SeqOpsTrackingMirrorHasAllMilestonesAndLookupIndexes(t *testing.T) {
 				convey.So(columns[milestone], convey.ShouldEqual, "text")
 			}
 
-			convey.So(shape.Index["seq_ops_tracking_per_sample_mirror"], convey.ShouldResemble, []string{"id_sample_lims", "sanger_sample_name", "study_id"})
+			convey.So(shape.Index["seq_ops_tracking_per_sample_mirror"], convey.ShouldResemble, []string{"id_sample_lims", "sanger_sample_name", "study_id", "study_id,id_sample_lims"})
 		})
 	})
 }

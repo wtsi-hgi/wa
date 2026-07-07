@@ -332,6 +332,7 @@ var iseqProductMetricsMirrorSecondaryIndexes = []syncIndexSpec{
 	{Name: "iseq_product_metrics_mirror_id_iseq_flowcell_tmp_idx", Column: "id_iseq_flowcell_tmp"},
 	{Name: "ipm_mirror_iseq_product_idx", Column: "id_iseq_product"},
 	{Name: "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx", Column: "id_study_lims, id_run, position"},
+	{Name: "ipm_mirror_study_sample_product_qc_idx", Column: "id_study_lims, id_sample_tmp, id_iseq_product, qc"},
 }
 
 var iseqProductMetricsMirrorIndexSet = syncMirrorIndexSet{
@@ -367,6 +368,7 @@ var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
 	{Name: "ipm_mirror_sample_run_position_tag_idx", Column: "id_sample_tmp, id_run, position, tag_index"},
 	{Name: "ipm_mirror_iseq_product_idx", Column: "id_iseq_product"},
 	{Name: "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx", Column: "id_study_lims, id_run, position"},
+	{Name: "ipm_mirror_study_sample_product_qc_idx", Column: "id_study_lims, id_sample_tmp, id_iseq_product, qc"},
 }
 
 // seqProductIRODSLocationsMirrorReadIndexes is the subset of the iRODS-locations

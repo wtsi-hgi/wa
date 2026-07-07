@@ -498,8 +498,10 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 				Collection: "/seq/run",
 				DataObject: "1",
 				IRODSPath:  "/seq/run/1",
+				Created:    "2026-05-07T09:20:00Z",
 				IDRun:      9001,
 				Platform:   "Illumina",
+				ManualQC:   "pass",
 			}})
 
 			var studyLimsForSample1 string

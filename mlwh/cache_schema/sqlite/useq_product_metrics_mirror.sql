@@ -23,3 +23,6 @@ CREATE INDEX IF NOT EXISTS useq_product_metrics_mirror_id_useq_wafer_tmp_idx
 
 CREATE INDEX IF NOT EXISTS useq_product_metrics_mirror_id_run_idx
 	ON useq_product_metrics_mirror(id_run);
+
+CREATE INDEX IF NOT EXISTS useq_product_metrics_mirror_study_sample_product_qc_idx
+	ON useq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_useq_product, qc);

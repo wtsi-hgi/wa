@@ -28,6 +28,7 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -1245,9 +1246,14 @@ func TestStatusBreakdownNeverSyncedUnknownAndEmptyCascade(t *testing.T) {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(breakdown.IDStudyLims, convey.ShouldEqual, f4StudyLims)
 			convey.So(breakdown.Distinct, convey.ShouldResemble, PhaseLadder{})
-			convey.So(breakdown.PerPlatform, convey.ShouldBeEmpty)
+			convey.So(breakdown.PerPlatform, convey.ShouldResemble, []PlatformPhaseLadder{})
+			convey.So(breakdown.PerPlatform, convey.ShouldNotBeNil)
 			convey.So(breakdown.WithDetailedTimeline, convey.ShouldEqual, 0)
 			convey.So(breakdown.CacheSyncedAt, convey.ShouldNotEqual, "")
+
+			raw, marshalErr := json.Marshal(breakdown)
+			convey.So(marshalErr, convey.ShouldBeNil)
+			convey.So(string(raw), convey.ShouldContainSubstring, `"per_platform":[]`)
 		})
 	})
 }
