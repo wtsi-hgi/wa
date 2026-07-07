@@ -673,8 +673,48 @@ func TestIRODSPathsForSampleReturnsJoinedPaths(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(paths, convey.ShouldResemble, []IRODSPath{
-			{IDProduct: "4001", Collection: "/seq/1234", DataObject: "1234_1#1.cram", IRODSPath: "/seq/1234/1234_1#1.cram", Created: "2026-05-06T12:11:00Z", Platform: "illumina"},
-			{IDProduct: "4002", Collection: "/seq/1234", DataObject: "1234_1#2.cram", IRODSPath: "/seq/1234/1234_1#2.cram", Created: "2026-05-06T12:11:00Z", Platform: "illumina"},
+			{IDProduct: "4001", Collection: "/seq/1234", DataObject: "1234_1#1.cram", IRODSPath: "/seq/1234/1234_1#1.cram", IDSampleTmp: 31, Name: "7607STDY14643771", SupplierName: "supplier-31", SangerSampleID: "seed-sanger", AccessionNumber: "seed-accession", IDStudyLims: "6568", Created: "2026-05-06T12:11:00Z", Platform: "illumina"},
+			{IDProduct: "4002", Collection: "/seq/1234", DataObject: "1234_1#2.cram", IRODSPath: "/seq/1234/1234_1#2.cram", IDSampleTmp: 31, Name: "7607STDY14643771", SupplierName: "supplier-31", SangerSampleID: "seed-sanger", AccessionNumber: "seed-accession", IDStudyLims: "6568", Created: "2026-05-06T12:11:00Z", Platform: "illumina"},
+		})
+	})
+}
+
+func TestIRODSPathsForSampleCarriesSpecFieldsAndDeliverableTrue(t *testing.T) {
+	convey.Convey("Given a sample-scoped iRODS row with mirrored coordinates, identity and deliverable=true", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 31, "S1", "S1STDY1")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "sample-true", "/seq/52553", "52553_2#7.cram", 31, "S1", time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC), "illumina")
+		setIRODSLocationMirrorRunFields(t, client.cache.DB(), 52553, 2, 7, "sample-true")
+		setIRODSLocationMirrorQCAndDeliverableFields(t, client.cache.DB(), "sample-true", sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{Int64: 1, Valid: true}, false)
+
+		paths, err := client.IRODSPathsForSample(context.Background(), "S1STDY1", 100, 0)
+
+		convey.Convey("when the sample iRODS list is fetched, then the row exposes the spec-required fields", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(paths, convey.ShouldHaveLength, 1)
+			convey.So(paths[0], convey.ShouldResemble, IRODSPath{
+				IDProduct:            "sample-true",
+				Collection:           "/seq/52553",
+				DataObject:           "52553_2#7.cram",
+				IRODSPath:            "/seq/52553/52553_2#7.cram",
+				IDSampleTmp:          31,
+				Name:                 "S1STDY1",
+				SupplierName:         "supplier-31",
+				SangerSampleID:       "seed-sanger",
+				AccessionNumber:      "seed-accession",
+				IDStudyLims:          "S1",
+				StudyAccessionNumber: "EGAS0000S1",
+				Created:              "2026-06-25T09:00:00Z",
+				IDRun:                52553,
+				Position:             2,
+				TagIndex:             7,
+				Platform:             "illumina",
+				ManualQC:             "pass",
+				Deliverable:          boolPtr(true),
+			})
 		})
 	})
 }
@@ -713,12 +753,18 @@ func TestIRODSPathsForSampleReturnsCompositeProductPathForEveryLinkedSample(t *t
 
 		convey.So(firstErr, convey.ShouldBeNil)
 		convey.So(firstPaths, convey.ShouldResemble, []IRODSPath{{
-			IDProduct:  "5c7e2518e6e4b9f0bff053374d43a2b1f9bbb84625f035148db857b9bb01bfc0",
-			Collection: "/seq/illumina/runs/48/48522/plex1",
-			DataObject: "48522#1.cram",
-			IRODSPath:  "/seq/illumina/runs/48/48522/plex1/48522#1.cram",
-			Created:    "2026-05-06T12:11:00Z",
-			Platform:   "illumina",
+			IDProduct:       "5c7e2518e6e4b9f0bff053374d43a2b1f9bbb84625f035148db857b9bb01bfc0",
+			Collection:      "/seq/illumina/runs/48/48522/plex1",
+			DataObject:      "48522#1.cram",
+			IRODSPath:       "/seq/illumina/runs/48/48522/plex1/48522#1.cram",
+			IDSampleTmp:     31,
+			Name:            "7607STDY14643771",
+			SupplierName:    "supplier-31",
+			SangerSampleID:  "seed-sanger",
+			AccessionNumber: "seed-accession",
+			IDStudyLims:     "7607",
+			Created:         "2026-05-06T12:11:00Z",
+			Platform:        "illumina",
 		}})
 		convey.So(secondErr, convey.ShouldBeNil)
 		convey.So(secondPaths, convey.ShouldHaveLength, 1)
@@ -829,8 +875,8 @@ func TestIRODSPathsForStudyReturnsJoinedPaths(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(paths, convey.ShouldResemble, []IRODSPath{
-			{IDProduct: "5001", Collection: "/seq/5678", DataObject: "5678_1#1.cram", IRODSPath: "/seq/5678/5678_1#1.cram", IDSampleTmp: 91, Created: "2026-05-06T12:11:00Z", Platform: "illumina"},
-			{IDProduct: "5002", Collection: "/seq/5678", DataObject: "5678_1#2.cram", IRODSPath: "/seq/5678/5678_1#2.cram", IDSampleTmp: 92, Created: "2026-05-06T12:11:00Z", Platform: "illumina"},
+			{IDProduct: "5001", Collection: "/seq/5678", DataObject: "5678_1#1.cram", IRODSPath: "/seq/5678/5678_1#1.cram", IDSampleTmp: 91, IDStudyLims: "6568", StudyAccessionNumber: "EGAS00006568", Created: "2026-05-06T12:11:00Z", Platform: "illumina"},
+			{IDProduct: "5002", Collection: "/seq/5678", DataObject: "5678_1#2.cram", IRODSPath: "/seq/5678/5678_1#2.cram", IDSampleTmp: 92, IDStudyLims: "6568", StudyAccessionNumber: "EGAS00006568", Created: "2026-05-06T12:11:00Z", Platform: "illumina"},
 		})
 	})
 }
@@ -867,6 +913,46 @@ func TestIRODSPathsForStudyCarrySampleIdentityGroupableBySample(t *testing.T) {
 			// The S2-scoped sample's data object must not appear under S1.
 			_, leaked := bySample[b3SharedWithS2]
 			convey.So(leaked, convey.ShouldBeFalse)
+		})
+	})
+}
+
+func TestIRODSPathsForStudyCarriesSpecFieldsAndDeliverableFalse(t *testing.T) {
+	convey.Convey("Given a study-scoped iRODS row with mirrored coordinates, identity and deliverable=false", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 32, "S1", "S1STDY2")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "study-false", "/seq/52554", "52554_3#4.cram", 32, "S1", time.Date(2026, time.June, 25, 9, 1, 0, 0, time.UTC), "illumina")
+		setIRODSLocationMirrorRunFields(t, client.cache.DB(), 52554, 3, 4, "study-false")
+		setIRODSLocationMirrorQCAndDeliverableFields(t, client.cache.DB(), "study-false", sql.NullInt64{Int64: 0, Valid: true}, sql.NullInt64{Int64: 0, Valid: true}, false)
+
+		paths, err := client.IRODSPathsForStudy(context.Background(), "S1", 100, 0)
+
+		convey.Convey("when the study iRODS list is fetched, then the row exposes the spec-required fields", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(paths, convey.ShouldHaveLength, 1)
+			convey.So(paths[0], convey.ShouldResemble, IRODSPath{
+				IDProduct:            "study-false",
+				Collection:           "/seq/52554",
+				DataObject:           "52554_3#4.cram",
+				IRODSPath:            "/seq/52554/52554_3#4.cram",
+				IDSampleTmp:          32,
+				Name:                 "S1STDY2",
+				SupplierName:         "supplier-32",
+				SangerSampleID:       "seed-sanger",
+				AccessionNumber:      "seed-accession",
+				IDStudyLims:          "S1",
+				StudyAccessionNumber: "EGAS0000S1",
+				Created:              "2026-06-25T09:01:00Z",
+				IDRun:                52554,
+				Position:             3,
+				TagIndex:             4,
+				Platform:             "illumina",
+				ManualQC:             "fail",
+				Deliverable:          boolPtr(false),
+			})
 		})
 	})
 }
@@ -1012,15 +1098,22 @@ func TestIRODSPathsForStudyCarryIDRunAndPlatformWhenProductMetricsMatch(t *testi
 		convey.Convey("when the study iRODS list is fetched, then the row carries id_run=52553 and platform=illumina", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(paths, convey.ShouldResemble, []IRODSPath{{
-				IDProduct:   "9001",
-				Collection:  "/seq/52553",
-				DataObject:  "52553_1#1.cram",
-				IRODSPath:   "/seq/52553/52553_1#1.cram",
-				IDSampleTmp: 1,
-				Name:        "S1STDY1",
-				Created:     "2026-06-25T09:00:00Z",
-				IDRun:       52553,
-				Platform:    "illumina",
+				IDProduct:            "9001",
+				Collection:           "/seq/52553",
+				DataObject:           "52553_1#1.cram",
+				IRODSPath:            "/seq/52553/52553_1#1.cram",
+				IDSampleTmp:          1,
+				Name:                 "S1STDY1",
+				SupplierName:         "supplier-1",
+				SangerSampleID:       "seed-sanger",
+				AccessionNumber:      "seed-accession",
+				IDStudyLims:          "S1",
+				StudyAccessionNumber: "EGAS0000S1",
+				Created:              "2026-06-25T09:00:00Z",
+				IDRun:                52553,
+				Position:             1,
+				TagIndex:             1,
+				Platform:             "illumina",
 			}})
 		})
 	})
@@ -1043,15 +1136,20 @@ func TestIRODSPathsForStudyUnmatchedRowGetsZeroIDRunAndKeepsPlatform(t *testing.
 		convey.Convey("when the study iRODS list is fetched, then the row has id_run=0 and platform=ont", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(paths, convey.ShouldResemble, []IRODSPath{{
-				IDProduct:   "ont-9002",
-				Collection:  "/seq/ont",
-				DataObject:  "ont_run.fast5",
-				IRODSPath:   "/seq/ont/ont_run.fast5",
-				IDSampleTmp: 2,
-				Name:        "S1STDY2",
-				Created:     "2026-06-25T09:00:00Z",
-				IDRun:       0,
-				Platform:    "ont",
+				IDProduct:            "ont-9002",
+				Collection:           "/seq/ont",
+				DataObject:           "ont_run.fast5",
+				IRODSPath:            "/seq/ont/ont_run.fast5",
+				IDSampleTmp:          2,
+				Name:                 "S1STDY2",
+				SupplierName:         "supplier-2",
+				SangerSampleID:       "seed-sanger",
+				AccessionNumber:      "seed-accession",
+				IDStudyLims:          "S1",
+				StudyAccessionNumber: "EGAS0000S1",
+				Created:              "2026-06-25T09:00:00Z",
+				IDRun:                0,
+				Platform:             "ont",
 			}})
 		})
 	})
@@ -1339,6 +1437,49 @@ func TestIRODSPathsForSampleByFileTypeFiltersToSuffix(t *testing.T) {
 			convey.So(paths[0].DataObject, convey.ShouldEqual, "1234_1#1.cram")
 			convey.So(count.Count, convey.ShouldEqual, 1)
 			convey.So(count.Count, convey.ShouldEqual, len(paths))
+		})
+	})
+}
+
+func TestIRODSPathsForRunCarriesSpecFieldsAndDeliverableNil(t *testing.T) {
+	convey.Convey("Given a run-scoped iRODS row with mirrored coordinates, identity and no deliverable discriminator", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedSyncState(t, client.cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC))
+		seedSyncState(t, client.cache.DB(), syncTableSeqProductIRODSLocations, time.Date(2026, time.June, 25, 9, 5, 0, 0, time.UTC))
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 33, "S1", "S1STDY3")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 9003, 33, 52553, 4, 0, "S1")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "9003", "/seq/pacbio", "pacbio-pass-through.bam", 33, "S1", time.Date(2026, time.June, 25, 9, 2, 0, 0, time.UTC), "pacbio")
+		setIRODSLocationMirrorRunFields(t, client.cache.DB(), 52553, 4, 0, "9003")
+		setIRODSLocationMirrorQCAndDeliverableFields(t, client.cache.DB(), "9003", sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{}, false)
+
+		paths, err := client.IRODSPathsForRun(context.Background(), "52553", "", 100, 0)
+
+		convey.Convey("when the run iRODS list is fetched, then the row exposes the spec-required fields with deliverable nil", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(paths, convey.ShouldHaveLength, 1)
+			convey.So(paths[0], convey.ShouldResemble, IRODSPath{
+				IDProduct:            "9003",
+				Collection:           "/seq/pacbio",
+				DataObject:           "pacbio-pass-through.bam",
+				IRODSPath:            "/seq/pacbio/pacbio-pass-through.bam",
+				IDSampleTmp:          33,
+				Name:                 "S1STDY3",
+				SupplierName:         "supplier-33",
+				SangerSampleID:       "seed-sanger",
+				AccessionNumber:      "seed-accession",
+				IDStudyLims:          "S1",
+				StudyAccessionNumber: "EGAS0000S1",
+				Created:              "2026-06-25T09:02:00Z",
+				IDRun:                52553,
+				Position:             4,
+				TagIndex:             0,
+				Platform:             "pacbio",
+				ManualQC:             "pass",
+			})
+			convey.So(paths[0].Deliverable, convey.ShouldBeNil)
 		})
 	})
 }
@@ -2238,11 +2379,15 @@ func TestIRODSPathsForRunIncludesSingleRunMergedCompositeH2(t *testing.T) {
 			merged := irodsPathByProduct(t, paths, "4934812")
 			convey.So(merged.Merged, convey.ShouldBeTrue)
 			convey.So(merged.IDRun, convey.ShouldEqual, 0)
+			convey.So(merged.Position, convey.ShouldEqual, 0)
+			convey.So(merged.TagIndex, convey.ShouldEqual, 0)
 			convey.So(merged.IRODSPath, convey.ShouldContainSubstring, "/lane1-2/plex1/49348_1-2#1.cram")
 
 			single := irodsPathByProduct(t, paths, "4934801")
 			convey.So(single.Merged, convey.ShouldBeFalse)
 			convey.So(single.IDRun, convey.ShouldEqual, 49348)
+			convey.So(single.Position, convey.ShouldEqual, 1)
+			convey.So(single.TagIndex, convey.ShouldEqual, 1)
 		})
 	})
 }
@@ -2482,4 +2627,8 @@ func irodsCreatedValues(paths []IRODSPath) []string {
 	}
 
 	return values
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }

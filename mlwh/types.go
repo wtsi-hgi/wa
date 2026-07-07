@@ -127,29 +127,37 @@ type Lane struct {
 	TagIndex int `json:"tag_index" doc:"index of the multiplexing tag within the lane"`
 }
 
-// IRODSPath identifies a product path exported from MLWH joins. IDSampleTmp and
-// Name identify the sample the data object belongs to, so a study iRODS listing
-// is aggregatable by sample without a second query. IDRun is the Illumina NPG run
-// id from the iRODS mirror's denormalised export fields, with a product-metrics
-// fallback for older non-merged cache rows; it is 0 for merged composite objects
-// and when not derivable (non-Illumina / unmatched), matching the existing
-// RunOverview.IDRun / RunStatusTimeline.IDRun "0 for non-Illumina" convention.
+// IRODSPath identifies a product path exported from MLWH joins. IDSampleTmp,
+// Name, SupplierName, SangerSampleID and AccessionNumber identify the sample the
+// data object belongs to, while IDStudyLims and StudyAccessionNumber identify the
+// study the iRODS row is scoped under. IDRun, Position and TagIndex come from the
+// iRODS mirror's denormalised export fields, with a product-metrics fallback for
+// older non-merged cache rows; composite merged rows report all three as 0.
 // Platform is the iRODS row's mirrored platform string (the source
 // seq_platform_name, e.g. "illumina"), so a 0 id_run reads as ONT / non-Illumina
-// or a merged composite when Merged is true. Both fields are additive; existing
-// fields unchanged.
+// or a merged composite when Merged is true. Deliverable is tri-state: true/false
+// when the mirrored platform discriminator is known, nil for PacBio/ONT/no
+// discriminator pass-through rows.
 type IRODSPath struct {
-	IDProduct   string `json:"id_product" doc:"product identifier of the iRODS data object"`
-	Collection  string `json:"collection" doc:"iRODS collection containing the data object"`
-	DataObject  string `json:"data_object" doc:"iRODS data object name"`
-	IRODSPath   string `json:"irods_path" doc:"full iRODS path of the data object"`
-	IDSampleTmp int64  `json:"id_sample_tmp" doc:"internal MLWH surrogate key of the sample the data object belongs to"`
-	Name        string `json:"name" doc:"Sanger sample name of the sample the data object belongs to; empty when the sample is not present in the sample mirror"`
-	Created     string `json:"created" doc:"iRODS created time (data added), UTC RFC3339; empty if unknown"`
-	IDRun       int    `json:"id_run" doc:"Illumina NPG run id of the data object; 0 when not derivable (non-Illumina or unmatched)"`
-	Platform    string `json:"platform" doc:"platform string the iRODS row was synced with (source seq_platform_name); disambiguates a 0 id_run as ONT/non-Illumina"`
-	Merged      bool   `json:"merged" doc:"true for a merged multi-lane composite object; id_run is 0 because the object has no single run"`
-	ManualQC    string `json:"manual_qc" doc:"per-product QC roll-up pass|fail|pending from the denormalized product qc; empty when no product-metrics (e.g. ONT)"`
+	IDProduct            string `json:"id_product" doc:"product identifier of the iRODS data object"`
+	Collection           string `json:"collection" doc:"iRODS collection containing the data object"`
+	DataObject           string `json:"data_object" doc:"iRODS data object name"`
+	IRODSPath            string `json:"irods_path" doc:"full iRODS path of the data object"`
+	IDSampleTmp          int64  `json:"id_sample_tmp" doc:"internal MLWH surrogate key of the sample the data object belongs to"`
+	Name                 string `json:"name" doc:"Sanger sample name of the sample the data object belongs to; empty when the sample is not present in the sample mirror"`
+	SupplierName         string `json:"supplier_name" doc:"name the sample supplier gave the sample; empty when the sample is not present in the sample mirror"`
+	SangerSampleID       string `json:"sanger_sample_id" doc:"Sanger sample identifier; empty when the sample is not present in the sample mirror"`
+	AccessionNumber      string `json:"accession_number" doc:"public archive accession number for the sample; empty when unavailable"`
+	IDStudyLims          string `json:"id_study_lims" doc:"LIMS study id the iRODS row is scoped under"`
+	StudyAccessionNumber string `json:"study_accession_number" doc:"public archive accession number for the study; empty when unavailable"`
+	Created              string `json:"created" doc:"iRODS created time (data added), UTC RFC3339; empty if unknown"`
+	IDRun                int    `json:"id_run" doc:"Illumina NPG run id of the data object; 0 when not derivable (non-Illumina, unmatched or merged composite)"`
+	Position             int    `json:"lane" doc:"lane position on the run; 0 for merged composite objects or when not derivable"`
+	TagIndex             int    `json:"tag_index" doc:"index of the multiplexing tag within the lane; 0 for merged composite objects or when not derivable"`
+	Platform             string `json:"platform" doc:"platform string the iRODS row was synced with (source seq_platform_name); disambiguates a 0 id_run as ONT/non-Illumina"`
+	Merged               bool   `json:"merged" doc:"true for a merged multi-lane composite object; id_run, lane and tag_index are 0 because the object has no single product coordinate"`
+	ManualQC             string `json:"manual_qc" doc:"per-product QC roll-up pass|fail|pending from the denormalized product qc; empty when no product-metrics (e.g. ONT)"`
+	Deliverable          *bool  `json:"deliverable" doc:"tri-state deliverable flag: true/false when a platform discriminator exists, null for PacBio/ONT/no discriminator pass-through"`
 }
 
 // IRODSPathOptions carries optional filters for iRODS path listings and their
