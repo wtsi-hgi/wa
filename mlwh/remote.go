@@ -297,6 +297,30 @@ func remoteRunListingOptions(opts RunAggregationOptions, limit int, cursor strin
 	return values
 }
 
+// SequencingAggregate returns grouped sequencing aggregate rows through the
+// remote server.
+func (rc *RemoteClient) SequencingAggregate(ctx context.Context, opts SequencingAggregateOptions) ([]SequencingAggregateRow, error) {
+	return remoteCall[[]SequencingAggregateRow](rc, ctx, "SequencingAggregate", nil, remoteSequencingAggregateOptions(opts))
+}
+
+func remoteSequencingAggregateOptions(opts SequencingAggregateOptions) url.Values {
+	values := remoteRunAggregationOptions(RunAggregationOptions{
+		Since:     opts.Since,
+		Until:     opts.Until,
+		Platforms: opts.Platforms,
+	})
+	for _, group := range opts.GroupBy {
+		if strings.TrimSpace(group) != "" {
+			values.Add("group_by", strings.TrimSpace(group))
+		}
+	}
+	if strings.TrimSpace(opts.Unit) != "" {
+		values.Set("unit", strings.TrimSpace(opts.Unit))
+	}
+
+	return values
+}
+
 // StudyOverview returns a study's overview aggregate through the remote server.
 func (rc *RemoteClient) StudyOverview(ctx context.Context, studyLimsID string) (StudyOverview, error) {
 	return remoteCall[StudyOverview](rc, ctx, "StudyOverview", []string{studyLimsID}, nil)
@@ -634,19 +658,24 @@ func (rc *RemoteClient) CountStudiesForProgramme(ctx context.Context, programme 
 	return remoteCall[Count](rc, ctx, "CountStudiesForProgramme", []string{programme}, nil)
 }
 
+// Programmes lists distinct programmes through the remote server.
+func (rc *RemoteClient) Programmes(ctx context.Context) ([]Programme, error) {
+	return remoteCall[[]Programme](rc, ctx, "Programmes", nil, nil)
+}
+
 // StudyUsers lists study_users assignments for a study through the remote server.
-func (rc *RemoteClient) StudyUsers(ctx context.Context, studyLimsID string, limit, offset int) ([]StudyUser, error) {
-	return remoteCall[[]StudyUser](rc, ctx, "StudyUsers", []string{studyLimsID}, remotePagination(limit, offset))
+func (rc *RemoteClient) StudyUsers(ctx context.Context, studyLimsID, role string, limit, offset int) ([]StudyUser, error) {
+	return remoteCall[[]StudyUser](rc, ctx, "StudyUsers", []string{studyLimsID}, remotePaginationWithRole(limit, offset, role))
 }
 
 // StudyUsersPage is the Page[StudyUser] variant of StudyUsers.
-func (rc *RemoteClient) StudyUsersPage(ctx context.Context, studyLimsID string, limit, offset int) (Page[StudyUser], error) {
-	return remoteCallPage[StudyUser](rc, ctx, "StudyUsers", []string{studyLimsID}, remotePagination(limit, offset))
+func (rc *RemoteClient) StudyUsersPage(ctx context.Context, studyLimsID, role string, limit, offset int) (Page[StudyUser], error) {
+	return remoteCallPage[StudyUser](rc, ctx, "StudyUsers", []string{studyLimsID}, remotePaginationWithRole(limit, offset, role))
 }
 
 // CountStudyUsers counts study_users assignments for a study through the remote server.
-func (rc *RemoteClient) CountStudyUsers(ctx context.Context, studyLimsID string) (Count, error) {
-	return remoteCall[Count](rc, ctx, "CountStudyUsers", []string{studyLimsID}, nil)
+func (rc *RemoteClient) CountStudyUsers(ctx context.Context, studyLimsID, role string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudyUsers", []string{studyLimsID}, remoteRole(role))
 }
 
 // SampleCRAMsForStudy lists selected sample CRAMs for a study through the remote server.
@@ -673,6 +702,7 @@ func remoteExportQuery(opts ExportOptions) url.Values {
 	query := url.Values{}
 	remoteSetNonEmptyQuery(query, "columns", strings.Join(opts.Columns, ","))
 	remoteSetNonEmptyQuery(query, "file_type", opts.FileType)
+	remoteSetNonEmptyQuery(query, "role", opts.Role)
 	remoteSetNonEmptyQuery(query, "qc", opts.QC)
 	remoteSetNonEmptyQuery(query, "library_type", opts.LibraryType)
 	remoteSetNonEmptyQuery(query, "organism", opts.Organism)

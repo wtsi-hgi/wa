@@ -460,8 +460,8 @@ func TestD1cExportRelationshipCountsMatchListLength(t *testing.T) {
 			},
 			{
 				name:    "CountStudyUsers",
-				count:   func(c *Client) (Count, error) { return c.CountStudyUsers(ctx, "E1") },
-				listLen: func(c *Client) (int, error) { return listLen(c.StudyUsers(ctx, "E1", countListFetchAll, 0)) },
+				count:   func(c *Client) (Count, error) { return c.CountStudyUsers(ctx, "E1", "") },
+				listLen: func(c *Client) (int, error) { return listLen(c.StudyUsers(ctx, "E1", "", countListFetchAll, 0)) },
 			},
 			{
 				name:  "CountSampleCRAMsForStudy",

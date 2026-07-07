@@ -113,6 +113,13 @@ type PersonCandidate struct {
 	StudyCount int    `json:"study_count" doc:"distinct studies for this candidate"`
 }
 
+// Programme is one row of the /programmes enumeration: a programme grouping /
+// attribution unit and the number of SQSCP studies carrying that exact value.
+type Programme struct {
+	Name       string `json:"name" doc:"distinct programme value"`
+	StudyCount int    `json:"study_count" doc:"distinct SQSCP studies in this programme"`
+}
+
 // Lane identifies a run/lane/tag combination linked to a sample.
 type Lane struct {
 	IDRun    int `json:"id_run" doc:"sequencing run identifier"`
@@ -190,6 +197,29 @@ type RunListingRow struct {
 	RunDate       string `json:"run_date" doc:"completion date per date_basis; empty if unknown"`
 	DateBasis     string `json:"date_basis" doc:"the completion date field/status used"`
 	CacheSyncedAt string `json:"cache_synced_at" doc:"oldest last_run across feeding tables, UTC RFC3339"`
+}
+
+// SequencingAggregateOptions carries filters for the grouped sequencing
+// aggregate. GroupBy is explicit and may combine month, platform, manufacturer,
+// programme and faculty_sponsor. Unit is explicit: runs uses the per-platform run
+// date basis, while samples and products use iRODS created timestamps.
+type SequencingAggregateOptions struct {
+	GroupBy   []string
+	Unit      string
+	Since     string
+	Until     string
+	Platforms []string
+}
+
+// SequencingAggregateRow is one row of the grouped sequencing aggregate. Group
+// carries only the requested group_by keys. Unit is the counted unit
+// (runs|samples|products), and DateBasis states the date field used.
+type SequencingAggregateRow struct {
+	Group         map[string]string `json:"group" doc:"requested group_by key values"`
+	Unit          string            `json:"unit" doc:"counted unit: runs|samples|products"`
+	Count         int               `json:"count" doc:"count of the unit in this group"`
+	DateBasis     string            `json:"date_basis" doc:"date field/basis used: per-platform run basis for runs, iRODS created for samples/products"`
+	CacheSyncedAt string            `json:"cache_synced_at" doc:"oldest last_run across feeding tables, UTC RFC3339"`
 }
 
 // SampleSearchOptions carries optional sample-search modes and filters. Phase 2
@@ -276,6 +306,7 @@ type StudyOverview struct {
 	Name                   string     `json:"name" doc:"study name"`
 	AccessionNumber        string     `json:"accession_number" doc:"study accession number"`
 	FacultySponsor         string     `json:"faculty_sponsor" doc:"study faculty sponsor"`
+	Programme              string     `json:"programme" doc:"study programme grouping / attribution unit"`
 	DataAccessGroup        string     `json:"data_access_group" doc:"study data access group governing data access"`
 	SamplesTotal           int        `json:"samples_total" doc:"distinct samples linked via library_samples"`
 	SamplesWithData        int        `json:"samples_with_data" doc:"distinct samples with >=1 study-scoped iRODS row"`

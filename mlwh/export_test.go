@@ -773,3 +773,26 @@ func TestExportStudySampleCRAMsBackedByIRODSMirrorD1a(t *testing.T) {
 		})
 	})
 }
+
+func TestExportStudyUsersHonoursRoleFilterG3(t *testing.T) {
+	convey.Convey("G3: Given study 7568 has owner, manager and follower users", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedStudyUsersInverseFixture(t, client.cache)
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "users", ParentKind: "study"}, "7568", ExportOptions{
+			Role:  "owner,manager",
+			Limit: 100,
+		})
+
+		convey.Convey("when users of the study are exported with role=owner,manager, then only those role rows are printed", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Columns, convey.ShouldResemble, []string{"role", "name", "login", "email"})
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"manager", "Maya Manager", "mm1", "mm1@sanger.ac.uk"},
+				{"owner", "Olive Owner", "oo1", "oo1@sanger.ac.uk"},
+			})
+			convey.So(result.Total, convey.ShouldEqual, 2)
+		})
+	})
+}

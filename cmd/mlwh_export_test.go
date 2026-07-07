@@ -140,6 +140,47 @@ func TestMLWHExportRunsSampleHonoursSelectedColumnsD1b(t *testing.T) {
 	})
 }
 
+func TestMLWHExportUsersStudyHonoursRoleFilterG3(t *testing.T) {
+	convey.Convey("G3 acceptance 3: Given users of study 7568, when --role owner,manager,follower is supplied, then it prints role,name,login,email rows", t, func() {
+		var capturedRel mlwh.ExportRelationship
+		var capturedParent string
+		var capturedOptions mlwh.ExportOptions
+		stub := &stubMLWHExportClient{
+			export: func(_ context.Context, rel mlwh.ExportRelationship, parentID string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
+				capturedRel = rel
+				capturedParent = parentID
+				capturedOptions = opts
+
+				return mlwh.ExportResult{
+					Columns: []string{"role", "name", "login", "email"},
+					Rows: [][]string{
+						{"follower", "Fran Follower", "ff1", "ff1@sanger.ac.uk"},
+						{"manager", "Maya Manager", "mm1", "mm1@sanger.ac.uk"},
+						{"owner", "Olive Owner", "oo1", "oo1@sanger.ac.uk"},
+					},
+					Total:    3,
+					Complete: true,
+					Format:   "tsv",
+				}, nil
+			},
+		}
+		withStubMLWHExportClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{
+			"mlwh", "export", "users", "study", "7568", "--role", "owner,manager,follower",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "role\tname\tlogin\temail")
+		convey.So(output, convey.ShouldContainSubstring, "follower\tFran Follower\tff1\tff1@sanger.ac.uk")
+		convey.So(output, convey.ShouldContainSubstring, "manager\tMaya Manager\tmm1\tmm1@sanger.ac.uk")
+		convey.So(output, convey.ShouldContainSubstring, "owner\tOlive Owner\too1\too1@sanger.ac.uk")
+		convey.So(capturedRel, convey.ShouldResemble, mlwh.ExportRelationship{Children: "users", ParentKind: "study"})
+		convey.So(capturedParent, convey.ShouldEqual, "7568")
+		convey.So(capturedOptions.Role, convey.ShouldEqual, "owner,manager,follower")
+	})
+}
+
 func TestMLWHExportAllStatesCompleteSetD1b(t *testing.T) {
 	convey.Convey("D1b.3: Given --all, when the export command runs, then it states the complete set was emitted", t, func() {
 		var capturedOptions mlwh.ExportOptions

@@ -36,6 +36,7 @@ import (
 
 type stubMLWHRunsClient struct {
 	monthly func(context.Context, mlwh.RunAggregationOptions) ([]mlwh.MonthlyRunCount, error)
+	agg     func(context.Context, mlwh.SequencingAggregateOptions) ([]mlwh.SequencingAggregateRow, error)
 	list    func(context.Context, mlwh.RunAggregationOptions, int, string) ([]mlwh.RunListingRow, error)
 	count   func(context.Context, mlwh.RunAggregationOptions) (mlwh.Count, error)
 	closed  bool
@@ -47,6 +48,14 @@ func (s *stubMLWHRunsClient) MonthlyRunCounts(ctx context.Context, opts mlwh.Run
 	}
 
 	return []mlwh.MonthlyRunCount{}, nil
+}
+
+func (s *stubMLWHRunsClient) SequencingAggregate(ctx context.Context, opts mlwh.SequencingAggregateOptions) ([]mlwh.SequencingAggregateRow, error) {
+	if s.agg != nil {
+		return s.agg(ctx, opts)
+	}
+
+	return []mlwh.SequencingAggregateRow{}, nil
 }
 
 func (s *stubMLWHRunsClient) RunListing(ctx context.Context, opts mlwh.RunAggregationOptions, limit int, cursor string) ([]mlwh.RunListingRow, error) {
@@ -117,6 +126,44 @@ func TestMLWHRunsMonthlyPrintsGroupedCountsF1(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "month=2023-12 manufacturer=PacBio platform=PacBio count=1 date_basis=run_complete cache_synced_at=2026-07-01T08:00:00Z")
 		convey.So(output, convey.ShouldContainSubstring, "month=2024-01 manufacturer=Oxford Nanopore platform=ONT count=2 date_basis=warehouse load time - not a true sequencing date cache_synced_at=2026-07-01T08:00:00Z")
 		convey.So(strings.Index(output, "month=2023-12"), convey.ShouldBeLessThan, strings.Index(output, "month=2024-01"))
+	})
+}
+
+func TestMLWHRunsMonthlyGroupByProgrammeUsesSequencingAggregateG2(t *testing.T) {
+	convey.Convey("Given a fake runs client returning a programme-grouped sequencing aggregate", t, func() {
+		var captured mlwh.SequencingAggregateOptions
+		stub := &stubMLWHRunsClient{
+			agg: func(_ context.Context, opts mlwh.SequencingAggregateOptions) ([]mlwh.SequencingAggregateRow, error) {
+				captured = opts
+
+				return []mlwh.SequencingAggregateRow{{
+					Group:         map[string]string{"month": "2026-02", "programme": "Cancer"},
+					Unit:          "runs",
+					Count:         2,
+					DateBasis:     "run_complete",
+					CacheSyncedAt: "2026-07-02T08:00:00Z",
+				}}, nil
+			},
+		}
+		withStubMLWHRunsClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{
+			"mlwh", "runs", "--monthly",
+			"--group-by", "programme",
+			"--since", "2026-02-01",
+			"--until", "2026-03-01",
+			"--platform", "PacBio",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(captured.GroupBy, convey.ShouldResemble, []string{"month", "programme"})
+		convey.So(captured.Unit, convey.ShouldEqual, "runs")
+		convey.So(captured.Since, convey.ShouldEqual, "2026-02-01")
+		convey.So(captured.Until, convey.ShouldEqual, "2026-03-01")
+		convey.So(captured.Platforms, convey.ShouldResemble, []string{"PacBio"})
+		convey.So(stub.closed, convey.ShouldBeTrue)
+		convey.So(output, convey.ShouldContainSubstring, "Sequencing aggregate:")
+		convey.So(output, convey.ShouldContainSubstring, "month=2026-02 programme=Cancer unit=runs count=2 date_basis=run_complete cache_synced_at=2026-07-02T08:00:00Z")
 	})
 }
 

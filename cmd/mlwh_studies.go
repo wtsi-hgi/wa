@@ -56,13 +56,23 @@ var openMLWHStudiesRemoteClient = func(_ context.Context, cfg mlwh.RemoteConfig)
 }
 
 // studiesMode is the chosen `wa mlwh studies` mode: the named faculty sponsor or a
-// study_users member.
+// study_users member, or an exact programme value.
 type studiesMode int
 
 const (
 	studiesModeFacultySponsor studiesMode = iota
+	studiesModeProgramme
 	studiesModeUser
 )
+
+func personStudiesFromStudies(studies []mlwh.Study) []mlwh.PersonStudy {
+	rows := make([]mlwh.PersonStudy, len(studies))
+	for index, study := range studies {
+		rows[index] = mlwh.PersonStudy{Study: study}
+	}
+
+	return rows
+}
 
 func normaliseStudiesTotal(total, shown, offset int) int {
 	if offset < 0 {
@@ -106,6 +116,8 @@ func dispatchStudiesCount(ctx context.Context, client mlwhStudiesClient, mode st
 	switch mode {
 	case studiesModeFacultySponsor:
 		return client.CountStudiesForFacultySponsor(ctx, query)
+	case studiesModeProgramme:
+		return client.CountStudiesForProgramme(ctx, query)
 	case studiesModeUser:
 		return client.CountStudiesForUser(ctx, query, role)
 	default:
@@ -119,6 +131,9 @@ func dispatchStudiesCount(ctx context.Context, client mlwhStudiesClient, mode st
 type mlwhStudiesClient interface {
 	StudiesForFacultySponsor(ctx context.Context, name string, limit, offset int) ([]mlwh.PersonStudy, error)
 	CountStudiesForFacultySponsor(ctx context.Context, name string) (mlwh.Count, error)
+	StudiesForProgramme(ctx context.Context, programme string, limit, offset int) ([]mlwh.Study, error)
+	CountStudiesForProgramme(ctx context.Context, programme string) (mlwh.Count, error)
+	Programmes(ctx context.Context) ([]mlwh.Programme, error)
 	StudiesForUser(ctx context.Context, person, role string, limit, offset int) ([]mlwh.PersonStudy, error)
 	CountStudiesForUser(ctx context.Context, person, role string) (mlwh.Count, error)
 	ResolvePerson(ctx context.Context, term string, limit, offset int) ([]mlwh.PersonCandidate, error)
@@ -151,6 +166,7 @@ func newMLWHStudiesCommand() *cobra.Command {
 	var (
 		serverURL      string
 		facultySponsor string
+		programme      string
 		user           string
 		role           string
 		limit          int
@@ -159,18 +175,22 @@ func newMLWHStudiesCommand() *cobra.Command {
 	)
 
 	command := &cobra.Command{
-		Use:           "studies (--faculty-sponsor <name> | --user <login>)",
-		Short:         "List the studies a person sponsors or is a role member of",
+		Use:           "studies (--faculty-sponsor <name> | --programme <name> | --user <login>)",
+		Short:         "List studies by sponsor, programme, or study_users membership",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		Long: strings.Join([]string{
 			"List the studies associated with a person through a wa mlwh serve API,",
-			"in one of two distinct modes. Exactly one is required:",
+			"in one of three distinct modes. Exactly one is required:",
 			"",
 			"  --faculty-sponsor <name>   studies whose faculty_sponsor matches the",
 			"                             named PI/sponsor (free-text, case-insensitive",
 			"                             substring). The sponsor is not a study_users",
 			"                             role, so these rows carry no role.",
+			"  --programme <name>         studies whose programme exactly matches this",
+			"                             grouping / attribution unit (not a substring",
+			"                             search). Each product maps to exactly one",
+			"                             study->programme.",
 			"  --user <login>             studies the person is a study_users role",
 			"                             member of, matched case-insensitively across",
 			"                             name, login and email. --role overrides the",
@@ -179,9 +199,9 @@ func newMLWHStudiesCommand() *cobra.Command {
 			"                             list, e.g. --role owner,manager. Each row",
 			"                             surfaces its matched role.",
 			"",
-			"These two modes return different sets (the named sponsor versus role",
-			"membership). Each text line carries id_study_lims, name and",
-			"faculty_sponsor (plus role in --user mode); the total study count is",
+			"These modes return different sets (the named sponsor, exact programme,",
+			"or role membership). Each text line carries id_study_lims, name and",
+			"faculty_sponsor (plus programme in --programme mode and role in --user mode); the total study count is",
 			"printed. Use --limit/--offset to page and --json for a single JSON array",
 			"of studies-by-person rows suitable for piping into jq.",
 			"",
@@ -212,6 +232,9 @@ func newMLWHStudiesCommand() *cobra.Command {
 			"  # Studies sponsored by a named PI via a development stack",
 			"  wa --env development mlwh studies --faculty-sponsor \"Carl Anderson\"",
 			"",
+			"  # Studies in an exact programme",
+			"  wa mlwh studies --programme \"Human Genetics\"",
+			"",
 			"  # Studies a user owns or manages from a remote MLWH server as JSON",
 			"  wa mlwh studies --user ca3 --role owner,manager --server http://host:8091 --json",
 			"",
@@ -219,7 +242,7 @@ func newMLWHStudiesCommand() *cobra.Command {
 			"  WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite wa mlwh studies --user ca3 --limit 50 --offset 50",
 		}, "\n"),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			mode, query, err := resolveStudiesMode(facultySponsor, user)
+			mode, query, err := resolveStudiesMode(facultySponsor, programme, user)
 			if err != nil {
 				return err
 			}
@@ -236,6 +259,7 @@ func newMLWHStudiesCommand() *cobra.Command {
 
 	command.Flags().StringVar(&serverURL, "server", defaultMLWHInfoServerURL(), "MLWH server base URL (defaults to WA_MLWH_SERVER_URL, WA_MLWH_BACKEND_URL, or active WA_*_SEQMETA_PORT)")
 	command.Flags().StringVar(&facultySponsor, "faculty-sponsor", "", "list studies whose faculty_sponsor matches this PI/sponsor name (mutually exclusive with --user)")
+	command.Flags().StringVar(&programme, "programme", "", "list studies whose programme exactly matches this value (mutually exclusive with --faculty-sponsor and --user)")
 	command.Flags().StringVar(&user, "user", "", "list studies the person is a study_users role member of, by name, login or email (mutually exclusive with --faculty-sponsor)")
 	command.Flags().StringVar(&role, "role", "", "with --user, comma-separated study_users roles overriding the default set (owner,manager,data_access_contact)")
 	command.Flags().IntVar(&limit, "limit", 50, "maximum number of studies to return")
@@ -245,23 +269,36 @@ func newMLWHStudiesCommand() *cobra.Command {
 	return command
 }
 
-// resolveStudiesMode enforces that EXACTLY ONE of --faculty-sponsor/--user is given
-// and returns the chosen mode plus its trimmed query value. Neither or both is a
-// clear usage error (non-zero exit).
-func resolveStudiesMode(facultySponsor, user string) (studiesMode, string, error) {
+// resolveStudiesMode enforces that EXACTLY ONE of --faculty-sponsor/--programme/
+// --user is given and returns the chosen mode plus its trimmed query value.
+// Missing or multiple modes are clear usage errors (non-zero exit).
+func resolveStudiesMode(facultySponsor, programme, user string) (studiesMode, string, error) {
 	sponsor := strings.TrimSpace(facultySponsor)
+	programme = strings.TrimSpace(programme)
 	person := strings.TrimSpace(user)
 
-	switch {
-	case sponsor != "" && person != "":
-		return 0, "", errors.New("exactly one of --faculty-sponsor or --user is required (both were given)")
-	case sponsor != "":
-		return studiesModeFacultySponsor, sponsor, nil
-	case person != "":
-		return studiesModeUser, person, nil
-	default:
-		return 0, "", errors.New("exactly one of --faculty-sponsor or --user is required (neither was given)")
+	selected := 0
+	if sponsor != "" {
+		selected++
 	}
+	if programme != "" {
+		selected++
+	}
+	if person != "" {
+		selected++
+	}
+
+	if selected != 1 {
+		return 0, "", errors.New("exactly one of --faculty-sponsor, --programme, or --user is required")
+	}
+	if sponsor != "" {
+		return studiesModeFacultySponsor, sponsor, nil
+	}
+	if programme != "" {
+		return studiesModeProgramme, programme, nil
+	}
+
+	return studiesModeUser, person, nil
 }
 
 // runMLWHStudies dispatches to the chosen mode's studies-by-person query and renders
@@ -291,7 +328,7 @@ func runMLWHStudies(ctx context.Context, client mlwhStudiesClient, out io.Writer
 		return fmt.Errorf("count studies for %s: %w", query, err)
 	}
 
-	writePersonStudiesText(out, studies, total.Count, offset, mode == studiesModeUser)
+	writePersonStudiesText(out, studies, total.Count, offset, mode)
 
 	return nil
 }
@@ -326,11 +363,11 @@ func writePersonStudiesJSON(out io.Writer, studies []mlwh.PersonStudy) error {
 }
 
 // writePersonStudiesText renders the tabular text output: one line per study with
-// its id_study_lims, name and faculty_sponsor; in user mode each line also carries
-// its matched role. The total matching study count is printed separately from the
-// shown page range. A genuinely empty result prints the neutral no-match line
-// (exit 0).
-func writePersonStudiesText(out io.Writer, studies []mlwh.PersonStudy, total, offset int, userMode bool) {
+// its id_study_lims, name and faculty_sponsor; programme mode adds programme, and
+// user mode adds the matched role. The total matching study count is printed
+// separately from the shown page range. A genuinely empty result prints the
+// neutral no-match line (exit 0).
+func writePersonStudiesText(out io.Writer, studies []mlwh.PersonStudy, total, offset int, mode studiesMode) {
 	total = normaliseStudiesTotal(total, len(studies), offset)
 	if len(studies) == 0 && total == 0 {
 		_, _ = fmt.Fprintf(out, "%s\n", peopleNoMatchMessage)
@@ -343,7 +380,11 @@ func writePersonStudiesText(out io.Writer, studies []mlwh.PersonStudy, total, of
 		_, _ = fmt.Fprintf(out, "  id_study_lims=%s name=%s faculty_sponsor=%s",
 			personStudy.Study.IDStudyLims, personStudy.Study.Name, personStudy.Study.FacultySponsor)
 
-		if userMode {
+		if mode == studiesModeProgramme {
+			_, _ = fmt.Fprintf(out, " programme=%s", personStudy.Study.Programme)
+		}
+
+		if mode == studiesModeUser {
 			_, _ = fmt.Fprintf(out, " role=%s", personStudy.Role)
 		}
 
@@ -355,10 +396,135 @@ func dispatchStudiesMode(ctx context.Context, client mlwhStudiesClient, mode stu
 	switch mode {
 	case studiesModeFacultySponsor:
 		return client.StudiesForFacultySponsor(ctx, query, limit, offset)
+	case studiesModeProgramme:
+		studies, err := client.StudiesForProgramme(ctx, query, limit, offset)
+		if err != nil {
+			return nil, err
+		}
+
+		return personStudiesFromStudies(studies), nil
 	case studiesModeUser:
 		return client.StudiesForUser(ctx, query, role, limit, offset)
 	default:
 		return nil, fmt.Errorf("unknown studies mode %d", mode)
+	}
+}
+
+func newMLWHProgrammesCommand() *cobra.Command {
+	var (
+		serverURL string
+		jsonOut   bool
+	)
+
+	command := &cobra.Command{
+		Use:           "programmes",
+		Short:         "List MLWH programme values with study counts",
+		SilenceUsage:  true,
+		SilenceErrors: false,
+		Long: strings.Join([]string{
+			"List the distinct non-empty SQSCP programme values through a wa mlwh",
+			"serve API, with the number of studies in each programme. Programme",
+			"is the study grouping / attribution unit: every sequencing product",
+			"maps through exactly one study to that study's programme.",
+			"",
+			"Use --json for a single JSON array of Programme rows suitable for",
+			"piping into jq.",
+			"",
+			"Normal CLI users should point this command at the MLWH query server",
+			"with --server or WA_MLWH_SERVER_URL; database and cache credentials",
+			"stay with the server process. Operators can still run against a local",
+			"cache with WA_MLWH_CACHE_PATH, or use WA_MLWH_DSN for direct local",
+			"operator mode.",
+			"",
+			"Configuration is read from the environment. Use the persistent --env",
+			"flag (or WA_ENV=development|test|production) to load matching",
+			".env.<name> / .env.<name>.local files from the working directory",
+			"before resolving:",
+			"",
+			"  WA_MLWH_SERVER_URL      Preferred. Base URL for wa mlwh serve.",
+			"  WA_MLWH_BACKEND_URL     Lower-precedence compatibility default.",
+			"  WA_*_SEQMETA_PORT       Scenario-local default API port.",
+			"  WA_MLWH_DSN             Optional direct operator mode only.",
+			"  WA_MLWH_PASSWORD        Optional. Password used with WA_MLWH_DSN.",
+			"  WA_MLWH_CACHE_PATH      Optional local operator cache path or",
+			"                          MySQL cache DSN without a password.",
+			"  WA_MLWH_CACHE_PASSWORD  Optional. SQLCipher key used to encrypt",
+			"                          the local cache when set.",
+			"",
+			"Example:",
+			"  wa mlwh programmes --server http://host:8091",
+			"  wa mlwh programmes --json",
+		}, "\n"),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			client, err := openMLWHStudiesConfiguredClient(cmd.Context(), serverURL)
+			if err != nil {
+				return fmt.Errorf("open mlwh client: %w", err)
+			}
+			defer func() { _ = client.Close() }()
+
+			return runMLWHProgrammes(cmd.Context(), client, cmd.OutOrStdout(), jsonOut)
+		},
+	}
+
+	command.Flags().StringVar(&serverURL, "server", defaultMLWHInfoServerURL(), "MLWH server base URL (defaults to WA_MLWH_SERVER_URL, WA_MLWH_BACKEND_URL, or active WA_*_SEQMETA_PORT)")
+	command.Flags().BoolVar(&jsonOut, "json", false, "emit a single JSON array of programmes instead of human-readable text")
+
+	return command
+}
+
+func runMLWHProgrammes(ctx context.Context, client mlwhStudiesClient, out io.Writer, jsonOut bool) error {
+	programmes, err := client.Programmes(ctx)
+	if err != nil {
+		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
+			return writeProgrammesCacheUnavailable(out, jsonOut)
+		}
+
+		return fmt.Errorf("list programmes: %w", err)
+	}
+
+	if jsonOut {
+		return writeProgrammesJSON(out, programmes)
+	}
+
+	writeProgrammesText(out, programmes)
+
+	return nil
+}
+
+func writeProgrammesCacheUnavailable(out io.Writer, jsonOut bool) error {
+	if jsonOut {
+		return writeProgrammesJSON(out, nil)
+	}
+
+	_, _ = fmt.Fprintf(out, "%s\n", mlwhCacheUnavailableMessage)
+
+	return nil
+}
+
+func writeProgrammesJSON(out io.Writer, programmes []mlwh.Programme) error {
+	if programmes == nil {
+		programmes = []mlwh.Programme{}
+	}
+
+	encoder := json.NewEncoder(out)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(programmes); err != nil {
+		return fmt.Errorf("encode programmes: %w", err)
+	}
+
+	return nil
+}
+
+func writeProgrammesText(out io.Writer, programmes []mlwh.Programme) {
+	if len(programmes) == 0 {
+		_, _ = fmt.Fprintf(out, "%s\n", peopleNoMatchMessage)
+
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "Programmes (%d total):\n", len(programmes))
+	for _, programme := range programmes {
+		_, _ = fmt.Fprintf(out, "  name=%s study_count=%d\n", programme.Name, programme.StudyCount)
 	}
 }
 

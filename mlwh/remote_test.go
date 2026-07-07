@@ -195,7 +195,7 @@ func b1RemotePageMethodCases() []remotePageMethodCase {
 			wantWithoutHeaders: Page[StudyUser]{Items: studyUsers, Total: 0, NextOffset: -1},
 			emptyPage:          Page[StudyUser]{},
 			call: func(ctx context.Context, client *RemoteClient) (any, error) {
-				return client.StudyUsersPage(ctx, "S1", 2, 2)
+				return client.StudyUsersPage(ctx, "S1", "", 2, 2)
 			},
 		},
 		{
@@ -1743,7 +1743,7 @@ func TestRemoteClientD1cCountEndpointsRoundTrip(t *testing.T) {
 			name:        "CountStudyUsers",
 			expectedURI: "/study/S1/users/count",
 			call: func(ctx context.Context, client *RemoteClient) (Count, error) {
-				return client.CountStudyUsers(ctx, "S1")
+				return client.CountStudyUsers(ctx, "S1", "")
 			},
 		},
 		{

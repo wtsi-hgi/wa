@@ -423,3 +423,271 @@ func monthlyRunCountByMonthPlatform(rows []MonthlyRunCount) map[string]MonthlyRu
 
 	return byKey
 }
+
+// G2 acceptance tests 1 and 2: grouped run aggregation keeps the F1 run grain,
+// joins study metadata inside one query and counts a cross-programme run once in
+// each programme it touches.
+func TestSequencingAggregateGroupsPacBioRunsByProgrammeG2(t *testing.T) {
+	convey.Convey("Given PacBio run rows linked to studies in two programmes", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedG2PacBioSequencingAggregateScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		rows, err := client.SequencingAggregate(context.Background(), SequencingAggregateOptions{
+			GroupBy:   []string{"programme"},
+			Unit:      "runs",
+			Since:     "2026-02-01",
+			Until:     "2026-03-01",
+			Platforms: []string{"PacBio"},
+		})
+
+		convey.Convey("when grouped by programme, then PacBio runs carry the PacBio date basis and a cross-programme run counts once per programme", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			byProgramme := sequencingAggregateByGroup(rows, "programme")
+			convey.So(byProgramme["Cancer"], convey.ShouldResemble, SequencingAggregateRow{
+				Group:         map[string]string{"programme": "Cancer"},
+				Unit:          "runs",
+				Count:         2,
+				DateBasis:     "run_complete",
+				CacheSyncedAt: "2026-07-02T08:00:00Z",
+			})
+			convey.So(byProgramme["Malaria"], convey.ShouldResemble, SequencingAggregateRow{
+				Group:         map[string]string{"programme": "Malaria"},
+				Unit:          "runs",
+				Count:         1,
+				DateBasis:     "run_complete",
+				CacheSyncedAt: "2026-07-02T08:00:00Z",
+			})
+		})
+	})
+}
+
+func TestSequencingAggregateCountsOneRunOncePerProgrammeGroupG2(t *testing.T) {
+	convey.Convey("Given one PacBio run with several products in one programme and one product in another programme", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedG2CrossProgrammeRunScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		rows, err := client.SequencingAggregate(context.Background(), SequencingAggregateOptions{
+			GroupBy:   []string{"programme"},
+			Unit:      "runs",
+			Since:     "2026-02-01",
+			Until:     "2026-03-01",
+			Platforms: []string{"PacBio"},
+		})
+
+		convey.Convey("when grouped by programme, then duplicate products do not inflate the run count within a programme", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			byProgramme := sequencingAggregateByGroup(rows, "programme")
+			convey.So(byProgramme["Cancer"].Count, convey.ShouldEqual, 1)
+			convey.So(byProgramme["Malaria"].Count, convey.ShouldEqual, 1)
+		})
+	})
+}
+
+func seedG2CrossProgrammeRunScenario(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedG2SequencingAggregateSyncState(t, db)
+	seedStudyMirrorSearchRow(t, db, 7001, "7001", "study-cancer-a", "Cancer A", "Cancer", "Sponsor A")
+	seedStudyMirrorSearchRow(t, db, 7002, "7002", "study-malaria", "Malaria", "Malaria", "Sponsor B")
+	seedG2PacBioRunWell(t, db, 92001, "TRACTION-G2-CROSS", "A01", "2026-02-10")
+	seedG2PacBioRunWell(t, db, 92002, "TRACTION-G2-CROSS", "B01", "2026-02-10")
+	seedG2PacBioRunWell(t, db, 92003, "TRACTION-G2-CROSS", "C01", "2026-02-10")
+	seedG2PacBioProduct(t, db, "pb-g2-cross-cancer-1", 92001, 8101, "7001")
+	seedG2PacBioProduct(t, db, "pb-g2-cross-cancer-2", 92002, 8102, "7001")
+	seedG2PacBioProduct(t, db, "pb-g2-cross-malaria", 92003, 8103, "7002")
+}
+
+// G2 acceptance tests 4 and 5: samples/products are data-grain aggregates over
+// iRODS created, distinct from the run-date path.
+func TestSequencingAggregateSamplesAndProductsUseIRODSCreatedWindowG2(t *testing.T) {
+	convey.Convey("Given PacBio products delivered to iRODS in a created-time window", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedG2PacBioSequencingAggregateScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		opts := SequencingAggregateOptions{
+			GroupBy:   []string{"programme"},
+			Since:     "2026-02-01T00:00:00Z",
+			Until:     "2026-03-01T00:00:00Z",
+			Platforms: []string{"PacBio"},
+		}
+
+		runRows, runErr := client.SequencingAggregate(context.Background(), SequencingAggregateOptions{
+			GroupBy:   opts.GroupBy,
+			Unit:      "runs",
+			Since:     "2026-02-01",
+			Until:     "2026-03-01",
+			Platforms: opts.Platforms,
+		})
+		sampleRows, sampleErr := client.SequencingAggregate(context.Background(), SequencingAggregateOptions{
+			GroupBy:   opts.GroupBy,
+			Unit:      "samples",
+			Since:     opts.Since,
+			Until:     opts.Until,
+			Platforms: opts.Platforms,
+		})
+		productRows, productErr := client.SequencingAggregate(context.Background(), SequencingAggregateOptions{
+			GroupBy:   opts.GroupBy,
+			Unit:      "products",
+			Since:     opts.Since,
+			Until:     opts.Until,
+			Platforms: opts.Platforms,
+		})
+
+		convey.Convey("when unit=samples, then it counts distinct samples by iRODS created and differs from unit=runs", func() {
+			convey.So(runErr, convey.ShouldBeNil)
+			convey.So(sampleErr, convey.ShouldBeNil)
+
+			runByProgramme := sequencingAggregateByGroup(runRows, "programme")
+			sampleByProgramme := sequencingAggregateByGroup(sampleRows, "programme")
+			convey.So(sampleByProgramme["Cancer"], convey.ShouldResemble, SequencingAggregateRow{
+				Group:         map[string]string{"programme": "Cancer"},
+				Unit:          "samples",
+				Count:         1,
+				DateBasis:     "iRODS created",
+				CacheSyncedAt: "2026-07-02T08:00:00Z",
+			})
+			convey.So(sampleByProgramme["Malaria"], convey.ShouldResemble, SequencingAggregateRow{
+				Group:         map[string]string{"programme": "Malaria"},
+				Unit:          "samples",
+				Count:         1,
+				DateBasis:     "iRODS created",
+				CacheSyncedAt: "2026-07-02T08:00:00Z",
+			})
+			convey.So(sampleByProgramme["Cancer"].Count, convey.ShouldNotEqual, runByProgramme["Cancer"].Count)
+		})
+
+		convey.Convey("when unit=products, then it counts distinct products and can exceed the sample count", func() {
+			convey.So(sampleErr, convey.ShouldBeNil)
+			convey.So(productErr, convey.ShouldBeNil)
+
+			sampleByProgramme := sequencingAggregateByGroup(sampleRows, "programme")
+			productByProgramme := sequencingAggregateByGroup(productRows, "programme")
+			convey.So(productByProgramme["Cancer"], convey.ShouldResemble, SequencingAggregateRow{
+				Group:         map[string]string{"programme": "Cancer"},
+				Unit:          "products",
+				Count:         2,
+				DateBasis:     "iRODS created",
+				CacheSyncedAt: "2026-07-02T08:00:00Z",
+			})
+			convey.So(productByProgramme["Cancer"].Count, convey.ShouldBeGreaterThan, sampleByProgramme["Cancer"].Count)
+		})
+	})
+}
+
+func TestSequencingAggregateEndpointG2(t *testing.T) {
+	convey.Convey("Given the G2 aggregate fixture served through the MLWH API", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedG2PacBioSequencingAggregateScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/sequencing/aggregate?group_by=programme&unit=runs&platform=PacBio&since=2026-02-01&until=2026-03-01")
+
+		convey.Convey("when GET /sequencing/aggregate is served, then it returns the grouped aggregate rows", func() {
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+			var rows []SequencingAggregateRow
+			convey.So(json.Unmarshal(response.Body.Bytes(), &rows), convey.ShouldBeNil)
+			byProgramme := sequencingAggregateByGroup(rows, "programme")
+			convey.So(byProgramme["Cancer"].Count, convey.ShouldEqual, 2)
+			convey.So(byProgramme["Cancer"].Unit, convey.ShouldEqual, "runs")
+			convey.So(byProgramme["Cancer"].DateBasis, convey.ShouldEqual, "run_complete")
+		})
+	})
+}
+
+func seedG2PacBioSequencingAggregateScenario(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedG2SequencingAggregateSyncState(t, db)
+	seedStudyMirrorSearchRow(t, db, 7001, "7001", "study-cancer-a", "Cancer A", "Cancer", "Sponsor A")
+	seedStudyMirrorSearchRow(t, db, 7002, "7002", "study-malaria", "Malaria", "Malaria", "Sponsor B")
+	seedStudyMirrorSearchRow(t, db, 7003, "7003", "study-cancer-b", "Cancer B", "Cancer", "Sponsor C")
+	seedG2PacBioRunWell(t, db, 91001, "TRACTION-G2-1", "A01", "2026-02-10")
+	seedG2PacBioRunWell(t, db, 91002, "TRACTION-G2-1", "B01", "2026-02-10")
+	seedG2PacBioRunWell(t, db, 91003, "TRACTION-G2-1", "C01", "2026-02-10")
+	seedG2PacBioRunWell(t, db, 91004, "TRACTION-G2-2", "A01", "2026-02-11")
+	seedG2PacBioRunWell(t, db, 91005, "TRACTION-G2-OUTSIDE", "A01", "2026-03-05")
+	seedG2PacBioProduct(t, db, "pb-g2-cancer-a-1", 91001, 8001, "7001")
+	seedG2PacBioProduct(t, db, "pb-g2-cancer-a-2", 91002, 8001, "7001")
+	seedG2PacBioProduct(t, db, "pb-g2-malaria-1", 91003, 8002, "7002")
+	seedG2PacBioProduct(t, db, "pb-g2-cancer-b-outside-data", 91004, 8003, "7003")
+	seedG2PacBioProduct(t, db, "pb-g2-cancer-outside-run", 91005, 8004, "7001")
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "pb-g2-cancer-a-1", "/seq/pacbio", "pb-g2-cancer-a-1.bam", 8001, "7001", time.Date(2026, time.February, 12, 9, 0, 0, 0, time.UTC), "pacbio")
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "pb-g2-cancer-a-1", "/seq/pacbio", "pb-g2-cancer-a-1.pbi", 8001, "7001", time.Date(2026, time.February, 12, 9, 1, 0, 0, time.UTC), "pacbio")
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "pb-g2-cancer-a-2", "/seq/pacbio", "pb-g2-cancer-a-2.bam", 8001, "7001", time.Date(2026, time.February, 13, 9, 0, 0, 0, time.UTC), "pacbio")
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "pb-g2-malaria-1", "/seq/pacbio", "pb-g2-malaria-1.bam", 8002, "7002", time.Date(2026, time.February, 14, 9, 0, 0, 0, time.UTC), "pacbio")
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "pb-g2-cancer-b-outside-data", "/seq/pacbio", "pb-g2-cancer-b-outside-data.bam", 8003, "7003", time.Date(2026, time.March, 2, 9, 0, 0, 0, time.UTC), "pacbio")
+}
+
+func seedG2SequencingAggregateSyncState(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	highWater := time.Date(2026, time.July, 2, 9, 0, 0, 0, time.UTC)
+	oldest := time.Date(2026, time.July, 2, 8, 0, 0, 0, time.UTC)
+	for offset, table := range []string{
+		syncTableStudy,
+		syncTableSeqProductIRODSLocations,
+		syncTablePacBioRunWellMetrics,
+		syncTablePacBioProductMetrics,
+		syncTableIseqRunStatus,
+		syncTableIseqRunStatusDict,
+		syncTableIseqProductMetrics,
+		syncTableOseqFlowcell,
+		syncTableEseqRunLaneMetrics,
+		syncTableEseqProductMetrics,
+		syncTableUseqRunMetrics,
+		syncTableUseqProductMetrics,
+	} {
+		seedSyncStateRun(t, db, table, highWater, oldest.Add(time.Duration(offset)*time.Minute))
+	}
+}
+
+func seedG2PacBioRunWell(t *testing.T, db *sql.DB, id int64, runName, well, normalisedDate string) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO pac_bio_run_well_metrics_mirror(id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, plate_number, run_complete, run_status, well_status, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id,
+		runName,
+		well,
+		1,
+		normalisedDate+"T09:00:00Z",
+		"Complete",
+		"Complete",
+		normalisedDate+"T10:00:00Z",
+		normalisedDate,
+	)
+	convey.So(err, convey.ShouldBeNil)
+}
+
+func seedG2PacBioProduct(t *testing.T, db *sql.DB, idProduct string, wellID, sampleID int64, studyID string) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO pac_bio_product_metrics_mirror(id_pac_bio_product, id_pac_bio_rw_metrics_tmp, id_sample_tmp, id_study_lims, qc, last_updated) VALUES (?, ?, ?, ?, ?, ?)`,
+		idProduct,
+		wellID,
+		sampleID,
+		studyID,
+		1,
+		"2026-02-15T09:00:00Z",
+	)
+	convey.So(err, convey.ShouldBeNil)
+}
+
+func sequencingAggregateByGroup(rows []SequencingAggregateRow, key string) map[string]SequencingAggregateRow {
+	byKey := make(map[string]SequencingAggregateRow, len(rows))
+	for _, row := range rows {
+		byKey[row.Group[key]] = row
+	}
+
+	return byKey
+}

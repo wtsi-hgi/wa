@@ -226,6 +226,19 @@ func TestRealMySQLCacheReadQueriesExecuteAndIndexesApplied(t *testing.T) {
 			convey.So(plan.key, convey.ShouldEqual, "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx")
 			convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
 		})
+
+		convey.Convey("the StudiesForProgramme query is served by the programme index, not a full scan", func() {
+			indexes, _, err := readMySQLTableIndexes(ctx, writeDB, "study_mirror")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(slices.Contains(indexes, "programme"), convey.ShouldBeTrue)
+
+			plans := explainPlanRows(t, writeDB, studiesForProgrammeD1cSQL, "programme", 100, 0)
+			plan, ok := findExplainPlanRow(plans, "study_mirror")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(plan.key, convey.ShouldEqual, "study_mirror_programme_idx")
+			convey.So(plan.possibleKeys, convey.ShouldContainSubstring, "study_mirror_programme_idx")
+			convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+		})
 	})
 }
 
@@ -1502,6 +1515,21 @@ func seedB2DeliverableFilterScenarioMySQL(t *testing.T, db *sql.DB) {
 	}
 }
 
+// assertG3StudyUsersForStudyIndexServed asserts EXPLAIN of /study/:id/users uses
+// the id_study_tmp lookup into study_users_mirror required by G3.
+func assertG3StudyUsersForStudyIndexServed(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	query, args := studyUsersForStudySQL(nil, "5101", availabilityFetchAll, 0)
+	plans := explainPlanRows(t, db, query, args...)
+
+	plan, ok := findExplainPlanRow(plans, "study_users_mirror")
+	convey.So(ok, convey.ShouldBeTrue)
+	convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+	convey.So(plan.key, convey.ShouldEqual, "study_users_mirror_id_study_tmp_idx")
+	convey.So(plan.possibleKeys, convey.ShouldContainSubstring, "study_users_mirror_id_study_tmp_idx")
+}
+
 func assertA6MonthlyRunCountMySQLPlanUsesIndex(t *testing.T, db *sql.DB, planCase a6MonthlyRunCountMySQLPlanCase) {
 	t.Helper()
 
@@ -1932,6 +1960,58 @@ type a6MonthlyRunCountMySQLPlanCase struct {
 	alias     string
 	indexName string
 	args      []any
+}
+
+func TestSequencingAggregateMySQLExplainUsesIndexesG2(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	writeDB := cache.cache.DB()
+	seedG2PacBioSequencingAggregateScenario(t, writeDB)
+	if _, err = writeDB.Exec("ANALYZE TABLE pac_bio_run_well_metrics_mirror, pac_bio_product_metrics_mirror, study_mirror"); err != nil {
+		t.Fatalf("analyze G2 MySQL fixture tables: %v", err)
+	}
+
+	convey.Convey("G2: Given a freshly built throwaway MySQL cache with PacBio run and study rows", t, func() {
+		convey.Convey("when EXPLAIN runs the grouped sequencing aggregate, then the date source and study product join are index-served with no per-study dependent query", func() {
+			opts, specs, err := normaliseSequencingAggregateOptions(SequencingAggregateOptions{
+				GroupBy:   []string{"programme"},
+				Unit:      "runs",
+				Since:     "2026-02-01",
+				Until:     "2026-03-01",
+				Platforms: []string{"PacBio"},
+			})
+			convey.So(err, convey.ShouldBeNil)
+
+			query, args, err := sequencingAggregateQuery(opts, specs, "mysql")
+			convey.So(err, convey.ShouldBeNil)
+			plans := explainPlanRows(t, writeDB, query, args...)
+			for _, plan := range plans {
+				convey.So(strings.ToUpper(plan.selectType), convey.ShouldNotContainSubstring, "DEPENDENT SUBQUERY")
+				convey.So(strings.ToUpper(plan.selectType), convey.ShouldNotContainSubstring, "DEPENDENT DERIVED")
+			}
+			assertA6MonthlyRunCountMySQLPlanUsesIndex(t, writeDB, a6MonthlyRunCountMySQLPlanCase{
+				platform:  "PacBio grouped aggregate",
+				alias:     "pb",
+				indexName: "pac_bio_run_well_metrics_mirror_normalised_date_idx",
+				query:     query,
+				args:      args,
+			})
+			assertMirrorIndexServed(plans, "pbm")
+		})
+	})
 }
 
 func a6MonthlyRunCountMySQLPlanCases(since, until string) []a6MonthlyRunCountMySQLPlanCase {
@@ -2533,8 +2613,9 @@ func TestRealMySQLNewQueryPathsExecuteAndIndexesApplied(t *testing.T) {
 			assertJ1FileTypeStudyIRODSIndexServed(t, writeDB)
 		})
 
-		convey.Convey("I1.3: the /studies/user query is served by a study_users_mirror index, not a full scan", func() {
+		convey.Convey("I1.3: study_users query directions are served by study_users_mirror indexes, not a full scan", func() {
 			assertJ1StudiesForUserIndexServed(t, writeDB)
+			assertG3StudyUsersForStudyIndexServed(t, writeDB)
 		})
 	})
 }

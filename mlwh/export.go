@@ -463,6 +463,21 @@ func projectStudy(study Study, role string, columns []exportColumn) []string {
 	return projectMap(values, columns)
 }
 
+func projectStudyUsers(users []StudyUser, columns []exportColumn) [][]string {
+	rows := make([][]string, len(users))
+	for rowIndex, user := range users {
+		values := map[string]string{
+			"role":  user.Role,
+			"name":  user.Name,
+			"login": user.Login,
+			"email": user.Email,
+		}
+		rows[rowIndex] = projectMap(values, columns)
+	}
+
+	return rows
+}
+
 func projectSampleCRAMs(sampleCRAMs []exportSampleCRAMRow, columns []exportColumn) [][]string {
 	rows := make([][]string, len(sampleCRAMs))
 	for rowIndex, sampleCRAM := range sampleCRAMs {
@@ -687,6 +702,7 @@ func newExportPlan(rel ExportRelationship, parentID string, opts ExportOptions) 
 		format:            format,
 		normalisedFile:    normalisedFile,
 		deliverablesOnly:  deliverablesOnly,
+		role:              opts.Role,
 		filters:           filters,
 		limit:             limit,
 		offset:            offset,
@@ -778,6 +794,7 @@ type ExportOptions struct {
 	Columns          []string
 	FileType         string
 	DeliverablesOnly *bool
+	Role             string
 	QC               string
 	LibraryType      string
 	Organism         string
@@ -1077,39 +1094,13 @@ func (c *Client) exportStudies(ctx context.Context, plan exportPlan, parentID st
 }
 
 func (c *Client) exportUsers(ctx context.Context, plan exportPlan, parent exportParent) (ExportResult, error) {
-	db := c.readCacheDB()
-	if db == nil {
-		return ExportResult{}, fmt.Errorf("mlwh: cache reader not configured")
-	}
-
-	query := `SELECT study_users_mirror.role, study_users_mirror.name, study_users_mirror.login, study_users_mirror.email ` +
-		`FROM study_users_mirror INNER JOIN study_mirror ON study_mirror.id_study_tmp = study_users_mirror.id_study_tmp ` +
-		`WHERE study_mirror.id_lims = 'SQSCP' AND study_mirror.id_study_lims = ? ORDER BY study_users_mirror.role, study_users_mirror.login LIMIT ? OFFSET ?`
-	rows, err := db.QueryContext(ctx, query, parent.Canonical, plan.limit, plan.offset)
-	if err != nil {
-		return ExportResult{}, fmt.Errorf("%w: query export study users: %w", ErrUpstreamImpaired, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	projected := make([][]string, 0)
-	for rows.Next() {
-		var role, name, login, email string
-		if err = rows.Scan(&role, &name, &login, &email); err != nil {
-			return ExportResult{}, fmt.Errorf("%w: scan export study users: %w", ErrUpstreamImpaired, err)
-		}
-		row := map[string]string{"role": role, "name": name, "login": login, "email": email}
-		projected = append(projected, projectMap(row, plan.columns))
-	}
-	if err = rows.Err(); err != nil {
-		return ExportResult{}, fmt.Errorf("%w: query export study users: %w", ErrUpstreamImpaired, err)
-	}
-
-	total, err := c.queryCount(ctx, `SELECT COUNT(*) FROM study_users_mirror INNER JOIN study_mirror ON study_mirror.id_study_tmp = study_users_mirror.id_study_tmp WHERE study_mirror.id_lims = 'SQSCP' AND study_mirror.id_study_lims = ?`, "count export study users", parent.Canonical)
-	if err != nil {
+	users, err := c.StudyUsers(ctx, parent.Canonical, plan.role, plan.limit, plan.offset)
+	total, countErr := c.CountStudyUsers(ctx, parent.Canonical, plan.role)
+	if err = errors.Join(err, countErr); err != nil {
 		return ExportResult{}, err
 	}
 
-	return buildExportResult(plan, projected, total), nil
+	return buildExportResult(plan, projectStudyUsers(users, plan.columns), exportCountValue(total)), nil
 }
 
 func (c *Client) exportSampleCRAMs(ctx context.Context, plan exportPlan, parent exportParent) (ExportResult, error) {
@@ -1645,6 +1636,7 @@ type exportPlan struct {
 	format            string
 	normalisedFile    string
 	deliverablesOnly  bool
+	role              string
 	filters           exportFilters
 	limit             int
 	offset            int
@@ -1708,8 +1700,8 @@ func (c *Client) studiesForExport(ctx context.Context, plan exportPlan, parentID
 
 		return exportStudyRows{rows: projectPersonStudies(rows, plan.columns), total: exportCountValue(total)}, nil
 	case "user":
-		rows, err := c.StudiesForUser(ctx, parentID, "", plan.limit, plan.offset)
-		total, countErr := c.CountStudiesForUser(ctx, parentID, "")
+		rows, err := c.StudiesForUser(ctx, parentID, plan.role, plan.limit, plan.offset)
+		total, countErr := c.CountStudiesForUser(ctx, parentID, plan.role)
 		if err = errors.Join(err, countErr); err != nil {
 			return exportStudyRows{}, err
 		}

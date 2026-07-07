@@ -54,8 +54,8 @@ exactly those studies agreeing with `/count`, index-served via EXPLAIN;
 `/programmes` lists distinct values with study counts). Depends on Phase
 1 (A7).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 7.2: G2 - grouped sequencing aggregate (generalises F1) [parallel with 7.1]
 
@@ -80,8 +80,8 @@ field, differing from unit=runs; unit=products distinct-product counts
 exceeding samples where a sample has multiple products). Depends on Phase
 6 (F1).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items
@@ -111,8 +111,8 @@ owner,manager,follower` prints `role,name,login,email` rows). Depends on
 7.1 (shared `people.go`/`count.go`) and Phase 4 (`export.go` users
 relationship).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For sequential items, a single review pass after G3 is acceptable;
 reviewers must confirm the study->users default returns ALL roles (not

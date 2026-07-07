@@ -134,6 +134,14 @@ func parityQueryCases() []parityQueryCase {
 		{name: "RunListing", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.RunListing(ctx, RunAggregationOptions{Platforms: []string{platformIllumina}}, 100, "")
 		}},
+		{name: "SequencingAggregate", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.SequencingAggregate(ctx, SequencingAggregateOptions{
+				GroupBy: []string{"programme"},
+				Unit:    "samples",
+				Since:   "2026-01-01T00:00:00Z",
+				Until:   "2027-01-01T00:00:00Z",
+			})
+		}},
 		{name: "StudyOverview", call: func(ctx context.Context, q Queryer) (any, error) { return q.StudyOverview(ctx, parityStudyID) }},
 		{name: "RunOverview", call: func(ctx context.Context, q Queryer) (any, error) { return q.RunOverview(ctx, parityRunID) }},
 		{name: "RunStatus", call: func(ctx context.Context, q Queryer) (any, error) { return q.RunStatus(ctx, parityRunID) }},
@@ -176,11 +184,14 @@ func parityQueryCases() []parityQueryCase {
 		{name: "CountStudiesForProgramme", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountStudiesForProgramme(ctx, "programme")
 		}},
+		{name: "Programmes", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.Programmes(ctx)
+		}},
 		{name: "StudyUsers", call: func(ctx context.Context, q Queryer) (any, error) {
-			return q.StudyUsers(ctx, parityStudyID, 100, 0)
+			return q.StudyUsers(ctx, parityStudyID, "", 100, 0)
 		}},
 		{name: "CountStudyUsers", call: func(ctx context.Context, q Queryer) (any, error) {
-			return q.CountStudyUsers(ctx, parityStudyID)
+			return q.CountStudyUsers(ctx, parityStudyID, "")
 		}},
 		{name: "SampleCRAMsForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.SampleCRAMsForStudy(ctx, parityStudyID, 100, 0)

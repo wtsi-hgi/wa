@@ -273,6 +273,16 @@ var Registry = []Endpoint{
 		QueryParams: runListingQueryParams(),
 	},
 	{
+		Method:      "SequencingAggregate",
+		Verb:        registryVerbGet,
+		Path:        "/sequencing/aggregate",
+		Query:       []string{"group_by", "unit", "since", "until", "platform"},
+		NewResult:   newSliceResult[SequencingAggregateRow],
+		Summary:     "List grouped sequencing aggregate",
+		Description: "Returns a grouped sequencing aggregate in one call. group_by is required and may be supplied more than once or comma-separated, combining month, platform, manufacturer, programme and faculty_sponsor. unit is required: runs counts platform-native run identifiers using the per-platform date basis from /runs/monthly (Illumina and Elembio run complete, Ultimagen run archived, PacBio run_complete, ONT warehouse load time - not a true sequencing date); a run spanning multiple requested study groups counts once in each group it touches, with no server-side fan-out over studies. samples and products are data-grain aggregates over seq_product_irods_locations_mirror, windowed by iRODS created with since inclusive and until exclusive; each product is attributed through its single study-scoped iRODS row to exactly one study programme/faculty sponsor, and rows state date_basis=iRODS created. platform is optional and repeatable.",
+		QueryParams: sequencingAggregateQueryParams(),
+	},
+	{
 		Method:      "StudyOverview",
 		Verb:        registryVerbGet,
 		Path:        "/study/:id/overview",
@@ -483,26 +493,37 @@ var Registry = []Endpoint{
 		Description: "Returns the number of SQSCP studies whose programme exactly matches the supplied value, the count counterpart of /studies/programme/:term.",
 	},
 	{
+		Method:      "Programmes",
+		Verb:        registryVerbGet,
+		Path:        "/programmes",
+		PathParams:  []string{},
+		Query:       []string{},
+		NewResult:   newSliceResult[Programme],
+		Summary:     "List programmes",
+		Description: "Lists the distinct non-empty SQSCP programme values with their study counts, so callers can discover the programme grouping / attribution vocabulary. Each sequencing product maps through exactly one study to that study's programme.",
+	},
+	{
 		Method:      "StudyUsers",
 		Verb:        registryVerbGet,
 		Path:        "/study/:id/users",
 		PathParams:  []string{"id"},
-		Query:       []string{},
+		Query:       []string{"role"},
 		Paginated:   true,
 		NewResult:   newSliceResult[StudyUser],
 		Summary:     "List study users",
-		Description: "Lists study_users role assignments for the given study. Defaults to returning all rows; use limit/offset to page.",
-		QueryParams: fetchAllPaginationParams(),
+		Description: "Lists study_users role assignments for the given study. DEFAULT no role filter returns ALL roles present (unlike /studies/user, whose default is owner, manager and data_access_contact). Set role to a comma-separated stored-role filter over owner, manager, data_access_contact, follower, slf_manager, lab_manager and administrator. The faculty_sponsor is a Study field, NOT a study_users role. Defaults to returning all rows; use limit/offset to page.",
+		QueryParams: fetchAllPaginationWithStudyUsersRoleParams(),
 	},
 	{
 		Method:      "CountStudyUsers",
 		Verb:        registryVerbGet,
 		Path:        "/study/:id/users/count",
 		PathParams:  []string{"id"},
-		Query:       []string{},
+		Query:       []string{"role"},
 		NewResult:   newResult[Count],
 		Summary:     "Count study users",
-		Description: "Returns the number of study_users role assignments for the given study, the count counterpart of /study/:id/users.",
+		Description: "Returns the number of study_users role assignments for the given study, the count counterpart of /study/:id/users, honouring the same optional role filter. DEFAULT no role filter counts ALL roles present.",
+		QueryParams: []QueryParam{studyUsersRoleQueryParam()},
 	},
 	{
 		Method:      "SampleCRAMsForStudy",
@@ -531,7 +552,7 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/export/:children/:parent_kind/:parent_id",
 		PathParams:  []string{"children", "parent_kind", "parent_id"},
-		Query:       []string{"columns", "file_type", "deliverables_only", "qc", "library_type", "organism", "sort", "order_by", "since", "until", "all", "cursor", "format"},
+		Query:       []string{"columns", "file_type", "deliverables_only", "role", "qc", "library_type", "organism", "sort", "order_by", "since", "until", "all", "cursor", "format"},
 		NewResult:   newResult[ExportResult],
 		Summary:     "Export relationship rows",
 		Description: "Projects one supported MLWH export relationship into ordered string rows for the selected columns, matching `wa mlwh export <children> <parent-kind> <parent-id>`. The response body carries Columns, Rows, Total, NextCursor, Complete and Format. Query parameters mirror the CLI: columns is an ordered comma-separated projection; file_type restricts file exports by filename suffix; deliverables_only, qc, library_type and organism apply the shared export filters where supported; limit/offset request a bounded page; all requests the complete matching set; cursor continues keyset pagination for iRODS exports; format is tsv, csv or json metadata for callers that render the result. A never-synced cache returns cache_never_synced so CLIs can degrade cleanly.",
@@ -1058,6 +1079,15 @@ func roleQueryParam() QueryParam {
 	}
 }
 
+func studyUsersRoleQueryParam() QueryParam {
+	return QueryParam{
+		Name:        "role",
+		Type:        "string",
+		Required:    false,
+		Description: "when set, a comma-separated list of study_users roles to include, matched exactly and case-insensitively: owner, manager, data_access_contact, follower, slf_manager, lab_manager, administrator; omit to return ALL roles present for the study",
+	}
+}
+
 // searchPaginationWithRoleParams are the QueryParams for the /studies/user list
 // endpoint: the search-style limit/offset pagination controls (default 100,
 // maximum 1000) plus the optional role override filter. The list shares its single
@@ -1065,6 +1095,10 @@ func roleQueryParam() QueryParam {
 // both the pagination and the filter controls.
 func searchPaginationWithRoleParams() []QueryParam {
 	return append(searchPaginationParams(), roleQueryParam())
+}
+
+func fetchAllPaginationWithStudyUsersRoleParams() []QueryParam {
+	return append(fetchAllPaginationParams(), studyUsersRoleQueryParam())
 }
 
 // fetchAllPaginationWithAddedWindowParams are the QueryParams for the
@@ -1169,12 +1203,23 @@ func monthlyRunQueryParams() []QueryParam {
 	}
 }
 
+func sequencingAggregateQueryParams() []QueryParam {
+	return []QueryParam{
+		{Name: "group_by", Type: "string", Required: true, Description: "required repeatable or comma-separated grouping keys: month, platform, manufacturer, programme, faculty_sponsor"},
+		{Name: "unit", Type: "string", Required: true, Description: "required counted unit: runs, samples, or products"},
+		{Name: "since", Type: "string", Description: "optional inclusive lower bound; YYYY-MM-DD/RFC3339 over run date basis for unit=runs and over iRODS created for samples/products"},
+		{Name: "until", Type: "string", Description: "optional exclusive upper bound; YYYY-MM-DD/RFC3339 over run date basis for unit=runs and over iRODS created for samples/products"},
+		{Name: "platform", Type: "string", Description: "optional repeatable platform filter: Illumina, PacBio, Elembio, Ultimagen or ONT"},
+	}
+}
+
 func exportQueryParams() []QueryParam {
 	params := fetchAllPaginationParams()
 	params = append(params,
 		QueryParam{Name: "columns", Type: "string", Description: "ordered comma-separated export columns to emit; omit to use the relationship default projection"},
 		fileTypeQueryParam(),
 		QueryParam{Name: "deliverables_only", Type: "boolean", Description: "when true, restricts supported file exports to deliverable rows; when false, includes controls/sub-products; omit to use the relationship default"},
+		QueryParam{Name: "role", Type: "string", Description: "optional comma-separated study_users role filter for study_users-backed exports; users-of-study omits to return all roles present, studies-of-user omits to use owner, manager and data_access_contact"},
 		QueryParam{Name: "qc", Type: "string", Description: "optional QC filter for product-backed exports: pass, fail, or pending"},
 		QueryParam{Name: "library_type", Type: "string", Description: "optional exact library type filter for sample-backed exports"},
 		QueryParam{Name: "organism", Type: "string", Description: "optional organism/common-name filter for sample-backed exports"},

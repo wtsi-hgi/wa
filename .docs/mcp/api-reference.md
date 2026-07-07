@@ -207,6 +207,16 @@ Returns a bounded global all-runs listing across platforms, one row per platform
 - Query parameters: `since` (string): optional YYYY-MM-DD or RFC3339 inclusive lower bound over the platform's normalised run date basis; `until` (string): optional YYYY-MM-DD or RFC3339 exclusive upper bound over the platform's normalised run date basis; `platform` (string): optional repeatable platform filter: Illumina, PacBio, Elembio, Ultimagen or ONT; `limit` (integer): maximum number of rows to return; defaults to 100, maximum 1000; `cursor` (string): keyset cursor: the composite id from the last row of the previous page
 - Response: `[]RunListingRow`
 
+### `GET /sequencing/aggregate`
+
+List grouped sequencing aggregate
+
+Returns a grouped sequencing aggregate in one call. group_by is required and may be supplied more than once or comma-separated, combining month, platform, manufacturer, programme and faculty_sponsor. unit is required: runs counts platform-native run identifiers using the per-platform date basis from /runs/monthly (Illumina and Elembio run complete, Ultimagen run archived, PacBio run_complete, ONT warehouse load time - not a true sequencing date); a run spanning multiple requested study groups counts once in each group it touches, with no server-side fan-out over studies. samples and products are data-grain aggregates over seq_product_irods_locations_mirror, windowed by iRODS created with since inclusive and until exclusive; each product is attributed through its single study-scoped iRODS row to exactly one study programme/faculty sponsor, and rows state date_basis=iRODS created. platform is optional and repeatable.
+
+- Path parameters: none
+- Query parameters: `group_by` (string): required repeatable or comma-separated grouping keys: month, platform, manufacturer, programme, faculty_sponsor; `unit` (string): required counted unit: runs, samples, or products; `since` (string): optional inclusive lower bound; YYYY-MM-DD/RFC3339 over run date basis for unit=runs and over iRODS created for samples/products; `until` (string): optional exclusive upper bound; YYYY-MM-DD/RFC3339 over run date basis for unit=runs and over iRODS created for samples/products; `platform` (string): optional repeatable platform filter: Illumina, PacBio, Elembio, Ultimagen or ONT
+- Response: `[]SequencingAggregateRow`
+
 ### `GET /study/:id/overview`
 
 Get a study's sequencing overview
@@ -397,24 +407,34 @@ Returns the number of SQSCP studies whose programme exactly matches the supplied
 - Query parameters: none
 - Response: `Count`
 
+### `GET /programmes`
+
+List programmes
+
+Lists the distinct non-empty SQSCP programme values with their study counts, so callers can discover the programme grouping / attribution vocabulary. Each sequencing product maps through exactly one study to that study's programme.
+
+- Path parameters: none
+- Query parameters: none
+- Response: `[]Programme`
+
 ### `GET /study/:id/users`
 
 List study users
 
-Lists study_users role assignments for the given study. Defaults to returning all rows; use limit/offset to page.
+Lists study_users role assignments for the given study. DEFAULT no role filter returns ALL roles present (unlike /studies/user, whose default is owner, manager and data_access_contact). Set role to a comma-separated stored-role filter over owner, manager, data_access_contact, follower, slf_manager, lab_manager and administrator. The faculty_sponsor is a Study field, NOT a study_users role. Defaults to returning all rows; use limit/offset to page.
 
 - Path parameters: `id`
-- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `role` (string): when set, a comma-separated list of study_users roles to include, matched exactly and case-insensitively: owner, manager, data_access_contact, follower, slf_manager, lab_manager, administrator; omit to return ALL roles present for the study
 - Response: `[]StudyUser`
 
 ### `GET /study/:id/users/count`
 
 Count study users
 
-Returns the number of study_users role assignments for the given study, the count counterpart of /study/:id/users.
+Returns the number of study_users role assignments for the given study, the count counterpart of /study/:id/users, honouring the same optional role filter. DEFAULT no role filter counts ALL roles present.
 
 - Path parameters: `id`
-- Query parameters: none
+- Query parameters: `role` (string): when set, a comma-separated list of study_users roles to include, matched exactly and case-insensitively: owner, manager, data_access_contact, follower, slf_manager, lab_manager, administrator; omit to return ALL roles present for the study
 - Response: `Count`
 
 ### `GET /study/:id/sample-crams`
@@ -444,7 +464,7 @@ Export relationship rows
 Projects one supported MLWH export relationship into ordered string rows for the selected columns, matching `wa mlwh export <children> <parent-kind> <parent-id>`. The response body carries Columns, Rows, Total, NextCursor, Complete and Format. Query parameters mirror the CLI: columns is an ordered comma-separated projection; file_type restricts file exports by filename suffix; deliverables_only, qc, library_type and organism apply the shared export filters where supported; limit/offset request a bounded page; all requests the complete matching set; cursor continues keyset pagination for iRODS exports; format is tsv, csv or json metadata for callers that render the result. A never-synced cache returns cache_never_synced so CLIs can degrade cleanly.
 
 - Path parameters: `children`, `parent_kind`, `parent_id`
-- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `columns` (string): ordered comma-separated export columns to emit; omit to use the relationship default projection; `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types; `deliverables_only` (boolean): when true, restricts supported file exports to deliverable rows; when false, includes controls/sub-products; omit to use the relationship default; `qc` (string): optional QC filter for product-backed exports: pass, fail, or pending; `library_type` (string): optional exact library type filter for sample-backed exports; `organism` (string): optional organism/common-name filter for sample-backed exports; `sort` (string): optional iRODS export sort mode; supported value created-desc orders by iRODS created time newest-first; `order_by` (string): alias for sort on iRODS exports; supported value created_desc; `since` (string): RFC3339 lower bound for iRODS created-date exports (created >= since); supported for iRODS exports; `until` (string): RFC3339 upper bound for iRODS created-date exports (created < until); requires since; `all` (boolean): when true, emits the complete matching set rather than a bounded page; `cursor` (string): opaque keyset cursor returned by a previous iRODS export page; `format` (string): output rendering format metadata: tsv, csv or json; defaults to tsv
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `columns` (string): ordered comma-separated export columns to emit; omit to use the relationship default projection; `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types; `deliverables_only` (boolean): when true, restricts supported file exports to deliverable rows; when false, includes controls/sub-products; omit to use the relationship default; `role` (string): optional comma-separated study_users role filter for study_users-backed exports; users-of-study omits to return all roles present, studies-of-user omits to use owner, manager and data_access_contact; `qc` (string): optional QC filter for product-backed exports: pass, fail, or pending; `library_type` (string): optional exact library type filter for sample-backed exports; `organism` (string): optional organism/common-name filter for sample-backed exports; `sort` (string): optional iRODS export sort mode; supported value created-desc orders by iRODS created time newest-first; `order_by` (string): alias for sort on iRODS exports; supported value created_desc; `since` (string): RFC3339 lower bound for iRODS created-date exports (created >= since); supported for iRODS exports; `until` (string): RFC3339 upper bound for iRODS created-date exports (created < until); requires since; `all` (boolean): when true, emits the complete matching set rather than a bounded page; `cursor` (string): opaque keyset cursor returned by a previous iRODS export page; `format` (string): output rendering format metadata: tsv, csv or json; defaults to tsv
 - Response: `ExportResult`
 
 ### `GET /studies/faculty-sponsor/:name`

@@ -145,8 +145,8 @@ const (
 	// studyUsersForStudyD1cSQL lists/counts the D1 export "users of study"
 	// relationship: one study_users_mirror row linked to the study per returned
 	// row.
-	studyUsersForStudyD1cSQL      = `SELECT study_users_mirror.role, study_users_mirror.name, study_users_mirror.login, study_users_mirror.email FROM study_users_mirror INNER JOIN study_mirror ON study_mirror.id_study_tmp = study_users_mirror.id_study_tmp WHERE study_mirror.id_lims = 'SQSCP' AND study_mirror.id_study_lims = ? ORDER BY study_users_mirror.role, study_users_mirror.login LIMIT ? OFFSET ?`
-	countStudyUsersForStudyD1cSQL = `SELECT COUNT(*) FROM study_users_mirror INNER JOIN study_mirror ON study_mirror.id_study_tmp = study_users_mirror.id_study_tmp WHERE study_mirror.id_lims = 'SQSCP' AND study_mirror.id_study_lims = ?`
+	studyUsersForStudyD1cSQLPrefix      = `SELECT study_users_mirror.role, study_users_mirror.name, study_users_mirror.login, study_users_mirror.email FROM study_users_mirror INNER JOIN study_mirror ON study_mirror.id_study_tmp = study_users_mirror.id_study_tmp WHERE study_mirror.id_lims = 'SQSCP' AND study_mirror.id_study_lims = ?`
+	countStudyUsersForStudyD1cSQLPrefix = `SELECT COUNT(*) FROM study_users_mirror INNER JOIN study_mirror ON study_mirror.id_study_tmp = study_users_mirror.id_study_tmp WHERE study_mirror.id_lims = 'SQSCP' AND study_mirror.id_study_lims = ?`
 )
 
 // countLatestDataForFacultySponsorSQLPrefix/Suffix count raw iRODS-location
@@ -184,8 +184,15 @@ type StudyUser struct {
 	Email string `json:"email" doc:"email address"`
 }
 
-// StudyUsers lists study_users role assignments for a study.
-func (c *Client) StudyUsers(ctx context.Context, studyLimsID string, limit, offset int) ([]StudyUser, error) {
+// StudyUsers lists study_users role assignments for a study. An empty role
+// filter returns ALL roles present; a non-empty comma-separated role filter
+// matches the stored study_users vocabulary exactly and case-insensitively.
+func (c *Client) StudyUsers(ctx context.Context, studyLimsID, role string, limit, offset int) ([]StudyUser, error) {
+	roles, err := resolveStudyUsersForStudyRoles(role)
+	if err != nil {
+		return nil, err
+	}
+
 	studyExists, err := c.cacheStudyExists(ctx, studyLimsID)
 	if err != nil {
 		return nil, err
@@ -207,7 +214,8 @@ func (c *Client) StudyUsers(ctx context.Context, studyLimsID string, limit, offs
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	users, err := queryStudyUsers(ctx, db, studyUsersForStudyD1cSQL, studyLimsID, limit, offset)
+	query, args := studyUsersForStudySQL(roles, studyLimsID, limit, offset)
+	users, err := queryStudyUsers(ctx, db, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -222,6 +230,24 @@ func (c *Client) StudyUsers(ctx context.Context, studyLimsID string, limit, offs
 	}
 
 	return users, nil
+}
+
+func studyUsersForStudySQL(roles []string, studyLimsID string, limit, offset int) (string, []any) {
+	args := studyUsersForStudyArgs(studyLimsID, roles)
+	args = append(args, limit, offset)
+
+	return studyUsersForStudyD1cSQLPrefix +
+		studyUsersRoleClause(roles) +
+		` ORDER BY study_users_mirror.role, study_users_mirror.login LIMIT ? OFFSET ?`, args
+}
+
+func studyUsersForStudyArgs(studyLimsID string, roles []string) []any {
+	args := []any{studyLimsID}
+	for _, role := range roles {
+		args = append(args, role)
+	}
+
+	return args
 }
 
 func queryStudyUsers(ctx context.Context, db *sql.DB, query string, args ...any) ([]StudyUser, error) {
@@ -309,6 +335,10 @@ func sampleCRAMRows(rows []exportSampleCRAMRow) []SampleCRAM {
 	}
 
 	return sampleCRAMs
+}
+
+func countStudyUsersForStudySQL(roles []string, studyLimsID string) (string, []any) {
+	return countStudyUsersForStudyD1cSQLPrefix + studyUsersRoleClause(roles), studyUsersForStudyArgs(studyLimsID, roles)
 }
 
 func latestDataFilterQuery(prefix, suffix, fileType string, args ...any) (string, []any, error) {
@@ -786,8 +816,13 @@ func (c *Client) CountStudiesForProgramme(ctx context.Context, programme string)
 }
 
 // CountStudyUsers counts study_users role assignments for a study, the count
-// counterpart of StudyUsers.
-func (c *Client) CountStudyUsers(ctx context.Context, studyLimsID string) (Count, error) {
+// counterpart of StudyUsers, honouring the same optional role filter.
+func (c *Client) CountStudyUsers(ctx context.Context, studyLimsID, role string) (Count, error) {
+	roles, err := resolveStudyUsersForStudyRoles(role)
+	if err != nil {
+		return Count{}, err
+	}
+
 	studyExists, err := c.cacheStudyExists(ctx, studyLimsID)
 	if err != nil {
 		return Count{}, err
@@ -800,7 +835,8 @@ func (c *Client) CountStudyUsers(ctx context.Context, studyLimsID string) (Count
 		return Count{}, ErrNotFound
 	}
 
-	count, err := c.queryCount(ctx, countStudyUsersForStudyD1cSQL, "count study users", studyLimsID)
+	query, args := countStudyUsersForStudySQL(roles, studyLimsID)
+	count, err := c.queryCount(ctx, query, "count study users", args...)
 	if err != nil {
 		return Count{}, err
 	}

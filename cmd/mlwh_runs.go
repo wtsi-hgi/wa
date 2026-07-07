@@ -40,6 +40,8 @@ const runsNoMonthlyRowsMessage = "no runs"
 
 const runsNoListingRowsMessage = "no runs"
 
+const runsNoAggregateRowsMessage = "no aggregate rows"
+
 var openMLWHRunsClient = func(ctx context.Context, cfg mlwh.Config) (mlwhRunsClient, error) {
 	if strings.TrimSpace(cfg.DSN) == "" {
 		return mlwh.OpenCacheOnly(ctx, cfg.Cache)
@@ -56,6 +58,7 @@ var openMLWHRunsRemoteClient = func(_ context.Context, cfg mlwh.RemoteConfig) (m
 // Both *mlwh.RemoteClient and the local *mlwh.Client satisfy it.
 type mlwhRunsClient interface {
 	MonthlyRunCounts(ctx context.Context, opts mlwh.RunAggregationOptions) ([]mlwh.MonthlyRunCount, error)
+	SequencingAggregate(ctx context.Context, opts mlwh.SequencingAggregateOptions) ([]mlwh.SequencingAggregateRow, error)
 	RunListing(ctx context.Context, opts mlwh.RunAggregationOptions, limit int, cursor string) ([]mlwh.RunListingRow, error)
 	CountRunListing(ctx context.Context, opts mlwh.RunAggregationOptions) (mlwh.Count, error)
 	Close() error
@@ -90,6 +93,8 @@ func newMLWHRunsCommand() *cobra.Command {
 		since     string
 		until     string
 		platforms []string
+		groupBy   []string
+		unit      string
 		limit     int
 		cursor    string
 		all       bool
@@ -104,6 +109,10 @@ func newMLWHRunsCommand() *cobra.Command {
 			"List global run aggregates through a wa mlwh serve API. In this",
 			"phase, the default output is the flat global all-runs listing.",
 			"Use --monthly to select monthly grouped run counts across platforms.",
+			"Use --group-by to select the grouped sequencing aggregate; with",
+			"--monthly, month is included automatically. The aggregate unit",
+			"defaults to runs for CLI compatibility and can be set to samples or",
+			"products with --unit.",
 			"Rows are counted or listed at one run identifier: Illumina, Elembio",
 			"and Ultimagen use distinct id_run, PacBio uses distinct",
 			"pac_bio_run_name, and ONT uses distinct experiment_name. Flat run",
@@ -145,6 +154,7 @@ func newMLWHRunsCommand() *cobra.Command {
 			"Example:",
 			"  wa --env development mlwh runs --since 2024-01-01 --platform PacBio --platform ONT",
 			"  wa --env development mlwh runs --monthly --since 2024-01-01 --platform PacBio",
+			"  wa --env development mlwh runs --monthly --group-by programme --platform PacBio --since 2024-01-01 --until 2025-01-01",
 		}, "\n"),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			client, err := openMLWHRunsConfiguredClient(cmd.Context(), serverURL)
@@ -154,6 +164,21 @@ func newMLWHRunsCommand() *cobra.Command {
 			defer func() { _ = client.Close() }()
 
 			opts := mlwh.RunAggregationOptions{Since: since, Until: until, Platforms: platforms}
+			if len(groupBy) > 0 || strings.TrimSpace(unit) != "" {
+				if all || strings.TrimSpace(cursor) != "" {
+					return errors.New("--all and --cursor are supported only for the flat run listing")
+				}
+
+				aggregateOpts := mlwh.SequencingAggregateOptions{
+					GroupBy:   cliSequencingAggregateGroupBy(monthly, groupBy),
+					Unit:      cliSequencingAggregateUnit(unit),
+					Since:     since,
+					Until:     until,
+					Platforms: platforms,
+				}
+
+				return runMLWHRunsSequencingAggregate(cmd.Context(), client, cmd.OutOrStdout(), aggregateOpts)
+			}
 			if monthly {
 				if all || strings.TrimSpace(cursor) != "" {
 					return errors.New("--all and --cursor are supported only for the flat run listing")
@@ -171,11 +196,80 @@ func newMLWHRunsCommand() *cobra.Command {
 	command.Flags().StringVar(&since, "since", "", "inclusive lower bound over the run date basis (YYYY-MM-DD or RFC3339)")
 	command.Flags().StringVar(&until, "until", "", "exclusive upper bound over the run date basis (YYYY-MM-DD or RFC3339)")
 	command.Flags().StringArrayVar(&platforms, "platform", nil, "restrict to a platform; repeat for multiple values")
+	command.Flags().StringArrayVar(&groupBy, "group-by", nil, "aggregate grouping key; repeat or comma-separate month, platform, manufacturer, programme, faculty_sponsor")
+	command.Flags().StringVar(&unit, "unit", "", "aggregate unit with --group-by: runs, samples, or products (default runs)")
 	command.Flags().IntVar(&limit, "limit", mlwh.RunListingDefaultLimit, "maximum rows to return for a bounded page, or stream chunk size with --all")
 	command.Flags().StringVar(&cursor, "cursor", "", "composite id from the previous page's last row")
 	command.Flags().BoolVar(&all, "all", false, "emit the complete matching run listing instead of one bounded page")
 
 	return command
+}
+
+func cliSequencingAggregateGroupBy(monthly bool, groupBy []string) []string {
+	groups := make([]string, 0, len(groupBy)+1)
+	if monthly {
+		groups = append(groups, "month")
+	}
+	groups = append(groups, groupBy...)
+
+	return groups
+}
+
+func cliSequencingAggregateUnit(unit string) string {
+	if strings.TrimSpace(unit) == "" {
+		return "runs"
+	}
+
+	return unit
+}
+
+func runMLWHRunsSequencingAggregate(ctx context.Context, client mlwhRunsClient, out io.Writer, opts mlwh.SequencingAggregateOptions) error {
+	rows, err := client.SequencingAggregate(ctx, opts)
+	if err != nil {
+		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
+			_, _ = fmt.Fprintf(out, "%s\n", mlwhCacheUnavailableMessage)
+
+			return nil
+		}
+
+		return fmt.Errorf("sequencing aggregate: %w", err)
+	}
+
+	writeSequencingAggregateRows(out, rows, opts.GroupBy)
+
+	return nil
+}
+
+func writeSequencingAggregateRows(out io.Writer, rows []mlwh.SequencingAggregateRow, groupBy []string) {
+	_, _ = fmt.Fprintln(out, "Sequencing aggregate:")
+	if len(rows) == 0 {
+		_, _ = fmt.Fprintf(out, "  %s\n", runsNoAggregateRowsMessage)
+
+		return
+	}
+
+	for _, row := range rows {
+		_, _ = fmt.Fprintf(out, "  %sunit=%s count=%d date_basis=%s cache_synced_at=%s\n",
+			formatSequencingAggregateGroup(row.Group, groupBy),
+			row.Unit,
+			row.Count,
+			row.DateBasis,
+			row.CacheSyncedAt,
+		)
+	}
+}
+
+func formatSequencingAggregateGroup(group map[string]string, groupBy []string) string {
+	var builder strings.Builder
+	for _, key := range groupBy {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		_, _ = fmt.Fprintf(&builder, "%s=%s ", normalized, group[normalized])
+	}
+
+	return builder.String()
 }
 
 func runMLWHRunsMonthly(ctx context.Context, client mlwhRunsClient, out io.Writer, opts mlwh.RunAggregationOptions) error {

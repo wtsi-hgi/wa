@@ -1227,16 +1227,17 @@ func TestStudyOverviewPopulatesStudyMetadataAlongsideCounts(t *testing.T) {
 
 		overview, err := client.StudyOverview(context.Background(), "S1")
 
-		convey.Convey("when StudyOverview is called, then the four metadata fields are populated alongside the counts", func() {
+		convey.Convey("when StudyOverview is called, then the study metadata fields are populated alongside the counts", func() {
 			convey.So(err, convey.ShouldBeNil)
 
-			// The four metadata fields come from study_mirror (seedHierarchyStudy 111).
+			// The metadata fields come from study_mirror (seedHierarchyStudy 111).
 			convey.So(overview.Name, convey.ShouldEqual, "Study S1")
 			convey.So(overview.AccessionNumber, convey.ShouldEqual, "EGAS0000S1")
 			convey.So(overview.FacultySponsor, convey.ShouldEqual, "Faculty sponsor 111")
+			convey.So(overview.Programme, convey.ShouldEqual, "programme")
 			convey.So(overview.DataAccessGroup, convey.ShouldEqual, "group")
 
-			// The existing counts are still correct (the four fields are additive).
+			// The existing counts are still correct (the metadata fields are additive).
 			convey.So(overview.IDStudyLims, convey.ShouldEqual, "S1")
 			convey.So(overview.SamplesTotal, convey.ShouldEqual, 5)
 			convey.So(overview.SamplesWithData, convey.ShouldEqual, 3)

@@ -51,6 +51,7 @@ type Queryer interface {
 	RunsForSample(ctx context.Context, sangerName string, limit, offset int) ([]Run, error)
 	MonthlyRunCounts(ctx context.Context, opts RunAggregationOptions) ([]MonthlyRunCount, error)
 	RunListing(ctx context.Context, opts RunAggregationOptions, limit int, cursor string) ([]RunListingRow, error)
+	SequencingAggregate(ctx context.Context, opts SequencingAggregateOptions) ([]SequencingAggregateRow, error)
 	StudyOverview(ctx context.Context, studyLimsID string) (StudyOverview, error)
 	RunOverview(ctx context.Context, idRun string) (RunOverview, error)
 	RunStatus(ctx context.Context, idRun string) (RunStatusTimeline, error)
@@ -67,7 +68,8 @@ type Queryer interface {
 	StudyManifest(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (StudyManifest, error)
 	StudiesForSample(ctx context.Context, sangerName string) ([]Study, error)
 	StudiesForProgramme(ctx context.Context, programme string, limit, offset int) ([]Study, error)
-	StudyUsers(ctx context.Context, studyLimsID string, limit, offset int) ([]StudyUser, error)
+	Programmes(ctx context.Context) ([]Programme, error)
+	StudyUsers(ctx context.Context, studyLimsID, role string, limit, offset int) ([]StudyUser, error)
 	SampleCRAMsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleCRAM, error)
 
 	// Generic export projection.
@@ -122,7 +124,7 @@ type Queryer interface {
 	CountStudyManifest(ctx context.Context, studyLimsID string) (Count, error)
 	CountLibrariesForStudy(ctx context.Context, studyLimsID string) (Count, error)
 	CountLanesForSample(ctx context.Context, sangerName string) (Count, error)
-	CountStudyUsers(ctx context.Context, studyLimsID string) (Count, error)
+	CountStudyUsers(ctx context.Context, studyLimsID, role string) (Count, error)
 	CountSampleCRAMsForStudy(ctx context.Context, studyLimsID string) (Count, error)
 	CountIRODSPathsForSample(ctx context.Context, sangerName string) (Count, error)
 	CountIRODSPathsForStudy(ctx context.Context, studyLimsID string) (Count, error)

@@ -170,6 +170,7 @@ func newMLWHExportCommand() *cobra.Command {
 	command.Flags().StringVar(&flags.fileType, "file-type", "", "restrict file exports to data objects whose filename ends in this suffix; file exports default to cram")
 	command.Flags().BoolVar(&flags.deliverablesOnly, "deliverables-only", false, "restrict cram file exports to deliverable rows")
 	command.Flags().BoolVar(&flags.includeControls, "include-controls", false, "include controls/sub-products in cram file exports")
+	command.Flags().StringVar(&flags.role, "role", "", "restrict study_users-backed exports to comma-separated roles")
 	command.Flags().StringVar(&flags.qc, "qc", "", "restrict product-backed exports by QC: pass, fail or pending")
 	command.Flags().StringVar(&flags.libraryType, "library-type", "", "restrict sample-backed exports by library type")
 	command.Flags().StringVar(&flags.organism, "organism", "", "restrict sample-backed exports by organism/common name")
@@ -284,6 +285,7 @@ func mlwhExportRemoteQuery(opts mlwh.ExportOptions) url.Values {
 	query := url.Values{}
 	setNonEmptyQuery(query, "columns", strings.Join(opts.Columns, ","))
 	setNonEmptyQuery(query, "file_type", opts.FileType)
+	setNonEmptyQuery(query, "role", opts.Role)
 	setNonEmptyQuery(query, "qc", opts.QC)
 	setNonEmptyQuery(query, "library_type", opts.LibraryType)
 	setNonEmptyQuery(query, "organism", opts.Organism)
@@ -324,6 +326,7 @@ type mlwhExportFlags struct {
 	fileType         string
 	deliverablesOnly bool
 	includeControls  bool
+	role             string
 	qc               string
 	libraryType      string
 	organism         string
@@ -355,6 +358,7 @@ func (f mlwhExportFlags) options(rel mlwh.ExportRelationship, cmd *cobra.Command
 		Columns:          columns,
 		FileType:         mlwhExportFileTypeDefault(rel, f.fileType, cmd.Flags().Changed("file-type")),
 		DeliverablesOnly: deliverablesOnly,
+		Role:             f.role,
 		QC:               f.qc,
 		LibraryType:      f.libraryType,
 		Organism:         f.organism,

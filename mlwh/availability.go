@@ -730,6 +730,7 @@ func (c *Client) fillStudyOverviewMetadata(ctx context.Context, studyLimsID stri
 	overview.Name = study.Name
 	overview.AccessionNumber = study.AccessionNumber
 	overview.FacultySponsor = study.FacultySponsor
+	overview.Programme = study.Programme
 	overview.DataAccessGroup = study.DataAccessGroup
 
 	return nil

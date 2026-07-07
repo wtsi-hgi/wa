@@ -64,6 +64,11 @@ var facultySponsorPageSQL = `SELECT ` + studyMirrorSelectColumns + ` FROM study_
 // len(StudiesForFacultySponsor(name, all)) for any name.
 var facultySponsorCountSQL = `SELECT COUNT(*) FROM study_mirror WHERE ` + facultySponsorWhereClause
 
+// programmesSQL enumerates the non-empty SQSCP programme vocabulary. Programme is
+// the study grouping / attribution unit; every sequencing product maps through
+// exactly one study to that study's programme.
+var programmesSQL = `SELECT programme, COUNT(*) AS study_count FROM study_mirror WHERE id_lims = 'SQSCP' AND programme <> '' GROUP BY programme ORDER BY programme`
+
 // studyUsersPersonFields are the three study_users_mirror columns the user
 // endpoint matches the person term against (qualified so name is unambiguous in
 // the study_mirror join). The term is a case-insensitive substring of any one of
@@ -77,6 +82,19 @@ var studyUsersPersonFields = []string{"study_users_mirror.name", "study_users_mi
 // with a study. follower/slf_manager/lab_manager/administrator are excluded unless
 // a non-empty role= widens (overrides) the set.
 var studyUsersDefaultRoles = []string{"owner", "manager", "data_access_contact"}
+
+// studyUsersStoredRoles is the stored study_users vocabulary surfaced by the
+// study->users inverse. DEFAULT no role filter for that direction returns all
+// roles present; this list validates non-empty role filters.
+var studyUsersStoredRoles = map[string]struct{}{
+	"owner":               {},
+	"manager":             {},
+	"data_access_contact": {},
+	"follower":            {},
+	"slf_manager":         {},
+	"lab_manager":         {},
+	"administrator":       {},
+}
 
 // studyUsersJoin is the FROM/JOIN body shared by StudiesForUser and its count
 // sibling: study_users_mirror joined to its study by id_study_tmp, scoped to
@@ -162,15 +180,35 @@ func resolveStudyUsersRoles(role string) []string {
 		return studyUsersDefaultRoles
 	}
 
+	roles := splitStudyUsersRoles(role)
+	if len(roles) == 0 {
+		return studyUsersDefaultRoles
+	}
+
+	return roles
+}
+
+// resolveStudyUsersForStudyRoles turns the raw study->users role filter into a
+// lower-cased exact-match set. Empty means no role predicate, so the study inverse
+// returns ALL roles present.
+func resolveStudyUsersForStudyRoles(role string) ([]string, error) {
+	roles := splitStudyUsersRoles(role)
+	for _, role := range roles {
+		if _, ok := studyUsersStoredRoles[role]; !ok {
+			return nil, fmt.Errorf("%w: unsupported study_users role %q", ErrUnsupportedIdentifier, role)
+		}
+	}
+
+	return roles, nil
+}
+
+func splitStudyUsersRoles(role string) []string {
 	roles := make([]string, 0, strings.Count(role, ",")+1)
 	for _, candidate := range strings.Split(role, ",") {
 		trimmed := strings.TrimSpace(candidate)
 		if trimmed != "" {
 			roles = append(roles, strings.ToLower(trimmed))
 		}
-	}
-	if len(roles) == 0 {
-		return studyUsersDefaultRoles
 	}
 
 	return roles
@@ -201,6 +239,10 @@ func studyUsersCountSQL(roles []string) string {
 // case-insensitively (the bound values are already lowercased by
 // resolveStudyUsersRoles).
 func studyUsersRoleClause(roles []string) string {
+	if len(roles) == 0 {
+		return ""
+	}
+
 	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(roles)), ", ")
 
 	return ` AND LOWER(study_users_mirror.role) IN (` + placeholders + `)`
@@ -333,6 +375,42 @@ func (c *Client) CountStudiesForFacultySponsor(ctx context.Context, name string)
 	}
 
 	return Count{Count: 0}, nil
+}
+
+// Programmes returns the distinct non-empty programme values carried by SQSCP
+// studies, with a study count for each grouping / attribution unit.
+func (c *Client) Programmes(ctx context.Context) ([]Programme, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	rows, err := db.QueryContext(ctx, programmesSQL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: query programmes: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	programmes := make([]Programme, 0)
+	for rows.Next() {
+		var programme Programme
+		if err = rows.Scan(&programme.Name, &programme.StudyCount); err != nil {
+			return nil, fmt.Errorf("%w: scan programme: %w", ErrUpstreamImpaired, err)
+		}
+
+		programmes = append(programmes, programme)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: query programmes: %w", ErrUpstreamImpaired, err)
+	}
+	if len(programmes) > 0 {
+		return programmes, nil
+	}
+	if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+		return []Programme{}, err
+	}
+
+	return []Programme{}, nil
 }
 
 // StudiesForUser returns the studies person is a study_users role member of, each

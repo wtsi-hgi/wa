@@ -224,6 +224,38 @@ func mlwhRunListingRequestFromQuery(c *gin.Context) (RunAggregationOptions, int,
 	return opts, limit, c.Query("cursor"), true
 }
 
+func mlwhSequencingAggregateOptionsFromQuery(c *gin.Context) (SequencingAggregateOptions, bool) {
+	opts := SequencingAggregateOptions{
+		GroupBy:   mlwhSequencingAggregateGroupByFromQuery(c),
+		Unit:      c.Query("unit"),
+		Since:     c.Query("since"),
+		Until:     c.Query("until"),
+		Platforms: mlwhRunAggregationPlatformsFromQuery(c),
+	}
+	normalized, _, err := normaliseSequencingAggregateOptions(opts)
+	if err != nil {
+		writeMLWHBadRequest(c, err.Error())
+
+		return SequencingAggregateOptions{}, false
+	}
+
+	return normalized, true
+}
+
+func mlwhSequencingAggregateGroupByFromQuery(c *gin.Context) []string {
+	rawValues := c.QueryArray("group_by")
+	groups := make([]string, 0, len(rawValues))
+	for _, raw := range rawValues {
+		for _, group := range strings.Split(raw, ",") {
+			if strings.TrimSpace(group) != "" {
+				groups = append(groups, group)
+			}
+		}
+	}
+
+	return groups
+}
+
 func mlwhLatestDataPaginationFromQuery(c *gin.Context) (mlwhPagination, bool) {
 	limit, ok := mlwhQueryInt(c, "limit", mlwhLatestDataDefaultLimit)
 	if !ok {
@@ -671,6 +703,15 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			result, err := queryer.RunListing(c.Request.Context(), opts, limit, cursor)
 			writeMLWHResult(c, result, err)
 		}
+	case "SequencingAggregate":
+		return func(c *gin.Context) {
+			opts, ok := mlwhSequencingAggregateOptionsFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.SequencingAggregate(c.Request.Context(), opts)
+			writeMLWHResult(c, result, err)
+		}
 	case "StudyOverview":
 		return func(c *gin.Context) {
 			id, ok := mlwhPathParam(c, "id")
@@ -911,16 +952,22 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			result, err := queryer.CountStudiesForProgramme(c.Request.Context(), name)
 			writeMLWHResult(c, result, err)
 		}
+	case "Programmes":
+		return func(c *gin.Context) {
+			result, err := queryer.Programmes(c.Request.Context())
+			writeMLWHResult(c, result, err)
+		}
 	case "StudyUsers":
 		return func(c *gin.Context) {
 			id, pagination, ok := mlwhIDAndPagination(c)
 			if !ok {
 				return
 			}
+			role := c.Query("role")
 			ctx := c.Request.Context()
-			result, err := queryer.StudyUsers(ctx, id, pagination.limit, pagination.offset)
+			result, err := queryer.StudyUsers(ctx, id, role, pagination.limit, pagination.offset)
 			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
-				return countValue(queryer.CountStudyUsers(ctx, id))
+				return countValue(queryer.CountStudyUsers(ctx, id, role))
 			})
 		}
 	case "CountStudyUsers":
@@ -929,7 +976,7 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			result, err := queryer.CountStudyUsers(c.Request.Context(), id)
+			result, err := queryer.CountStudyUsers(c.Request.Context(), id, c.Query("role"))
 			writeMLWHResult(c, result, err)
 		}
 	case "SampleCRAMsForStudy":
@@ -1712,6 +1759,7 @@ func mlwhExportOptionsFromQuery(c *gin.Context) (ExportOptions, bool) {
 		Columns:          columns,
 		FileType:         c.Query("file_type"),
 		DeliverablesOnly: deliverablesOnly,
+		Role:             c.Query("role"),
 		QC:               c.Query("qc"),
 		LibraryType:      c.Query("library_type"),
 		Organism:         c.Query("organism"),

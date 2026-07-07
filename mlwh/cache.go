@@ -627,6 +627,7 @@ func ensureAdditiveCurrentCacheIndexes(ctx context.Context, db *sql.DB, dialect 
 		}{
 			{stmt: `CREATE INDEX IF NOT EXISTS library_samples_library_id_idx ON library_samples(library_id)`},
 			{stmt: `CREATE INDEX IF NOT EXISTS library_samples_id_library_lims_idx ON library_samples(id_library_lims)`},
+			{stmt: `CREATE INDEX IF NOT EXISTS pac_bio_product_metrics_mirror_rw_metrics_tmp_idx ON pac_bio_product_metrics_mirror(id_pac_bio_rw_metrics_tmp)`},
 			{stmt: `CREATE INDEX IF NOT EXISTS ipm_mirror_iseq_product_idx ON iseq_product_metrics_mirror(id_iseq_product)`, indexSet: &iseqProductMetricsMirrorIndexSet},
 			{stmt: `CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_iseq_product_idx ON seq_product_irods_locations_mirror(id_study_lims, id_iseq_product)`, indexSet: &seqProductIRODSLocationsMirrorIndexSet},
 			{stmt: `CREATE INDEX IF NOT EXISTS spi_mirror_sample_tmp_iseq_product_idx ON seq_product_irods_locations_mirror(id_sample_tmp, id_iseq_product)`, indexSet: &seqProductIRODSLocationsMirrorIndexSet},
@@ -653,6 +654,10 @@ func ensureAdditiveCurrentCacheIndexes(ctx context.Context, db *sql.DB, dialect 
 		}
 		if err := ensureAdditiveMySQLIndex(ctx, db, "library_samples", "id_library_lims",
 			`CREATE INDEX library_samples_id_library_lims_idx ON library_samples(id_library_lims)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "pac_bio_product_metrics_mirror", "id_pac_bio_rw_metrics_tmp",
+			`CREATE INDEX pac_bio_product_metrics_mirror_rw_metrics_tmp_idx ON pac_bio_product_metrics_mirror(id_pac_bio_rw_metrics_tmp)`); err != nil {
 			return err
 		}
 		if err := ensureAdditiveMySQLIndex(ctx, db, "iseq_product_metrics_mirror", "id_iseq_product",

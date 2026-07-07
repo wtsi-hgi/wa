@@ -132,6 +132,169 @@ func TestResolvePersonWhitespaceTermIsBadRequestE3(t *testing.T) {
 	})
 }
 
+// G1 acceptance test 2: programme is an exact study grouping key, not the
+// substring search/study surface. The list and count endpoints must agree.
+func TestStudiesForProgrammeExactMatchAndHTTPCountG1(t *testing.T) {
+	convey.Convey("Given SQSCP studies in Human Genetics plus a longer programme value", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedProgrammeStudies(t, cache)
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when StudiesForProgramme runs, then only the exact programme value is returned and the count agrees", func() {
+			rows, err := client.StudiesForProgramme(context.Background(), "Human Genetics", 100, 0)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(studyLimsIDs(rows), convey.ShouldResemble, []string{"7001", "7002"})
+
+			count, err := client.CountStudiesForProgramme(context.Background(), "Human Genetics")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(rows))
+		})
+
+		convey.Convey("when GET /studies/programme/Human%20Genetics is served, then rows and /count agree", func() {
+			response := performMLWHRequestForTest(t, client, http.MethodGet, "/studies/programme/Human%20Genetics?limit=1&offset=0")
+
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+			convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "2")
+			convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "1")
+
+			var rows []Study
+			decodeMLWHJSONResponseForTest(t, response, &rows)
+			convey.So(studyLimsIDs(rows), convey.ShouldResemble, []string{"7001"})
+
+			countResponse := performMLWHRequestForTest(t, client, http.MethodGet, "/studies/programme/Human%20Genetics/count")
+			convey.So(countResponse.Code, convey.ShouldEqual, http.StatusOK)
+
+			var count Count
+			decodeMLWHJSONResponseForTest(t, countResponse, &count)
+			convey.So(count.Count, convey.ShouldEqual, 2)
+		})
+	})
+}
+
+// G1 acceptance test 3: /programmes enumerates the programme vocabulary with one
+// study_count per distinct value.
+func TestProgrammesListsDistinctValuesWithStudyCountsG1(t *testing.T) {
+	convey.Convey("Given studies across three non-empty programmes", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedProgrammeStudies(t, cache)
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when Programmes runs, then each distinct programme has its study count", func() {
+			programmes, err := client.Programmes(context.Background())
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(programmes, convey.ShouldResemble, []Programme{
+				{Name: "Cancer Genomics", StudyCount: 1},
+				{Name: "Human Genetics", StudyCount: 2},
+				{Name: "Human Genetics Extended", StudyCount: 1},
+			})
+		})
+
+		convey.Convey("when GET /programmes is served, then the same vocabulary is returned", func() {
+			response := performMLWHRequestForTest(t, client, http.MethodGet, "/programmes")
+
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+			var programmes []Programme
+			decodeMLWHJSONResponseForTest(t, response, &programmes)
+			convey.So(programmes, convey.ShouldResemble, []Programme{
+				{Name: "Cancer Genomics", StudyCount: 1},
+				{Name: "Human Genetics", StudyCount: 2},
+				{Name: "Human Genetics Extended", StudyCount: 1},
+			})
+		})
+	})
+}
+
+func seedProgrammeStudies(t *testing.T, cache Cache) {
+	t.Helper()
+
+	seedStudyMirrorSearchRow(t, cache.DB(), 1, "7001", "study-a", "Title A", "Human Genetics", "Carl Anderson")
+	seedStudyMirrorSearchRow(t, cache.DB(), 2, "7002", "study-b", "Title B", "Human Genetics", "Carla Anders")
+	seedStudyMirrorSearchRow(t, cache.DB(), 3, "7003", "study-c", "Title C", "Cancer Genomics", "Jane Doe")
+	seedStudyMirrorSearchRow(t, cache.DB(), 4, "7004", "study-d", "Title D", "Human Genetics Extended", "Rosa King")
+	seedNonSQSCPStudy(t, cache.DB(), 5, "OTHER1")
+	seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+}
+
+// G3 acceptance tests 1/2: the study->users inverse defaults to ALL stored
+// roles for the study (unlike person->studies), and role= narrows that set.
+func TestStudyUsersReturnsAllRolesByDefaultAndFiltersByRoleG3(t *testing.T) {
+	convey.Convey("Given study 7568 has owner, manager and follower study_users rows", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedStudyUsersInverseFixture(t, cache)
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when StudyUsers is called without role, then ALL roles present are returned and counted", func() {
+			rows, err := client.StudyUsers(context.Background(), "7568", "", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(rows, convey.ShouldResemble, []StudyUser{
+				{Role: "follower", Name: "Fran Follower", Login: "ff1", Email: "ff1@sanger.ac.uk"},
+				{Role: "manager", Name: "Maya Manager", Login: "mm1", Email: "mm1@sanger.ac.uk"},
+				{Role: "owner", Name: "Olive Owner", Login: "oo1", Email: "oo1@sanger.ac.uk"},
+			})
+
+			count, err := client.CountStudyUsers(context.Background(), "7568", "")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(rows))
+		})
+
+		convey.Convey("when role=owner,manager is supplied, then only those roles are returned and counted", func() {
+			rows, err := client.StudyUsers(context.Background(), "7568", "owner,manager", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(rows, convey.ShouldResemble, []StudyUser{
+				{Role: "manager", Name: "Maya Manager", Login: "mm1", Email: "mm1@sanger.ac.uk"},
+				{Role: "owner", Name: "Olive Owner", Login: "oo1", Email: "oo1@sanger.ac.uk"},
+			})
+
+			count, err := client.CountStudyUsers(context.Background(), "7568", "owner,manager")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, 2)
+		})
+
+		convey.Convey("when GET /study/7568/users?role=owner,manager is served, then pagination headers use the filtered count", func() {
+			response := performMLWHRequestForTest(t, client, http.MethodGet, "/study/7568/users?role=owner,manager&limit=1&offset=0")
+
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+			convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "2")
+			convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "1")
+
+			var rows []StudyUser
+			decodeMLWHJSONResponseForTest(t, response, &rows)
+			convey.So(rows, convey.ShouldResemble, []StudyUser{
+				{Role: "manager", Name: "Maya Manager", Login: "mm1", Email: "mm1@sanger.ac.uk"},
+			})
+
+			countResponse := performMLWHRequestForTest(t, client, http.MethodGet, "/study/7568/users/count?role=owner,manager")
+			convey.So(countResponse.Code, convey.ShouldEqual, http.StatusOK)
+
+			var count Count
+			decodeMLWHJSONResponseForTest(t, countResponse, &count)
+			convey.So(count.Count, convey.ShouldEqual, 2)
+		})
+	})
+}
+
+func seedStudyUsersInverseFixture(t *testing.T, cache Cache) {
+	t.Helper()
+
+	seedStudyMirrorSearchRow(t, cache.DB(), 7568, "7568", "study-users-inverse", "Study users inverse", "Human Genetics", "Sponsor Person")
+	seedStudyUsersMirrorRow(t, cache.DB(), 756801, 7568, "owner", "oo1", "oo1@sanger.ac.uk", "Olive Owner")
+	seedStudyUsersMirrorRow(t, cache.DB(), 756802, 7568, "manager", "mm1", "mm1@sanger.ac.uk", "Maya Manager")
+	seedStudyUsersMirrorRow(t, cache.DB(), 756803, 7568, "follower", "ff1", "ff1@sanger.ac.uk", "Fran Follower")
+	seedStudyMirrorSearchRow(t, cache.DB(), 7569, "7569", "other-study", "Other", "Human Genetics", "")
+	seedStudyUsersMirrorRow(t, cache.DB(), 756901, 7569, "owner", "other", "other@sanger.ac.uk", "Other Owner")
+	seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+	seedSyncState(t, cache.DB(), syncTableStudyUsers, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+}
+
 // E1 acceptance test 1: a "carl" term matches the three Carl studies
 // case-insensitively (substring), each PersonStudy carries the FULL Study and an
 // empty Role, and CountStudiesForFacultySponsor("carl") is 3 (count == len(list)).
