@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS useq_product_metrics_mirror (
 	id_run            INTEGER NOT NULL,
 	id_sample_tmp     INTEGER NOT NULL,
 	id_study_lims     TEXT    NOT NULL COLLATE NOCASE,
+	is_sequencing_control INTEGER,
 	qc                INTEGER,
 	qc_seq            INTEGER,
 	qc_lib            INTEGER,

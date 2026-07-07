@@ -61,12 +61,13 @@ import (
 // duplication. The source query recovers id_sample_tmp/id_study_lims through the
 // platform's linkage table and projects the QC columns plus last_changed.
 type productMetricsMirrorSpec struct {
-	syncTable     string
-	mirrorTable   string
-	keyColumn     string
-	mirrorColumns []string
-	sourceQuery   func(state syncStateRecord) (string, []any)
-	qcColumns     int
+	syncTable            string
+	mirrorTable          string
+	keyColumn            string
+	mirrorColumns        []string
+	sourceQuery          func(state syncStateRecord) (string, []any)
+	qcColumns            int
+	hasSequencingControl bool
 	// hasIDRun reports whether the mirror carries an id_run column (the NPG run
 	// id), populated from the source product-metrics row. Elembio and Ultimagen
 	// product-metrics carry id_run (it is their within-sequencing run-status join
@@ -92,6 +93,7 @@ var eseqProductMetricsMirrorColumns = []string{
 	"id_run",
 	"id_sample_tmp",
 	"id_study_lims",
+	"is_sequencing_control",
 	"qc",
 	"qc_seq",
 	"qc_lib",
@@ -104,6 +106,7 @@ var useqProductMetricsMirrorColumns = []string{
 	"id_run",
 	"id_sample_tmp",
 	"id_study_lims",
+	"is_sequencing_control",
 	"qc",
 	"qc_seq",
 	"qc_lib",
@@ -136,14 +139,15 @@ func pacBioProductMetricsSpec() productMetricsMirrorSpec {
 
 func eseqProductMetricsSpec() productMetricsMirrorSpec {
 	return productMetricsMirrorSpec{
-		syncTable:     syncTableEseqProductMetrics,
-		mirrorTable:   "eseq_product_metrics_mirror",
-		keyColumn:     "id_eseq_product",
-		mirrorColumns: eseqProductMetricsMirrorColumns,
-		qcColumns:     3,
-		hasIDRun:      true,
+		syncTable:            syncTableEseqProductMetrics,
+		mirrorTable:          "eseq_product_metrics_mirror",
+		keyColumn:            "id_eseq_product",
+		mirrorColumns:        eseqProductMetricsMirrorColumns,
+		qcColumns:            3,
+		hasSequencingControl: true,
+		hasIDRun:             true,
 		sourceQuery: func(state syncStateRecord) (string, []any) {
-			return `SELECT epm.id_eseq_product, epm.id_eseq_flowcell_tmp, epm.id_run, efc.id_sample_tmp, study.id_study_lims, epm.qc, epm.qc_seq, epm.qc_lib, epm.last_changed FROM eseq_product_metrics epm INNER JOIN eseq_flowcell efc ON efc.id_eseq_flowcell_tmp = epm.id_eseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = efc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE epm.last_changed >= ? ORDER BY epm.last_changed, epm.id_eseq_pr_metrics_tmp`,
+			return `SELECT epm.id_eseq_product, epm.id_eseq_flowcell_tmp, epm.id_run, efc.id_sample_tmp, study.id_study_lims, epm.is_sequencing_control, epm.qc, epm.qc_seq, epm.qc_lib, epm.last_changed FROM eseq_product_metrics epm INNER JOIN eseq_flowcell efc ON efc.id_eseq_flowcell_tmp = epm.id_eseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = efc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE epm.last_changed >= ? ORDER BY epm.last_changed, epm.id_eseq_pr_metrics_tmp`,
 				[]any{formatSyncTime(state.HighWater)}
 		},
 	}
@@ -151,14 +155,15 @@ func eseqProductMetricsSpec() productMetricsMirrorSpec {
 
 func useqProductMetricsSpec() productMetricsMirrorSpec {
 	return productMetricsMirrorSpec{
-		syncTable:     syncTableUseqProductMetrics,
-		mirrorTable:   "useq_product_metrics_mirror",
-		keyColumn:     "id_useq_product",
-		mirrorColumns: useqProductMetricsMirrorColumns,
-		qcColumns:     3,
-		hasIDRun:      true,
+		syncTable:            syncTableUseqProductMetrics,
+		mirrorTable:          "useq_product_metrics_mirror",
+		keyColumn:            "id_useq_product",
+		mirrorColumns:        useqProductMetricsMirrorColumns,
+		qcColumns:            3,
+		hasSequencingControl: true,
+		hasIDRun:             true,
 		sourceQuery: func(state syncStateRecord) (string, []any) {
-			return `SELECT upm.id_useq_product, upm.id_useq_wafer_tmp, upm.id_run, uw.id_sample_tmp, study.id_study_lims, upm.qc, upm.qc_seq, upm.qc_lib, upm.last_changed FROM useq_product_metrics upm INNER JOIN useq_wafer uw ON uw.id_useq_wafer_tmp = upm.id_useq_wafer_tmp INNER JOIN study ON study.id_study_tmp = uw.id_study_tmp AND study.id_lims = 'SQSCP' WHERE upm.last_changed >= ? ORDER BY upm.last_changed, upm.id_useq_pr_metrics_tmp`,
+			return `SELECT upm.id_useq_product, upm.id_useq_wafer_tmp, upm.id_run, uw.id_sample_tmp, study.id_study_lims, upm.is_sequencing_control, upm.qc, upm.qc_seq, upm.qc_lib, upm.last_changed FROM useq_product_metrics upm INNER JOIN useq_wafer uw ON uw.id_useq_wafer_tmp = upm.id_useq_wafer_tmp INNER JOIN study ON study.id_study_tmp = uw.id_study_tmp AND study.id_lims = 'SQSCP' WHERE upm.last_changed >= ? ORDER BY upm.last_changed, upm.id_useq_pr_metrics_tmp`,
 				[]any{formatSyncTime(state.HighWater)}
 		},
 	}
@@ -168,17 +173,19 @@ func useqProductMetricsSpec() productMetricsMirrorSpec {
 // are NULL-preserving (sql.NullInt64, never coerced to 0) so a downstream read
 // maps NULL to "pending", distinct from a 0 "fail" (the A3 precedent).
 type productMetricsMirrorSyncRow struct {
-	ProductID      string
-	LinkID         int64
-	IDRun          int64
-	IDSampleTmp    int64
-	IDStudyLims    string
-	QC             sql.NullInt64
-	QCSeq          sql.NullInt64
-	QCLib          sql.NullInt64
-	LastUpdated    time.Time
-	hasSecondaryQC bool
-	hasIDRun       bool
+	ProductID            string
+	LinkID               int64
+	IDRun                int64
+	IDSampleTmp          int64
+	IDStudyLims          string
+	IsSequencingControl  sql.NullInt64
+	QC                   sql.NullInt64
+	QCSeq                sql.NullInt64
+	QCLib                sql.NullInt64
+	LastUpdated          time.Time
+	hasSecondaryQC       bool
+	hasSequencingControl bool
+	hasIDRun             bool
 }
 
 func syncPacBioProductMetricsTable(ctx context.Context, cache Cache, source Querier, state syncStateRecord) (SyncReport, bool, error) {
@@ -264,13 +271,18 @@ func syncProductMetricsMirrorTable(ctx context.Context, cache Cache, source Quer
 func scanProductMetricsMirrorSyncRow(rows *sql.Rows, spec productMetricsMirrorSpec) (productMetricsMirrorSyncRow, error) {
 	var row productMetricsMirrorSyncRow
 	row.hasSecondaryQC = spec.qcColumns == 3
+	row.hasSequencingControl = spec.hasSequencingControl
 	row.hasIDRun = spec.hasIDRun
 	var lastChanged any
 	targets := []any{&row.ProductID, &row.LinkID}
 	if row.hasIDRun {
 		targets = append(targets, &row.IDRun)
 	}
-	targets = append(targets, &row.IDSampleTmp, &row.IDStudyLims, &row.QC)
+	targets = append(targets, &row.IDSampleTmp, &row.IDStudyLims)
+	if row.hasSequencingControl {
+		targets = append(targets, &row.IsSequencingControl)
+	}
+	targets = append(targets, &row.QC)
 	if row.hasSecondaryQC {
 		targets = append(targets, &row.QCSeq, &row.QCLib)
 	}
@@ -294,7 +306,11 @@ func productMetricsMirrorRowArgs(row productMetricsMirrorSyncRow) []any {
 	if row.hasIDRun {
 		args = append(args, row.IDRun)
 	}
-	args = append(args, row.IDSampleTmp, row.IDStudyLims, row.QC)
+	args = append(args, row.IDSampleTmp, row.IDStudyLims)
+	if row.hasSequencingControl {
+		args = append(args, row.IsSequencingControl)
+	}
+	args = append(args, row.QC)
 	if row.hasSecondaryQC {
 		args = append(args, row.QCSeq, row.QCLib)
 	}
@@ -391,6 +407,7 @@ var iseqRunStatusMirrorColumns = []string{
 	"date",
 	"id_run_status_dict",
 	"iscurrent",
+	"normalised_date",
 }
 
 type iseqRunStatusSyncRow struct {
@@ -517,7 +534,7 @@ func scanIseqRunStatusSyncRow(rows *sql.Rows) (iseqRunStatusSyncRow, error) {
 }
 
 func iseqRunStatusMirrorRowArgs(row iseqRunStatusSyncRow) []any {
-	return []any{row.IDRunStatus, row.IDRun, formatSyncTime(row.Date), row.IDRunStatusDict, row.IsCurrent}
+	return []any{row.IDRunStatus, row.IDRun, formatSyncTime(row.Date), row.IDRunStatusDict, row.IsCurrent, formatSyncDate(row.Date)}
 }
 
 func writeIseqRunStatusBatch(ctx context.Context, cache Cache, rows []iseqRunStatusSyncRow, maxID int64) (syncBatchResult, error) {
@@ -635,21 +652,34 @@ func iseqRunStatusDictWholesaleSpec() wholesaleMirrorSpec {
 
 func oseqFlowcellWholesaleSpec() wholesaleMirrorSpec {
 	return wholesaleMirrorSpec{
-		syncTable:     syncTableOseqFlowcell,
-		mirrorTable:   "oseq_flowcell_mirror",
-		mirrorColumns: []string{"id_oseq_flowcell_tmp", "id_sample_tmp", "id_study_lims"},
-		sourceQuery:   `SELECT ofc.id_oseq_flowcell_tmp, ofc.id_sample_tmp, study.id_study_lims FROM oseq_flowcell ofc INNER JOIN study ON study.id_study_tmp = ofc.id_study_tmp AND study.id_lims = 'SQSCP' ORDER BY ofc.id_oseq_flowcell_tmp`,
+		syncTable:   syncTableOseqFlowcell,
+		mirrorTable: "oseq_flowcell_mirror",
+		mirrorColumns: []string{
+			"id_oseq_flowcell_tmp", "id_sample_tmp", "id_study_lims", "experiment_name",
+			"run_id", "run_uuid", "last_updated", "normalised_date",
+		},
+		sourceQuery: `SELECT ofc.id_oseq_flowcell_tmp, ofc.id_sample_tmp, study.id_study_lims, ofc.experiment_name, ofc.run_id, ofc.run_uuid, ofc.last_updated FROM oseq_flowcell ofc INNER JOIN study ON study.id_study_tmp = ofc.id_study_tmp AND study.id_lims = 'SQSCP' ORDER BY ofc.id_oseq_flowcell_tmp`,
 		scan: func(rows *sql.Rows) ([]any, error) {
 			var idOseqFlowcellTmp, idSampleTmp int64
-			var idStudyLims string
-			if err := rows.Scan(&idOseqFlowcellTmp, &idSampleTmp, &idStudyLims); err != nil {
+			var idStudyLims, experimentName, runUUID, lastUpdated sql.NullString
+			var runID sql.NullInt64
+			if err := rows.Scan(&idOseqFlowcellTmp, &idSampleTmp, &idStudyLims, &experimentName, &runID, &runUUID, &lastUpdated); err != nil {
 				return nil, fmt.Errorf("mlwh: scan oseq_flowcell sync row: %w", err)
 			}
-			if idStudyLims == "" {
+			if idStudyLims.String == "" {
 				return nil, nil
 			}
 
-			return []any{idOseqFlowcellTmp, idSampleTmp, idStudyLims}, nil
+			return []any{
+				idOseqFlowcellTmp,
+				idSampleTmp,
+				idStudyLims.String,
+				nullStringValue(experimentName),
+				runID,
+				nullStringValue(runUUID),
+				normalizeWholesaleTime(lastUpdated),
+				normalisedDateFromNullableTime(lastUpdated),
+			}, nil
 		},
 	}
 }
@@ -687,7 +717,7 @@ func pacBioRunWellMetricsWholesaleSpec() wholesaleMirrorSpec {
 		mirrorTable: "pac_bio_run_well_metrics_mirror",
 		mirrorColumns: []string{
 			"id_pac_bio_rw_metrics_tmp", "pac_bio_run_name", "well_label", "plate_number",
-			"run_start", "run_complete", "well_complete", "qc_seq_date", "run_status", "well_status", "last_updated",
+			"run_start", "run_complete", "well_complete", "qc_seq_date", "run_status", "well_status", "last_updated", "normalised_date",
 		},
 		sourceQuery: `SELECT id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, plate_number, run_start, run_complete, well_complete, qc_seq_date, run_status, well_status, last_changed FROM pac_bio_run_well_metrics ORDER BY id_pac_bio_rw_metrics_tmp`,
 		scan: func(rows *sql.Rows) ([]any, error) {
@@ -699,7 +729,7 @@ func pacBioRunWellMetricsWholesaleSpec() wholesaleMirrorSpec {
 				return nil, fmt.Errorf("mlwh: scan pac_bio_run_well_metrics sync row: %w", err)
 			}
 
-			return []any{idTmp, runName, wellLabel, plateNumber, runStart, runComplete, wellComplete, qcSeqDate, runStatus, wellStatus, normalizeWholesaleTime(lastChanged)}, nil
+			return []any{idTmp, runName, wellLabel, plateNumber, runStart, runComplete, wellComplete, qcSeqDate, runStatus, wellStatus, normalizeWholesaleTime(lastChanged), normalisedDateFromNullableTime(runComplete)}, nil
 		},
 	}
 }
@@ -738,7 +768,7 @@ func eseqRunLaneMetricsWholesaleSpec() wholesaleMirrorSpec {
 	return wholesaleMirrorSpec{
 		syncTable:     syncTableEseqRunLaneMetrics,
 		mirrorTable:   "eseq_run_lane_metrics_mirror",
-		mirrorColumns: []string{"id_run", "lane", "run_started", "run_complete", "last_updated"},
+		mirrorColumns: []string{"id_run", "lane", "run_started", "run_complete", "last_updated", "normalised_date"},
 		sourceQuery:   `SELECT id_run, lane, run_started, run_complete, last_changed FROM eseq_run_lane_metrics ORDER BY id_run, lane`,
 		scan: func(rows *sql.Rows) ([]any, error) {
 			var idRun, lane int64
@@ -747,7 +777,7 @@ func eseqRunLaneMetricsWholesaleSpec() wholesaleMirrorSpec {
 				return nil, fmt.Errorf("mlwh: scan eseq_run_lane_metrics sync row: %w", err)
 			}
 
-			return []any{idRun, lane, runStarted, runComplete, normalizeWholesaleTime(lastChanged)}, nil
+			return []any{idRun, lane, runStarted, runComplete, normalizeWholesaleTime(lastChanged), normalisedDateFromNullableTime(runComplete)}, nil
 		},
 	}
 }
@@ -764,7 +794,7 @@ func useqRunMetricsWholesaleSpec() wholesaleMirrorSpec {
 	return wholesaleMirrorSpec{
 		syncTable:     syncTableUseqRunMetrics,
 		mirrorTable:   "useq_run_metrics_mirror",
-		mirrorColumns: []string{"id_run", "run_name", "run_status", "run_start", "run_complete", "last_updated"},
+		mirrorColumns: []string{"id_run", "run_name", "run_status", "run_start", "run_complete", "last_updated", "normalised_date"},
 		sourceQuery:   `SELECT id_run, run_folder_name, run_in_progress, run_archived, last_changed FROM useq_run_metrics ORDER BY id_run`,
 		scan: func(rows *sql.Rows) ([]any, error) {
 			var idRun int64
@@ -774,7 +804,7 @@ func useqRunMetricsWholesaleSpec() wholesaleMirrorSpec {
 				return nil, fmt.Errorf("mlwh: scan useq_run_metrics sync row: %w", err)
 			}
 
-			return []any{idRun, runFolderName, useqRunMetricsStatus(runInProgress, runArchived), runInProgress, runArchived, normalizeWholesaleTime(lastChanged)}, nil
+			return []any{idRun, runFolderName, useqRunMetricsStatus(runInProgress, runArchived), runInProgress, runArchived, normalizeWholesaleTime(lastChanged), normalisedDateFromNullableTime(runArchived)}, nil
 		},
 	}
 }

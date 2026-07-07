@@ -2032,10 +2032,15 @@ func seedOseqFlowcellMirrorRow(t *testing.T, db *sql.DB, idOseqFlowcellTmp, idSa
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO oseq_flowcell_mirror(id_oseq_flowcell_tmp, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`,
+		`INSERT INTO oseq_flowcell_mirror(id_oseq_flowcell_tmp, id_sample_tmp, id_study_lims, experiment_name, run_id, run_uuid, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		idOseqFlowcellTmp,
 		idSampleTmp,
 		idStudyLims,
+		"ONTRUN-"+formatInt(idOseqFlowcellTmp),
+		nil,
+		"ont-run-uuid-"+formatInt(idOseqFlowcellTmp),
+		formatSyncTime(time.Date(2026, time.May, 6, 12, 10, 0, 0, time.UTC)),
+		"2026-05-06",
 	)
 	if err != nil {
 		t.Fatalf("seedOseqFlowcellMirrorRow(): %v", err)

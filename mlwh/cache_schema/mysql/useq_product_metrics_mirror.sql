@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS useq_product_metrics_mirror (
 	id_run            BIGINT       NOT NULL,
 	id_sample_tmp     BIGINT       NOT NULL,
 	id_study_lims     VARCHAR(255) NOT NULL COLLATE {{MYSQL_TEXT_COLLATION}},
+	is_sequencing_control INT,
 	qc                INT,
 	qc_seq            INT,
 	qc_lib            INT,

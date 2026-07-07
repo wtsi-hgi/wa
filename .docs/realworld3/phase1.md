@@ -58,8 +58,8 @@ from A2 (a MySQL describe shows `char(64)` PK and no separate
 `ipm_mirror_iseq_product_idx`; EXPLAIN uses the PK for the join with no
 implicit collation conversion).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.2: A7 - study_mirror.programme index [parallel with 1.1, 1.3]
 
@@ -72,8 +72,8 @@ exists as a column, so this is index-only (no new column). Covering the
 single acceptance test from A7 (both dialects load with a `programme`
 index, in parity).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.3: A9 - source integration test for new source columns/tables [parallel with 1.1, 1.2]
 
@@ -92,8 +92,8 @@ changes. Covering the single acceptance test from A9 (with creds each
 asserted column/table exists with the expected type and the merged-object
 linkage is present; without creds it skips).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items
@@ -125,8 +125,8 @@ dialects, in parity). Add the `iseq_flowcell` wholesale source arm
 entity_type rows mirrored; is_sequencing_control on both product mirrors
 in parity and populated from source).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.5: A3 - composite (merged) product rows in iseq_product_metrics_mirror
 
@@ -144,8 +144,8 @@ present with its `qc` and `id_iseq_flowcell_tmp`; the export
 iRODS<->product join matches the composite so `manual_qc` is not empty).
 Depends on 1.1 (the char(64) join key).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.6: A4 - denormalised export columns on seq_product_irods_locations_mirror + covering index
 
@@ -172,8 +172,8 @@ Ultima/PacBio/ONT rows carry the specified qc/is_deliverable values).
 Depends on 1.1 (char(64) join), 1.4 (iseq_flowcell + is_sequencing_control
 sources), and 1.5 (composite product rows).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.7: A5 - common_name_word_mirror organism vocabulary
 
@@ -188,8 +188,8 @@ into `sync.go`. Covering the single acceptance test from A5 (word
 `musculus` maps to both `Mus Musculus` and `Mus musculus castaneus`, not
 `Homo sapiens`, and no row has the mid-word fragment `usculus`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.8: A6 - ONT run identity + normalised run dates + run-aggregation indexes
 
@@ -212,8 +212,8 @@ tests from A6 (ONT experiment_name/last_updated carried, run_id NULL;
 EXPLAIN of the monthly run count uses a normalised-date index per
 platform, no full scan).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.9: A8 - version bump, migration, cold-load read-index set
 
@@ -230,8 +230,8 @@ recreate migration reporting `12 -> 13`; the generated OpenAPI doc has
 `info.version == "1.8.0"`). MUST be last: it references the A1/A4/A6
 indexes and the migration lists they register. Depends on 1.4, 1.6, 1.8.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For sequential items, a single review pass after each item (or one pass
 over Batch 2) is acceptable; reviewers must confirm the schema change is

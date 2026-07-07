@@ -4,8 +4,12 @@ CREATE TABLE IF NOT EXISTS eseq_run_lane_metrics_mirror (
 	run_started  TEXT,
 	run_complete TEXT,
 	last_updated TEXT    NOT NULL,
+	normalised_date TEXT NOT NULL,
 	PRIMARY KEY (id_run, lane)
 );
 
 CREATE INDEX IF NOT EXISTS eseq_run_lane_metrics_mirror_id_run_idx
 	ON eseq_run_lane_metrics_mirror(id_run);
+
+CREATE INDEX IF NOT EXISTS eseq_run_lane_metrics_mirror_normalised_date_idx
+	ON eseq_run_lane_metrics_mirror(normalised_date);

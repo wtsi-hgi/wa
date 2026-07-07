@@ -9,8 +9,12 @@ CREATE TABLE IF NOT EXISTS pac_bio_run_well_metrics_mirror (
 	qc_seq_date               TEXT,
 	run_status                TEXT,
 	well_status               TEXT,
-	last_updated              TEXT    NOT NULL
+	last_updated              TEXT    NOT NULL,
+	normalised_date           TEXT    NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS pac_bio_run_well_metrics_mirror_run_name_well_label_idx
 	ON pac_bio_run_well_metrics_mirror(pac_bio_run_name, well_label);
+
+CREATE INDEX IF NOT EXISTS pac_bio_run_well_metrics_mirror_normalised_date_idx
+	ON pac_bio_run_well_metrics_mirror(normalised_date);

@@ -52,14 +52,14 @@ import (
 // per-table assertions below.
 var a4MirrorTables = map[string][]string{
 	"pac_bio_product_metrics_mirror":     {"id_sample_tmp", "id_study_lims"},
-	"pac_bio_run_well_metrics_mirror":    {"pac_bio_run_name,well_label"},
+	"pac_bio_run_well_metrics_mirror":    {"normalised_date", "pac_bio_run_name,well_label"},
 	"eseq_product_metrics_mirror":        {"id_run", "id_sample_tmp", "id_study_lims"},
 	"eseq_run_mirror":                    {"run_name"},
-	"eseq_run_lane_metrics_mirror":       {"id_run"},
+	"eseq_run_lane_metrics_mirror":       {"id_run", "normalised_date"},
 	"useq_product_metrics_mirror":        {"id_run", "id_sample_tmp", "id_study_lims", "id_useq_wafer_tmp"},
-	"useq_run_metrics_mirror":            {"run_name"},
-	"oseq_flowcell_mirror":               {"id_sample_tmp", "id_study_lims"},
-	"iseq_run_status_mirror":             {"id_run", "id_run,date"},
+	"useq_run_metrics_mirror":            {"normalised_date", "run_name"},
+	"oseq_flowcell_mirror":               {"experiment_name", "id_sample_tmp", "id_study_lims", "last_updated", "normalised_date"},
+	"iseq_run_status_mirror":             {"id_run", "id_run,date", "normalised_date,id_run_status_dict,id_run"},
 	"iseq_run_status_dict_mirror":        nil,
 	"seq_ops_tracking_per_sample_mirror": {"id_sample_lims", "sanger_sample_name", "study_id"},
 }
@@ -83,6 +83,14 @@ var studyUsersMirrorColumns = map[string]string{
 // study_users_mirror secondary indexes, in the form parseSchemaShape stores.
 var studyUsersMirrorIndexes = []string{"email", "id_study_tmp", "login", "name", "role"}
 
+var iseqFlowcellMirrorSchemaColumns = map[string]string{
+	"id_iseq_flowcell_tmp": "integer",
+	"entity_type":          "text",
+	"pipeline_id_lims":     "text",
+	"id_sample_tmp":        "integer",
+	"id_study_tmp":         "integer",
+}
+
 // a2NewIndexColumns maps each table A2 adds a single-column index to, to that
 // index's column in the comma-joined form parseSchemaShape stores. study_mirror
 // gains study_mirror_faculty_sponsor_idx (faculty_sponsor) for the D4
@@ -96,11 +104,18 @@ var a2NewIndexColumns = map[string]string{
 	"seq_product_irods_locations_mirror": "id_iseq_product",
 }
 
+const (
+	a2ProductMetricsTable          = "iseq_product_metrics_mirror"
+	a2IRODSLocationsTable          = "seq_product_irods_locations_mirror"
+	a2ProductIDColumn              = "id_iseq_product"
+	a2RedundantMySQLProductIDIndex = "ipm_mirror_iseq_product_idx"
+)
+
 func TestLoadSchema(t *testing.T) {
 	convey.Convey("Given the SQLite schema files", t, func() {
 		stmts, err := loadSchema("sqlite")
 
-		convey.Convey("when loadSchema runs, then it returns the 9 table statements in spec order", func() {
+		convey.Convey("when loadSchema runs, then it returns the table statements in spec order", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(stmts, convey.ShouldHaveLength, len(schemaStatementOrder))
 
@@ -184,6 +199,33 @@ func TestParseSchemaShapeRecordsTokenIndexAsNormalTable(t *testing.T) {
 	})
 }
 
+func TestCommonNameWordMirrorSchemaDeclaresVocabularyTableAndIndex(t *testing.T) {
+	convey.Convey("A5: Given the SQLite and MySQL schemas at the current version", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when common_name_word_mirror is inspected, then both dialects declare (word, common_name) rows indexed by word", func() {
+			convey.So(schemaStatementOrder, convey.ShouldContain, "common_name_word_mirror")
+			convey.So(sqliteShape.Tables, convey.ShouldContainKey, "common_name_word_mirror")
+			convey.So(mysqlShape.Tables, convey.ShouldContainKey, "common_name_word_mirror")
+			convey.So(sqliteShape.Tables["common_name_word_mirror"], convey.ShouldResemble, map[string]string{
+				"word":        "text",
+				"common_name": "text",
+			})
+			convey.So(sqliteShape.Tables["common_name_word_mirror"], convey.ShouldResemble, mysqlShape.Tables["common_name_word_mirror"])
+			convey.So(sqliteShape.Index["common_name_word_mirror"], convey.ShouldResemble, []string{"word"})
+			convey.So(sqliteShape.Index["common_name_word_mirror"], convey.ShouldResemble, mysqlShape.Index["common_name_word_mirror"])
+		})
+	})
+}
+
 func TestSeqProductIRODSLocationsMirrorSQLiteShapeHasCreatedPlatformAndCreatedIndex(t *testing.T) {
 	convey.Convey("A1.1: Given the SQLite schema parsed into a schemaShape", t, func() {
 		stmts, err := loadSchema("sqlite")
@@ -202,6 +244,113 @@ func TestSeqProductIRODSLocationsMirrorSQLiteShapeHasCreatedPlatformAndCreatedIn
 			convey.So(columns["platform"], convey.ShouldEqual, "text")
 			convey.So(shape.Index["seq_product_irods_locations_mirror"], convey.ShouldContain, "id_seq_product_irods_locations_tmp")
 			convey.So(shape.Index["seq_product_irods_locations_mirror"], convey.ShouldContain, "id_study_lims,created")
+		})
+	})
+}
+
+func TestA4SeqProductIRODSLocationsMirrorExportColumnsAndIndexes(t *testing.T) {
+	convey.Convey("A4.1: Given the SQLite and MySQL schemas parsed into schemaShapes", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when seq_product_irods_locations_mirror is inspected, then export columns and indexes exist in dialect parity", func() {
+			requiredColumns := map[string]string{
+				"id_run":         "integer",
+				"position":       "integer",
+				"tag_index":      "integer",
+				"qc":             "integer",
+				"is_deliverable": "integer",
+				"merged":         "integer",
+			}
+			for column, columnType := range requiredColumns {
+				convey.So(sqliteShape.Tables["seq_product_irods_locations_mirror"], convey.ShouldContainKey, column)
+				convey.So(sqliteShape.Tables["seq_product_irods_locations_mirror"][column], convey.ShouldEqual, columnType)
+				convey.So(mysqlShape.Tables["seq_product_irods_locations_mirror"], convey.ShouldContainKey, column)
+				convey.So(mysqlShape.Tables["seq_product_irods_locations_mirror"][column], convey.ShouldEqual, columnType)
+			}
+
+			convey.So(sqliteShape.Nullable["seq_product_irods_locations_mirror"]["qc"], convey.ShouldBeTrue)
+			convey.So(sqliteShape.Nullable["seq_product_irods_locations_mirror"]["is_deliverable"], convey.ShouldBeTrue)
+			convey.So(mysqlShape.Nullable["seq_product_irods_locations_mirror"]["qc"], convey.ShouldBeTrue)
+			convey.So(mysqlShape.Nullable["seq_product_irods_locations_mirror"]["is_deliverable"], convey.ShouldBeTrue)
+
+			requiredIndexes := []string{
+				"id_study_lims,id_run,position,tag_index,id_seq_product_irods_locations_tmp",
+				"id_study_lims,created",
+				"id_sample_tmp,created",
+				"id_run,created",
+			}
+			for _, index := range requiredIndexes {
+				convey.So(sqliteShape.Index["seq_product_irods_locations_mirror"], convey.ShouldContain, index)
+				convey.So(mysqlShape.Index["seq_product_irods_locations_mirror"], convey.ShouldContain, index)
+			}
+
+			convey.So(mysqlShape.Tables["seq_product_irods_locations_mirror"], convey.ShouldResemble, sqliteShape.Tables["seq_product_irods_locations_mirror"])
+			convey.So(mysqlShape.Index["seq_product_irods_locations_mirror"], convey.ShouldResemble, sqliteShape.Index["seq_product_irods_locations_mirror"])
+		})
+	})
+}
+
+func TestA6RunDateMirrorSchemasAndIndexes(t *testing.T) {
+	convey.Convey("A6: Given the SQLite and MySQL schemas parsed into schemaShapes", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when oseq_flowcell_mirror is inspected, then ONT run identity and date columns exist in dialect parity", func() {
+			required := map[string]string{
+				"experiment_name": "text",
+				"run_id":          "integer",
+				"run_uuid":        "text",
+				"last_updated":    "text",
+				"normalised_date": "text",
+			}
+			for column, columnType := range required {
+				convey.So(sqliteShape.Tables["oseq_flowcell_mirror"], convey.ShouldContainKey, column)
+				convey.So(sqliteShape.Tables["oseq_flowcell_mirror"][column], convey.ShouldEqual, columnType)
+				convey.So(mysqlShape.Tables["oseq_flowcell_mirror"], convey.ShouldContainKey, column)
+				convey.So(mysqlShape.Tables["oseq_flowcell_mirror"][column], convey.ShouldEqual, columnType)
+			}
+
+			convey.So(sqliteShape.Nullable["oseq_flowcell_mirror"]["run_id"], convey.ShouldBeTrue)
+			convey.So(mysqlShape.Nullable["oseq_flowcell_mirror"]["run_id"], convey.ShouldBeTrue)
+			convey.So(sqliteShape.Index["oseq_flowcell_mirror"], convey.ShouldContain, "experiment_name")
+			convey.So(sqliteShape.Index["oseq_flowcell_mirror"], convey.ShouldContain, "last_updated")
+			convey.So(sqliteShape.Index["oseq_flowcell_mirror"], convey.ShouldContain, "normalised_date")
+			convey.So(mysqlShape.Index["oseq_flowcell_mirror"], convey.ShouldContain, "experiment_name")
+			convey.So(mysqlShape.Index["oseq_flowcell_mirror"], convey.ShouldContain, "last_updated")
+			convey.So(mysqlShape.Index["oseq_flowcell_mirror"], convey.ShouldContain, "normalised_date")
+		})
+
+		convey.Convey("when run-date source mirrors are inspected, then each has an indexed sync-derived normalised_date", func() {
+			requiredIndexes := map[string]string{
+				"iseq_run_status_mirror":          "normalised_date,id_run_status_dict,id_run",
+				"pac_bio_run_well_metrics_mirror": "normalised_date",
+				"oseq_flowcell_mirror":            "normalised_date",
+				"useq_run_metrics_mirror":         "normalised_date",
+				"eseq_run_lane_metrics_mirror":    "normalised_date",
+			}
+			for table, index := range requiredIndexes {
+				convey.So(sqliteShape.Tables[table], convey.ShouldContainKey, "normalised_date")
+				convey.So(sqliteShape.Tables[table]["normalised_date"], convey.ShouldEqual, "text")
+				convey.So(mysqlShape.Tables[table], convey.ShouldContainKey, "normalised_date")
+				convey.So(mysqlShape.Tables[table]["normalised_date"], convey.ShouldEqual, "text")
+				convey.So(sqliteShape.Index[table], convey.ShouldContain, index)
+				convey.So(mysqlShape.Index[table], convey.ShouldContain, index)
+			}
 		})
 	})
 }
@@ -231,8 +380,7 @@ func TestSeqProductIRODSLocationsMirrorMySQLShapeMatchesSQLite(t *testing.T) {
 
 			convey.So(mysqlShape.Tables["seq_product_irods_locations_mirror"], convey.ShouldResemble, sqliteShape.Tables["seq_product_irods_locations_mirror"])
 			convey.So(mysqlShape.Index["seq_product_irods_locations_mirror"], convey.ShouldResemble, sqliteShape.Index["seq_product_irods_locations_mirror"])
-			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
-			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldBeNil)
+			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
 		})
 	})
 }
@@ -261,9 +409,8 @@ func TestA4MirrorTablesExistWithIndexesAndDialectsCompareEqual(t *testing.T) {
 			}
 		})
 
-		convey.Convey("when the two dialects are compared, then they are structurally equal", func() {
-			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
-			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldBeNil)
+		convey.Convey("when the two dialects are compared, then they are structurally equal apart from MySQL's dropped duplicate product-id index", func() {
+			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
 
 			for table := range a4MirrorTables {
 				convey.So(mysqlShape.Tables[table], convey.ShouldResemble, sqliteShape.Tables[table])
@@ -354,6 +501,48 @@ func TestA1StudyUsersMirrorSQLiteShapeHasColumnsAndIndexes(t *testing.T) {
 	})
 }
 
+func TestA1IseqFlowcellMirrorAndPlatformControlColumnsInBothDialects(t *testing.T) {
+	convey.Convey("A1: Given the sqlite and mysql schemas parsed into schemaShapes", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when iseq_flowcell_mirror is inspected, then it has the product-join primary key and entity_type index in parity", func() {
+			for _, schema := range [][]string{sqliteSchema, mysqlSchema} {
+				ddl, ddlErr := createTableStatement(schema, "iseq_flowcell_mirror")
+				convey.So(ddlErr, convey.ShouldBeNil)
+				definition, ok := createTableColumnDefinition(ddl, "id_iseq_flowcell_tmp")
+				convey.So(ok, convey.ShouldBeTrue)
+				convey.So(strings.ToUpper(definition), convey.ShouldContainSubstring, "PRIMARY KEY")
+			}
+
+			convey.So(sqliteShape.Tables["iseq_flowcell_mirror"], convey.ShouldResemble, iseqFlowcellMirrorSchemaColumns)
+			convey.So(mysqlShape.Tables["iseq_flowcell_mirror"], convey.ShouldResemble, iseqFlowcellMirrorSchemaColumns)
+			convey.So(sqliteShape.Index["iseq_flowcell_mirror"], convey.ShouldResemble, []string{"entity_type"})
+			convey.So(mysqlShape.Index["iseq_flowcell_mirror"], convey.ShouldResemble, []string{"entity_type"})
+			convey.So(sqliteShape.Index["iseq_flowcell_mirror"], convey.ShouldResemble, mysqlShape.Index["iseq_flowcell_mirror"])
+		})
+
+		convey.Convey("when Element and Ultima product mirrors are inspected, then is_sequencing_control is nullable and in parity", func() {
+			for _, table := range []string{"eseq_product_metrics_mirror", "useq_product_metrics_mirror"} {
+				convey.So(sqliteShape.Tables[table]["is_sequencing_control"], convey.ShouldEqual, "integer")
+				convey.So(mysqlShape.Tables[table]["is_sequencing_control"], convey.ShouldEqual, "integer")
+				convey.So(sqliteShape.Nullable[table]["is_sequencing_control"], convey.ShouldBeTrue)
+				convey.So(mysqlShape.Nullable[table]["is_sequencing_control"], convey.ShouldBeTrue)
+				convey.So(sqliteShape.Tables[table], convey.ShouldResemble, mysqlShape.Tables[table])
+			}
+
+			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
+		})
+	})
+}
+
 func TestA1StudyUsersMirrorMySQLShapeMatchesSQLite(t *testing.T) {
 	convey.Convey("A1.2: Given the SQLite and MySQL schemas parsed into schemaShapes", t, func() {
 		sqliteSchema, err := loadSchema("sqlite")
@@ -373,8 +562,7 @@ func TestA1StudyUsersMirrorMySQLShapeMatchesSQLite(t *testing.T) {
 
 			convey.So(mysqlShape.Tables["study_users_mirror"], convey.ShouldResemble, sqliteShape.Tables["study_users_mirror"])
 			convey.So(mysqlShape.Index["study_users_mirror"], convey.ShouldResemble, sqliteShape.Index["study_users_mirror"])
-			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
-			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldBeNil)
+			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
 		})
 	})
 }
@@ -403,13 +591,12 @@ func TestA2NewLookupIndexesExistInBothDialectsAndCompareEqual(t *testing.T) {
 				convey.So(mysqlShape.Index[table], convey.ShouldResemble, sqliteShape.Index[table])
 			}
 
-			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
-			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldBeNil)
+			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
 		})
 	})
 }
 
-func TestA2CrossDialectShapeParityStillPassesWithNewIndexes(t *testing.T) {
+func TestA2CrossDialectShapeParityAllowsMySQLProductIDPrimaryKeyIndexDrop(t *testing.T) {
 	convey.Convey("A2.2: Given both dialect schemas parsed into schemaShapes", t, func() {
 		sqliteSchema, err := loadSchema("sqlite")
 		convey.So(err, convey.ShouldBeNil)
@@ -421,14 +608,39 @@ func TestA2CrossDialectShapeParityStillPassesWithNewIndexes(t *testing.T) {
 		mysqlShape, err := parseSchemaShape(mysqlSchema)
 		convey.So(err, convey.ShouldBeNil)
 
-		convey.Convey("when the full per-table index column lists are compared, then they still match across dialects with the new indexes present", func() {
+		convey.Convey("when the full per-table index column lists are compared, then they match except for MySQL's dropped redundant product-id secondary index", func() {
 			for table, column := range a2NewIndexColumns {
 				convey.So(sqliteShape.Index[table], convey.ShouldContain, column)
 			}
 
-			convey.So(sqliteShape.Index, convey.ShouldResemble, mysqlShape.Index)
-			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
-			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldBeNil)
+			convey.So(sqliteShape.Index[a2ProductMetricsTable], convey.ShouldContain, a2ProductIDColumn)
+			convey.So(mysqlShape.Index[a2ProductMetricsTable], convey.ShouldNotContain, a2ProductIDColumn)
+			convey.So(schemaShapeWithA2MySQLProductIDIndexDropped(sqliteShape).Index, convey.ShouldResemble, mysqlShape.Index)
+			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestA7StudyMirrorProgrammeIndexExistsInBothDialectsAndComparesEqual(t *testing.T) {
+	convey.Convey("A7: Given the sqlite and mysql schemas parsed into schemaShapes", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when study_mirror is inspected, then programme has an index in both dialects", func() {
+			convey.So(sqliteShape.Index["study_mirror"], convey.ShouldContain, "programme")
+			convey.So(mysqlShape.Index["study_mirror"], convey.ShouldContain, "programme")
+		})
+
+		convey.Convey("when the two dialects are compared, then study_mirror indexes and full schema shapes are in parity", func() {
+			convey.So(mysqlShape.Index["study_mirror"], convey.ShouldResemble, sqliteShape.Index["study_mirror"])
+			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
 		})
 	})
 }
@@ -456,10 +668,10 @@ func TestParseSchemaShapeParity(t *testing.T) {
 			convey.So(sqliteShape.Tables, convey.ShouldResemble, mysqlShape.Tables)
 		})
 
-		convey.Convey("when comparing the per-table index column lists, then they match across dialects (including the sample_search_token prefix index)", func() {
+		convey.Convey("when comparing the per-table index column lists, then they match across dialects except for MySQL's product-id PK duplicate removal", func() {
 			convey.So(sqliteErr, convey.ShouldBeNil)
 			convey.So(mysqlErr, convey.ShouldBeNil)
-			convey.So(sqliteShape.Index, convey.ShouldResemble, mysqlShape.Index)
+			convey.So(schemaShapeWithA2MySQLProductIDIndexDropped(sqliteShape).Index, convey.ShouldResemble, mysqlShape.Index)
 			convey.So(sqliteShape.Index["sample_search_token"], convey.ShouldResemble, []string{"token,id_sample_tmp"})
 		})
 
@@ -473,11 +685,10 @@ func TestParseSchemaShapeParity(t *testing.T) {
 			})
 		})
 
-		convey.Convey("when the full schema parity is compared, then tables, columns, indexes, and unique constraints all match across dialects", func() {
+		convey.Convey("when the full schema parity is compared, then tables, columns, indexes, and unique constraints all match after allowing the A2 MySQL-only duplicate-index removal", func() {
 			convey.So(sqliteErr, convey.ShouldBeNil)
 			convey.So(mysqlErr, convey.ShouldBeNil)
-			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
-			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldBeNil)
+			convey.So(compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape), convey.ShouldBeNil)
 		})
 	})
 }
@@ -535,7 +746,7 @@ func TestSQLiteSchemaExecution(t *testing.T) {
 			tables = append(tables, table)
 		}
 
-		convey.Convey("when the schema is executed against SQLite, then all 9 cache tables are created", func() {
+		convey.Convey("when the schema is executed against SQLite, then every ordered cache table is created", func() {
 			convey.So(rows.Err(), convey.ShouldBeNil)
 			convey.So(tables, convey.ShouldResemble, schemaStatementOrder)
 		})
@@ -696,6 +907,222 @@ func TestSchemaDeclaresCaseInsensitiveLookupCollations(t *testing.T) {
 			for _, snippet := range mysqlExpected {
 				convey.So(mysqlDDL, convey.ShouldContainSubstring, snippet)
 			}
+		})
+	})
+}
+
+func TestA2MySQLProductIDDDLDeclaresChar64PrimaryKeyWithoutRedundantIndex(t *testing.T) {
+	convey.Convey("A2: Given the embedded MySQL cache schema", t, func() {
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		productDDL, err := createTableStatement(mysqlSchema, a2ProductMetricsTable)
+		convey.So(err, convey.ShouldBeNil)
+		irodsDDL, err := createTableStatement(mysqlSchema, a2IRODSLocationsTable)
+		convey.So(err, convey.ShouldBeNil)
+		productIndexes, err := createIndexesForTable(mysqlSchema, a2ProductMetricsTable)
+		convey.So(err, convey.ShouldBeNil)
+
+		productDefinition, ok := createTableColumnDefinition(productDDL, a2ProductIDColumn)
+		convey.So(ok, convey.ShouldBeTrue)
+		irodsDefinition, ok := createTableColumnDefinition(irodsDDL, a2ProductIDColumn)
+		convey.So(ok, convey.ShouldBeTrue)
+
+		convey.Convey("when the product mirror id_iseq_product column is inspected, then it is CHAR(64) NOT NULL PRIMARY KEY", func() {
+			fields := strings.Fields(productDefinition)
+			convey.So(len(fields), convey.ShouldBeGreaterThanOrEqualTo, 5)
+			convey.So(strings.ToUpper(fields[1]), convey.ShouldEqual, "CHAR(64)")
+
+			normalized := strings.ToUpper(strings.Join(fields, " "))
+			convey.So(normalized, convey.ShouldContainSubstring, "NOT NULL")
+			convey.So(normalized, convey.ShouldContainSubstring, "PRIMARY KEY")
+		})
+
+		convey.Convey("when the iRODS mirror id_iseq_product column is inspected, then it is CHAR(64) too", func() {
+			fields := strings.Fields(irodsDefinition)
+			convey.So(len(fields), convey.ShouldBeGreaterThanOrEqualTo, 3)
+			convey.So(strings.ToUpper(fields[1]), convey.ShouldEqual, "CHAR(64)")
+
+			normalized := strings.ToUpper(strings.Join(fields, " "))
+			convey.So(normalized, convey.ShouldContainSubstring, "NOT NULL")
+			convey.So(normalized, convey.ShouldNotContainSubstring, "PRIMARY KEY")
+		})
+
+		convey.Convey("when product mirror secondary indexes are inspected, then the redundant id_iseq_product index is not declared", func() {
+			_, ok := productIndexes[a2RedundantMySQLProductIDIndex]
+			convey.So(ok, convey.ShouldBeFalse)
+
+			for name, columns := range productIndexes {
+				convey.So(name, convey.ShouldNotEqual, a2RedundantMySQLProductIDIndex)
+				convey.So(strings.Join(columns, ","), convey.ShouldNotEqual, a2ProductIDColumn)
+			}
+		})
+	})
+}
+
+func createTableStatement(stmts []string, table string) (string, error) {
+	for _, group := range stmts {
+		for _, stmt := range splitSQLStatements(group) {
+			if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(stmt)), "CREATE TABLE") {
+				continue
+			}
+
+			name, _, _, _, err := parseCreateTable(stmt)
+			if err != nil {
+				return "", err
+			}
+			if name == table {
+				return stmt, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("mlwh: create table statement for %s not found", table)
+}
+
+func createIndexesForTable(stmts []string, table string) (map[string][]string, error) {
+	indexes := map[string][]string{}
+	for _, group := range stmts {
+		for _, stmt := range splitSQLStatements(group) {
+			if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(stmt)), "CREATE INDEX") {
+				continue
+			}
+
+			name, err := createIndexName(stmt)
+			if err != nil {
+				return nil, err
+			}
+			indexTable, columns, err := parseCreateIndex(stmt)
+			if err != nil {
+				return nil, err
+			}
+			if indexTable == table {
+				indexes[name] = columns
+			}
+		}
+	}
+
+	return indexes, nil
+}
+
+func createIndexName(stmt string) (string, error) {
+	fields := strings.Fields(strings.Join(strings.Fields(stmt), " "))
+	if len(fields) < 3 || !strings.EqualFold(fields[0], "CREATE") || !strings.EqualFold(fields[1], "INDEX") {
+		return "", fmt.Errorf("mlwh: malformed create index statement %q", stmt)
+	}
+
+	return trimIdentifier(fields[2]), nil
+}
+
+func createTableColumnDefinition(stmt, column string) (string, bool) {
+	bodyStart := strings.Index(stmt, "(")
+	bodyEnd := strings.LastIndex(stmt, ")")
+	if bodyStart == -1 || bodyEnd <= bodyStart {
+		return "", false
+	}
+
+	for _, part := range splitTopLevel(body(stmt, bodyStart, bodyEnd), ',') {
+		fields := strings.Fields(part)
+		if len(fields) < 2 || isTableConstraint(fields) {
+			continue
+		}
+		if trimIdentifier(fields[0]) == column {
+			return strings.Join(fields, " "), true
+		}
+	}
+
+	return "", false
+}
+
+func cloneSchemaShape(shape schemaShape) schemaShape {
+	clone := schemaShape{
+		Tables:   make(map[string]map[string]string, len(shape.Tables)),
+		Index:    make(map[string][]string, len(shape.Index)),
+		Unique:   make(map[string][]string, len(shape.Unique)),
+		Nullable: make(map[string]map[string]bool, len(shape.Nullable)),
+	}
+
+	for table, columns := range shape.Tables {
+		clone.Tables[table] = maps.Clone(columns)
+	}
+	for table, indexes := range shape.Index {
+		clone.Index[table] = slices.Clone(indexes)
+	}
+	for table, uniques := range shape.Unique {
+		clone.Unique[table] = slices.Clone(uniques)
+	}
+	for table, nullable := range shape.Nullable {
+		clone.Nullable[table] = maps.Clone(nullable)
+	}
+
+	return clone
+}
+
+func compareSchemaShapesAllowingA2MySQLProductIDIndexDrop(sqliteShape, mysqlShape schemaShape) error {
+	sqliteForMySQL := schemaShapeWithA2MySQLProductIDIndexDropped(sqliteShape)
+	if err := compareCacheSchemaShapes(sqliteForMySQL, mysqlShape); err != nil {
+		return err
+	}
+
+	return compareCacheSchemaShapes(mysqlShape, sqliteForMySQL)
+}
+
+func schemaShapeWithA2MySQLProductIDIndexDropped(shape schemaShape) schemaShape {
+	clone := cloneSchemaShape(shape)
+	clone.Index[a2ProductMetricsTable] = slices.DeleteFunc(clone.Index[a2ProductMetricsTable], func(columns string) bool {
+		return columns == a2ProductIDColumn
+	})
+
+	return clone
+}
+
+func TestA6MonthlyRunCountSQLitePlansUseNormalisedDateIndexes(t *testing.T) {
+	convey.Convey("A6: Given an opened ephemeral SQLite cache with run-date mirror rows", t, func() {
+		db := openSQLiteSchemaTestDB(t)
+		seedA6RunDatePlanRows(t, db)
+
+		convey.Convey("when monthly count shapes are explained, then every platform source uses its normalised-date index", func() {
+			since := "2026-06-01"
+			until := "2026-08-01"
+
+			assertSQLitePlanUsesIndex(t, db,
+				`SELECT substr(s.normalised_date, 1, 7), COUNT(DISTINCT s.id_run)
+				FROM iseq_run_status_mirror AS s
+				INNER JOIN iseq_run_status_dict_mirror AS d
+					ON d.id_run_status_dict = s.id_run_status_dict
+				WHERE s.normalised_date >= ? AND s.normalised_date < ?
+					AND d.description IN ('run complete', 'run archived')
+				GROUP BY substr(s.normalised_date, 1, 7)`,
+				"iseq_run_status_mirror_normalised_date_idx", since, until,
+			)
+			assertSQLitePlanUsesIndex(t, db,
+				`SELECT substr(normalised_date, 1, 7), COUNT(DISTINCT pac_bio_run_name || ':' || well_label)
+				FROM pac_bio_run_well_metrics_mirror
+				WHERE normalised_date >= ? AND normalised_date < ?
+				GROUP BY substr(normalised_date, 1, 7)`,
+				"pac_bio_run_well_metrics_mirror_normalised_date_idx", since, until,
+			)
+			assertSQLitePlanUsesIndex(t, db,
+				`SELECT substr(normalised_date, 1, 7), COUNT(DISTINCT experiment_name)
+				FROM oseq_flowcell_mirror
+				WHERE normalised_date >= ? AND normalised_date < ?
+				GROUP BY substr(normalised_date, 1, 7)`,
+				"oseq_flowcell_mirror_normalised_date_idx", since, until,
+			)
+			assertSQLitePlanUsesIndex(t, db,
+				`SELECT substr(normalised_date, 1, 7), COUNT(DISTINCT id_run)
+				FROM useq_run_metrics_mirror
+				WHERE normalised_date >= ? AND normalised_date < ?
+				GROUP BY substr(normalised_date, 1, 7)`,
+				"useq_run_metrics_mirror_normalised_date_idx", since, until,
+			)
+			assertSQLitePlanUsesIndex(t, db,
+				`SELECT substr(normalised_date, 1, 7), COUNT(DISTINCT id_run)
+				FROM eseq_run_lane_metrics_mirror
+				WHERE normalised_date >= ? AND normalised_date < ?
+				GROUP BY substr(normalised_date, 1, 7)`,
+				"eseq_run_lane_metrics_mirror_normalised_date_idx", since, until,
+			)
 		})
 	})
 }
@@ -1163,10 +1590,10 @@ func insertReadBackPacBioRunWellMetricsMirror(t *testing.T, db *sql.DB) error {
 	t.Helper()
 
 	if _, err := db.Exec(
-		`INSERT INTO pac_bio_run_well_metrics_mirror(id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, plate_number, run_start, run_complete, well_complete, qc_seq_date, run_status, well_status, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO pac_bio_run_well_metrics_mirror(id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, plate_number, run_start, run_complete, well_complete, qc_seq_date, run_status, well_status, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		int64(11), "run-A", "A01", int64(1),
 		"2026-06-20T00:00:00Z", "2026-06-21T00:00:00Z", "2026-06-22T00:00:00Z", "2026-06-23T00:00:00Z",
-		"Complete", "Complete", "2026-06-24T00:00:00Z",
+		"Complete", "Complete", "2026-06-24T00:00:00Z", "2026-06-21",
 	); err != nil {
 		return err
 	}
@@ -1265,8 +1692,8 @@ func insertReadBackEseqRunLaneMetricsMirror(t *testing.T, db *sql.DB) error {
 	t.Helper()
 
 	if _, err := db.Exec(
-		`INSERT INTO eseq_run_lane_metrics_mirror(id_run, lane, run_started, run_complete, last_updated) VALUES (?, ?, ?, ?, ?)`,
-		int64(7700), int64(1), "2026-06-20T00:00:00Z", "2026-06-21T00:00:00Z", "2026-06-26T10:00:00Z",
+		`INSERT INTO eseq_run_lane_metrics_mirror(id_run, lane, run_started, run_complete, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?)`,
+		int64(7700), int64(1), "2026-06-20T00:00:00Z", "2026-06-21T00:00:00Z", "2026-06-26T10:00:00Z", "2026-06-21",
 	); err != nil {
 		return err
 	}
@@ -1331,8 +1758,8 @@ func insertReadBackUseqRunMetricsMirror(t *testing.T, db *sql.DB) error {
 	t.Helper()
 
 	if _, err := db.Exec(
-		`INSERT INTO useq_run_metrics_mirror(id_run, run_name, run_status, run_start, run_complete, last_updated) VALUES (?, ?, ?, ?, ?, ?)`,
-		int64(7800), "useq-run-A", "Running", "2026-06-20T00:00:00Z", nil, "2026-06-26T10:00:00Z",
+		`INSERT INTO useq_run_metrics_mirror(id_run, run_name, run_status, run_start, run_complete, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		int64(7800), "useq-run-A", "Running", "2026-06-20T00:00:00Z", nil, "2026-06-26T10:00:00Z", "",
 	); err != nil {
 		return err
 	}
@@ -1361,8 +1788,8 @@ func insertReadBackOseqFlowcellMirror(t *testing.T, db *sql.DB) error {
 	t.Helper()
 
 	if _, err := db.Exec(
-		`INSERT INTO oseq_flowcell_mirror(id_oseq_flowcell_tmp, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`,
-		int64(71), int64(104), "6568",
+		`INSERT INTO oseq_flowcell_mirror(id_oseq_flowcell_tmp, id_sample_tmp, id_study_lims, experiment_name, run_id, run_uuid, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		int64(71), int64(104), "6568", "ONTRUN-71", nil, "ont-run-uuid-71", "2026-06-24T00:00:00Z", "2026-06-24",
 	); err != nil {
 		return err
 	}
@@ -1389,8 +1816,8 @@ func insertReadBackIseqRunStatusMirror(t *testing.T, db *sql.DB) error {
 	t.Helper()
 
 	if _, err := db.Exec(
-		`INSERT INTO iseq_run_status_mirror(id_run_status, id_run, date, id_run_status_dict, iscurrent) VALUES (?, ?, ?, ?, ?)`,
-		int64(900), int64(52553), "2026-06-25T09:00:00Z", int64(4), int64(1),
+		`INSERT INTO iseq_run_status_mirror(id_run_status, id_run, date, id_run_status_dict, iscurrent, normalised_date) VALUES (?, ?, ?, ?, ?, ?)`,
+		int64(900), int64(52553), "2026-06-25T09:00:00Z", int64(4), int64(1), "2026-06-25",
 	); err != nil {
 		return err
 	}
@@ -1489,4 +1916,87 @@ func insertReadBackSeqOpsTrackingPerSampleMirror(t *testing.T, db *sql.DB) error
 	convey.So(sequencingQCDone.Valid, convey.ShouldBeFalse)
 
 	return nil
+}
+
+func seedA6RunDatePlanRows(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	execSchemaTestSQL(t, db,
+		`INSERT INTO iseq_run_status_dict_mirror(id_run_status_dict, description, temporal_index) VALUES (?, ?, ?)`,
+		int64(1), "run complete", int64(1),
+	)
+	execSchemaTestSQL(t, db,
+		`INSERT INTO iseq_run_status_dict_mirror(id_run_status_dict, description, temporal_index) VALUES (?, ?, ?)`,
+		int64(2), "run archived", int64(2),
+	)
+	execSchemaTestSQL(t, db,
+		`INSERT INTO iseq_run_status_mirror(id_run_status, id_run, date, id_run_status_dict, iscurrent, normalised_date) VALUES (?, ?, ?, ?, ?, ?)`,
+		int64(101), int64(52553), "2026-07-01T09:30:00Z", int64(1), int64(1), "2026-07-01",
+	)
+	execSchemaTestSQL(t, db,
+		`INSERT INTO pac_bio_run_well_metrics_mirror(id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, plate_number, run_start, run_complete, well_complete, qc_seq_date, run_status, well_status, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		int64(201), "pacbio-run-a", "A01", int64(1), "2026-06-01T08:00:00Z", "2026-06-02T08:00:00Z", nil, nil, "Complete", "Complete", "2026-06-03T08:00:00Z", "2026-06-02",
+	)
+	execSchemaTestSQL(t, db,
+		`INSERT INTO oseq_flowcell_mirror(id_oseq_flowcell_tmp, id_sample_tmp, id_study_lims, experiment_name, run_id, run_uuid, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		int64(301), int64(104), "6568", "ONTRUN-11", nil, "ont-run-uuid-11", "2026-06-04T10:00:00Z", "2026-06-04",
+	)
+	execSchemaTestSQL(t, db,
+		`INSERT INTO useq_run_metrics_mirror(id_run, run_name, run_status, run_start, run_complete, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		int64(401), "ultima-run-a", "run archived", "2026-06-05T08:00:00Z", "2026-06-06T08:00:00Z", "2026-06-07T08:00:00Z", "2026-06-06",
+	)
+	execSchemaTestSQL(t, db,
+		`INSERT INTO eseq_run_lane_metrics_mirror(id_run, lane, run_started, run_complete, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?)`,
+		int64(501), int64(1), "2026-06-08T08:00:00Z", "2026-06-09T08:00:00Z", "2026-06-10T08:00:00Z", "2026-06-09",
+	)
+}
+
+func execSchemaTestSQL(t *testing.T, db *sql.DB, query string, args ...any) {
+	t.Helper()
+
+	if _, err := db.Exec(query, args...); err != nil {
+		t.Fatalf("exec schema test SQL %q: %v", query, err)
+	}
+}
+
+func assertSQLitePlanUsesIndex(t *testing.T, db *sql.DB, query, indexName string, args ...any) {
+	t.Helper()
+
+	details := explainSQLiteQueryPlanDetails(t, db, query, args...)
+	for _, detail := range details {
+		if strings.Contains(detail, "SEARCH") && strings.Contains(detail, indexName) {
+			return
+		}
+	}
+
+	t.Fatalf("expected EXPLAIN QUERY PLAN for %s to use %s as a SEARCH; details: %v", query, indexName, details)
+}
+
+func explainSQLiteQueryPlanDetails(t *testing.T, db *sql.DB, query string, args ...any) []string {
+	t.Helper()
+
+	rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatalf("EXPLAIN QUERY PLAN %q: %v", query, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var details []string
+	for rows.Next() {
+		var (
+			id     int
+			parent int
+			unused int
+			detail string
+		)
+		if err = rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatalf("scan EXPLAIN QUERY PLAN %q: %v", query, err)
+		}
+		details = append(details, detail)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatalf("read EXPLAIN QUERY PLAN %q: %v", query, err)
+	}
+
+	return details
 }

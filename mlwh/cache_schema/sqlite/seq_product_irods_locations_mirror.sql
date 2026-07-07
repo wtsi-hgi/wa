@@ -10,6 +10,12 @@ CREATE TABLE IF NOT EXISTS seq_product_irods_locations_mirror (
 	last_updated             TEXT    NOT NULL,
 	created                  TEXT,
 	platform                 TEXT    NOT NULL,
+	id_run                   INTEGER NOT NULL DEFAULT 0,
+	position                 INTEGER NOT NULL DEFAULT 0,
+	tag_index                INTEGER NOT NULL DEFAULT 0,
+	qc                       INTEGER,
+	is_deliverable           INTEGER,
+	merged                   INTEGER NOT NULL DEFAULT 0,
 	CHECK(id_study_lims <> '')
 );
 
@@ -27,6 +33,15 @@ CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_sample_tmp_idx
 
 CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_created_idx
 	ON seq_product_irods_locations_mirror(id_study_lims, created);
+
+CREATE INDEX IF NOT EXISTS spi_mirror_sample_tmp_created_idx
+	ON seq_product_irods_locations_mirror(id_sample_tmp, created);
+
+CREATE INDEX IF NOT EXISTS spi_mirror_run_created_idx
+	ON seq_product_irods_locations_mirror(id_run, created);
+
+CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_export_idx
+	ON seq_product_irods_locations_mirror(id_study_lims, id_run, position, tag_index, id_seq_product_irods_locations_tmp);
 
 CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_iseq_product_idx
 	ON seq_product_irods_locations_mirror(id_study_lims, id_iseq_product);

@@ -4,8 +4,12 @@ CREATE TABLE IF NOT EXISTS useq_run_metrics_mirror (
 	run_status   TEXT,
 	run_start    TEXT,
 	run_complete TEXT,
-	last_updated TEXT    NOT NULL
+	last_updated TEXT    NOT NULL,
+	normalised_date TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS useq_run_metrics_mirror_run_name_idx
 	ON useq_run_metrics_mirror(run_name);
+
+CREATE INDEX IF NOT EXISTS useq_run_metrics_mirror_normalised_date_idx
+	ON useq_run_metrics_mirror(normalised_date);

@@ -1646,12 +1646,13 @@ func seedIseqRunStatusMirrorRow(t *testing.T, db *sql.DB, idRunStatus, idRun int
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO iseq_run_status_mirror(id_run_status, id_run, date, id_run_status_dict, iscurrent) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO iseq_run_status_mirror(id_run_status, id_run, date, id_run_status_dict, iscurrent, normalised_date) VALUES (?, ?, ?, ?, ?, ?)`,
 		idRunStatus,
 		idRun,
 		formatSyncTime(date),
 		idRunStatusDict,
 		iscurrent,
+		formatSyncDate(date),
 	)
 	if err != nil {
 		t.Fatalf("seedIseqRunStatusMirrorRow(): %v", err)
@@ -1677,7 +1678,7 @@ func seedPacBioRunWellMetricsMirrorRow(t *testing.T, db *sql.DB, idPacBioRWMetri
 	}
 
 	_, err := db.Exec(
-		`INSERT INTO pac_bio_run_well_metrics_mirror(id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, run_start, run_complete, well_complete, qc_seq_date, run_status, well_status, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO pac_bio_run_well_metrics_mirror(id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, run_start, run_complete, well_complete, qc_seq_date, run_status, well_status, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		idPacBioRWMetrics,
 		"pb-run-"+formatInt(idPacBioRWMetrics),
 		"A01",
@@ -1688,6 +1689,7 @@ func seedPacBioRunWellMetricsMirrorRow(t *testing.T, db *sql.DB, idPacBioRWMetri
 		runStatus,
 		wellStatus,
 		formatSyncTime(time.Date(2026, time.May, 6, 12, 10, 0, 0, time.UTC)),
+		normalisedDateFromDateMap(dates, "run_complete"),
 	)
 	if err != nil {
 		t.Fatalf("seedPacBioRunWellMetricsMirrorRow(): %v", err)
@@ -1771,12 +1773,13 @@ func seedEseqRunLaneMetricsMirrorRow(t *testing.T, db *sql.DB, idRun int64, date
 	}
 
 	_, err := db.Exec(
-		`INSERT INTO eseq_run_lane_metrics_mirror(id_run, lane, run_started, run_complete, last_updated) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO eseq_run_lane_metrics_mirror(id_run, lane, run_started, run_complete, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?)`,
 		idRun,
 		int64(1),
 		dated("run_started"),
 		dated("run_complete"),
 		formatSyncTime(time.Date(2026, time.May, 6, 12, 10, 0, 0, time.UTC)),
+		normalisedDateFromDateMap(dates, "run_complete"),
 	)
 	if err != nil {
 		t.Fatalf("seedEseqRunLaneMetricsMirrorRow(): %v", err)
@@ -1822,17 +1825,26 @@ func seedUseqRunMetricsMirrorRow(t *testing.T, db *sql.DB, idRun int64, runStatu
 	}
 
 	_, err := db.Exec(
-		`INSERT INTO useq_run_metrics_mirror(id_run, run_name, run_status, run_start, run_complete, last_updated) VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO useq_run_metrics_mirror(id_run, run_name, run_status, run_start, run_complete, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		idRun,
 		"useq-run-"+formatInt(idRun),
 		runStatus,
 		dated("run_start"),
 		dated("run_complete"),
 		formatSyncTime(time.Date(2026, time.May, 6, 12, 10, 0, 0, time.UTC)),
+		normalisedDateFromDateMap(dates, "run_complete"),
 	)
 	if err != nil {
 		t.Fatalf("seedUseqRunMetricsMirrorRow(): %v", err)
 	}
+}
+
+func normalisedDateFromDateMap(dates map[string]time.Time, name string) string {
+	if value, ok := dates[name]; ok {
+		return formatSyncDate(value)
+	}
+
+	return ""
 }
 
 func TestSampleProgressUsesSyncedUltimagenLifecyclePhases(t *testing.T) {

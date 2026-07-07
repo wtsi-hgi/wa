@@ -51,11 +51,10 @@ const (
 	mysqlSyncLockNamePrefix        = "wa_mlwh_sync_"
 
 	// CacheSchemaVersion is the embedded cache schema version supported by OpenCache.
-	// Bumped to 12 to add seq_product_irods_locations_mirror's stable upstream
-	// source-row id and index. Existing mirror rows lack that identity, so the
-	// migration recreates the mirror tables and clears their sync_state rows;
-	// the next sync repopulates them with source ids for stale-row replacement.
-	CacheSchemaVersion = 12
+	// Bumped to 13 for the Phase 1 foundation schema. The existing migration
+	// recreates mirror tables and clears their sync_state rows; the next sync
+	// repopulates the new/changed mirrors.
+	CacheSchemaVersion = 13
 )
 
 var (
@@ -751,7 +750,10 @@ func compareCacheSchemaShapes(expected, actual schemaShape) error {
 }
 
 func allowLargeMySQLColdLoadIndexShape(ctx context.Context, db *sql.DB, expected, actual schemaShape) {
-	for _, indexSet := range []syncMirrorIndexSet{iseqProductMetricsMirrorIndexSet, seqProductIRODSLocationsMirrorIndexSet} {
+	for _, indexSet := range syncMirrorIndexSets {
+		if _, ok := mySQLSparseMirrorReadIndexSet(indexSet); !ok {
+			continue
+		}
 		if stringSlicesEqual(expected.Index[indexSet.Table], actual.Index[indexSet.Table]) {
 			continue
 		}
@@ -770,7 +772,7 @@ func allowLargeMySQLColdLoadIndexShape(ctx context.Context, db *sql.DB, expected
 }
 
 func allowLargeSQLiteColdLoadIndexShape(ctx context.Context, db *sql.DB, expected, actual schemaShape) {
-	for _, indexSet := range []syncMirrorIndexSet{sampleMirrorIndexSet, iseqProductMetricsMirrorIndexSet, seqProductIRODSLocationsMirrorIndexSet} {
+	for _, indexSet := range syncMirrorIndexSets {
 		if stringSlicesEqual(expected.Index[indexSet.Table], actual.Index[indexSet.Table]) {
 			continue
 		}
@@ -798,22 +800,27 @@ func sqliteLargeCacheReadIndexShape(indexSet syncMirrorIndexSet, actual []string
 			stringSlicesEqual(actual, []string{"id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"}) ||
 			stringSlicesEqual(actual, []string{"id_sample_tmp", "id_study_lims,id_sample_tmp"})
 	default:
-		return false
+		columns, ok := sparseMirrorReadIndexColumns(indexSet)
+		return ok && stringSlicesEqual(actual, columns)
 	}
 }
 
 func iseqProductMetricsSparseReadIndexColumns() []string {
-	return []string{"id_iseq_product", "id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_study_lims,id_run,position"}
+	columns, _ := sparseMirrorReadIndexColumns(iseqProductMetricsMirrorIndexSet)
+
+	return columns
 }
 
 // seqProductIRODSLocationsSparseReadIndexColumns is the sorted, comma-joined column
 // shape of the iRODS-locations mirror's sparse cold-load read index set
 // (seqProductIRODSLocationsMirrorReadIndexes), used to accept the post-cold-load
-// shape that includes the source-row replacement index, the (id_study_lims,
-// id_iseq_product) status-breakdown index, and the (id_iseq_product) D1
-// run-scope / D2 manifest LEFT JOIN index.
+// shape that includes the source-row replacement index, the export covering
+// index, the recency indexes, the status-breakdown index, and product-id join
+// indexes.
 func seqProductIRODSLocationsSparseReadIndexColumns() []string {
-	return []string{"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"}
+	columns, _ := sparseMirrorReadIndexColumns(seqProductIRODSLocationsMirrorIndexSet)
+
+	return columns
 }
 
 func sqliteSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table string) bool {
@@ -823,6 +830,21 @@ func sqliteSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table
 	}
 
 	return indexesDropped == 1
+}
+
+func sparseMirrorReadIndexColumns(indexSet syncMirrorIndexSet) ([]string, bool) {
+	readIndexSet, ok := mySQLSparseMirrorReadIndexSet(indexSet)
+	if !ok {
+		return nil, false
+	}
+
+	columns := make([]string, 0, len(readIndexSet.Indexes))
+	for _, index := range readIndexSet.Indexes {
+		columns = append(columns, strings.ReplaceAll(index.Column, " ", ""))
+	}
+	sort.Strings(columns)
+
+	return columns, true
 }
 
 func mysqlSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table string) bool {

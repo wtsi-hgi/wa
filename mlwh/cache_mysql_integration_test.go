@@ -213,6 +213,193 @@ func TestRealMySQLCacheReadQueriesExecuteAndIndexesApplied(t *testing.T) {
 	})
 }
 
+type mysqlColumnDescription struct {
+	dataType               string
+	characterMaximumLength sql.NullInt64
+	isNullable             string
+	columnKey              string
+	characterSet           sql.NullString
+	collation              sql.NullString
+}
+
+func describeMySQLColumn(t *testing.T, db *sql.DB, table, column string) mysqlColumnDescription {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var description mysqlColumnDescription
+	err := db.QueryRowContext(ctx, `
+		SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE, COLUMN_KEY,
+		       CHARACTER_SET_NAME, COLLATION_NAME
+		FROM INFORMATION_SCHEMA.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
+	`, table, column).Scan(
+		&description.dataType,
+		&description.characterMaximumLength,
+		&description.isNullable,
+		&description.columnKey,
+		&description.characterSet,
+		&description.collation,
+	)
+	if err != nil {
+		t.Fatalf("describe MySQL column %s.%s: %v", table, column, err)
+	}
+
+	return description
+}
+
+// TestRealMySQLA2ProductIDSchemaAndJoinUsesPrimaryKey is a runtime-skipped (NOT
+// build-tagged) integration test against a throwaway MySQL cache. It is the
+// MySQL-only guard for A2: a fresh schema must describe the Illumina product id as
+// CHAR(64) PRIMARY KEY, keep the iRODS side aligned to CHAR(64), omit the
+// redundant secondary product-id index, and use the product mirror PRIMARY key for
+// the iRODS<->product join with matching string metadata on both sides.
+func TestRealMySQLA2ProductIDSchemaAndJoinUsesPrimaryKey(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	writeDB := cache.cache.DB()
+	seedA2ProductIDJoinScenarioMySQL(t, writeDB)
+
+	convey.Convey("A2: Given a freshly built throwaway MySQL cache schema", t, func() {
+		productColumn := describeMySQLColumn(t, writeDB, a2ProductMetricsTable, a2ProductIDColumn)
+		irodsColumn := describeMySQLColumn(t, writeDB, a2IRODSLocationsTable, a2ProductIDColumn)
+
+		convey.Convey("when the product and iRODS id_iseq_product columns are described, then they are fixed-width and the product side is the primary key", func() {
+			convey.So(productColumn.dataType, convey.ShouldEqual, "char")
+			convey.So(productColumn.characterMaximumLength.Valid, convey.ShouldBeTrue)
+			convey.So(productColumn.characterMaximumLength.Int64, convey.ShouldEqual, 64)
+			convey.So(productColumn.isNullable, convey.ShouldEqual, "NO")
+			convey.So(productColumn.columnKey, convey.ShouldEqual, "PRI")
+
+			convey.So(irodsColumn.dataType, convey.ShouldEqual, "char")
+			convey.So(irodsColumn.characterMaximumLength.Valid, convey.ShouldBeTrue)
+			convey.So(irodsColumn.characterMaximumLength.Int64, convey.ShouldEqual, 64)
+			convey.So(irodsColumn.isNullable, convey.ShouldEqual, "NO")
+			convey.So(irodsColumn.characterSet, convey.ShouldResemble, productColumn.characterSet)
+			convey.So(irodsColumn.collation, convey.ShouldResemble, productColumn.collation)
+
+			indexNames := readMySQLSecondaryIndexNames(t, writeDB, a2ProductMetricsTable)
+			convey.So(indexNames, convey.ShouldNotContain, a2RedundantMySQLProductIDIndex)
+		})
+
+		convey.Convey("when EXPLAIN runs the iRODS to product join, then the product mirror is reached through PRIMARY with aligned string metadata", func() {
+			convey.So(irodsColumn.dataType, convey.ShouldEqual, productColumn.dataType)
+			convey.So(irodsColumn.characterMaximumLength, convey.ShouldResemble, productColumn.characterMaximumLength)
+			convey.So(irodsColumn.characterSet, convey.ShouldResemble, productColumn.characterSet)
+			convey.So(irodsColumn.collation, convey.ShouldResemble, productColumn.collation)
+
+			plans := explainPlanRows(t, writeDB, `
+				SELECT spi.id_seq_product_irods_locations_tmp
+				FROM seq_product_irods_locations_mirror spi
+				STRAIGHT_JOIN iseq_product_metrics_mirror ipm
+					ON ipm.id_iseq_product = spi.id_iseq_product
+				WHERE spi.id_study_lims = ?
+			`, "A2")
+
+			spiPlan, ok := findExplainPlanRow(plans, "spi")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(spiPlan.scanType), convey.ShouldNotEqual, "all")
+
+			ipmPlan, ok := findExplainPlanRow(plans, "ipm")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(ipmPlan.scanType), convey.ShouldNotEqual, "all")
+			convey.So(ipmPlan.key, convey.ShouldEqual, "PRIMARY")
+			convey.So(ipmPlan.possibleKeys, convey.ShouldContainSubstring, "PRIMARY")
+		})
+	})
+}
+
+func seedA2ProductIDJoinScenarioMySQL(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	productID := strings.Repeat("a", 64)
+	_, err := db.Exec(
+		`INSERT INTO iseq_product_metrics_mirror(id_iseq_product, id_iseq_flowcell_tmp, id_run, position, tag_index, id_sample_tmp, id_study_lims, qc, qc_lib, qc_seq, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		productID,
+		int64(700001),
+		int64(70001),
+		1,
+		1,
+		int64(701),
+		"A2",
+		1,
+		1,
+		1,
+		formatSyncTime(time.Date(2026, time.June, 20, 12, 0, 0, 0, time.UTC)),
+	)
+	if err != nil {
+		t.Fatalf("seed A2 product mirror row: %v", err)
+	}
+
+	_, err = db.Exec(
+		`INSERT INTO seq_product_irods_locations_mirror(id_seq_product_irods_locations_tmp, id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		int64(1),
+		productID,
+		"/seq",
+		"70001_1#1.cram",
+		"/seq/70001",
+		"70001_1#1.cram",
+		int64(701),
+		"A2",
+		formatSyncTime(time.Date(2026, time.June, 20, 12, 1, 0, 0, time.UTC)),
+		formatSyncTime(time.Date(2026, time.June, 20, 12, 1, 0, 0, time.UTC)),
+		"illumina",
+	)
+	if err != nil {
+		t.Fatalf("seed A2 iRODS mirror row: %v", err)
+	}
+
+	if _, err = db.Exec("ANALYZE TABLE iseq_product_metrics_mirror, seq_product_irods_locations_mirror"); err != nil {
+		t.Fatalf("analyze A2 MySQL fixture tables: %v", err)
+	}
+}
+
+func readMySQLSecondaryIndexNames(t *testing.T, db *sql.DB, table string) []string {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT DISTINCT INDEX_NAME
+		FROM INFORMATION_SCHEMA.STATISTICS
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME <> 'PRIMARY'
+		ORDER BY INDEX_NAME
+	`, table)
+	if err != nil {
+		t.Fatalf("read MySQL secondary index names for %s: %v", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			t.Fatalf("scan MySQL secondary index name for %s: %v", table, err)
+		}
+		names = append(names, name)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatalf("read MySQL secondary index names for %s: %v", table, err)
+	}
+
+	return names
+}
+
 // seedF4StatusBreakdownScenarioMySQL seeds the same multi-platform + ONT status
 // breakdown fixture as seedF4StatusBreakdownScenario, but stamps sync_state with the
 // dialect-neutral plain-INSERT seedSyncStateRun instead of the SQLite-only ON
@@ -491,20 +678,11 @@ func createThrowawayMySQLCacheDBOrSkip(t *testing.T, baseDSN, password string) s
 	return throwaway.FormatDSN()
 }
 
-// throwawayCacheDBName derives a unique throwaway db name from the configured
-// cache db name by replacing its last _<segment> with _it<random>, e.g.
-// workflow_automation_mlwh_sb10 -> workflow_automation_mlwh_it<random>. When the
-// name has no _<segment>, the suffix is appended instead, so the result is always
-// distinct from the configured name.
+// throwawayCacheDBName derives a unique dev-prefixed throwaway db name, keeping
+// live validation safely inside workflow_automation_mlwh_dev* databases and
+// distinct from the configured cache db.
 func throwawayCacheDBName(configured string) string {
-	suffix := "it" + randomHexToken()
-
-	idx := strings.LastIndex(configured, "_")
-	if idx < 0 {
-		return configured + "_" + suffix
-	}
-
-	return configured[:idx+1] + suffix
+	return "workflow_automation_mlwh_dev_it" + randomHexToken()
 }
 
 // randomHexToken returns a short random hex token unique per test run so
@@ -552,6 +730,7 @@ type mysqlExplainPlanRow struct {
 	scanType     string
 	key          string
 	possibleKeys string
+	extra        string
 }
 
 // findExplainPlanRow returns the EXPLAIN plan row for the given query alias (the
@@ -569,6 +748,98 @@ func findExplainPlanRow(plans []mysqlExplainPlanRow, alias string) (mysqlExplain
 	return mysqlExplainPlanRow{}, false
 }
 
+func TestRealMySQLA4StudyExportScanUsesCoveringIndex(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	writeDB := cache.cache.DB()
+	seedA4StudyExportScanScenarioMySQL(t, writeDB)
+
+	convey.Convey("A4: Given a freshly built throwaway MySQL cache with study-scoped iRODS rows", t, func() {
+		convey.Convey("when EXPLAIN runs the export keyset scan, then the iRODS mirror uses the covering index range without filesort", func() {
+			plans := explainPlanRows(t, writeDB, `
+				SELECT spi.id_seq_product_irods_locations_tmp, spi.id_run, spi.position, spi.tag_index
+				FROM seq_product_irods_locations_mirror spi
+				WHERE spi.id_study_lims = ?
+				ORDER BY spi.id_run, spi.position, spi.tag_index, spi.id_seq_product_irods_locations_tmp
+				LIMIT 100
+			`, "A4")
+
+			plan, ok := findExplainPlanRow(plans, "spi")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+			convey.So(plan.key, convey.ShouldEqual, "spi_mirror_study_lims_export_idx")
+			convey.So(strings.ToLower(plan.extra), convey.ShouldNotContainSubstring, "filesort")
+		})
+	})
+}
+
+func seedA4StudyExportScanScenarioMySQL(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	base := time.Date(2026, time.July, 1, 11, 0, 0, 0, time.UTC)
+	for i := range 250 {
+		study := "A4-decoy"
+		if i < 5 {
+			study = "A4"
+		}
+		_, err := db.Exec(
+			`INSERT INTO seq_product_irods_locations_mirror(id_seq_product_irods_locations_tmp, id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform, id_run, position, tag_index, qc, is_deliverable, merged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			int64(1000+i),
+			fmt.Sprintf("a4-product-%03d", i),
+			"/seq",
+			fmt.Sprintf("run/%03d.cram", i),
+			"/seq/run",
+			fmt.Sprintf("%03d.cram", i),
+			int64(2000+i),
+			study,
+			formatSyncTime(base.Add(time.Duration(i)*time.Second)),
+			formatSyncTime(base.Add(time.Duration(i)*time.Second)),
+			"illumina",
+			int64(50000+i%7),
+			int64(i%8+1),
+			int64(i%12+1),
+			1,
+			1,
+			0,
+		)
+		if err != nil {
+			t.Fatalf("seed A4 export scan row %d: %v", i, err)
+		}
+	}
+
+	if _, err := db.Exec("ANALYZE TABLE seq_product_irods_locations_mirror"); err != nil {
+		t.Fatalf("analyze A4 MySQL fixture table: %v", err)
+	}
+}
+
+func assertA6MonthlyRunCountMySQLPlanUsesIndex(t *testing.T, db *sql.DB, planCase a6MonthlyRunCountMySQLPlanCase) {
+	t.Helper()
+
+	plans := explainPlanRows(t, db, planCase.query, planCase.args...)
+	plan, ok := findExplainPlanRow(plans, planCase.alias)
+	convey.So(ok, convey.ShouldBeTrue)
+	if !ok {
+		return
+	}
+
+	convey.So(plan.key, convey.ShouldEqual, planCase.indexName)
+	convey.So(plan.possibleKeys, convey.ShouldContainSubstring, planCase.indexName)
+	convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+}
+
 // assertJ1SampleIRODSIndexServed asserts the sample-scoped iRODS query has the
 // composite index matching WHERE id_sample_tmp plus ORDER BY id_iseq_product
 // available, and EXPLAIN does not choose the global product-id index. A
@@ -582,7 +853,7 @@ func assertJ1SampleIRODSIndexServed(t *testing.T, db *sql.DB) {
 	convey.So(indexes, convey.ShouldContain, "id_sample_tmp,id_iseq_product")
 	indexes, _, err = readMySQLTableIndexes(context.Background(), db, "iseq_product_metrics_mirror")
 	convey.So(err, convey.ShouldBeNil)
-	convey.So(indexes, convey.ShouldContain, "id_iseq_product")
+	convey.So(indexes, convey.ShouldNotContain, "id_iseq_product")
 
 	query, args := irodsFileTypeQuery(irodsPathsForSampleCacheSQLPrefix, irodsPathsForSampleCacheSQLSuffix, "cram", int64(21), availabilityFetchAll, 0)
 	plans := explainPlanRows(t, db, query, args...)
@@ -595,7 +866,8 @@ func assertJ1SampleIRODSIndexServed(t *testing.T, db *sql.DB) {
 	plan, ok = findExplainPlanRow(plans, "ipm")
 	convey.So(ok, convey.ShouldBeTrue)
 	convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
-	convey.So(plan.possibleKeys, convey.ShouldContainSubstring, "ipm_mirror_iseq_product_idx")
+	convey.So(plan.key, convey.ShouldEqual, "PRIMARY")
+	convey.So(plan.possibleKeys, convey.ShouldContainSubstring, "PRIMARY")
 }
 
 // assertJ1StudiesForUserIndexServed asserts EXPLAIN of the /studies/user query
@@ -667,6 +939,8 @@ func explainPlanRows(t *testing.T, db *sql.DB, query string, args ...any) []mysq
 				plan.key = value
 			case "possible_keys":
 				plan.possibleKeys = value
+			case "Extra":
+				plan.extra = value
 			}
 		}
 
@@ -689,6 +963,211 @@ func assertMirrorIndexServed(plans []mysqlExplainPlanRow, alias string) {
 	convey.So(ok, convey.ShouldBeTrue)
 	convey.So(plan.key, convey.ShouldNotBeBlank)
 	convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+}
+
+type a6MonthlyRunCountMySQLPlanCase struct {
+	platform  string
+	query     string
+	alias     string
+	indexName string
+	args      []any
+}
+
+func a6MonthlyRunCountMySQLPlanCases(since, until string) []a6MonthlyRunCountMySQLPlanCase {
+	return []a6MonthlyRunCountMySQLPlanCase{
+		{
+			platform: "Illumina",
+			query: `
+				SELECT SUBSTR(s.normalised_date, 1, 7), COUNT(DISTINCT s.id_run)
+				FROM iseq_run_status_mirror AS s
+				INNER JOIN iseq_run_status_dict_mirror AS d
+					ON d.id_run_status_dict = s.id_run_status_dict
+				WHERE s.normalised_date >= ? AND s.normalised_date < ?
+					AND d.description IN ('run complete', 'run archived')
+				GROUP BY SUBSTR(s.normalised_date, 1, 7)
+				ORDER BY NULL
+			`,
+			alias:     "s",
+			indexName: "iseq_run_status_mirror_normalised_date_idx",
+			args:      []any{since, until},
+		},
+		{
+			platform: "PacBio",
+			query: `
+				SELECT SUBSTR(pb.normalised_date, 1, 7), COUNT(DISTINCT CONCAT(pb.pac_bio_run_name, ':', pb.well_label))
+				FROM pac_bio_run_well_metrics_mirror AS pb
+				WHERE pb.normalised_date >= ? AND pb.normalised_date < ?
+				GROUP BY SUBSTR(pb.normalised_date, 1, 7)
+				ORDER BY NULL
+			`,
+			alias:     "pb",
+			indexName: "pac_bio_run_well_metrics_mirror_normalised_date_idx",
+			args:      []any{since, until},
+		},
+		{
+			platform: "ONT",
+			query: `
+				SELECT SUBSTR(ont.normalised_date, 1, 7), COUNT(DISTINCT ont.experiment_name)
+				FROM oseq_flowcell_mirror AS ont
+				WHERE ont.normalised_date >= ? AND ont.normalised_date < ?
+				GROUP BY SUBSTR(ont.normalised_date, 1, 7)
+				ORDER BY NULL
+			`,
+			alias:     "ont",
+			indexName: "oseq_flowcell_mirror_normalised_date_idx",
+			args:      []any{since, until},
+		},
+		{
+			platform: "Ultima",
+			query: `
+				SELECT SUBSTR(ur.normalised_date, 1, 7), COUNT(DISTINCT ur.id_run)
+				FROM useq_run_metrics_mirror AS ur
+				WHERE ur.normalised_date >= ? AND ur.normalised_date < ?
+				GROUP BY SUBSTR(ur.normalised_date, 1, 7)
+				ORDER BY NULL
+			`,
+			alias:     "ur",
+			indexName: "useq_run_metrics_mirror_normalised_date_idx",
+			args:      []any{since, until},
+		},
+		{
+			platform: "Element",
+			query: `
+				SELECT SUBSTR(er.normalised_date, 1, 7), COUNT(DISTINCT er.id_run)
+				FROM eseq_run_lane_metrics_mirror AS er
+				WHERE er.normalised_date >= ? AND er.normalised_date < ?
+				GROUP BY SUBSTR(er.normalised_date, 1, 7)
+				ORDER BY NULL
+			`,
+			alias:     "er",
+			indexName: "eseq_run_lane_metrics_mirror_normalised_date_idx",
+			args:      []any{since, until},
+		},
+	}
+}
+
+func TestRealMySQLA6MonthlyRunCountPlansUseNormalisedDateIndexes(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	writeDB := cache.cache.DB()
+	seedA6MonthlyRunCountPlanScenarioMySQL(t, writeDB)
+
+	convey.Convey("A6: Given a freshly built throwaway MySQL cache with run-date mirror rows", t, func() {
+		convey.Convey("when EXPLAIN runs monthly grouping shapes, then each platform source uses its normalised-date index", func() {
+			for _, planCase := range a6MonthlyRunCountMySQLPlanCases("2026-06-01", "2026-08-01") {
+				convey.Convey(planCase.platform, func() {
+					assertA6MonthlyRunCountMySQLPlanUsesIndex(t, writeDB, planCase)
+				})
+			}
+		})
+	})
+}
+
+func seedA6MonthlyRunCountPlanScenarioMySQL(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedA6MonthlyRunCountPlanMatchedRowsMySQL(t, db)
+	seedA6MonthlyRunCountPlanFillerRowsMySQL(t, db)
+
+	if _, err := db.Exec(`ANALYZE TABLE
+		iseq_run_status_mirror,
+		pac_bio_run_well_metrics_mirror,
+		oseq_flowcell_mirror,
+		useq_run_metrics_mirror,
+		eseq_run_lane_metrics_mirror`); err != nil {
+		t.Fatalf("analyze A6 MySQL fixture tables: %v", err)
+	}
+}
+
+func seedA6MonthlyRunCountPlanMatchedRowsMySQL(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	execA6MonthlyRunCountPlanSeed(t, db,
+		`INSERT INTO iseq_run_status_dict_mirror(id_run_status_dict, description, temporal_index) VALUES (?, ?, ?)`,
+		int64(1), "run complete", int64(1),
+	)
+	execA6MonthlyRunCountPlanSeed(t, db,
+		`INSERT INTO iseq_run_status_dict_mirror(id_run_status_dict, description, temporal_index) VALUES (?, ?, ?)`,
+		int64(2), "run archived", int64(2),
+	)
+	execA6MonthlyRunCountPlanSeed(t, db,
+		`INSERT INTO iseq_run_status_mirror(id_run_status, id_run, date, id_run_status_dict, iscurrent, normalised_date) VALUES (?, ?, ?, ?, ?, ?)`,
+		int64(101), int64(52553), "2026-07-01T09:30:00Z", int64(1), int64(1), "2026-07-01",
+	)
+	execA6MonthlyRunCountPlanSeed(t, db,
+		`INSERT INTO pac_bio_run_well_metrics_mirror(id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, plate_number, run_start, run_complete, well_complete, qc_seq_date, run_status, well_status, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		int64(201), "pacbio-run-a", "A01", int64(1), "2026-06-01T08:00:00Z", "2026-06-02T08:00:00Z", nil, nil, "Complete", "Complete", "2026-06-03T08:00:00Z", "2026-06-02",
+	)
+	execA6MonthlyRunCountPlanSeed(t, db,
+		`INSERT INTO oseq_flowcell_mirror(id_oseq_flowcell_tmp, id_sample_tmp, id_study_lims, experiment_name, run_id, run_uuid, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		int64(301), int64(104), "6568", "ONTRUN-11", nil, "ont-run-uuid-11", "2026-06-04T10:00:00Z", "2026-06-04",
+	)
+	execA6MonthlyRunCountPlanSeed(t, db,
+		`INSERT INTO useq_run_metrics_mirror(id_run, run_name, run_status, run_start, run_complete, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		int64(401), "ultima-run-a", "run archived", "2026-06-05T08:00:00Z", "2026-06-06T08:00:00Z", "2026-06-07T08:00:00Z", "2026-06-06",
+	)
+	execA6MonthlyRunCountPlanSeed(t, db,
+		`INSERT INTO eseq_run_lane_metrics_mirror(id_run, lane, run_started, run_complete, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?)`,
+		int64(501), int64(1), "2026-06-08T08:00:00Z", "2026-06-09T08:00:00Z", "2026-06-10T08:00:00Z", "2026-06-09",
+	)
+}
+
+func seedA6MonthlyRunCountPlanFillerRowsMySQL(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	base := time.Date(2025, time.January, 1, 9, 0, 0, 0, time.UTC)
+	for i := range 300 {
+		date := base.AddDate(0, 0, i)
+		timestamp := formatSyncTime(date)
+		normalised := formatSyncDate(date)
+		sequence := int64(i)
+		statusID := int64(1)
+		if i%2 == 1 {
+			statusID = 2
+		}
+
+		execA6MonthlyRunCountPlanSeed(t, db,
+			`INSERT INTO iseq_run_status_mirror(id_run_status, id_run, date, id_run_status_dict, iscurrent, normalised_date) VALUES (?, ?, ?, ?, ?, ?)`,
+			int64(1000)+sequence, int64(60000)+sequence, timestamp, statusID, int64(0), normalised,
+		)
+		execA6MonthlyRunCountPlanSeed(t, db,
+			`INSERT INTO pac_bio_run_well_metrics_mirror(id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, plate_number, run_start, run_complete, well_complete, qc_seq_date, run_status, well_status, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			int64(2000)+sequence, fmt.Sprintf("a6-pacbio-decoy-%03d", i), fmt.Sprintf("A%02d", i%96+1), int64(1), timestamp, timestamp, nil, nil, "Complete", "Complete", timestamp, normalised,
+		)
+		execA6MonthlyRunCountPlanSeed(t, db,
+			`INSERT INTO oseq_flowcell_mirror(id_oseq_flowcell_tmp, id_sample_tmp, id_study_lims, experiment_name, run_id, run_uuid, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			int64(3000)+sequence, int64(300000)+sequence, "A6-decoy", fmt.Sprintf("A6-ONT-decoy-%03d", i), nil, fmt.Sprintf("a6-ont-decoy-uuid-%03d", i), timestamp, normalised,
+		)
+		execA6MonthlyRunCountPlanSeed(t, db,
+			`INSERT INTO useq_run_metrics_mirror(id_run, run_name, run_status, run_start, run_complete, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			int64(400000)+sequence, fmt.Sprintf("a6-useq-decoy-%03d", i), "run archived", timestamp, timestamp, timestamp, normalised,
+		)
+		execA6MonthlyRunCountPlanSeed(t, db,
+			`INSERT INTO eseq_run_lane_metrics_mirror(id_run, lane, run_started, run_complete, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?)`,
+			int64(500000)+sequence, int64(1), timestamp, timestamp, timestamp, normalised,
+		)
+	}
+}
+
+func execA6MonthlyRunCountPlanSeed(t *testing.T, db *sql.DB, query string, args ...any) {
+	t.Helper()
+
+	if _, err := db.Exec(query, args...); err != nil {
+		t.Fatalf("seed A6 monthly run-count plan row: %v", err)
+	}
 }
 
 // TestRealMySQLNewQueryPathsExecuteAndIndexesApplied is a runtime-skipped (NOT

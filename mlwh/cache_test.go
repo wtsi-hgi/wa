@@ -48,8 +48,8 @@ import (
 
 func TestCacheSchemaVersionConstant(t *testing.T) {
 	convey.Convey("Given the embedded cache schema version", t, func() {
-		convey.Convey("when read, then it equals 12 (source-row identity for iRODS replacement)", func() {
-			convey.So(CacheSchemaVersion, convey.ShouldEqual, 12)
+		convey.Convey("when read, then it equals 13 for the Phase 1 A8 full-resync schema", func() {
+			convey.So(CacheSchemaVersion, convey.ShouldEqual, 13)
 		})
 	})
 }
@@ -119,12 +119,12 @@ func TestAllowLargeMySQLColdLoadIndexShapeAllowsLegacySampleNameOnlyIndex(t *tes
 
 		expected := schemaShape{Index: map[string][]string{
 			"iseq_product_metrics_mirror":        {"id_iseq_product", "id_sample_tmp,id_run,position,tag_index"},
-			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"},
+			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_run,position,tag_index,id_seq_product_irods_locations_tmp", "id_study_lims,id_sample_tmp"},
 			"sample_mirror":                      {"accession_number", "donor_id", "id_sample_lims", "last_updated", "name", "sanger_sample_id", "supplier_name", "uuid_sample_lims"},
 		}}
 		actual := schemaShape{Index: map[string][]string{
 			"iseq_product_metrics_mirror":        {"id_iseq_product", "id_sample_tmp,id_run,position,tag_index"},
-			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"},
+			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_run,position,tag_index,id_seq_product_irods_locations_tmp", "id_study_lims,id_sample_tmp"},
 			"sample_mirror":                      {"name"},
 		}}
 
@@ -179,9 +179,10 @@ func TestRepairCompletedSampleMirrorCreatesMissingLookupIndexes(t *testing.T) {
 	})
 }
 
-func TestOpenCacheSQLitePreviousVersionRecreatesSampleSearchTokenTable(t *testing.T) {
-	convey.Convey("Given a SQLite cache at the previous schema version", t, func() {
+func TestOpenCacheSQLiteV12RecreatesPhase1Tables(t *testing.T) {
+	convey.Convey("Given a SQLite cache at schema version 12", t, func() {
 		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+		const legacyVersion = 12
 
 		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
 		convey.So(err, convey.ShouldBeNil)
@@ -197,7 +198,7 @@ func TestOpenCacheSQLitePreviousVersionRecreatesSampleSearchTokenTable(t *testin
 			syncTableStudyUsers, "2026-05-10T09:00:00Z", "2026-05-10T09:00:00Z",
 		)
 		convey.So(err, convey.ShouldBeNil)
-		_, err = cache.DB().Exec(`UPDATE schema_version SET version = ?`, CacheSchemaVersion-1)
+		_, err = cache.DB().Exec(`UPDATE schema_version SET version = ?`, legacyVersion)
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(cache.Close(), convey.ShouldBeNil)
 
@@ -231,10 +232,10 @@ func TestOpenCacheSQLitePreviousVersionRecreatesSampleSearchTokenTable(t *testin
 			).Scan(&studyUsersSyncState), convey.ShouldBeNil)
 		})
 
-		convey.Convey("when OpenCache runs at the new version, then it prints exactly one migration line (now including sample_search_token) and the token table is present and usable", func() {
+		convey.Convey("when OpenCache runs at v13, then it prints exactly one 12->13 recreate migration line and the token table is present and usable", func() {
 			convey.So(migrationLine, convey.ShouldEqual, fmt.Sprintf(
-				"mlwh cache: schema v%d->v%d, recreated tables: [donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, study_users_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n",
-				CacheSchemaVersion-1, CacheSchemaVersion,
+				"mlwh cache: schema v%d->v%d, recreated tables: [common_name_word_mirror, donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_flowcell_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, study_users_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n",
+				legacyVersion, CacheSchemaVersion,
 			))
 			convey.So(searchTables, convey.ShouldEqual, 1)
 			convey.So(searchUsable, convey.ShouldBeNil)
@@ -322,7 +323,7 @@ func TestOpenCacheSQLiteSchemaMismatchResetsSchema(t *testing.T) {
 		})
 
 		convey.Convey("when OpenCache runs, then it migrates to the current version, recreates the affected tables, and clears sync_state", func() {
-			convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v1->v%d, recreated tables: [donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, study_users_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n", CacheSchemaVersion))
+			convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v1->v%d, recreated tables: [common_name_word_mirror, donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_flowcell_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, study_users_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n", CacheSchemaVersion))
 			convey.So(version, convey.ShouldEqual, CacheSchemaVersion)
 			convey.So(sampleRows, convey.ShouldEqual, 0)
 			convey.So(syncStateRows, convey.ShouldEqual, 1)
@@ -383,7 +384,7 @@ func TestOpenCacheSQLiteCurrentVersionShapeMismatchResetsSchema(t *testing.T) {
 			convey.So(sampleRows, convey.ShouldEqual, 0)
 		})
 
-		convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v%d->v%d, recreated tables: [donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, study_users_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n", CacheSchemaVersion, CacheSchemaVersion))
+		convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v%d->v%d, recreated tables: [common_name_word_mirror, donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_flowcell_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, study_users_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n", CacheSchemaVersion, CacheSchemaVersion))
 	})
 }
 
@@ -414,7 +415,7 @@ func TestOpenCacheSQLiteCurrentVersionWrongShapeResetsSchema(t *testing.T) {
 			convey.So(columnCount, convey.ShouldBeGreaterThan, 1)
 		})
 
-		convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v%d->v%d, recreated tables: [donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, study_users_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n", CacheSchemaVersion, CacheSchemaVersion))
+		convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v%d->v%d, recreated tables: [common_name_word_mirror, donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_flowcell_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, study_users_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n", CacheSchemaVersion, CacheSchemaVersion))
 	})
 }
 
@@ -592,7 +593,7 @@ func TestOpenCacheMySQLMigratesV1Cache(t *testing.T) {
 		})
 
 		convey.Convey("when OpenCache runs, then it applies the migration and emits the same single stderr line", func() {
-			convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v1->v%d, recreated tables: [donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, study_users_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n", CacheSchemaVersion))
+			convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v1->v%d, recreated tables: [common_name_word_mirror, donor_samples, eseq_product_metrics_mirror, eseq_run_lane_metrics_mirror, eseq_run_mirror, iseq_flowcell_mirror, iseq_product_metrics_mirror, iseq_run_status_dict_mirror, iseq_run_status_mirror, library_samples, oseq_flowcell_mirror, pac_bio_product_metrics_mirror, pac_bio_run_well_metrics_mirror, sample_mirror, sample_search_token, seq_ops_tracking_per_sample_mirror, seq_product_irods_locations_mirror, study_mirror, study_users_mirror, useq_product_metrics_mirror, useq_run_metrics_mirror]\n", CacheSchemaVersion))
 			convey.So(rwMock.ExpectationsWereMet(), convey.ShouldBeNil)
 			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		})
@@ -608,12 +609,12 @@ func TestAllowLargeMySQLColdLoadIndexShapeUsesDroppedSyncState(t *testing.T) {
 		highWater := time.Date(2026, time.May, 13, 9, 0, 0, 0, time.UTC)
 		expected := schemaShape{Index: map[string][]string{
 			"iseq_product_metrics_mirror":        {"id_iseq_product", "id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_iseq_flowcell_tmp", "id_study_lims,id_run,position"},
-			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"},
+			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_run,position,tag_index,id_seq_product_irods_locations_tmp", "id_study_lims,id_sample_tmp"},
 			"sample_mirror":                      {"name"},
 		}}
 		actual := schemaShape{Index: map[string][]string{
 			"iseq_product_metrics_mirror":        {},
-			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"},
+			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_run,position,tag_index,id_seq_product_irods_locations_tmp", "id_study_lims,id_sample_tmp"},
 			"sample_mirror":                      {"name"},
 		}}
 
@@ -636,11 +637,11 @@ func TestAllowLargeMySQLColdLoadIndexShapeUsesMetadataEstimateWithoutCountingRow
 
 		expected := schemaShape{Index: map[string][]string{
 			"iseq_product_metrics_mirror":        {"id_iseq_product", "id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_iseq_flowcell_tmp", "id_study_lims,id_run,position"},
-			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"},
+			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_run,position,tag_index,id_seq_product_irods_locations_tmp", "id_study_lims,id_sample_tmp"},
 		}}
 		actual := schemaShape{Index: map[string][]string{
 			"iseq_product_metrics_mirror":        {},
-			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"},
+			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_run,position,tag_index,id_seq_product_irods_locations_tmp", "id_study_lims,id_sample_tmp"},
 		}}
 
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
@@ -1346,8 +1347,12 @@ func expectMySQLSchemaMigration(mock sqlmock.Sqlmock, fromVersion, toVersion int
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 		WithArgs(syncTableSample).
 		WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
-	expectNoDroppedMirrorRepairRows(mock, syncTableIseqProductMetrics)
-	expectNoDroppedMirrorRepairRows(mock, syncTableSeqProductIRODSLocations)
+	for _, indexSet := range syncMirrorIndexSets {
+		if indexSet.Table == sampleMirrorIndexSet.Table {
+			continue
+		}
+		expectNoDroppedMirrorRepairRows(mock, indexSet.SyncTable)
+	}
 }
 
 func expectNoDroppedMirrorRepairRows(mock sqlmock.Sqlmock, table string) {

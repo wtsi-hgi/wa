@@ -45,6 +45,8 @@ const (
 	// sample sync, replacing the former SQLite fts5 trigram virtual table and
 	// MySQL ngram FULLTEXT index.
 	sampleSearchTokenTable = "sample_search_token"
+
+	commonNameWordMirrorTable = "common_name_word_mirror"
 )
 
 //go:embed cache_schema/sqlite/*.sql cache_schema/mysql/*.sql
@@ -55,6 +57,7 @@ var schemaStatementOrder = []string{
 	"study_mirror",
 	"library_samples",
 	"donor_samples",
+	"iseq_flowcell_mirror",
 	"iseq_product_metrics_mirror",
 	"seq_product_irods_locations_mirror",
 	"pac_bio_product_metrics_mirror",
@@ -70,16 +73,19 @@ var schemaStatementOrder = []string{
 	"seq_ops_tracking_per_sample_mirror",
 	"study_users_mirror",
 	"sample_search_token",
+	commonNameWordMirrorTable,
 	"sync_state",
 	"schema_version",
 	"sync_lock",
 }
 
 var cacheMigrationRecreateTables = []string{
+	commonNameWordMirrorTable,
 	"donor_samples",
 	"eseq_product_metrics_mirror",
 	"eseq_run_lane_metrics_mirror",
 	"eseq_run_mirror",
+	"iseq_flowcell_mirror",
 	"iseq_product_metrics_mirror",
 	"iseq_run_status_dict_mirror",
 	"iseq_run_status_mirror",
@@ -126,6 +132,7 @@ var cacheMigrationDropTables = []string{
 	"study_mirror",
 	"library_samples",
 	"donor_samples",
+	"iseq_flowcell_mirror",
 	"iseq_product_metrics_mirror",
 	"seq_product_irods_locations_mirror",
 	"pac_bio_product_metrics_mirror",
@@ -148,6 +155,7 @@ var cacheMigrationDropTables = []string{
 	// migration recreates it cleanly in both dialects; it is repopulated from
 	// sample_mirror by the next sample sync.
 	sampleSearchTokenTable,
+	commonNameWordMirrorTable,
 }
 
 func parseSchemaStatement(stmt string, shape *schemaShape) error {
