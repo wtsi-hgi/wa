@@ -187,6 +187,14 @@ func (q *serverFakeQueryer) RunsForSample(_ context.Context, _ string, _ int, _ 
 	panic("unexpected RunsForSample call")
 }
 
+func (q *serverFakeQueryer) MonthlyRunCounts(_ context.Context, _ RunAggregationOptions) ([]MonthlyRunCount, error) {
+	panic("unexpected MonthlyRunCounts call")
+}
+
+func (q *serverFakeQueryer) RunListing(_ context.Context, _ RunAggregationOptions, _ int, _ string) ([]RunListingRow, error) {
+	panic("unexpected RunListing call")
+}
+
 func (q *serverFakeQueryer) StudyOverview(_ context.Context, _ string) (StudyOverview, error) {
 	panic("unexpected StudyOverview call")
 }
@@ -506,6 +514,10 @@ func (q *serverFakeQueryer) CountRunsForStudy(_ context.Context, _ string) (Coun
 
 func (q *serverFakeQueryer) CountRunsForSample(_ context.Context, _ string) (Count, error) {
 	panic("unexpected CountRunsForSample call")
+}
+
+func (q *serverFakeQueryer) CountRunListing(_ context.Context, _ RunAggregationOptions) (Count, error) {
+	panic("unexpected CountRunListing call")
 }
 
 func (q *serverFakeQueryer) CountStudiesForSample(_ context.Context, _ string) (Count, error) {

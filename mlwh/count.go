@@ -903,6 +903,31 @@ func (c *Client) CountRunsForStudy(ctx context.Context, studyLimsID string) (Cou
 	return Count{Count: 0}, nil
 }
 
+// CountRunListing counts the rows returned by the global run listing with the
+// same platform and date filters and no cursor/limit.
+func (c *Client) CountRunListing(ctx context.Context, opts RunAggregationOptions) (Count, error) {
+	normalized, specs, err := normaliseRunAggregationOptions(opts)
+	if err != nil {
+		return Count{}, err
+	}
+	if len(specs) == 0 {
+		return Count{Count: 0}, nil
+	}
+
+	syncTables := syncTablesForRunAggregationSpecs(specs)
+	if err = c.requireAnySyncState(ctx, syncTables...); err != nil {
+		return Count{}, err
+	}
+
+	query, args := countRunListingQuery(specs, normalized, c.runListingDialect())
+	count, err := c.queryCount(ctx, query, "count global run listing", args...)
+	if err != nil {
+		return Count{}, err
+	}
+
+	return Count{Count: count}, nil
+}
+
 // CountLibrariesForStudy counts the distinct libraries for a study, the count
 // counterpart of LibrariesForStudy (same library_samples grouping by the
 // (pipeline_id_lims, library_id, id_library_lims) triple, no LIMIT), so it

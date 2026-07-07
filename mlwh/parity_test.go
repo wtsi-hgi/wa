@@ -128,6 +128,12 @@ func parityQueryCases() []parityQueryCase {
 		{name: "RunsForSample", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.RunsForSample(ctx, paritySampleName, 100, 0)
 		}},
+		{name: "MonthlyRunCounts", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.MonthlyRunCounts(ctx, RunAggregationOptions{Platforms: []string{platformIllumina}})
+		}},
+		{name: "RunListing", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.RunListing(ctx, RunAggregationOptions{Platforms: []string{platformIllumina}}, 100, "")
+		}},
 		{name: "StudyOverview", call: func(ctx context.Context, q Queryer) (any, error) { return q.StudyOverview(ctx, parityStudyID) }},
 		{name: "RunOverview", call: func(ctx context.Context, q Queryer) (any, error) { return q.RunOverview(ctx, parityRunID) }},
 		{name: "RunStatus", call: func(ctx context.Context, q Queryer) (any, error) { return q.RunStatus(ctx, parityRunID) }},
@@ -285,6 +291,9 @@ func parityQueryCases() []parityQueryCase {
 		{name: "CountRunsForSample", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountRunsForSample(ctx, paritySampleName)
 		}},
+		{name: "CountRunListing", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountRunListing(ctx, RunAggregationOptions{Platforms: []string{platformIllumina}})
+		}},
 		{name: "CountStudyManifest", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountStudyManifest(ctx, parityStudyID)
 		}},
@@ -342,6 +351,8 @@ func seedParityCache(t *testing.T, db *sql.DB) {
 	seedSyncState(t, db, syncTableStudy, syncedAt)
 	seedSyncState(t, db, syncTableStudyUsers, syncedAt)
 	seedSyncState(t, db, syncTableIseqFlowcell, syncedAt)
+	seedSyncState(t, db, syncTableIseqRunStatus, syncedAt)
+	seedSyncState(t, db, syncTableIseqRunStatusDict, syncedAt)
 	seedSyncState(t, db, syncTableIseqProductMetrics, syncedAt)
 	seedSyncState(t, db, syncTableSeqProductIRODSLocations, syncedAt)
 
@@ -378,6 +389,9 @@ func seedParityCache(t *testing.T, db *sql.DB) {
 	seedIseqProductMetricsMirrorRow(t, db, 9001, 31, 48522, 1, 1, parityStudyID)
 	seedIseqProductMetricsMirrorRow(t, db, 9002, 32, 48522, 1, 2, parityStudyID)
 	seedIseqProductMetricsMirrorRow(t, db, 9003, 31, 48523, 2, 1, parityStudyID)
+	seedIseqRunStatusDictMirrorRow(t, db, 1, "run complete")
+	seedIseqRunStatusMirrorRow(t, db, 9101, 48522, syncedAt, 1, 0)
+	seedIseqRunStatusMirrorRow(t, db, 9102, 48523, syncedAt.Add(time.Hour), 1, 0)
 	seedIRODSLocationMirrorRow(t, db, "9001", "/seq/illumina/runs/48/48522/plex1", "48522#1.cram", 31, parityStudyID)
 	seedIRODSLocationMirrorRow(t, db, "9002", "/seq/illumina/runs/48/48522/plex1", "48522#2.cram", 32, parityStudyID)
 

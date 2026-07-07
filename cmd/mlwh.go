@@ -354,6 +354,7 @@ func newMLWHCommand() *cobra.Command {
 	command.AddCommand(newMLWHExportCommand())
 	command.AddCommand(newMLWHManifestCommand())
 	command.AddCommand(newMLWHLatestCommand())
+	command.AddCommand(newMLWHRunsCommand())
 	command.AddCommand(newMLWHStudiesCommand())
 	command.AddCommand(newMLWHPeopleCommand())
 	command.AddCommand(newMLWHServeCommand())

@@ -253,6 +253,26 @@ var Registry = []Endpoint{
 		QueryParams: fetchAllPaginationParams(),
 	},
 	{
+		Method:      "MonthlyRunCounts",
+		Verb:        registryVerbGet,
+		Path:        "/runs/monthly",
+		Query:       []string{"since", "until", "platform"},
+		NewResult:   newSliceResult[MonthlyRunCount],
+		Summary:     "List monthly grouped run counts",
+		Description: "Returns monthly grouped run counts across platforms. Manufacturer is derived from platform as Illumina->Illumina, Elembio->Element Biosciences, Ultimagen->Ultima Genomics, PacBio->PacBio and ONT->Oxford Nanopore. Run grain is one run identifier, never wells or flowcells: Illumina, Elembio and Ultimagen count distinct id_run, PacBio counts distinct pac_bio_run_name, and ONT counts distinct experiment_name. Date basis is authoritative and each row states it: Illumina and Elembio use run complete, Ultimagen uses run archived, PacBio uses run_complete, and ONT uses warehouse load time - not a true sequencing date. ONT is included under that labelled warehouse-load basis, never dropped. Optional since and until filter the normalised per-platform run date with since inclusive and until exclusive; platform may be supplied more than once to restrict platforms.",
+		QueryParams: monthlyRunQueryParams(),
+	},
+	{
+		Method:      "RunListing",
+		Verb:        registryVerbGet,
+		Path:        "/runs",
+		Query:       []string{"since", "until", "platform", "limit", "cursor"},
+		NewResult:   newSliceResult[RunListingRow],
+		Summary:     "List global runs",
+		Description: "Returns a bounded global all-runs listing across platforms, one row per platform-native run identifier. The stable id is the composite <platform>:<native_id> (for example illumina:47409, pacbio:<run_name>, ont:<experiment_name>) and is the keyset cursor. Native_id is also returned separately. Manufacturer is derived from platform as Illumina->Illumina, Elembio->Element Biosciences, Ultimagen->Ultima Genomics, PacBio->PacBio and ONT->Oxford Nanopore. Run grain and date basis match /runs/monthly: Illumina, Elembio and Ultimagen list distinct id_run, PacBio lists distinct pac_bio_run_name, and ONT lists distinct experiment_name; Illumina and Elembio use run complete, Ultimagen uses run archived, PacBio uses run_complete, and ONT uses warehouse load time - not a true sequencing date. Optional since and until filter the normalised per-platform run date with since inclusive and until exclusive; platform may be supplied more than once to restrict platforms. Use limit for a bounded page and cursor=<last id> to continue.",
+		QueryParams: runListingQueryParams(),
+	},
+	{
 		Method:      "StudyOverview",
 		Verb:        registryVerbGet,
 		Path:        "/study/:id/overview",
@@ -883,6 +903,16 @@ var Registry = []Endpoint{
 		Description: "Returns the number of distinct sequencing runs associated with the given sample, the count counterpart of /sample/:id/runs.",
 	},
 	{
+		Method:      "CountRunListing",
+		Verb:        registryVerbGet,
+		Path:        "/runs/count",
+		Query:       []string{"since", "until", "platform"},
+		NewResult:   newResult[Count],
+		Summary:     "Count global runs",
+		Description: "Returns the number of rows matching the same global all-runs listing filters as /runs, without transferring rows. The count uses the same run grain as the list: Illumina, Elembio and Ultimagen distinct id_run, PacBio distinct pac_bio_run_name, and ONT distinct experiment_name.",
+		QueryParams: monthlyRunQueryParams(),
+	},
+	{
 		Method:      "CountLibrariesForStudy",
 		Verb:        registryVerbGet,
 		Path:        "/study/:id/libraries/count",
@@ -1119,6 +1149,24 @@ func manifestQueryParams() []QueryParam {
 	})
 
 	return append(params, fileTypeQueryParam())
+}
+
+func runListingQueryParams() []QueryParam {
+	params := append([]QueryParam{}, monthlyRunQueryParams()...)
+	params = append(params,
+		QueryParam{Name: "limit", Type: "integer", Description: "maximum number of rows to return; defaults to 100, maximum 1000"},
+		QueryParam{Name: "cursor", Type: "string", Description: "keyset cursor: the composite id from the last row of the previous page"},
+	)
+
+	return params
+}
+
+func monthlyRunQueryParams() []QueryParam {
+	return []QueryParam{
+		{Name: "since", Type: "string", Description: "optional YYYY-MM-DD or RFC3339 inclusive lower bound over the platform's normalised run date basis"},
+		{Name: "until", Type: "string", Description: "optional YYYY-MM-DD or RFC3339 exclusive upper bound over the platform's normalised run date basis"},
+		{Name: "platform", Type: "string", Description: "optional repeatable platform filter: Illumina, PacBio, Elembio, Ultimagen or ONT"},
+	}
 }
 
 func exportQueryParams() []QueryParam {

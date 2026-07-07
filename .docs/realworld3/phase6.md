@@ -50,8 +50,8 @@ once in Dec-2023, each row states date_basis; ONT bucket's date_basis ==
 dropped; MySQL EXPLAIN shows index-served grouping, no full scan).
 Depends on Phase 1 (A6).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 6.2: F2 - global run listing + composite id
 
@@ -73,8 +73,8 @@ run with no silent cap and count == len(list-all)). Depends on 6.1 (the
 per-platform date_basis/manufacturer/run-grain derivation) and Phase 1
 (A6).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For sequential items, a single review pass after each item is
 acceptable; reviewers must confirm run grain is one run identifier (never

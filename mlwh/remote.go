@@ -257,6 +257,46 @@ func (rc *RemoteClient) RunsForSamplePage(ctx context.Context, sangerName string
 	return remoteCallPage[Run](rc, ctx, "RunsForSample", []string{sangerName}, remotePagination(limit, offset))
 }
 
+// MonthlyRunCounts returns monthly grouped run counts through the remote server.
+func (rc *RemoteClient) MonthlyRunCounts(ctx context.Context, opts RunAggregationOptions) ([]MonthlyRunCount, error) {
+	return remoteCall[[]MonthlyRunCount](rc, ctx, "MonthlyRunCounts", nil, remoteRunAggregationOptions(opts))
+}
+
+func remoteRunAggregationOptions(opts RunAggregationOptions) url.Values {
+	values := url.Values{}
+	if strings.TrimSpace(opts.Since) != "" {
+		values.Set("since", strings.TrimSpace(opts.Since))
+	}
+	if strings.TrimSpace(opts.Until) != "" {
+		values.Set("until", strings.TrimSpace(opts.Until))
+	}
+	for _, platform := range opts.Platforms {
+		if strings.TrimSpace(platform) != "" {
+			values.Add("platform", strings.TrimSpace(platform))
+		}
+	}
+
+	return values
+}
+
+// RunListing returns a bounded global run listing page through the remote
+// server.
+func (rc *RemoteClient) RunListing(ctx context.Context, opts RunAggregationOptions, limit int, cursor string) ([]RunListingRow, error) {
+	return remoteCall[[]RunListingRow](rc, ctx, "RunListing", nil, remoteRunListingOptions(opts, limit, cursor))
+}
+
+func remoteRunListingOptions(opts RunAggregationOptions, limit int, cursor string) url.Values {
+	values := remoteRunAggregationOptions(opts)
+	if limit > 0 {
+		values.Set("limit", strconv.Itoa(limit))
+	}
+	if strings.TrimSpace(cursor) != "" {
+		values.Set("cursor", strings.TrimSpace(cursor))
+	}
+
+	return values
+}
+
 // StudyOverview returns a study's overview aggregate through the remote server.
 func (rc *RemoteClient) StudyOverview(ctx context.Context, studyLimsID string) (StudyOverview, error) {
 	return remoteCall[StudyOverview](rc, ctx, "StudyOverview", []string{studyLimsID}, nil)
@@ -907,6 +947,11 @@ func (rc *RemoteClient) CountRunsForStudy(ctx context.Context, studyLimsID strin
 // CountRunsForSample counts the distinct runs for a sample through the remote server.
 func (rc *RemoteClient) CountRunsForSample(ctx context.Context, sangerName string) (Count, error) {
 	return remoteCall[Count](rc, ctx, "CountRunsForSample", []string{sangerName}, nil)
+}
+
+// CountRunListing counts global run listing rows through the remote server.
+func (rc *RemoteClient) CountRunListing(ctx context.Context, opts RunAggregationOptions) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountRunListing", nil, remoteRunAggregationOptions(opts))
 }
 
 // CountStudyManifest counts the distinct products in a study's manifest through

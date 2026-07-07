@@ -2007,6 +2007,23 @@ func a6MonthlyRunCountMySQLPlanCases(since, until string) []a6MonthlyRunCountMyS
 	}
 }
 
+func f1MonthlyRunCountMySQLPlanCases(since, until string) []a6MonthlyRunCountMySQLPlanCase {
+	opts := RunAggregationOptions{Since: since, Until: until}
+	cases := make([]a6MonthlyRunCountMySQLPlanCase, 0, len(runAggregationPlatformSpecs))
+	for _, spec := range runAggregationPlatformSpecs {
+		query, args := monthlyRunCountQuery(spec, opts)
+		cases = append(cases, a6MonthlyRunCountMySQLPlanCase{
+			platform:  spec.platform,
+			query:     query,
+			alias:     spec.alias,
+			indexName: spec.indexName,
+			args:      args,
+		})
+	}
+
+	return cases
+}
+
 func TestRealMySQLE1IRODSCreatedDescUsesRecencyIndexes(t *testing.T) {
 	baseDSN, password := realMySQLCacheDSNOrSkip(t)
 
@@ -2332,6 +2349,36 @@ func TestRealMySQLA6MonthlyRunCountPlansUseNormalisedDateIndexes(t *testing.T) {
 	convey.Convey("A6: Given a freshly built throwaway MySQL cache with run-date mirror rows", t, func() {
 		convey.Convey("when EXPLAIN runs monthly grouping shapes, then each platform source uses its normalised-date index", func() {
 			for _, planCase := range a6MonthlyRunCountMySQLPlanCases("2026-06-01", "2026-08-01") {
+				convey.Convey(planCase.platform, func() {
+					assertA6MonthlyRunCountMySQLPlanUsesIndex(t, writeDB, planCase)
+				})
+			}
+		})
+	})
+}
+
+func TestMonthlyRunCountsMySQLExplainUsesIndexesF1(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	writeDB := cache.cache.DB()
+	seedA6MonthlyRunCountPlanScenarioMySQL(t, writeDB)
+
+	convey.Convey("F1: Given a freshly built throwaway MySQL cache with run-date mirror rows", t, func() {
+		convey.Convey("when EXPLAIN runs the production monthly run-count shapes, then each platform source uses its normalised-date index and no full scan", func() {
+			for _, planCase := range f1MonthlyRunCountMySQLPlanCases("2026-06-01", "2026-08-01") {
 				convey.Convey(planCase.platform, func() {
 					assertA6MonthlyRunCountMySQLPlanUsesIndex(t, writeDB, planCase)
 				})

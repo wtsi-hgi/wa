@@ -165,6 +165,65 @@ func countIRODSPathsForStudyResult(c *gin.Context, queryer Queryer, id string, o
 	return queryer.CountIRODSPathsForStudy(c.Request.Context(), id)
 }
 
+func mlwhRunAggregationOptionsFromQuery(c *gin.Context) (RunAggregationOptions, bool) {
+	opts := RunAggregationOptions{
+		Since:     c.Query("since"),
+		Until:     c.Query("until"),
+		Platforms: mlwhRunAggregationPlatformsFromQuery(c),
+	}
+	normalized, _, err := normaliseRunAggregationOptions(opts)
+	if err != nil {
+		writeMLWHBadRequest(c, err.Error())
+
+		return RunAggregationOptions{}, false
+	}
+
+	return normalized, true
+}
+
+func mlwhRunAggregationPlatformsFromQuery(c *gin.Context) []string {
+	rawValues := c.QueryArray("platform")
+	platforms := make([]string, 0, len(rawValues))
+	for _, raw := range rawValues {
+		for _, platform := range strings.Split(raw, ",") {
+			if strings.TrimSpace(platform) != "" {
+				platforms = append(platforms, platform)
+			}
+		}
+	}
+
+	return platforms
+}
+
+func mlwhRunListingRequestFromQuery(c *gin.Context) (RunAggregationOptions, int, string, bool) {
+	opts, ok := mlwhRunAggregationOptionsFromQuery(c)
+	if !ok {
+		return RunAggregationOptions{}, 0, "", false
+	}
+
+	limit, ok := mlwhQueryInt(c, "limit", RunListingDefaultLimit)
+	if !ok {
+		return RunAggregationOptions{}, 0, "", false
+	}
+	if limit < 0 {
+		writeMLWHBadRequest(c, "limit must not be negative")
+
+		return RunAggregationOptions{}, 0, "", false
+	}
+	if limit > RunListingMaxLimit {
+		writeMLWHBadRequest(c, fmt.Sprintf("limit must not exceed %d", RunListingMaxLimit))
+
+		return RunAggregationOptions{}, 0, "", false
+	}
+	if _, err := parseRunListingCursor(c.Query("cursor")); err != nil {
+		writeMLWHBadRequest(c, err.Error())
+
+		return RunAggregationOptions{}, 0, "", false
+	}
+
+	return opts, limit, c.Query("cursor"), true
+}
+
 func mlwhLatestDataPaginationFromQuery(c *gin.Context) (mlwhPagination, bool) {
 	limit, ok := mlwhQueryInt(c, "limit", mlwhLatestDataDefaultLimit)
 	if !ok {
@@ -593,6 +652,24 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
 				return countValue(queryer.CountRunsForSample(ctx, id))
 			})
+		}
+	case "MonthlyRunCounts":
+		return func(c *gin.Context) {
+			opts, ok := mlwhRunAggregationOptionsFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.MonthlyRunCounts(c.Request.Context(), opts)
+			writeMLWHResult(c, result, err)
+		}
+	case "RunListing":
+		return func(c *gin.Context) {
+			opts, limit, cursor, ok := mlwhRunListingRequestFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.RunListing(c.Request.Context(), opts, limit, cursor)
+			writeMLWHResult(c, result, err)
 		}
 	case "StudyOverview":
 		return func(c *gin.Context) {
@@ -1235,6 +1312,15 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 				return
 			}
 			result, err := queryer.CountRunsForSample(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
+	case "CountRunListing":
+		return func(c *gin.Context) {
+			opts, ok := mlwhRunAggregationOptionsFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.CountRunListing(c.Request.Context(), opts)
 			writeMLWHResult(c, result, err)
 		}
 	case "CountStudyManifest":

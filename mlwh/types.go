@@ -167,6 +167,31 @@ type RecentDataRow struct {
 	Merged       bool   `json:"merged" doc:"true for a merged composite object"`
 }
 
+// MonthlyRunCount is one grouped monthly run count. Manufacturer is derived from
+// Platform. DateBasis states which per-platform completion date the month bucket
+// used, including the ONT warehouse-load caveat.
+type MonthlyRunCount struct {
+	Month         string `json:"month" doc:"YYYY-MM bucket"`
+	Manufacturer  string `json:"manufacturer" doc:"manufacturer derived from platform"`
+	Platform      string `json:"platform" doc:"platform"`
+	Count         int    `json:"count" doc:"distinct runs at run grain in the bucket"`
+	DateBasis     string `json:"date_basis" doc:"the completion date field/status used for this platform"`
+	CacheSyncedAt string `json:"cache_synced_at" doc:"oldest last_run across feeding tables, UTC RFC3339"`
+}
+
+// RunListingRow is one global run listing row. ID is the stable cross-platform
+// composite "<platform>:<native_id>" (for example illumina:47409,
+// pacbio:<run_name>, ont:<experiment_name>) and is the keyset cursor.
+type RunListingRow struct {
+	ID            string `json:"id" doc:"composite <platform>:<native_id> run identifier (keyset cursor)"`
+	Platform      string `json:"platform" doc:"platform"`
+	NativeID      string `json:"native_id" doc:"platform-native run id (id_run / pac_bio_run_name / experiment_name)"`
+	Manufacturer  string `json:"manufacturer" doc:"manufacturer derived from platform"`
+	RunDate       string `json:"run_date" doc:"completion date per date_basis; empty if unknown"`
+	DateBasis     string `json:"date_basis" doc:"the completion date field/status used"`
+	CacheSyncedAt string `json:"cache_synced_at" doc:"oldest last_run across feeding tables, UTC RFC3339"`
+}
+
 // SampleSearchOptions carries optional sample-search modes and filters. Phase 2
 // consumes DeliverablesOnly; later realworld3 search phases fill in the rest.
 type SampleSearchOptions struct {
