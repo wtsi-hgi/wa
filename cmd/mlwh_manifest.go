@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -116,7 +117,9 @@ func newMLWHManifestCommand() *cobra.Command {
 			"--file-type cram attaches the .cram object. The manifest stays",
 			"product-grained regardless of --with-irods/--file-type: a product with",
 			"no matching iRODS object still appears as a row (its irods_path renders",
-			"as '-'). Use --limit/--offset to page and --json for a single JSON",
+			"as '-'). Known merged multi-lane CRAM gaps are counted as",
+			"products_without_irods; use sample-crams or export irods for the",
+			"merged-aware path view. Use --limit/--offset to page and --json for a single JSON",
 			"manifest object (the envelope, not a bare array) suitable for piping",
 			"into jq.",
 			"",
@@ -285,6 +288,7 @@ func writeManifestHeader(out io.Writer, manifest mlwh.StudyManifest) {
 	writeKV(out, "  accession_number", manifest.AccessionNumber)
 	writeKV(out, "  faculty_sponsor", manifest.FacultySponsor)
 	writeKV(out, "  data_access_group", manifest.DataAccessGroup)
+	writeKV(out, "  products_without_irods", strconv.Itoa(manifest.ProductsWithoutIRODS))
 	writeKV(out, "  cache_synced_at", manifest.CacheSyncedAt)
 }
 
@@ -302,6 +306,12 @@ func writeManifestRow(out io.Writer, row mlwh.ManifestRow, withIRODS bool) {
 		}
 
 		_, _ = fmt.Fprintf(out, " irods_path=%s", irodsPath)
+		if row.IRODSUnmatched {
+			_, _ = fmt.Fprintf(out, " irods_unmatched=true")
+			if strings.TrimSpace(row.Reason) != "" {
+				_, _ = fmt.Fprintf(out, " reason=%s", row.Reason)
+			}
+		}
 	}
 
 	_, _ = fmt.Fprintln(out)

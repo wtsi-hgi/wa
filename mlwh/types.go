@@ -130,12 +130,14 @@ type Lane struct {
 // IRODSPath identifies a product path exported from MLWH joins. IDSampleTmp and
 // Name identify the sample the data object belongs to, so a study iRODS listing
 // is aggregatable by sample without a second query. IDRun is the Illumina NPG run
-// id, derived by LEFT JOIN id_iseq_product -> iseq_product_metrics_mirror.id_run;
-// it is 0 when not derivable (non-Illumina / unmatched), matching the existing
+// id from the iRODS mirror's denormalised export fields, with a product-metrics
+// fallback for older non-merged cache rows; it is 0 for merged composite objects
+// and when not derivable (non-Illumina / unmatched), matching the existing
 // RunOverview.IDRun / RunStatusTimeline.IDRun "0 for non-Illumina" convention.
 // Platform is the iRODS row's mirrored platform string (the source
 // seq_platform_name, e.g. "illumina"), so a 0 id_run reads as ONT / non-Illumina
-// rather than ambiguous. Both fields are additive; existing fields unchanged.
+// or a merged composite when Merged is true. Both fields are additive; existing
+// fields unchanged.
 type IRODSPath struct {
 	IDProduct   string `json:"id_product" doc:"product identifier of the iRODS data object"`
 	Collection  string `json:"collection" doc:"iRODS collection containing the data object"`
@@ -146,6 +148,7 @@ type IRODSPath struct {
 	Created     string `json:"created" doc:"iRODS created time (data added), UTC RFC3339; empty if unknown"`
 	IDRun       int    `json:"id_run" doc:"Illumina NPG run id of the data object; 0 when not derivable (non-Illumina or unmatched)"`
 	Platform    string `json:"platform" doc:"platform string the iRODS row was synced with (source seq_platform_name); disambiguates a 0 id_run as ONT/non-Illumina"`
+	Merged      bool   `json:"merged" doc:"true for a merged multi-lane composite object; id_run is 0 because the object has no single run"`
 	ManualQC    string `json:"manual_qc" doc:"per-product QC roll-up pass|fail|pending from the denormalized product qc; empty when no product-metrics (e.g. ONT)"`
 }
 
@@ -237,6 +240,8 @@ type SampleSearchOptions struct {
 // metadata carried once in the envelope (not per row). When the file-type / iRODS
 // path is requested, IRODSPath is the data object for that product matching the
 // suffix filter (empty string when the product has no matching iRODS object).
+// IRODSUnmatched/Reason make known merge-driven gaps explicit without copying a
+// composite CRAM path onto each single-lane row.
 type ManifestRow struct {
 	Name            string `json:"name" doc:"Sanger sample name"`
 	SupplierName    string `json:"supplier_name" doc:"supplier-given sample name"`
@@ -247,6 +252,8 @@ type ManifestRow struct {
 	TagIndex        int    `json:"tag_index" doc:"multiplexing tag index of the product"`
 	ManualQC        string `json:"manual_qc" doc:"per-product QC roll-up pass|fail|pending from the product qc"`
 	IRODSPath       string `json:"irods_path,omitempty" doc:"iRODS path of the product's data object matching the file-type filter; present only when with_irods is set"`
+	IRODSUnmatched  bool   `json:"irods_unmatched,omitempty" doc:"true when the product has no direct iRODS match because its CRAM is represented by a merged composite object"`
+	Reason          string `json:"reason,omitempty" doc:"reason for irods_unmatched; currently merged_multilane"`
 }
 
 // StudyManifest is the manifest response body: the study-level metadata once,
@@ -255,13 +262,14 @@ type ManifestRow struct {
 // sizing headers. The study fields answer Q3's "study details" without
 // repeating per row (D2/D5).
 type StudyManifest struct {
-	IDStudyLims     string        `json:"id_study_lims" doc:"LIMS study id"`
-	Name            string        `json:"name" doc:"study name"`
-	AccessionNumber string        `json:"accession_number" doc:"study accession number"`
-	FacultySponsor  string        `json:"faculty_sponsor" doc:"study faculty sponsor"`
-	DataAccessGroup string        `json:"data_access_group" doc:"study data access group"`
-	Rows            []ManifestRow `json:"rows" doc:"page of per-product manifest rows"`
-	CacheSyncedAt   string        `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
+	IDStudyLims          string        `json:"id_study_lims" doc:"LIMS study id"`
+	Name                 string        `json:"name" doc:"study name"`
+	AccessionNumber      string        `json:"accession_number" doc:"study accession number"`
+	FacultySponsor       string        `json:"faculty_sponsor" doc:"study faculty sponsor"`
+	DataAccessGroup      string        `json:"data_access_group" doc:"study data access group"`
+	ProductsWithoutIRODS int           `json:"products_without_irods" doc:"count of product rows whose iRODS path is absent for a known reason such as merged multi-lane CRAM"`
+	Rows                 []ManifestRow `json:"rows" doc:"page of per-product manifest rows"`
+	CacheSyncedAt        string        `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
 }
 
 // PagedStudyManifest is the header-aware remote result for StudyManifest. It

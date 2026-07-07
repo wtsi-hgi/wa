@@ -190,6 +190,41 @@ func TestMLWHManifestWithIRODSIncludesIRODSPath(t *testing.T) {
 	})
 }
 
+func TestMLWHManifestWithIRODSSurfacesProductsWithoutIRODSH4(t *testing.T) {
+	convey.Convey("H4.3: Given the manifest envelope reports merged CRAM product gaps, when wa mlwh manifest 7568 runs with CRAM iRODS paths, then products_without_irods is visible and the command exits 0", t, func() {
+		var capturedStudy, capturedFileType string
+		var capturedWithIRODS bool
+		stub := &stubMLWHManifestClient{
+			manifest: func(_ context.Context, studyLimsID, fileType string, withIRODS bool, _, _ int) (mlwh.StudyManifest, error) {
+				capturedStudy = studyLimsID
+				capturedFileType = fileType
+				capturedWithIRODS = withIRODS
+
+				return mlwh.StudyManifest{
+					IDStudyLims:          "7568",
+					Name:                 "Study 7568",
+					ProductsWithoutIRODS: 96,
+					Rows: []mlwh.ManifestRow{
+						{Name: "7568STDY9419243", SangerSampleID: "sanger-9419243", IDRun: 49348, Position: 1, TagIndex: 1, IRODSUnmatched: true, Reason: "merged_multilane"},
+					},
+				}, nil
+			},
+		}
+
+		withStubMLWHManifestClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "manifest", "7568", "--with-irods", "--file-type", "cram"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(capturedStudy, convey.ShouldEqual, "7568")
+		convey.So(capturedWithIRODS, convey.ShouldBeTrue)
+		convey.So(capturedFileType, convey.ShouldEqual, "cram")
+		convey.So(output, convey.ShouldContainSubstring, "products_without_irods")
+		convey.So(output, convey.ShouldContainSubstring, "96")
+		convey.So(output, convey.ShouldContainSubstring, "reason=merged_multilane")
+	})
+}
+
 // AT3: --json emits a single StudyManifest JSON OBJECT (the envelope), not a bare
 // array: it decodes as an object exposing "rows".
 func TestMLWHManifestJSONEmitsEnvelopeObject(t *testing.T) {

@@ -404,6 +404,30 @@ func TestCountStudyManifestSyncedStudyWithNoProductsReturnsZeroC2(t *testing.T) 
 	})
 }
 
+func TestSampleCRAMsForStudyReturnsOneCramPerSampleH3(t *testing.T) {
+	convey.Convey("H3: Given a study has merged, multi-lane, non-deliverable-only, and null-deliverable CRAM samples", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedExportSampleCRAMScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		rows, err := client.SampleCRAMsForStudy(context.Background(), "CRAMS", countListFetchAll, 0)
+		count, countErr := client.CountSampleCRAMsForStudy(context.Background(), "CRAMS")
+
+		convey.Convey("when sample-crams are listed, then every sample with a CRAM contributes one populated row with merged objects preferred", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(rows))
+			convey.So(rows, convey.ShouldResemble, []SampleCRAM{
+				{Name: "cram-control-only", EGAID: "EGAN-control", IRODSCRAMPath: "/seq/crams/control/52554_1#1.cram", Merged: false},
+				{Name: "cram-merged", EGAID: "EGAN-merged", IRODSCRAMPath: "/seq/crams/merged/49348_1-2#1.cram", Merged: true},
+				{Name: "cram-null-deliverable", EGAID: "EGAN-null", IRODSCRAMPath: "/seq/crams/null/pacbio.cram", Merged: false},
+				{Name: "cram-single", EGAID: "EGAN-single", IRODSCRAMPath: "/seq/crams/single/52553_1#1.cram", Merged: false},
+			})
+		})
+	})
+}
+
 // e1Count names one new /count endpoint under test: its Client count method and
 // the corresponding all-rows list-length, so the E1 cross-check
 // (count == len(list-all)) can be asserted for every count uniformly. zeroIs

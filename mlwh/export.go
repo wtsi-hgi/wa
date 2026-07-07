@@ -234,7 +234,7 @@ func exportFileFilters(kind exportRelationshipKind, opts ExportOptions) (string,
 	deliverablesOnly := false
 	if opts.DeliverablesOnly != nil {
 		deliverablesOnly = *opts.DeliverablesOnly
-	} else if exportRelationshipUsesFileType(kind) && normalised == "cram" {
+	} else if kind == exportRelationshipIRODS && normalised == "cram" {
 		deliverablesOnly = true
 	}
 

@@ -49,8 +49,8 @@ relationship carries correct non-empty `name`/`id_sample_tmp` and now
 `merged=true`, `id_run=0`; a single-lane object has `merged=false` and
 its real `id_run`). Depends on Phase 1 (A4 `merged`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 8.2: H2 - run-scoped composite visibility
 
@@ -68,8 +68,8 @@ multi-lane composite object, attributed and `merged=true`, alongside the
 single-lane objects - no longer invisible). Depends on 8.1 (shared
 `hierarchy.go`, the `merged` representation) and Phase 1 (A3).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 8.3: H3 - per-sample sample-crams export
 
@@ -92,8 +92,8 @@ merged rows attributed, total 732, no `id_sample_tmp:0`/`name:""`).
 Depends on 8.1/8.2 (shared `hierarchy.go`, `merged`) and Phase 4
 (`export.go`/`cmd/mlwh_export.go`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 8.4: H4 - manifest gap made explicit
 
@@ -118,8 +118,8 @@ samples / 96 single-lane rows; a study with no merged CRAMs has
 surfaces `products_without_irods` and exits 0). Depends on 8.1 (shared
 `types.go`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For sequential items, a single review pass after each item is
 acceptable; reviewers must confirm composites are represented honestly

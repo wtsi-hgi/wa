@@ -64,6 +64,7 @@ type serverFakeQueryer struct {
 	searchStudiesFunc         func(context.Context, string, int, int) ([]Study, error)
 	searchSamplesFunc         func(context.Context, string, int, int) ([]Sample, error)
 	studyUsersFunc            func(context.Context, string, string, int, int) ([]StudyUser, error)
+	sampleCRAMsFunc           func(context.Context, string, int, int) ([]SampleCRAM, error)
 	countStudySearchFunc      func(context.Context, string) (Count, error)
 	countSampleSearchFunc     func(context.Context, string) (Count, error)
 	countStudiesFunc          func(context.Context) (Count, error)
@@ -73,6 +74,7 @@ type serverFakeQueryer struct {
 	countLatestDataStudyFunc  func(context.Context, string, string) (Count, error)
 	countLatestDataPINameFunc func(context.Context, string, string) (Count, error)
 	countStudyUsersFunc       func(context.Context, string, string) (Count, error)
+	countSampleCRAMsFunc      func(context.Context, string) (Count, error)
 	freshnessFunc             func(context.Context) (Freshness, error)
 
 	samplesForStudyCall struct {
@@ -106,6 +108,12 @@ type serverFakeQueryer struct {
 	studyUsersCall struct {
 		studyLimsID string
 		role        string
+		limit       int
+		offset      int
+	}
+
+	sampleCRAMsCall struct {
+		studyLimsID string
 		limit       int
 		offset      int
 	}
@@ -298,8 +306,16 @@ func (q *serverFakeQueryer) StudyUsers(ctx context.Context, studyLimsID, role st
 	return q.studyUsersFunc(ctx, studyLimsID, role, limit, offset)
 }
 
-func (q *serverFakeQueryer) SampleCRAMsForStudy(_ context.Context, _ string, _ int, _ int) ([]SampleCRAM, error) {
-	panic("unexpected SampleCRAMsForStudy call")
+func (q *serverFakeQueryer) SampleCRAMsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleCRAM, error) {
+	if q.sampleCRAMsFunc == nil {
+		panic("unexpected SampleCRAMsForStudy call")
+	}
+
+	q.sampleCRAMsCall.studyLimsID = studyLimsID
+	q.sampleCRAMsCall.limit = limit
+	q.sampleCRAMsCall.offset = offset
+
+	return q.sampleCRAMsFunc(ctx, studyLimsID, limit, offset)
 }
 
 func (q *serverFakeQueryer) Export(_ context.Context, _ ExportRelationship, _ string, _ ExportOptions) (ExportResult, error) {
@@ -568,8 +584,14 @@ func (q *serverFakeQueryer) CountStudyUsers(ctx context.Context, studyLimsID, ro
 	return q.countStudyUsersFunc(ctx, studyLimsID, role)
 }
 
-func (q *serverFakeQueryer) CountSampleCRAMsForStudy(_ context.Context, _ string) (Count, error) {
-	panic("unexpected CountSampleCRAMsForStudy call")
+func (q *serverFakeQueryer) CountSampleCRAMsForStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	q.countCall.studyLimsID = studyLimsID
+
+	if q.countSampleCRAMsFunc == nil {
+		return Count{}, nil
+	}
+
+	return q.countSampleCRAMsFunc(ctx, studyLimsID)
 }
 
 func (q *serverFakeQueryer) CountIRODSPathsForSample(_ context.Context, _ string) (Count, error) {
@@ -692,6 +714,38 @@ func TestServerD1cStudyUsersSizingHeaders(t *testing.T) {
 		var users []StudyUser
 		decodeMLWHJSONResponseForTest(t, response, &users)
 		convey.So(users, convey.ShouldResemble, []StudyUser{{Role: "owner", Name: "Ana Owner", Login: "ao1", Email: "ao1@sanger.ac.uk"}})
+	})
+}
+
+func TestServerSampleCRAMsForStudySizingHeadersH3(t *testing.T) {
+	convey.Convey("H3: Given a server over a fake Queryer for sample-crams", t, func() {
+		queryer := &serverFakeQueryer{
+			sampleCRAMsFunc: func(_ context.Context, _ string, _ int, _ int) ([]SampleCRAM, error) {
+				return []SampleCRAM{{Name: "7568STDY9419243", EGAID: "ERS7568001", IRODSCRAMPath: "/seq/49348_1-2#1.cram", Merged: true}}, nil
+			},
+			countSampleCRAMsFunc: func(_ context.Context, _ string) (Count, error) {
+				return Count{Count: 732}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/7568/sample-crams?limit=1&offset=48")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "732")
+		convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "49")
+		convey.So(queryer.sampleCRAMsCall.studyLimsID, convey.ShouldEqual, "7568")
+		convey.So(queryer.sampleCRAMsCall.limit, convey.ShouldEqual, 1)
+		convey.So(queryer.sampleCRAMsCall.offset, convey.ShouldEqual, 48)
+		convey.So(queryer.countCall.studyLimsID, convey.ShouldEqual, "7568")
+
+		var rows []SampleCRAM
+		decodeMLWHJSONResponseForTest(t, response, &rows)
+		convey.So(rows, convey.ShouldResemble, []SampleCRAM{{
+			Name:          "7568STDY9419243",
+			EGAID:         "ERS7568001",
+			IRODSCRAMPath: "/seq/49348_1-2#1.cram",
+			Merged:        true,
+		}})
 	})
 }
 

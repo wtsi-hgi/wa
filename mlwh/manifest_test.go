@@ -40,6 +40,14 @@ import (
 // tests so a single call returns every product row.
 const manifestAllRows = 1000
 
+const (
+	h4Study7568MergedSamples            = 48
+	h4Study7568MergedSingleLaneProducts = h4Study7568MergedSamples * 2
+	h4MergedMultilaneReason             = "merged_multilane"
+	h4Study7568DirectCramPath           = "/seq/illumina/runs/49/49348/lane3/plex99/49348_3#99.cram"
+	h4Study7568MergedCramPathForFixture = "/seq/illumina/runs/49/49348/lane1-2/plex1/49348_1-2#1.cram"
+)
+
 func TestStudyManifestNeverSyncedReturnsJoinedSentinelC1(t *testing.T) {
 	convey.Convey("Given a never-synced SQLite cache", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -304,8 +312,102 @@ func TestStudyManifestWithIRODSCramAddsPathPerProductC1(t *testing.T) {
 			convey.So(manifest.Rows[1].IRODSPath, convey.ShouldEqual, "/seq/52553/52553_1#2.cram")
 			convey.So(manifest.Rows[2].IDRun, convey.ShouldEqual, 52554)
 			convey.So(manifest.Rows[2].IRODSPath, convey.ShouldEqual, "")
+			convey.So(manifest.ProductsWithoutIRODS, convey.ShouldEqual, 0)
+			convey.So(manifest.Rows[2].IRODSUnmatched, convey.ShouldBeFalse)
+			convey.So(manifest.Rows[2].Reason, convey.ShouldEqual, "")
 		})
 	})
+}
+
+func TestStudyManifestWithIRODSCramFlagsMergedMultilaneGapsH4(t *testing.T) {
+	convey.Convey("H4.1: Given study 7568 with 48 merged CRAM samples represented by 96 single-lane products", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedManifestStudy7568MergedCRAMScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		manifest, err := client.StudyManifest(context.Background(), "7568", "cram", true, manifestAllRows, 0)
+
+		convey.Convey("when the manifest is requested with CRAM iRODS paths, then the merged single-lane gap is explicit and the composite path is not copied onto product rows", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(manifest.Rows, convey.ShouldHaveLength, h4Study7568MergedSingleLaneProducts+1)
+
+			emptyPathRows := 0
+			productRowsWithPath := 0
+			rowsWithDirectPath := 0
+			unmatchedRows := 0
+			rowsWithWrongReason := 0
+			rowsDuplicatingMergedPath := 0
+			for _, row := range manifest.Rows {
+				if row.IRODSPath == "" {
+					emptyPathRows++
+				} else {
+					productRowsWithPath++
+				}
+				if row.IRODSUnmatched {
+					unmatchedRows++
+					if row.Reason != h4MergedMultilaneReason {
+						rowsWithWrongReason++
+					}
+				}
+				if row.IRODSPath == h4Study7568MergedCramPathForFixture {
+					rowsDuplicatingMergedPath++
+				}
+				if row.IRODSPath == h4Study7568DirectCramPath {
+					rowsWithDirectPath++
+				}
+			}
+
+			convey.So(manifest.ProductsWithoutIRODS, convey.ShouldEqual, h4Study7568MergedSingleLaneProducts)
+			convey.So(emptyPathRows, convey.ShouldEqual, h4Study7568MergedSingleLaneProducts)
+			convey.So(unmatchedRows, convey.ShouldEqual, h4Study7568MergedSingleLaneProducts)
+			convey.So(rowsWithWrongReason, convey.ShouldEqual, 0)
+			convey.So(productRowsWithPath, convey.ShouldEqual, 1)
+			convey.So(rowsWithDirectPath, convey.ShouldEqual, 1)
+			convey.So(len(manifest.Rows)-productRowsWithPath, convey.ShouldEqual, manifest.ProductsWithoutIRODS)
+			convey.So(manifest.ProductsWithoutIRODS, convey.ShouldEqual, h4Study7568MergedSamples*2)
+			convey.So(rowsDuplicatingMergedPath, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func seedManifestStudy7568MergedCRAMScenario(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedHierarchyStudy(t, db, 7568, "7568")
+	for i := range h4Study7568MergedSamples {
+		sampleID := int64(7_568_000 + i)
+		tagIndex := i + 1
+		seedManifestSampleRow(
+			t,
+			db,
+			sampleID,
+			"7568STDY"+formatInt(sampleID),
+			"supplier-"+formatInt(sampleID),
+			"EGAN"+formatInt(sampleID),
+			"sanger-"+formatInt(sampleID),
+		)
+		seedIseqProductMetricsMirrorRow(t, db, int64(49_348_000+tagIndex*10+1), sampleID, 49348, 1, tagIndex, "7568")
+		seedIseqProductMetricsMirrorRow(t, db, int64(49_348_000+tagIndex*10+2), sampleID, 49348, 2, tagIndex, "7568")
+		seedIRODSLocationMirrorRow(
+			t,
+			db,
+			"merged-"+formatInt(sampleID),
+			"/seq/illumina/runs/49/49348/lane1-2/plex"+formatInt(int64(tagIndex)),
+			"49348_1-2#"+formatInt(int64(tagIndex))+".cram",
+			sampleID,
+			"7568",
+		)
+		setIRODSLocationMirrorQCAndDeliverableFields(t, db, "merged-"+formatInt(sampleID), sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{Int64: 1, Valid: true}, true)
+	}
+
+	directSampleID := int64(7_568_999)
+	seedManifestSampleRow(t, db, directSampleID, "7568-direct-cram", "supplier-direct", "EGAN-direct", "sanger-direct")
+	seedIseqProductMetricsMirrorRow(t, db, 49_348_999, directSampleID, 49348, 3, 99, "7568")
+	seedIRODSLocationMirrorRow(t, db, "49348999", "/seq/illumina/runs/49/49348/lane3/plex99", "49348_3#99.cram", directSampleID, "7568")
+
+	seedManifestSyncState(t, db)
 }
 
 func TestStudyManifestRowsRenderManualQCFromProductQC(t *testing.T) {

@@ -1083,6 +1083,40 @@ func TestIRODSPathsForStudyCountEqualsListLenAfterIDRunPlatform(t *testing.T) {
 	})
 }
 
+func TestIRODSPathsForStudyReportsMergedCompositeHonestRunH1(t *testing.T) {
+	convey.Convey("H1: Given study 7568 with a merged lane1-2 object and a single-lane object", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 7568, "7568")
+		seedHierarchySample(t, client.cache.DB(), 9419243, "7568", "7568STDY9419243")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 4934801, 9419243, 49348, 0, 0, "7568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 4934802, 9419243, 49348, 3, 1, "7568")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "4934801", "/seq/illumina/runs/49/49348/lane1-2/plex1", "49348_1-2#1.cram", 9419243, "7568")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "4934802", "/seq/illumina/runs/49/49348/lane3/plex1", "49348_3#1.cram", 9419243, "7568")
+		setIRODSLocationMirrorRunFields(t, client.cache.DB(), 49348, 3, 1, "4934802")
+		setIRODSLocationMirrorQCAndDeliverableFields(t, client.cache.DB(), "4934801", sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{}, true)
+
+		paths, err := client.IRODSPathsForStudy(context.Background(), "7568", 100, 0)
+
+		convey.Convey("when study iRODS is listed, then the merged object is attributed and has id_run=0 while the single-lane row keeps its run", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(paths, convey.ShouldHaveLength, 2)
+
+			merged := irodsPathByProduct(t, paths, "4934801")
+			convey.So(merged.Name, convey.ShouldEqual, "7568STDY9419243")
+			convey.So(merged.IDSampleTmp, convey.ShouldEqual, int64(9419243))
+			convey.So(merged.Merged, convey.ShouldBeTrue)
+			convey.So(merged.IDRun, convey.ShouldEqual, 0)
+			convey.So(merged.IRODSPath, convey.ShouldContainSubstring, "/lane1-2/plex1/49348_1-2#1.cram")
+
+			single := irodsPathByProduct(t, paths, "4934802")
+			convey.So(single.Merged, convey.ShouldBeFalse)
+			convey.So(single.IDRun, convey.ShouldEqual, 49348)
+		})
+	})
+}
+
 func TestIRODSPathsRenderManualQCFromCompositeProductQC(t *testing.T) {
 	convey.Convey("B1.2: Given a merged composite iRODS row with denormalized qc=1", t, func() {
 		client, _, cleanup := newHierarchyTestClient(t)
@@ -2167,6 +2201,52 @@ func TestExpandIdentifierCacheInvalidatedAfterSyncCommit(t *testing.T) {
 	})
 }
 
+func TestIRODSPathsForRunIncludesSingleRunMergedCompositeH2(t *testing.T) {
+	convey.Convey("H2: Given run 49348 with single-lane rows and a single-run merged composite", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+		db := client.cache.DB()
+
+		seedSyncState(t, db, syncTableIseqProductMetrics, time.Date(2026, time.July, 7, 9, 0, 0, 0, time.UTC))
+		seedSyncState(t, db, syncTableSeqProductIRODSLocations, time.Date(2026, time.July, 7, 9, 5, 0, 0, time.UTC))
+		seedHierarchyStudy(t, db, 7568, "7568")
+		seedHierarchySample(t, db, 9419243, "7568", "7568STDY9419243")
+
+		seedIseqProductMetricsMirrorRow(t, db, 4934801, 9419243, 49348, 1, 1, "7568")
+		seedIRODSLocationMirrorRow(t, db, "4934801", "/seq/illumina/runs/49/49348/lane1/plex1", "49348_1#1.cram", 9419243, "7568")
+		setIRODSLocationMirrorRunFields(t, db, 49348, 1, 1, "4934801")
+
+		seedIseqProductMetricsMirrorRow(t, db, 4934802, 9419243, 49348, 2, 1, "7568")
+		seedIRODSLocationMirrorRow(t, db, "4934802", "/seq/illumina/runs/49/49348/lane2/plex1", "49348_2#1.cram", 9419243, "7568")
+		setIRODSLocationMirrorRunFields(t, db, 49348, 2, 1, "4934802")
+
+		seedIseqProductMetricsMirrorRow(t, db, 4934812, 9419243, 49348, 0, 0, "7568")
+		seedIRODSLocationMirrorRow(t, db, "4934812", "/seq/illumina/runs/49/49348/lane1-2/plex1", "49348_1-2#1.cram", 9419243, "7568")
+		setIRODSLocationMirrorQCAndDeliverableFields(t, db, "4934812", sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{Int64: 1, Valid: true}, true)
+
+		seedIseqProductMetricsMirrorRow(t, db, 4934899, 9419243, 0, 0, 0, "7568")
+		seedIRODSLocationMirrorRow(t, db, "4934899", "/seq/illumina/runs/composite/multi-run", "multi-run#1.cram", 9419243, "7568")
+		setIRODSLocationMirrorQCAndDeliverableFields(t, db, "4934899", sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{Int64: 1, Valid: true}, true)
+
+		paths, err := client.IRODSPathsForRun(context.Background(), "49348", "cram", availabilityFetchAll, 0)
+
+		convey.Convey("when the run iRODS list is fetched, then it includes the single-run composite as merged beside the single-lane objects only", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(paths, convey.ShouldHaveLength, 3)
+			convey.So(irodsProductIDs(paths), convey.ShouldResemble, []string{"4934801", "4934802", "4934812"})
+
+			merged := irodsPathByProduct(t, paths, "4934812")
+			convey.So(merged.Merged, convey.ShouldBeTrue)
+			convey.So(merged.IDRun, convey.ShouldEqual, 0)
+			convey.So(merged.IRODSPath, convey.ShouldContainSubstring, "/lane1-2/plex1/49348_1-2#1.cram")
+
+			single := irodsPathByProduct(t, paths, "4934801")
+			convey.So(single.Merged, convey.ShouldBeFalse)
+			convey.So(single.IDRun, convey.ShouldEqual, 49348)
+		})
+	})
+}
+
 func newHierarchyTestClient(t *testing.T) (*Client, sqlmock.Sqlmock, func()) {
 	t.Helper()
 
@@ -2365,6 +2445,20 @@ func irodsProductIDs(paths []IRODSPath) []string {
 	}
 
 	return ids
+}
+
+func irodsPathByProduct(t *testing.T, paths []IRODSPath, productID string) IRODSPath {
+	t.Helper()
+
+	for _, path := range paths {
+		if path.IDProduct == productID {
+			return path
+		}
+	}
+
+	t.Fatalf("iRODS path with product %q not found in %#v", productID, paths)
+
+	return IRODSPath{}
 }
 
 func setIRODSLocationMirrorManualQCFields(t *testing.T, db *sql.DB, idIseqProduct string, qc sql.NullInt64, merged bool) {

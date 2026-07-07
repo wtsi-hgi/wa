@@ -110,12 +110,12 @@ const (
 
 	// countIRODSPathsForRunCacheSQLPrefix/Suffix size IRODSPathsForRun: the
 	// run-scoped iRODS rows are read through the denormalized id_run on the iRODS
-	// mirror, so created-window counts and recency lists share the same scoped
-	// access path. COUNT(*) over the SELECT DISTINCT of the iRODS data-object
+	// mirror, with the same A3 product-metrics fallback as the list for single-run
+	// merged composites. COUNT(*) over the SELECT DISTINCT of the iRODS data-object
 	// columns preserves count == len(list) for the run scope. The file-type filter
-	// (B2) splices into the inner WHERE between the id_run predicate and the
-	// closing paren.
-	countIRODSPathsForRunCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.platform FROM seq_product_irods_locations_mirror spi WHERE spi.id_run = ?`
+	// (B2) splices into the inner WHERE between the run predicate and the closing
+	// paren.
+	countIRODSPathsForRunCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.platform FROM seq_product_irods_locations_mirror spi LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE ` + irodsRunScopePredicate
 	countIRODSPathsForRunCacheSQLSuffix = `) AS distinct_run_irods`
 
 	// countLatestDataForStudySQLPrefix/Suffix size the latest-data study list at
@@ -281,8 +281,7 @@ type SampleCRAM struct {
 	Merged        bool   `json:"merged" doc:"whether the selected CRAM is a merged composite object"`
 }
 
-// SampleCRAMsForStudy lists one selected CRAM per sample for a study, matching
-// the D1a sample-crams export default of CRAM suffix plus deliverables-only.
+// SampleCRAMsForStudy lists one selected CRAM per sample for a study.
 func (c *Client) SampleCRAMsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleCRAM, error) {
 	studyExists, err := c.cacheStudyExists(ctx, studyLimsID)
 	if err != nil {
@@ -315,11 +314,10 @@ func (c *Client) SampleCRAMsForStudy(ctx context.Context, studyLimsID string, li
 
 func defaultSampleCRAMInput(studyLimsID string, limit, offset int) exportSampleCRAMQueryInput {
 	return exportSampleCRAMQueryInput{
-		studyID:          studyLimsID,
-		normalisedFile:   "cram",
-		deliverablesOnly: true,
-		limit:            limit,
-		offset:           offset,
+		studyID:        studyLimsID,
+		normalisedFile: "cram",
+		limit:          limit,
+		offset:         offset,
 	}
 }
 
@@ -1147,7 +1145,7 @@ func (c *Client) CountIRODSPathsForStudyWithOptions(ctx context.Context, studyLi
 }
 
 // CountIRODSPathsForRun counts the iRODS data objects on a run, the count
-// counterpart of IRODSPathsForRun (same denormalised iRODS mirror id_run scope,
+// counterpart of IRODSPathsForRun (same iRODS mirror/product-metrics run scope,
 // with no LIMIT), so CountIRODSPathsForRun(run, fileType) equals
 // len(IRODSPathsForRun(run, fileType, all)) for any fileType. idRun is the
 // Illumina NPG id_run, resolved via ResolveRun: a non-numeric run is

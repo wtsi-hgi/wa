@@ -181,6 +181,46 @@ func TestMLWHExportUsersStudyHonoursRoleFilterG3(t *testing.T) {
 	})
 }
 
+func TestMLWHExportSampleCramsStudy7568H3(t *testing.T) {
+	convey.Convey("H3: Given sample-crams of study 7568, when the export command runs, then it requests the sample-crams relationship and prints merged-aware CRAM rows", t, func() {
+		var capturedRel mlwh.ExportRelationship
+		var capturedParent string
+		var capturedOptions mlwh.ExportOptions
+		stub := &stubMLWHExportClient{
+			export: func(_ context.Context, rel mlwh.ExportRelationship, parentID string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
+				capturedRel = rel
+				capturedParent = parentID
+				capturedOptions = opts
+
+				return mlwh.ExportResult{
+					Columns: []string{"name", "ega_id", "irods_cram_path", "merged"},
+					Rows: [][]string{
+						{"7568STDYCONTROL", "ERS7568CTRL", "/seq/illumina/runs/49/52554/lane1/plex1/52554_1#1.cram", "false"},
+						{"7568STDY9419243", "ERS7568001", "/seq/illumina/runs/49/49348/lane1-2/plex1/49348_1-2#1.cram", "true"},
+					},
+					Total:  732,
+					Format: "tsv",
+				}, nil
+			},
+		}
+		withStubMLWHExportClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "export", "sample-crams", "study", "7568"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "name\tega_id\tirods_cram_path\tmerged")
+		convey.So(output, convey.ShouldContainSubstring, "7568STDYCONTROL\tERS7568CTRL\t/seq/illumina/runs/49/52554/lane1/plex1/52554_1#1.cram\tfalse")
+		convey.So(output, convey.ShouldContainSubstring, "7568STDY9419243\tERS7568001\t/seq/illumina/runs/49/49348/lane1-2/plex1/49348_1-2#1.cram\ttrue")
+		convey.So(output, convey.ShouldContainSubstring, "total=732")
+		convey.So(capturedRel, convey.ShouldResemble, mlwh.ExportRelationship{Children: "sample-crams", ParentKind: "study"})
+		convey.So(capturedParent, convey.ShouldEqual, "7568")
+		convey.So(capturedOptions.FileType, convey.ShouldEqual, "cram")
+		convey.So(capturedOptions.DeliverablesOnly, convey.ShouldBeNil)
+		convey.So(capturedOptions.Format, convey.ShouldEqual, "tsv")
+		convey.So(stub.closed, convey.ShouldBeTrue)
+	})
+}
+
 func TestMLWHExportAllStatesCompleteSetD1b(t *testing.T) {
 	convey.Convey("D1b.3: Given --all, when the export command runs, then it states the complete set was emitted", t, func() {
 		var capturedOptions mlwh.ExportOptions

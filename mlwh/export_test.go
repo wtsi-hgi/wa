@@ -467,6 +467,53 @@ func TestExportStudyIRODSCramColumnsAliasAndDeliverablesD1a(t *testing.T) {
 	})
 }
 
+func TestExportStudyIRODSReportsMergedCompositeHonestRunH1(t *testing.T) {
+	convey.Convey("H1: Given a study iRODS export with a merged lane1-2 object and a single-lane object", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedExport7556Scenario(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "7556", ExportOptions{
+			Columns:  []string{"name", "supplier_name", "id_sample_tmp", "id_run", "merged", "irods_path"},
+			FileType: "cram",
+			Limit:    100,
+		})
+
+		convey.Convey("when iRODS rows are exported, then the composite row remains sample-attributed with merged=true/id_run=0 and the single-lane row keeps its run", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Columns, convey.ShouldResemble, []string{"name", "supplier_name", "id_sample_tmp", "id_run", "merged", "irods_path"})
+
+			merged := exportRowContainingPath(t, result.Rows, 5, "/lane1-2/plex1/49348_1-2#1.cram")
+			convey.So(merged, convey.ShouldResemble, []string{
+				"sample-beta",
+				"supplier-beta",
+				"22",
+				"0",
+				"true",
+				"/seq/illumina/runs/49/49348/lane1-2/plex1/49348_1-2#1.cram",
+			})
+
+			single := exportRowContainingPath(t, result.Rows, 5, "/lane1/plex1/52553_1#1.cram")
+			convey.So(single[3], convey.ShouldEqual, "52553")
+			convey.So(single[4], convey.ShouldEqual, "false")
+		})
+	})
+}
+
+func exportRowContainingPath(t *testing.T, rows [][]string, pathColumn int, pathSubstring string) []string {
+	t.Helper()
+
+	for _, row := range rows {
+		if strings.Contains(row[pathColumn], pathSubstring) {
+			return row
+		}
+	}
+
+	t.Fatalf("export row containing path %q not found in %#v", pathSubstring, rows)
+
+	return nil
+}
+
 func TestExportUnknownColumnListsVocabularyD1a(t *testing.T) {
 	convey.Convey("D1a.2: Given an unknown export column", t, func() {
 		client, cleanup := newExportTestClient(t)
@@ -751,25 +798,40 @@ func TestExportSamplesAppliesSharedFilterFamilyD1aC4(t *testing.T) {
 	})
 }
 
-func TestExportStudySampleCRAMsBackedByIRODSMirrorD1a(t *testing.T) {
+func TestExportStudySampleCramsBackedByIRODSMirrorD1a(t *testing.T) {
 	convey.Convey("D1a reviewer: Given study CRAMS has merged, single-lane, control, and non-cram iRODS rows", t, func() {
 		client, cleanup := newExportTestClient(t)
 		defer cleanup()
 		seedExportSampleCRAMScenario(t, client.cache.DB())
 
 		result, err := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "CRAMS", ExportOptions{})
+		deliverablesOnly := true
+		deliverableResult, deliverableErr := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "CRAMS", ExportOptions{
+			DeliverablesOnly: &deliverablesOnly,
+		})
 
-		convey.Convey("when sample-crams are exported, then one default deliverable CRAM is returned per sample with merged objects preferred", func() {
+		convey.Convey("when sample-crams are exported by default, then every selected CRAM row is returned with merged objects preferred", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(result.Columns, convey.ShouldResemble, []string{"name", "ega_id", "irods_cram_path", "merged"})
 			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"cram-control-only", "EGAN-control", "/seq/crams/control/52554_1#1.cram", "false"},
 				{"cram-merged", "EGAN-merged", "/seq/crams/merged/49348_1-2#1.cram", "true"},
 				{"cram-null-deliverable", "EGAN-null", "/seq/crams/null/pacbio.cram", "false"},
 				{"cram-single", "EGAN-single", "/seq/crams/single/52553_1#1.cram", "false"},
 			})
-			convey.So(result.Total, convey.ShouldEqual, 3)
+			convey.So(result.Total, convey.ShouldEqual, 4)
 			convey.So(result.Complete, convey.ShouldBeTrue)
 			convey.So(result.NextCursor, convey.ShouldBeEmpty)
+		})
+
+		convey.Convey("when deliverables-only is explicit, then the non-deliverable-only CRAM is filtered", func() {
+			convey.So(deliverableErr, convey.ShouldBeNil)
+			convey.So(deliverableResult.Rows, convey.ShouldResemble, [][]string{
+				{"cram-merged", "EGAN-merged", "/seq/crams/merged/49348_1-2#1.cram", "true"},
+				{"cram-null-deliverable", "EGAN-null", "/seq/crams/null/pacbio.cram", "false"},
+				{"cram-single", "EGAN-single", "/seq/crams/single/52553_1#1.cram", "false"},
+			})
+			convey.So(deliverableResult.Total, convey.ShouldEqual, 3)
 		})
 	})
 }

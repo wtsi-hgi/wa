@@ -82,6 +82,7 @@ const (
 	b2Study7556IRODSTargetAVUReferenceCram = 886
 	d1aStudy7568LimsID                     = "7568"
 	d1aStudy7568AttributedCramCount        = 732
+	d1aStudy7568MergedCramCount            = 48
 	d1aStudy7568MergedCramPath             = "/seq/illumina/runs/49/49348/lane1-2/plex1/49348_1-2#1.cram"
 )
 
@@ -2222,6 +2223,33 @@ func TestRealMySQLD1aFlagshipStudyExportsMatchSyncedCache(t *testing.T) {
 				t.Logf("study 7568 merged path %s was not present in the configured cache copy; attribution count still validated", d1aStudy7568MergedCramPath)
 			}
 		})
+
+		convey.Convey("H3: when study 7568 sample-crams are listed, then all 732 samples have one CRAM and the 48 run-49348 composites are merged", func() {
+			crams, err := cache.SampleCRAMsForStudy(ctx, d1aStudy7568LimsID, d1aStudy7568AttributedCramCount+1, 0)
+			convey.So(err, convey.ShouldBeNil)
+			count, countErr := cache.CountSampleCRAMsForStudy(ctx, d1aStudy7568LimsID)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, d1aStudy7568AttributedCramCount)
+			convey.So(crams, convey.ShouldHaveLength, d1aStudy7568AttributedCramCount)
+
+			blankPathCount := 0
+			mergedCount := 0
+			run49348MergedCount := 0
+			for _, cram := range crams {
+				if strings.TrimSpace(cram.IRODSCRAMPath) == "" {
+					blankPathCount++
+				}
+				if cram.Merged {
+					mergedCount++
+				}
+				if cram.Merged && strings.Contains(cram.IRODSCRAMPath, "/runs/49/49348/lane1-2/") {
+					run49348MergedCount++
+				}
+			}
+			convey.So(blankPathCount, convey.ShouldEqual, 0)
+			convey.So(mergedCount, convey.ShouldEqual, d1aStudy7568MergedCramCount)
+			convey.So(run49348MergedCount, convey.ShouldEqual, d1aStudy7568MergedCramCount)
+		})
 	})
 }
 
@@ -2346,7 +2374,7 @@ func copyD1aStudy7568FromConfiguredCache(t *testing.T, ctx context.Context, base
 				0 AS tag_index,
 				NULL AS qc,
 				NULL AS is_deliverable,
-				CASE WHEN CONCAT(spi.irods_collection, '/', spi.irods_file_name) = ? THEN 1 ELSE 0 END AS merged
+				CASE WHEN spi.merged <> 0 OR CONCAT(spi.irods_collection, '/', spi.irods_file_name) = ? THEN 1 ELSE 0 END AS merged
 			FROM %s.seq_product_irods_locations_mirror spi
 			WHERE spi.id_study_lims = ?
 				AND LOWER(spi.irods_file_name) LIKE '%%.cram'`, targetDBName, sourceDBName),

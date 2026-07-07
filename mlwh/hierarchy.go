@@ -53,25 +53,26 @@ const (
 const (
 	irodsManualQCAggregateSelect = `, CASE WHEN LOWER(spi.platform) = 'ont' THEN 0 WHEN MAX(CASE WHEN spi.qc IS NOT NULL OR spi.id_run <> 0 OR spi.position <> 0 OR spi.tag_index <> 0 OR spi.merged <> 0 OR LOWER(spi.platform) IN ('elembio', 'ultimagen', 'pacbio') THEN 1 ELSE 0 END) = 1 THEN COUNT(*) ELSE 0 END, SUM(CASE WHEN spi.qc IS NULL THEN 1 ELSE 0 END), MIN(spi.qc)`
 	irodsManualQCDirectSelect    = `, CASE WHEN LOWER(spi.platform) = 'ont' THEN 0 WHEN spi.qc IS NOT NULL OR spi.id_run <> 0 OR spi.position <> 0 OR spi.tag_index <> 0 OR spi.merged <> 0 OR LOWER(spi.platform) IN ('elembio', 'ultimagen', 'pacbio') THEN 1 ELSE 0 END, CASE WHEN spi.qc IS NULL THEN 1 ELSE 0 END, spi.qc`
+	irodsRunScopePredicate       = `COALESCE(NULLIF(spi.id_run, 0), ipm.id_run, 0) = ?`
 
-	irodsPathsForSampleCacheSQLPrefix = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, COALESCE(spi.created, ''), COALESCE(MIN(ipm.id_run), 0), spi.platform` + irodsManualQCAggregateSelect + ` FROM seq_product_irods_locations_mirror spi LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE spi.id_sample_tmp = ?`
+	irodsPathsForSampleCacheSQLPrefix = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, COALESCE(spi.created, ''), CASE WHEN MAX(spi.merged) <> 0 THEN 0 ELSE COALESCE(NULLIF(MAX(spi.id_run), 0), MIN(ipm.id_run), 0) END, spi.platform, MAX(spi.merged)` + irodsManualQCAggregateSelect + ` FROM seq_product_irods_locations_mirror spi LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE spi.id_sample_tmp = ?`
 	irodsPathsForSampleCacheSQLSuffix = ` GROUP BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, COALESCE(spi.created, ''), spi.platform ORDER BY spi.id_iseq_product LIMIT ? OFFSET ?`
-	irodsPathsForStudyCacheSQLPrefix  = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, ''), COALESCE(spi.created, ''), COALESCE(MIN(ipm.id_run), 0), spi.platform` + irodsManualQCAggregateSelect + ` FROM seq_product_irods_locations_mirror spi LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE spi.id_study_lims = ?`
+	irodsPathsForStudyCacheSQLPrefix  = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, ''), COALESCE(spi.created, ''), CASE WHEN MAX(spi.merged) <> 0 THEN 0 ELSE COALESCE(NULLIF(MAX(spi.id_run), 0), MIN(ipm.id_run), 0) END, spi.platform, MAX(spi.merged)` + irodsManualQCAggregateSelect + ` FROM seq_product_irods_locations_mirror spi LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE spi.id_study_lims = ?`
 	irodsPathsForStudyCacheSQLSuffix  = ` GROUP BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, ''), COALESCE(spi.created, ''), spi.platform ORDER BY spi.id_iseq_product, spi.id_sample_tmp LIMIT ? OFFSET ?`
-	irodsPathsForSampleRecencySQL     = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, COALESCE(spi.created, ''), spi.id_run, spi.platform` + irodsManualQCDirectSelect + ` FROM seq_product_irods_locations_mirror spi WHERE spi.id_sample_tmp = ?`
-	irodsPathsForStudyRecencySQL      = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, ''), COALESCE(spi.created, ''), spi.id_run, spi.platform` + irodsManualQCDirectSelect + ` FROM seq_product_irods_locations_mirror spi LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp WHERE spi.id_study_lims = ?`
-	irodsPathsForRunRecencySQL        = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, COALESCE(spi.created, ''), spi.id_run, spi.platform` + irodsManualQCDirectSelect + ` FROM seq_product_irods_locations_mirror spi WHERE spi.id_run = ?`
+	irodsPathsForSampleRecencySQL     = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, COALESCE(spi.created, ''), CASE WHEN spi.merged <> 0 THEN 0 ELSE spi.id_run END, spi.platform, spi.merged` + irodsManualQCDirectSelect + ` FROM seq_product_irods_locations_mirror spi WHERE spi.id_sample_tmp = ?`
+	irodsPathsForStudyRecencySQL      = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, ''), COALESCE(spi.created, ''), CASE WHEN spi.merged <> 0 THEN 0 ELSE spi.id_run END, spi.platform, spi.merged` + irodsManualQCDirectSelect + ` FROM seq_product_irods_locations_mirror spi LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp WHERE spi.id_study_lims = ?`
+	irodsPathsForRunRecencySQL        = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, COALESCE(spi.created, ''), CASE WHEN spi.merged <> 0 THEN 0 ELSE COALESCE(NULLIF(spi.id_run, 0), ipm.id_run, 0) END, spi.platform, spi.merged` + irodsManualQCDirectSelect + ` FROM seq_product_irods_locations_mirror spi LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE ` + irodsRunScopePredicate
 
 	// irodsPathsForRunCacheSQLPrefix/Suffix list the iRODS data objects on a run
-	// (B3): the default and file-type paths scope directly by the denormalised
-	// seq_product_irods_locations_mirror.id_run, matching the count and E1 recency
-	// paths. GROUP BY the same iRODS data-object columns + platform as the /count
-	// DISTINCT projection preserves count == len(list), while MIN(created) carries a
-	// stable created value for duplicate mirror rows at that object grain. The B2
-	// file-type filter (irodsFileTypeFilterClause) splices between the id_run
-	// predicate and the GROUP BY.
-	irodsPathsForRunCacheSQLPrefix = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, COALESCE(MIN(spi.created), ''), spi.id_run, spi.platform` + irodsManualQCAggregateSelect + ` FROM seq_product_irods_locations_mirror spi WHERE spi.id_run = ?`
-	irodsPathsForRunCacheSQLSuffix = ` GROUP BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_run, spi.platform ORDER BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name LIMIT ? OFFSET ?`
+	// (B3/H2): the default and file-type paths scope by the iRODS mirror id_run when
+	// present, with an A3 product-metrics fallback for single-run merged composites
+	// whose public iRODS id_run remains 0. GROUP BY the same iRODS data-object
+	// columns + platform as the /count DISTINCT projection preserves count ==
+	// len(list), while MIN(created) carries a stable created value for duplicate
+	// mirror rows at that object grain. The B2 file-type filter
+	// (irodsFileTypeFilterClause) splices between the run predicate and the GROUP BY.
+	irodsPathsForRunCacheSQLPrefix = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, COALESCE(MIN(spi.created), ''), CASE WHEN MAX(spi.merged) <> 0 THEN 0 ELSE COALESCE(NULLIF(MAX(spi.id_run), 0), MIN(ipm.id_run), 0) END, spi.platform, MAX(spi.merged)` + irodsManualQCAggregateSelect + ` FROM seq_product_irods_locations_mirror spi LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE ` + irodsRunScopePredicate
+	irodsPathsForRunCacheSQLSuffix = ` GROUP BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.platform ORDER BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name LIMIT ? OFFSET ?`
 
 	// irodsFileTypeFilterClause is the WHERE-clause fragment that restricts an
 	// iRODS list or count to data objects whose irods_file_name ends in
@@ -1570,12 +1571,13 @@ func (c *Client) IRODSPathsForStudyWithOptions(ctx context.Context, studyLimsID 
 // ErrUnsupportedIdentifier, a numeric run absent from a synced cache yields
 // ErrNotFound, and a never-synced cache yields an error satisfying both
 // ErrCacheNeverSynced and ErrNotFound -- the same run-space cascade as RunOverview.
-// The default and file-type list paths read the iRODS mirror's denormalised id_run
-// scope directly, returning IRODSPath rows each carrying the mirror id_run and
-// platform. An empty fileType returns all data objects; an invalid fileType is
-// rejected with ErrUnsupportedIdentifier (the HTTP handler returns 400 first; this
-// re-validates defensively). A valid but unmatched suffix, or a run with no iRODS
-// rows yet, yields an empty list (no error) on a synced cache.
+// The default and file-type list paths read the iRODS mirror's denormalised
+// id_run scope, falling back to the A3 product-metrics row for single-run merged
+// composites whose public iRODS IDRun is 0. Rows carry the public IDRun/platform
+// representation. An empty fileType returns all data objects; an invalid fileType
+// is rejected with ErrUnsupportedIdentifier (the HTTP handler returns 400 first;
+// this re-validates defensively). A valid but unmatched suffix, or a run with no
+// iRODS rows yet, yields an empty list (no error) on a synced cache.
 func (c *Client) IRODSPathsForRun(ctx context.Context, idRun, fileType string, limit, offset int) ([]IRODSPath, error) {
 	return c.IRODSPathsForRunWithOptions(ctx, idRun, IRODSPathOptions{FileType: fileType}, limit, offset)
 }
@@ -1677,14 +1679,16 @@ func (c *Client) queryIRODSPaths(ctx context.Context, query string, args []any, 
 	for rows.Next() {
 		var (
 			path         IRODSPath
+			merged       int
 			productCount int
 			pendingQC    sql.NullInt64
 			minQC        sql.NullInt64
 		)
-		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject, &path.Created, &path.IDRun, &path.Platform, &productCount, &pendingQC, &minQC); err != nil {
+		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject, &path.Created, &path.IDRun, &path.Platform, &merged, &productCount, &pendingQC, &minQC); err != nil {
 			return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
 		}
 		path.IRODSPath = strings.TrimRight(path.Collection, "/") + "/" + path.DataObject
+		path.Merged = merged != 0
 		path.ManualQC = qcRollupString(productCount, pendingQC, minQC)
 
 		paths = append(paths, path)
@@ -1716,14 +1720,16 @@ func (c *Client) queryIRODSPathsWithSample(ctx context.Context, query string, ar
 	for rows.Next() {
 		var (
 			path         IRODSPath
+			merged       int
 			productCount int
 			pendingQC    sql.NullInt64
 			minQC        sql.NullInt64
 		)
-		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject, &path.IDSampleTmp, &path.Name, &path.Created, &path.IDRun, &path.Platform, &productCount, &pendingQC, &minQC); err != nil {
+		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject, &path.IDSampleTmp, &path.Name, &path.Created, &path.IDRun, &path.Platform, &merged, &productCount, &pendingQC, &minQC); err != nil {
 			return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
 		}
 		path.IRODSPath = strings.TrimRight(path.Collection, "/") + "/" + path.DataObject
+		path.Merged = merged != 0
 		path.ManualQC = qcRollupString(productCount, pendingQC, minQC)
 
 		paths = append(paths, path)
