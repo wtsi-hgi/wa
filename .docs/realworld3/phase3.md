@@ -46,8 +46,8 @@ tests from C1 (`SearchSamples("hek_r", {})` returns exactly the 4
 term; MySQL EXPLAIN shows each field predicate is an index range seek, no
 full scan).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.2: C2 - --words opt-in word-prefix mode
 
@@ -63,8 +63,8 @@ matches `Mus Musculus`; `SearchSamples("hek_r", {Words:true})` returns the
 broader word-prefix set, >= the 4 literal matches and distinct from the
 default). Depends on 3.1 (shared `search.go`, the options struct).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.3: C3 - --organism word-membership filter over common_name
 
@@ -83,8 +83,8 @@ assert the actual word-membership count; `usculus` matches nothing; `mus
 musculus` requires both words; EXPLAIN uses the `(word)` index and the
 `common_name` index, no full scan). Depends on 3.1 and Phase 1 (A5).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.4: C4 - shared exact filter family (search + export), AND-combined, indexed
 
@@ -107,8 +107,8 @@ surface returns the strict subset matching the sample set - this AT is
 exercised via the Phase 4 export). Depends on 3.3 (organism) and Phase 2
 (B2 deliverable).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For sequential items, a single review pass after each item is
 acceptable; reviewers must confirm literal-prefix is the SOLE default

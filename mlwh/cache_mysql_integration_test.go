@@ -983,6 +983,315 @@ func seedA4StudyExportScanScenarioMySQL(t *testing.T, db *sql.DB) {
 	}
 }
 
+func TestRealMySQLC1DefaultSampleSearchUsesPrefixRangeIndexes(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	writeDB := cache.cache.DB()
+	seedC1SamplePrefixScenarioMySQL(t, writeDB)
+
+	convey.Convey("C1: Given a throwaway MySQL cache with selective Hek_R prefixes", t, func() {
+		pattern := escapeLIKEPrefixPattern("hek_r")
+
+		convey.Convey("when EXPLAIN plans the default no-mode sample search, then sample_mirror is not full-scanned", func() {
+			args := append(likeContainsArgs(pattern, sampleFullPrefixFields), 100)
+			plans := explainPlanRows(t, writeDB, sampleFullPrefixPageSQL, args...)
+			plan, ok := findExplainPlanRow(plans, "sample_mirror")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+			convey.So(plan.key, convey.ShouldNotBeBlank)
+		})
+
+		convey.Convey("when each default field predicate is explained, then it is served by that field's range index", func() {
+			indexByField := map[string]string{
+				"name":          "sample_mirror_name_idx",
+				"supplier_name": "sample_mirror_supplier_name_idx",
+				"common_name":   "sample_mirror_common_name_idx",
+				"donor_id":      "sample_mirror_donor_id_idx",
+			}
+			missingRange := make([]string, 0)
+			for _, field := range sampleFullPrefixFields {
+				query := fmt.Sprintf(
+					"SELECT id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' AND %s LIKE ? ESCAPE '!' LIMIT ?",
+					field,
+				)
+				plans := explainPlanRows(t, writeDB, query, pattern, 100)
+				plan, ok := findExplainPlanRow(plans, "sample_mirror")
+				if !ok || strings.ToLower(plan.scanType) != "range" || plan.key != indexByField[field] {
+					missingRange = append(missingRange, field)
+				}
+			}
+			convey.So(missingRange, convey.ShouldBeEmpty)
+		})
+	})
+}
+
+func seedC1SamplePrefixScenarioMySQL(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedSampleMirrorSearchRow(t, db, 1, "Hek_R_name", "supplier-1", "common-1", "donor-1")
+	seedSampleMirrorSearchRow(t, db, 2, "name-2", "Hek_R_supplier", "common-2", "donor-2")
+	seedSampleMirrorSearchRow(t, db, 3, "name-3", "supplier-3", "Hek_R_common", "donor-3")
+	seedSampleMirrorSearchRow(t, db, 4, "name-4", "supplier-4", "common-4", "Hek_R_donor")
+	for id := int64(5); id <= 304; id++ {
+		seedSampleMirrorSearchRow(t, db, id, "zzname-"+formatInt(id), "zzsupplier-"+formatInt(id), "zzcommon-"+formatInt(id), "zzdonor-"+formatInt(id))
+	}
+
+	if _, err := db.Exec("ANALYZE TABLE sample_mirror"); err != nil {
+		t.Fatalf("analyze C1 MySQL fixture table: %v", err)
+	}
+}
+
+func TestRealMySQLC3OrganismUsesIndexedWordAndCommonNameLookups(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	writeDB := cache.cache.DB()
+	seedC3OrganismScenarioMySQL(t, writeDB)
+
+	convey.Convey("C3: Given a throwaway MySQL cache with organism vocabulary rows", t, func() {
+		convey.Convey("when EXPLAIN resolves organism words, then common_name_word_mirror uses the word index", func() {
+			query, args := commonNameWordMembershipQuery(sampleOrganismTokens("mus musculus"))
+			plans := explainPlanRows(t, writeDB, query, args...)
+
+			plan, ok := findExplainPlanRow(plans, commonNameWordMirrorTable)
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+			convey.So(plan.key, convey.ShouldEqual, "common_name_word_mirror_word_idx")
+			convey.So(plan.possibleKeys, convey.ShouldContainSubstring, "common_name_word_mirror_word_idx")
+		})
+
+		convey.Convey("when EXPLAIN constrains samples by common_name, then sample_mirror uses the common_name index", func() {
+			plans := explainPlanRows(t, writeDB, sampleOrganismCommonNamePageSQL, "Mus Musculus", 100)
+
+			plan, ok := findExplainPlanRow(plans, "sample_mirror")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+			convey.So(plan.key, convey.ShouldEqual, "sample_mirror_common_name_idx")
+			convey.So(plan.possibleKeys, convey.ShouldContainSubstring, "sample_mirror_common_name_idx")
+		})
+	})
+}
+
+func seedC3OrganismScenarioMySQL(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedSampleMirrorSearchRow(t, db, 1, "c3sample-1", "supplier-1", "Mus Musculus", "donor-1")
+	seedSampleMirrorSearchRow(t, db, 2, "c3sample-2", "supplier-2", "Mus musculus castaneus", "donor-2")
+	seedSampleMirrorSearchRow(t, db, 3, "c3sample-3", "supplier-3", "Mus spretus", "donor-3")
+	seedSampleMirrorSearchRow(t, db, 4, "c3sample-4", "supplier-4", "Homo sapiens", "donor-4")
+	for id := int64(5); id <= 404; id++ {
+		seedSampleMirrorSearchRow(t, db, id, "c3-filler-"+formatInt(id), "supplier-"+formatInt(id), "Filler species "+formatInt(id), "donor-"+formatInt(id))
+	}
+	rebuildCommonNameWordMirrorForTest(t, db)
+
+	if _, err := db.Exec("ANALYZE TABLE sample_mirror, common_name_word_mirror"); err != nil {
+		t.Fatalf("analyze C3 MySQL fixture tables: %v", err)
+	}
+}
+
+func TestRealMySQLC4LibraryTypeOrganismIntersectionUsesIndexedCandidates(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	writeDB := cache.cache.DB()
+	seedC4LibraryTypeOrganismScenarioMySQL(t, writeDB)
+
+	convey.Convey("C4: Given a throwaway MySQL cache with library-type and organism rows", t, func() {
+		convey.Convey("when EXPLAIN resolves the library-type candidates, then library_samples uses its pipeline index", func() {
+			plans := explainPlanRows(t, writeDB, sampleLibraryTypePageSQL, "Standard", 100, 0)
+
+			libraryPlan, ok := findExplainPlanRow(plans, "library_samples")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(libraryPlan.scanType), convey.ShouldNotEqual, "all")
+			convey.So(libraryPlan.key, convey.ShouldEqual, "library_samples_pipeline_id_lims_id_sample_tmp_id_study_lims_uq")
+
+			_, ok = findExplainPlanRow(plans, "sample_mirror")
+			convey.So(ok, convey.ShouldBeFalse)
+		})
+
+		convey.Convey("when EXPLAIN checks SQSCP membership for candidate ids, then sample_mirror uses its primary key", func() {
+			query, args := sampleSQSCPFilterQuery([]int64{1, 2})
+			plans := explainPlanRows(t, writeDB, query, args...)
+
+			samplePlan, ok := findExplainPlanRow(plans, "sample_mirror")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(samplePlan.scanType), convey.ShouldNotEqual, "all")
+			convey.So(samplePlan.key, convey.ShouldEqual, "PRIMARY")
+		})
+
+		convey.Convey("when EXPLAIN intersects organism candidates with library type, then the library filter is indexed", func() {
+			query, args := sampleLibraryTypeFilterQuery([]int64{1, 2}, "Standard")
+			plans := explainPlanRows(t, writeDB, query, args...)
+
+			libraryPlan, ok := findExplainPlanRow(plans, "library_samples")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(libraryPlan.scanType), convey.ShouldNotEqual, "all")
+			convey.So(libraryPlan.key, convey.ShouldEqual, "library_samples_id_sample_tmp_id_study_lims_idx")
+		})
+	})
+}
+
+func seedC4LibraryTypeOrganismScenarioMySQL(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedSampleMirrorSearchRow(t, db, 1, "c4lib-mus-standard", "supplier-1", "Mus Musculus", "donor-1")
+	seedSampleMirrorSearchRow(t, db, 2, "c4lib-mus-bespoke", "supplier-2", "Mus musculus castaneus", "donor-2")
+	seedSampleMirrorSearchRow(t, db, 3, "c4lib-human-standard", "supplier-3", "Homo sapiens", "donor-3")
+	seedLibrarySample(t, db, "Standard", 1, "S1")
+	seedLibrarySample(t, db, "Bespoke", 2, "S1")
+	seedLibrarySample(t, db, "Standard", 3, "S1")
+	rebuildCommonNameWordMirrorForTest(t, db)
+
+	if _, err := db.Exec("ANALYZE TABLE sample_mirror, common_name_word_mirror, library_samples"); err != nil {
+		t.Fatalf("analyze C4 MySQL fixture tables: %v", err)
+	}
+}
+
+func TestRealMySQLC4QCOnlyFilterUsesIndexedCandidateLookups(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	writeDB := cache.cache.DB()
+	seedC4QCFilterScenarioMySQL(t, writeDB)
+
+	convey.Convey("C4: Given a throwaway MySQL cache with QC product rows", t, func() {
+		convey.Convey("when EXPLAIN pages QC candidate sample ids, then sample_mirror is read by primary-key order", func() {
+			plans := explainPlanRows(t, writeDB, sampleSQSCPPageSQL, 100, 0)
+
+			samplePlan, ok := findExplainPlanRow(plans, "sample_mirror")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(samplePlan.scanType), convey.ShouldNotEqual, "all")
+			convey.So(samplePlan.key, convey.ShouldEqual, "PRIMARY")
+		})
+
+		convey.Convey("when EXPLAIN rolls up QC for a candidate chunk, then every product arm uses id_sample_tmp indexes", func() {
+			query, args := sampleQCFilterQuery([]int64{1, 2, 3, 4}, qcPass)
+			plans := explainPlanRows(t, writeDB, query, args...)
+
+			assertC4QCPlanUsesSampleIndex(t, plans, "iseq_product_metrics_mirror", "ipm_mirror_sample_run_position_tag_idx")
+			assertC4QCPlanUsesSampleIndex(t, plans, "pac_bio_product_metrics_mirror", "pac_bio_product_metrics_mirror_id_sample_tmp_idx")
+			assertC4QCPlanUsesSampleIndex(t, plans, "eseq_product_metrics_mirror", "eseq_product_metrics_mirror_id_sample_tmp_idx")
+			assertC4QCPlanUsesSampleIndex(t, plans, "useq_product_metrics_mirror", "useq_product_metrics_mirror_id_sample_tmp_idx")
+		})
+	})
+}
+
+func seedC4QCFilterScenarioMySQL(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	for id := int64(1); id <= 20; id++ {
+		seedSampleMirrorSearchRow(t, db, id, "c4qc-"+formatInt(id), "supplier-"+formatInt(id), "Homo sapiens", "donor-"+formatInt(id))
+	}
+	seedIseqProductMetricsMirrorRowWithQC(t, db, 50101, 1, 55001, 1, 1, "S1", sql.NullInt64{Int64: 1, Valid: true})
+	seedIseqProductMetricsMirrorRowWithQC(t, db, 50201, 2, 55001, 2, 1, "S1", sql.NullInt64{Int64: 0, Valid: true})
+	seedPacBioProductMetricsMirrorRow(t, db, "pacbio-c4qc-3", 3, "S1")
+	seedC4ElembioProductMetricsMirrorRow(t, db, "elembio-c4qc-4", 4, sql.NullInt64{})
+	seedC4UltimagenProductMetricsMirrorRow(t, db, "ultima-c4qc-5", 5, sql.NullInt64{Int64: 1, Valid: true})
+
+	for _, table := range []string{
+		"sample_mirror",
+		"iseq_product_metrics_mirror",
+		"pac_bio_product_metrics_mirror",
+		"eseq_product_metrics_mirror",
+		"useq_product_metrics_mirror",
+	} {
+		if _, err := db.Exec("ANALYZE TABLE " + table); err != nil {
+			t.Fatalf("analyze C4 QC MySQL fixture table %s: %v", table, err)
+		}
+	}
+}
+
+func seedC4ElembioProductMetricsMirrorRow(t *testing.T, db *sql.DB, idProduct string, idSampleTmp int64, qc sql.NullInt64) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO eseq_product_metrics_mirror(id_eseq_product, id_eseq_flowcell_tmp, id_run, id_sample_tmp, id_study_lims, is_sequencing_control, qc, qc_seq, qc_lib, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		idProduct,
+		idSampleTmp,
+		int64(56_001),
+		idSampleTmp,
+		"S1",
+		0,
+		qc,
+		qc,
+		qc,
+		formatSyncTime(time.Date(2026, time.May, 6, 12, 10, 0, 0, time.UTC)),
+	)
+	if err != nil {
+		t.Fatalf("seedC4ElembioProductMetricsMirrorRow(): %v", err)
+	}
+}
+
+func seedC4UltimagenProductMetricsMirrorRow(t *testing.T, db *sql.DB, idProduct string, idSampleTmp int64, qc sql.NullInt64) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO useq_product_metrics_mirror(id_useq_product, id_useq_wafer_tmp, id_run, id_sample_tmp, id_study_lims, is_sequencing_control, qc, qc_seq, qc_lib, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		idProduct,
+		idSampleTmp,
+		int64(57_001),
+		idSampleTmp,
+		"S1",
+		0,
+		qc,
+		qc,
+		qc,
+		formatSyncTime(time.Date(2026, time.May, 6, 12, 10, 0, 0, time.UTC)),
+	)
+	if err != nil {
+		t.Fatalf("seedC4UltimagenProductMetricsMirrorRow(): %v", err)
+	}
+}
+
 func TestRealMySQLB2DeliverablesOnlyUsesIndexedFilters(t *testing.T) {
 	baseDSN, password := realMySQLCacheDSNOrSkip(t)
 
@@ -1245,6 +1554,15 @@ func explainPlanRows(t *testing.T, db *sql.DB, query string, args ...any) []mysq
 	}
 
 	return plans
+}
+
+func assertC4QCPlanUsesSampleIndex(t *testing.T, plans []mysqlExplainPlanRow, table, indexName string) {
+	t.Helper()
+
+	plan, ok := findExplainPlanRow(plans, table)
+	convey.So(ok, convey.ShouldBeTrue)
+	convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+	convey.So(plan.key, convey.ShouldEqual, indexName)
 }
 
 // assertMirrorIndexServed asserts the EXPLAIN plan row for the given query alias

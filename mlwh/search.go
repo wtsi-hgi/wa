@@ -55,9 +55,9 @@ const (
 	sampleSearchTokenPageMargin     = 64
 )
 
-// sampleDeliverableFilterFetchChunk bounds how many unfiltered search candidate
-// ids are checked in one deliverables-only SQL query.
-const sampleDeliverableFilterFetchChunk = 1000
+// sampleFilterFetchChunk bounds how many candidate id_sample_tmps are checked in
+// one shared-filter SQL query.
+const sampleFilterFetchChunk = 1000
 
 // sampleAnchorFieldFetchChunk bounds how many anchor-matched samples' searchable
 // fields are read per query during the in-memory word-AND verification (Part C). The
@@ -148,6 +148,32 @@ const sampleDeliverableIDUnionSQLTemplate = `
 	UNION
 	SELECT id_sample_tmp FROM oseq_flowcell_mirror WHERE id_sample_tmp IN (%[1]s)`
 
+const sampleDeliverableAllUnionSQL = `
+	SELECT ipm.id_sample_tmp
+	FROM iseq_product_metrics_mirror ipm
+	INNER JOIN iseq_flowcell_mirror ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp
+	WHERE ifc.entity_type IN ('library', 'library_indexed')
+	UNION
+	SELECT id_sample_tmp FROM eseq_product_metrics_mirror WHERE is_sequencing_control = 0
+	UNION
+	SELECT id_sample_tmp FROM useq_product_metrics_mirror WHERE is_sequencing_control = 0
+	UNION
+	SELECT id_sample_tmp FROM pac_bio_product_metrics_mirror
+	UNION
+	SELECT id_sample_tmp FROM oseq_flowcell_mirror`
+
+var sampleDeliverablePageSQL = `SELECT deliverable.id_sample_tmp FROM (` + sampleDeliverableAllUnionSQL +
+	`) AS deliverable INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = deliverable.id_sample_tmp ` +
+	`WHERE sample_mirror.id_lims = 'SQSCP' ORDER BY deliverable.id_sample_tmp LIMIT ? OFFSET ?`
+
+const sampleLibraryTypePageSQL = `SELECT DISTINCT id_sample_tmp FROM library_samples WHERE pipeline_id_lims = ? ORDER BY id_sample_tmp LIMIT ? OFFSET ?`
+
+const sampleSQSCPPageSQL = `SELECT id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT ? OFFSET ?`
+
+const sampleOrganismCommonNamePageSQL = `SELECT id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' AND common_name = ? ORDER BY id_sample_tmp LIMIT ?`
+
+const sampleQCRollupVerdictSQL = `CASE WHEN MIN(qc) = 0 THEN '` + qcFail + `' WHEN SUM(CASE WHEN qc IS NULL THEN 1 ELSE 0 END) > 0 THEN '` + qcPending + `' ELSE '` + qcPass + `' END`
+
 // sampleFullPrefixFields are the four sample_mirror columns whose case-insensitive
 // NOCASE/ci indexes back the full-value PREFIX match: a sample matches when ANY of
 // these columns has the search term as a literal prefix. Unlike the BINARY-collated
@@ -201,6 +227,16 @@ var studySearchSQL = `SELECT ` + studyMirrorSelectColumns + studySearchFromWhere
 // equals len(SearchStudies(...)) for the term.
 var studySearchCountSQL = `SELECT COUNT(*)` + studySearchFromWhere
 
+type sampleFilterBase int
+
+const (
+	sampleFilterBaseNone sampleFilterBase = iota
+	sampleFilterBaseOrganism
+	sampleFilterBaseLibraryType
+	sampleFilterBaseQC
+	sampleFilterBaseDeliverable
+)
+
 // likeContainsClause renders an OR'd, parenthesised set of
 // `column LIKE ? ESCAPE '!'` predicates, one per field (see searchLIKEEscapeChar
 // for why '!' is the escape character). Callers bind the same escaped pattern
@@ -213,6 +249,78 @@ func likeContainsClause(fields []string) string {
 
 	return "(" + strings.Join(predicates, " OR ") + ")"
 }
+
+func (c *Client) sampleFilterBaseSource(ctx context.Context, db *sql.DB, filters sampleFilterFamily, base sampleFilterBase) (sampleIDPageSource, error) {
+	switch base {
+	case sampleFilterBaseOrganism:
+		return func(limit, offset int) ([]int64, error) {
+			return c.sampleOrganismSearchIDs(ctx, db, filters.Organism, limit, offset)
+		}, nil
+	case sampleFilterBaseLibraryType:
+		return func(limit, offset int) ([]int64, error) {
+			return c.sampleLibraryTypeSearchIDs(ctx, db, filters.LibraryType, limit, offset)
+		}, nil
+	case sampleFilterBaseQC:
+		return func(limit, offset int) ([]int64, error) {
+			return c.sampleQCSearchIDs(ctx, db, filters.QC, limit, offset)
+		}, nil
+	case sampleFilterBaseDeliverable:
+		return func(limit, offset int) ([]int64, error) {
+			return queryIDColumn(ctx, db, sampleDeliverablePageSQL, limit, offset)
+		}, nil
+	default:
+		return nil, ErrUnsupportedIdentifier
+	}
+}
+
+type sampleIDPageSource func(limit, offset int) ([]int64, error)
+
+func (c *Client) filterSampleCandidatePages(ctx context.Context, db *sql.DB, source sampleIDPageSource, filters sampleFilterFamily, limit, offset int) ([]int64, error) {
+	if filters.empty() {
+		return source(limit, offset)
+	}
+
+	return filterSampleIDPages(source, func(ids []int64) ([]int64, error) {
+		return c.filterSampleIDsByFamily(ctx, db, ids, filters)
+	}, limit, offset)
+}
+
+func filterSampleIDPages(source sampleIDPageSource, filter sampleIDFilter, limit, offset int) ([]int64, error) {
+	need := offset + limit
+	if need <= 0 {
+		return nil, nil
+	}
+
+	filtered := make([]int64, 0, need)
+	rawOffset := 0
+	for len(filtered) < need {
+		candidates, err := source(sampleFilterFetchChunk, rawOffset)
+		if err != nil {
+			return nil, err
+		}
+		if len(candidates) == 0 {
+			break
+		}
+
+		kept, err := filter(candidates)
+		if err != nil {
+			return nil, err
+		}
+		filtered = append(filtered, kept...)
+		if len(candidates) < sampleFilterFetchChunk {
+			break
+		}
+
+		rawOffset += len(candidates)
+	}
+	if offset >= len(filtered) {
+		return []int64{}, nil
+	}
+
+	return filtered[offset:min(need, len(filtered))], nil
+}
+
+type sampleIDFilter func([]int64) ([]int64, error)
 
 // sampleSearchTokenBound is the half-open byte range [Lower, Upper) of one query
 // token: the lowercased token and its prefix successor (bytePrefixSuccessor).
@@ -373,6 +481,196 @@ func anyTokenHasPrefix(tokens []string, prefix string) bool {
 	return false
 }
 
+// sampleFilterFamily is the reusable sample-id filter family shared by search
+// now and by export in Phase 4. Every member resolves candidate id_sample_tmp
+// sets and AND-combines by intersection rather than scanning sample_mirror.
+type sampleFilterFamily struct {
+	Organism         string
+	LibraryType      string
+	QC               string
+	DeliverablesOnly bool
+}
+
+func sampleFilterFamilyFromOptions(opts SampleSearchOptions) (sampleFilterFamily, error) {
+	qc := strings.ToLower(strings.TrimSpace(opts.QC))
+	switch qc {
+	case "", qcPass, qcFail, qcPending:
+	default:
+		return sampleFilterFamily{}, ErrUnsupportedIdentifier
+	}
+
+	return sampleFilterFamily{
+		Organism:         strings.TrimSpace(opts.Organism),
+		LibraryType:      strings.TrimSpace(opts.LibraryType),
+		QC:               qc,
+		DeliverablesOnly: opts.DeliverablesOnly,
+	}, nil
+}
+
+func (filters sampleFilterFamily) empty() bool {
+	return filters.Organism == "" && filters.LibraryType == "" && filters.QC == "" && !filters.DeliverablesOnly
+}
+
+func (filters sampleFilterFamily) base() sampleFilterBase {
+	switch {
+	case filters.Organism != "":
+		return sampleFilterBaseOrganism
+	case filters.LibraryType != "":
+		return sampleFilterBaseLibraryType
+	case filters.QC != "":
+		return sampleFilterBaseQC
+	case filters.DeliverablesOnly:
+		return sampleFilterBaseDeliverable
+	default:
+		return sampleFilterBaseNone
+	}
+}
+
+func (filters sampleFilterFamily) without(base sampleFilterBase) sampleFilterFamily {
+	switch base {
+	case sampleFilterBaseOrganism:
+		filters.Organism = ""
+	case sampleFilterBaseLibraryType:
+		filters.LibraryType = ""
+	case sampleFilterBaseQC:
+		filters.QC = ""
+	case sampleFilterBaseDeliverable:
+		filters.DeliverablesOnly = false
+	}
+
+	return filters
+}
+
+func sampleSearchShouldShortCircuit(term string, filters sampleFilterFamily) bool {
+	if term == "" {
+		return filters.empty()
+	}
+
+	return len(term) < searchTermMinLength
+}
+
+func (c *Client) sampleFilterFamilyIDs(ctx context.Context, db *sql.DB, filters sampleFilterFamily, limit, offset int) ([]int64, error) {
+	base := filters.base()
+	source, err := c.sampleFilterBaseSource(ctx, db, filters, base)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.filterSampleCandidatePages(ctx, db, source, filters.without(base), limit, offset)
+}
+
+func (c *Client) filterSampleIDsByFamily(ctx context.Context, db *sql.DB, ids []int64, filters sampleFilterFamily) ([]int64, error) {
+	var err error
+	kept := ids
+	if filters.Organism != "" {
+		commonNames, resolveErr := c.resolveOrganismCommonNames(ctx, db, filters.Organism)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+
+		kept, err = c.filterOrganismSampleIDs(ctx, db, kept, makeStringSet(commonNames))
+		if err != nil {
+			return nil, err
+		}
+	}
+	if filters.LibraryType != "" {
+		kept, err = c.filterLibraryTypeSampleIDs(ctx, db, kept, filters.LibraryType)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if filters.QC != "" {
+		kept, err = c.filterQCSampleIDs(ctx, db, kept, filters.QC)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if filters.DeliverablesOnly {
+		kept, err = c.filterDeliverableSampleIDs(ctx, db, kept)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return kept, nil
+}
+
+func makeStringSet(values []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		set[value] = struct{}{}
+	}
+
+	return set
+}
+
+func sampleSQSCPFilterQuery(ids []int64) (string, []any) {
+	placeholders, args := sampleIDPlaceholders(ids)
+	query := `SELECT id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN (` +
+		placeholders + `) ORDER BY id_sample_tmp`
+
+	return query, args
+}
+
+func sampleLibraryTypeFilterQuery(ids []int64, libraryType string) (string, []any) {
+	placeholders, idArgs := sampleIDPlaceholders(ids)
+	args := make([]any, 0, len(idArgs)+1)
+	args = append(args, libraryType)
+	args = append(args, idArgs...)
+
+	query := `SELECT DISTINCT id_sample_tmp FROM library_samples WHERE pipeline_id_lims = ? AND id_sample_tmp IN (` +
+		placeholders + `) ORDER BY id_sample_tmp`
+
+	return query, args
+}
+
+func sampleQCFilterQuery(ids []int64, verdict string) (string, []any) {
+	unionSQL, args := sampleProductMetricsQCUnionForSampleIDs(ids)
+	query := `SELECT id_sample_tmp FROM (` + sampleQCRollupSelect(unionSQL) +
+		`) AS sample_qc WHERE verdict = ? ORDER BY id_sample_tmp`
+	args = append(args, verdict)
+
+	return query, args
+}
+
+func sampleProductMetricsQCUnionForSampleIDs(ids []int64) (string, []any) {
+	args := make([]any, 0, len(ids)*4)
+	arm := func(table string) string {
+		query := `SELECT id_sample_tmp, qc FROM ` + table
+		if len(ids) == 0 {
+			return query + ` WHERE 1 = 0`
+		}
+
+		placeholders, idArgs := sampleIDPlaceholders(ids)
+		args = append(args, idArgs...)
+
+		return query + ` WHERE id_sample_tmp IN (` + placeholders + `)`
+	}
+
+	return strings.Join([]string{
+		arm("iseq_product_metrics_mirror"),
+		arm("pac_bio_product_metrics_mirror"),
+		arm("eseq_product_metrics_mirror"),
+		arm("useq_product_metrics_mirror"),
+	}, " UNION ALL "), args
+}
+
+func sampleIDPlaceholders(ids []int64) (string, []any) {
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for index, id := range ids {
+		placeholders[index] = "?"
+		args[index] = id
+	}
+
+	return strings.Join(placeholders, ", "), args
+}
+
+func sampleQCRollupSelect(unionSQL string) string {
+	return `SELECT id_sample_tmp, ` + sampleQCRollupVerdictSQL + ` AS verdict FROM (` +
+		unionSQL + `) AS sample_products GROUP BY id_sample_tmp`
+}
+
 // sampleSearchTokensForTerm tokenises term the way stored searchable values are
 // tokenised (sampleSearchTokens: maximal [a-z0-9] runs, lowercased) and drops any
 // query token subsumed by a more-specific one (dropPrefixSubsumedTokens), so
@@ -380,6 +678,37 @@ func anyTokenHasPrefix(tokens []string, prefix string) bool {
 // single-vs-multi-token branch in SearchSamples/CountSampleSearch.
 func sampleSearchTokensForTerm(term string) []string {
 	return dropPrefixSubsumedTokens(sampleSearchTokens(term))
+}
+
+// sampleOrganismTokens tokenises an organism filter as exact whole words. Unlike
+// word-prefix search terms, it deliberately keeps prefix-subsumed words so
+// "mus musculus" requires BOTH the word "mus" and the word "musculus".
+func sampleOrganismTokens(organism string) []string {
+	return sampleSearchTokens(organism)
+}
+
+// commonNameWordMembershipQuery resolves the common_name vocabulary values whose
+// words contain every organism query word. The sample table is constrained in a
+// second step by common_name so the low-cardinality vocabulary lookup and the
+// sample lookup can each use their own index.
+func commonNameWordMembershipQuery(tokens []string) (string, []any) {
+	if len(tokens) == 0 {
+		return `SELECT common_name FROM ` + commonNameWordMirrorTable + ` WHERE 1 = 0`, nil
+	}
+	if len(tokens) == 1 {
+		return `SELECT DISTINCT common_name FROM ` + commonNameWordMirrorTable + ` WHERE word = ? ORDER BY common_name`, []any{tokens[0]}
+	}
+
+	placeholders := make([]string, len(tokens))
+	args := make([]any, 0, len(tokens)+1)
+	for index, token := range tokens {
+		placeholders[index] = "?"
+		args = append(args, token)
+	}
+	args = append(args, len(tokens))
+
+	return `SELECT common_name FROM ` + commonNameWordMirrorTable + ` WHERE word IN (` +
+		strings.Join(placeholders, ", ") + `) GROUP BY common_name HAVING COUNT(DISTINCT word) = ? ORDER BY common_name`, args
 }
 
 // moreSelectiveAnchorTie breaks an equal-count anchor tie deterministically: prefer
@@ -578,6 +907,31 @@ func queryIDColumn(ctx context.Context, db *sql.DB, query string, args ...any) (
 	return ids, nil
 }
 
+// queryStringColumn runs query (whose first column is a string) and returns the
+// scanned values in result order.
+func queryStringColumn(ctx context.Context, db *sql.DB, query string, args ...any) ([]string, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: query sample search: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	values := make([]string, 0)
+	for rows.Next() {
+		var value string
+		if scanErr := rows.Scan(&value); scanErr != nil {
+			return nil, fmt.Errorf("%w: scan sample search: %w", ErrUpstreamImpaired, scanErr)
+		}
+
+		values = append(values, value)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: query sample search: %w", ErrUpstreamImpaired, err)
+	}
+
+	return values, nil
+}
+
 // queryCountRow runs a single-row COUNT(...) query against db and returns the scalar
 // result. It is the db-scoped sibling of (*Client).queryCount used inside the
 // multi-token gather, which already holds the cache reader handle.
@@ -590,12 +944,24 @@ func queryCountRow(ctx context.Context, db *sql.DB, query string, args ...any) (
 	return count, nil
 }
 
-func validatePhase2SampleSearchOptions(opts SampleSearchOptions) error {
-	if opts.Words || opts.Organism != "" || opts.LibraryType != "" || opts.QC != "" {
-		return ErrUnsupportedIdentifier
+func intersectOrderedIDs(ordered []int64, matches []int64) []int64 {
+	if len(ordered) == 0 || len(matches) == 0 {
+		return nil
 	}
 
-	return nil
+	matchSet := make(map[int64]struct{}, len(matches))
+	for _, id := range matches {
+		matchSet[id] = struct{}{}
+	}
+
+	kept := make([]int64, 0, len(ordered))
+	for _, id := range ordered {
+		if _, ok := matchSet[id]; ok {
+			kept = append(kept, id)
+		}
+	}
+
+	return kept
 }
 
 func sampleDeliverableFilterQuery(ids []int64) (string, []any) {
@@ -798,43 +1164,26 @@ func (c *Client) SearchStudies(ctx context.Context, term string, limit, offset i
 
 // SearchSamples returns samples that match term, ordered by id_sample_tmp for
 // stable pagination, with their library/study fan-out populated as the Find* sample
-// methods do. A sample matches when EITHER any of name, supplier_name, common_name,
-// or donor_id has term as a literal case-insensitive prefix (the full-value prefix,
-// so "hek_r" matches supplier_name "Hek_R1" and "homo sapiens" matches common_name
-// "Homo sapiens"), OR, for EVERY word of term, some field has a word starting with
-// it (the case-insensitive word-prefix AND, so "mus" matches "Mus musculus",
-// "Mus muscu" matches it via both word-prefixes, and the separator-insensitive
-// "hek r1" matches "Hek_R1"); a substring inside a single word (e.g. "usculus") does
-// not. term is tokenised exactly as stored values are (sampleSearchTokens: maximal
-// [a-z0-9] runs). A term shorter than searchTermMinLength, or one that tokenises to
-// nothing (e.g. "___" or a non-ASCII-only term), returns an empty slice without
-// querying. A never-synced cache returns an empty slice joined with
-// ErrCacheNeverSynced and ErrNotFound.
-//
-// A single query token takes the fast single-range seek of the (token,
-// id_sample_tmp) prefix index alone (its word-prefix superset already contains every
-// full-value prefix match, so the prefix scan is skipped). A multi-word term unions
-// the full-value prefix match (an index range on the NOCASE/ci-collated columns)
-// with the word-token AND (anchored on the most-selective token), de-duplicated and
-// paged in id order. The same path serves both dialects; neither uses FTS, so it
-// works on MariaDB and MySQL < 8 too.
+// methods do. With no mode selected, a sample matches only when any of name,
+// supplier_name, common_name, or donor_id has term as a literal case-insensitive
+// prefix (so "hek_r" matches supplier_name "Hek_R1" and "homo sapiens" matches
+// common_name "Homo sapiens"). A term shorter than searchTermMinLength returns an
+// empty slice without querying. A never-synced cache returns an empty slice joined
+// with ErrCacheNeverSynced and ErrNotFound.
 func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
 	return c.SearchSamplesWithOptions(ctx, term, SampleSearchOptions{}, limit, offset)
 }
 
 // SearchSamplesWithOptions returns samples matching term and optional sample
-// filters. Phase 2 implements DeliverablesOnly; other filters are reserved for
-// the later shared-filter phase.
+// filters. Words selects the separator-agnostic word-prefix path; with no mode,
+// the C1 literal whole-value prefix remains the default. Phase 2 implements
+// DeliverablesOnly; other filters are reserved for the later shared-filter phase.
 func (c *Client) SearchSamplesWithOptions(ctx context.Context, term string, opts SampleSearchOptions, limit, offset int) ([]Sample, error) {
-	if err := validatePhase2SampleSearchOptions(opts); err != nil {
+	filters, err := sampleFilterFamilyFromOptions(opts)
+	if err != nil {
 		return nil, err
 	}
-	if len(term) < searchTermMinLength {
-		return []Sample{}, nil
-	}
-
-	tokens := sampleSearchTokensForTerm(term)
-	if len(tokens) == 0 {
+	if sampleSearchShouldShortCircuit(term, filters) {
 		return []Sample{}, nil
 	}
 
@@ -843,7 +1192,7 @@ func (c *Client) SearchSamplesWithOptions(ctx context.Context, term string, opts
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	ids, err := c.sampleSearchIDs(ctx, db, term, tokens, opts, limit, offset)
+	ids, err := c.sampleSearchIDs(ctx, db, term, opts, filters, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -867,24 +1216,50 @@ func (c *Client) SearchSamplesWithOptions(ctx context.Context, term string, opts
 }
 
 // sampleSearchIDs returns the id_sample_tmps for the page [offset, offset+limit) of
-// samples matching term. A single token keeps the fast single-range word-prefix page
-// (sampleSearchTokenPage) unchanged, since its word-prefix superset already covers
-// every full-value prefix match. A multi-word term pages the de-duplicated union of
-// the full-value prefix match and the word-token AND in id order
-// (sampleSearchUnionIDs), slicing the requested window.
-func (c *Client) sampleSearchIDs(ctx context.Context, db *sql.DB, term string, tokens []string, opts SampleSearchOptions, limit, offset int) ([]int64, error) {
-	if opts.DeliverablesOnly {
-		return c.deliverableSampleSearchIDs(ctx, db, term, tokens, limit, offset)
+// samples matching term under the selected sample search mode.
+func (c *Client) sampleSearchIDs(ctx context.Context, db *sql.DB, term string, opts SampleSearchOptions, filters sampleFilterFamily, limit, offset int) ([]int64, error) {
+	if filters.empty() {
+		return c.textSampleSearchIDs(ctx, db, term, opts, limit, offset)
+	}
+	if term == "" {
+		return c.sampleFilterFamilyIDs(ctx, db, filters, limit, offset)
 	}
 
-	return c.unfilteredSampleSearchIDs(ctx, db, term, tokens, limit, offset)
+	source := func(sourceLimit, sourceOffset int) ([]int64, error) {
+		return c.textSampleSearchIDs(ctx, db, term, opts, sourceLimit, sourceOffset)
+	}
+
+	return c.filterSampleCandidatePages(ctx, db, source, filters, limit, offset)
 }
 
-func (c *Client) unfilteredSampleSearchIDs(ctx context.Context, db *sql.DB, term string, tokens []string, limit, offset int) ([]int64, error) {
+func (c *Client) textSampleSearchIDs(ctx context.Context, db *sql.DB, term string, opts SampleSearchOptions, limit, offset int) ([]int64, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	if opts.Words {
+		return c.wordSampleSearchIDs(ctx, db, term, limit, offset)
+	}
+
+	prefixIDs, err := c.sampleFullPrefixPage(ctx, db, term, offset+limit)
+	if err != nil {
+		return nil, err
+	}
+	if offset >= len(prefixIDs) {
+		return []int64{}, nil
+	}
+
+	return prefixIDs[offset:min(offset+limit, len(prefixIDs))], nil
+}
+
+func (c *Client) wordSampleSearchIDs(ctx context.Context, db *sql.DB, term string, limit, offset int) ([]int64, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 
+	tokens := sampleSearchTokensForTerm(term)
+	if len(tokens) == 0 {
+		return []int64{}, nil
+	}
 	if len(tokens) == 1 {
 		return c.sampleSearchTokenPage(ctx, db, tokens[0], limit, offset)
 	}
@@ -900,64 +1275,130 @@ func (c *Client) unfilteredSampleSearchIDs(ctx context.Context, db *sql.DB, term
 	return unionIDs[offset:min(offset+limit, len(unionIDs))], nil
 }
 
-func (c *Client) deliverableSampleSearchIDs(ctx context.Context, db *sql.DB, term string, tokens []string, limit, offset int) ([]int64, error) {
+func (c *Client) sampleOrganismSearchIDs(ctx context.Context, db *sql.DB, organism string, limit, offset int) ([]int64, error) {
 	need := offset + limit
 	if need <= 0 {
 		return nil, nil
 	}
 
-	filtered := make([]int64, 0, need)
-	rawOffset := 0
-	for len(filtered) < need {
-		candidates, err := c.unfilteredSampleSearchIDs(ctx, db, term, tokens, sampleDeliverableFilterFetchChunk, rawOffset)
-		if err != nil {
-			return nil, err
-		}
-		if len(candidates) == 0 {
-			break
-		}
-
-		kept, err := c.filterDeliverableSampleIDs(ctx, db, candidates)
-		if err != nil {
-			return nil, err
-		}
-		filtered = append(filtered, kept...)
-		if len(candidates) < sampleDeliverableFilterFetchChunk {
-			break
-		}
-
-		rawOffset += len(candidates)
+	commonNames, err := c.resolveOrganismCommonNames(ctx, db, organism)
+	if err != nil {
+		return nil, err
 	}
-	if offset >= len(filtered) {
+	if len(commonNames) == 0 {
 		return []int64{}, nil
 	}
 
-	return filtered[offset:min(need, len(filtered))], nil
+	ids, err := c.sampleOrganismIDsForCommonNames(ctx, db, commonNames, need)
+	if err != nil {
+		return nil, err
+	}
+	if offset >= len(ids) {
+		return []int64{}, nil
+	}
+
+	return ids[offset:min(need, len(ids))], nil
 }
 
-func (c *Client) filterDeliverableSampleIDs(ctx context.Context, db *sql.DB, ids []int64) ([]int64, error) {
+func (c *Client) resolveOrganismCommonNames(ctx context.Context, db *sql.DB, organism string) ([]string, error) {
+	tokens := sampleOrganismTokens(organism)
+	if len(tokens) == 0 {
+		return nil, nil
+	}
+
+	query, args := commonNameWordMembershipQuery(tokens)
+
+	return queryStringColumn(ctx, db, query, args...)
+}
+
+func (c *Client) sampleOrganismIDsForCommonNames(ctx context.Context, db *sql.DB, commonNames []string, need int) ([]int64, error) {
+	if need <= 0 {
+		return nil, nil
+	}
+
+	merged := make([]int64, 0, need)
+	for _, commonName := range commonNames {
+		ids, err := queryIDColumn(ctx, db, sampleOrganismCommonNamePageSQL, commonName, need)
+		if err != nil {
+			return nil, err
+		}
+
+		merged = mergeBottomIDs(merged, ids, need)
+	}
+
+	return merged, nil
+}
+
+func (c *Client) sampleLibraryTypeSearchIDs(ctx context.Context, db *sql.DB, libraryType string, limit, offset int) ([]int64, error) {
+	source := func(sourceLimit, sourceOffset int) ([]int64, error) {
+		return queryIDColumn(ctx, db, sampleLibraryTypePageSQL, libraryType, sourceLimit, sourceOffset)
+	}
+
+	return filterSampleIDPages(source, func(ids []int64) ([]int64, error) {
+		return c.filterSQSCPIDs(ctx, db, ids)
+	}, limit, offset)
+}
+
+func (c *Client) sampleQCSearchIDs(ctx context.Context, db *sql.DB, verdict string, limit, offset int) ([]int64, error) {
+	source := func(sourceLimit, sourceOffset int) ([]int64, error) {
+		return queryIDColumn(ctx, db, sampleSQSCPPageSQL, sourceLimit, sourceOffset)
+	}
+
+	return filterSampleIDPages(source, func(ids []int64) ([]int64, error) {
+		return c.filterQCSampleIDs(ctx, db, ids, verdict)
+	}, limit, offset)
+}
+
+func (c *Client) filterSQSCPIDs(ctx context.Context, db *sql.DB, ids []int64) ([]int64, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
 
-	query, args := sampleDeliverableFilterQuery(ids)
+	query, args := sampleSQSCPFilterQuery(ids)
+	matches, err := queryIDColumn(ctx, db, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	return intersectOrderedIDs(ids, matches), nil
+}
+
+func (c *Client) filterOrganismSampleIDs(ctx context.Context, db *sql.DB, ids []int64, commonNameSet map[string]struct{}) ([]int64, error) {
+	if len(ids) == 0 || len(commonNameSet) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for index, id := range ids {
+		placeholders[index] = "?"
+		args[index] = id
+	}
+
+	query := `SELECT id_sample_tmp, common_name FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN (` +
+		strings.Join(placeholders, ", ") + ")"
+
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("%w: query deliverable sample filter: %w", ErrUpstreamImpaired, err)
+		return nil, fmt.Errorf("%w: query organism sample filter: %w", ErrUpstreamImpaired, err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	keptSet := make(map[int64]struct{}, len(ids))
 	for rows.Next() {
-		var id int64
-		if scanErr := rows.Scan(&id); scanErr != nil {
-			return nil, fmt.Errorf("%w: scan deliverable sample filter: %w", ErrUpstreamImpaired, scanErr)
+		var (
+			id         int64
+			commonName string
+		)
+		if scanErr := rows.Scan(&id, &commonName); scanErr != nil {
+			return nil, fmt.Errorf("%w: scan organism sample filter: %w", ErrUpstreamImpaired, scanErr)
 		}
-
-		keptSet[id] = struct{}{}
+		if _, ok := commonNameSet[commonName]; ok {
+			keptSet[id] = struct{}{}
+		}
 	}
 	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("%w: query deliverable sample filter: %w", ErrUpstreamImpaired, err)
+		return nil, fmt.Errorf("%w: query organism sample filter: %w", ErrUpstreamImpaired, err)
 	}
 
 	kept := make([]int64, 0, len(keptSet))
@@ -968,6 +1409,48 @@ func (c *Client) filterDeliverableSampleIDs(ctx context.Context, db *sql.DB, ids
 	}
 
 	return kept, nil
+}
+
+func (c *Client) filterLibraryTypeSampleIDs(ctx context.Context, db *sql.DB, ids []int64, libraryType string) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	query, args := sampleLibraryTypeFilterQuery(ids, libraryType)
+	matches, err := queryIDColumn(ctx, db, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	return intersectOrderedIDs(ids, matches), nil
+}
+
+func (c *Client) filterQCSampleIDs(ctx context.Context, db *sql.DB, ids []int64, verdict string) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	query, args := sampleQCFilterQuery(ids, verdict)
+	matches, err := queryIDColumn(ctx, db, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	return intersectOrderedIDs(ids, matches), nil
+}
+
+func (c *Client) filterDeliverableSampleIDs(ctx context.Context, db *sql.DB, ids []int64) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	query, args := sampleDeliverableFilterQuery(ids)
+	matches, err := queryIDColumn(ctx, db, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	return intersectOrderedIDs(ids, matches), nil
 }
 
 // sampleSearchTokenPage returns the distinct id_sample_tmps for the page
@@ -1088,14 +1571,11 @@ func (c *Client) CountStudySearch(ctx context.Context, term string) (Count, erro
 // CountSampleSearch counts the distinct samples SearchSamples would match for term,
 // bounded by sampleSearchCountCap. For normal result sets the count is exact and
 // equals len(SearchSamples(term, all)); for a very common match set the scan stops at
-// the cap and reports the cap as a floor (e.g. "homo sapiens" matching millions of
-// rows counts to the cap quickly instead of scanning every row). A single token uses
-// the fast single-range distinct count of the (token, id_sample_tmp) index. A
-// multi-word term counts the de-duplicated union of the full-value prefix match and
-// the word-token AND, bounded by the cap. A term shorter than searchTermMinLength, or
-// one that tokenises to nothing, returns Count{Count: 0} without querying. A
-// never-synced cache returns Count{} with an error satisfying both
-// ErrCacheNeverSynced and ErrNotFound, mirroring SearchSamples.
+// the cap and reports the cap as a floor. The no-mode count uses the same literal
+// whole-value prefix as SearchSamples. A term shorter than searchTermMinLength
+// returns Count{Count: 0} without querying. A never-synced cache returns Count{}
+// with an error satisfying both ErrCacheNeverSynced and ErrNotFound, mirroring
+// SearchSamples.
 func (c *Client) CountSampleSearch(ctx context.Context, term string) (Count, error) {
 	return c.CountSampleSearchWithOptions(ctx, term, SampleSearchOptions{})
 }
@@ -1103,19 +1583,15 @@ func (c *Client) CountSampleSearch(ctx context.Context, term string) (Count, err
 // CountSampleSearchWithOptions counts samples matching term and optional sample
 // filters, bounded by sampleSearchCountCap.
 func (c *Client) CountSampleSearchWithOptions(ctx context.Context, term string, opts SampleSearchOptions) (Count, error) {
-	if err := validatePhase2SampleSearchOptions(opts); err != nil {
+	filters, err := sampleFilterFamilyFromOptions(opts)
+	if err != nil {
 		return Count{}, err
 	}
-	if len(term) < searchTermMinLength {
+	if sampleSearchShouldShortCircuit(term, filters) {
 		return Count{Count: 0}, nil
 	}
 
-	tokens := sampleSearchTokensForTerm(term)
-	if len(tokens) == 0 {
-		return Count{Count: 0}, nil
-	}
-
-	count, err := c.countSampleSearch(ctx, term, tokens, opts)
+	count, err := c.countSampleSearch(ctx, term, opts, filters)
 	if err != nil {
 		return Count{}, err
 	}
@@ -1130,24 +1606,35 @@ func (c *Client) CountSampleSearchWithOptions(ctx context.Context, term string, 
 	return Count{Count: 0}, nil
 }
 
-// countSampleSearch returns the bounded match count for term. A single token uses
-// the fast single-range distinct count SQL directly. A multi-word term counts the
-// bottom-cap union ids (sampleSearchUnionIDs with need=cap), so the count equals
-// len(SearchSamples(term, all)) below the cap and reports the cap as a floor at or
-// above it.
-func (c *Client) countSampleSearch(ctx context.Context, term string, tokens []string, opts SampleSearchOptions) (int, error) {
-	if opts.DeliverablesOnly {
+// countSampleSearch returns the bounded count for term under the selected sample
+// search mode.
+func (c *Client) countSampleSearch(ctx context.Context, term string, opts SampleSearchOptions, filters sampleFilterFamily) (int, error) {
+	if !filters.empty() {
 		db := c.readCacheDB()
 		if db == nil {
 			return 0, fmt.Errorf("mlwh: cache reader not configured")
 		}
 
-		ids, err := c.deliverableSampleSearchIDs(ctx, db, term, tokens, sampleSearchCountCap, 0)
+		ids, err := c.sampleSearchIDs(ctx, db, term, opts, filters, sampleSearchCountCap, 0)
 		if err != nil {
 			return 0, err
 		}
 
 		return len(ids), nil
+	}
+	if opts.Words {
+		return c.countWordSampleSearch(ctx, term)
+	}
+
+	args := append(likeContainsArgs(escapeLIKEPrefixPattern(term), sampleFullPrefixFields), sampleSearchCountCap)
+
+	return c.queryCount(ctx, sampleFullPrefixCountSQL, "count sample search", args...)
+}
+
+func (c *Client) countWordSampleSearch(ctx context.Context, term string) (int, error) {
+	tokens := sampleSearchTokensForTerm(term)
+	if len(tokens) == 0 {
+		return 0, nil
 	}
 	if len(tokens) == 1 {
 		query, args := sampleTokenPrefixQuery(tokens[0], sampleSearchCountSQL, sampleSearchCountOpenSQL)
