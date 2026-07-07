@@ -135,6 +135,9 @@ func newMLWHLatestCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := validateLatestFileTypeFlag(fileType); err != nil {
+				return err
+			}
 
 			client, err := openMLWHLatestConfiguredClient(cmd.Context(), serverURL)
 			if err != nil {
@@ -169,6 +172,23 @@ func parseLatestSelector(args []string, facultySponsor string) (string, string, 
 	return study, sponsor, nil
 }
 
+func validateLatestFileTypeFlag(fileType string) error {
+	if fileType == "" {
+		return nil
+	}
+
+	normalised := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(fileType), "."))
+	if normalised == "" || strings.ContainsAny(normalised, `%_/`) {
+		return latestInvalidFileTypeError(fileType)
+	}
+
+	return nil
+}
+
+func latestInvalidFileTypeError(fileType string) error {
+	return fmt.Errorf("invalid --file-type %q: a filename suffix may not be empty or contain '%%', '_' or '/'", fileType)
+}
+
 func runMLWHLatest(ctx context.Context, client mlwhLatestClient, out io.Writer, selector latestSelector, fileType string, limit, offset int) error {
 	rows, err := latestRows(ctx, client, selector, fileType, limit, offset)
 	if err != nil {
@@ -178,7 +198,7 @@ func runMLWHLatest(ctx context.Context, client mlwhLatestClient, out io.Writer, 
 			return nil
 		}
 		if errors.Is(err, mlwh.ErrUnsupportedIdentifier) && fileType != "" {
-			return fmt.Errorf("invalid --file-type %q: a filename suffix may not be empty or contain '%%', '_' or '/'", fileType)
+			return latestInvalidFileTypeError(fileType)
 		}
 
 		return fmt.Errorf("latest data: %w", err)

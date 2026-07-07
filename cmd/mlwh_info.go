@@ -78,6 +78,7 @@ type mlwhInfoClient interface {
 	SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
 
 	StudyOverview(ctx context.Context, studyLimsID string) (mlwh.StudyOverview, error)
+	StudyManifest(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (mlwh.StudyManifest, error)
 	StatusBreakdown(ctx context.Context, studyLimsID string) (mlwh.StatusBreakdown, error)
 	CountSamplesWithData(ctx context.Context, studyLimsID string) (mlwh.Count, error)
 	CountSamplesWithDataSince(ctx context.Context, studyLimsID, since, until string) (mlwh.Count, error)
@@ -506,6 +507,7 @@ func writeStudyPanel(out io.Writer, report infoReport, style infoStyle) {
 	writeStudyMetaFields(out, style, report, labelWidth)
 	writeStudySamplesBlock(out, report, style, labelWidth)
 	writeStudyDataBlock(out, report, style, labelWidth)
+	writeStudyProductsBlock(out, report, style)
 	writeStudyListColumns(out, report, style)
 	writeCacheSyncedLine(out, style, studyCacheSyncedAt(report))
 }
@@ -518,6 +520,7 @@ func writeStudyMetaFields(out io.Writer, style infoStyle, report infoReport, lab
 	accession := study.AccessionNumber
 	sponsor := study.FacultySponsor
 	dataAccessGroup := study.DataAccessGroup
+	programme := study.Programme
 	if overview != nil {
 		if strings.TrimSpace(name) == "" {
 			name = overview.Name
@@ -531,12 +534,15 @@ func writeStudyMetaFields(out io.Writer, style infoStyle, report infoReport, lab
 		if strings.TrimSpace(overview.DataAccessGroup) != "" {
 			dataAccessGroup = overview.DataAccessGroup
 		}
+		if strings.TrimSpace(programme) == "" {
+			programme = overview.Programme
+		}
 	}
 
 	for _, field := range []struct{ label, value string }{
 		{"Name", name},
 		{"Accession", accession},
-		{"Programme", study.Programme},
+		{"Programme", programme},
 		{"Sponsor", sponsor},
 		{"Data Access", dataAccessGroup},
 		{"Title", study.StudyTitle},
@@ -787,6 +793,17 @@ func infoDateRange(rng *mlwh.DateRange) string {
 	return infoJoinNonEmpty(" → ", infoCompactDate(rng.Earliest), infoCompactDate(rng.Latest))
 }
 
+func writeStudyProductsBlock(out io.Writer, report infoReport, style infoStyle) {
+	if report.StudyManifest == nil || len(report.StudyManifest.Rows) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\n  %s\n", style.section(infoListHeading("Products", len(report.StudyManifest.Rows), 0)))
+	for _, row := range report.StudyManifest.Rows {
+		writeManifestRow(out, row, false)
+	}
+}
+
 // writeStudyListColumns lists the study's libraries, runs and samples, each with
 // the true total in its header and a "(N of M)" header when truncated at the
 // fetch cap.
@@ -973,6 +990,21 @@ type mlwhInfoSampleNameResolver interface {
 func runMLWHInfo(ctx context.Context, client mlwhInfoClient, out io.Writer, identifier, typeFlag, since string, jsonOut, canSync bool) error {
 	match, err := classifyForInfo(ctx, client, identifier, typeFlag)
 	if err != nil {
+		cacheUnavailable := errors.Is(err, mlwh.ErrCacheNeverSynced) ||
+			errors.Is(err, mlwh.ErrNotFound) && mlwhClientNeverSynced(ctx, client)
+		if cacheUnavailable && !canSync {
+			if jsonOut {
+				return writeInfoReportJSON(out, infoReport{
+					Identifier: identifier,
+					Warnings:   []string{mlwhCacheUnavailableMessage},
+				})
+			}
+
+			_, _ = fmt.Fprintf(out, "%s\n", mlwhCacheUnavailableMessage)
+
+			return nil
+		}
+
 		return infoQueryError(identifier, err, canSync)
 	}
 
@@ -1322,6 +1354,12 @@ func populateStudyFeatures(ctx context.Context, client mlwhInfoClient, report *i
 		report.Warnings = append(report.Warnings, fmt.Sprintf("status breakdown: %v", err))
 	}
 
+	if manifest, err := client.StudyManifest(ctx, studyLimsID, "", false, infoMaxRelated, 0); err == nil {
+		report.StudyManifest = &manifest
+	} else if !errors.Is(err, mlwh.ErrNotFound) && !errors.Is(err, mlwh.ErrCacheNeverSynced) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("study manifest: %v", err))
+	}
+
 	report.SamplesWithDataCount = studySamplesWithDataCount(ctx, client, report, studyLimsID, since)
 
 	if report.SamplesWithoutDataCount != nil {
@@ -1411,6 +1449,7 @@ type infoReport struct {
 	IRODSPaths []mlwh.IRODSPath `json:"irods_paths,omitempty"`
 
 	StudyOverview           *mlwh.StudyOverview       `json:"study_overview,omitempty"`
+	StudyManifest           *mlwh.StudyManifest       `json:"study_manifest,omitempty"`
 	StatusBreakdown         *mlwh.StatusBreakdown     `json:"status_breakdown,omitempty"`
 	SamplesWithDataCount    *infoSamplesWithDataCount `json:"samples_with_data_count,omitempty"`
 	SamplesWithoutDataCount *infoCount                `json:"samples_without_data_count,omitempty"`

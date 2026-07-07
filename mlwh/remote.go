@@ -882,7 +882,20 @@ func (rc *RemoteClient) SearchStudiesPage(ctx context.Context, term string, limi
 
 // SearchSamples runs a sample substring search through the remote server.
 func (rc *RemoteClient) SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
-	return remoteCall[[]Sample](rc, ctx, "SearchSamples", []string{term}, remotePagination(limit, offset))
+	return rc.SearchSamplesWithOptions(ctx, term, SampleSearchOptions{}, limit, offset)
+}
+
+// SearchSamplesWithOptions runs a sample search through the remote server with
+// the optioned Phase 10 search modes and exact filters.
+func (rc *RemoteClient) SearchSamplesWithOptions(ctx context.Context, term string, opts SampleSearchOptions, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "SearchSamples", []string{term}, remoteSampleSearchQuery(limit, offset, opts))
+}
+
+func remoteSampleSearchQuery(limit, offset int, opts SampleSearchOptions) url.Values {
+	query := remotePagination(limit, offset)
+	addSampleSearchOptionValues(query, opts)
+
+	return query
 }
 
 // SearchSamplesPage is the Page[Sample] variant of SearchSamples. It sends the
@@ -900,7 +913,20 @@ func (rc *RemoteClient) CountStudySearch(ctx context.Context, term string) (Coun
 
 // CountSampleSearch counts the samples matching term through the remote server.
 func (rc *RemoteClient) CountSampleSearch(ctx context.Context, term string) (Count, error) {
-	return remoteCall[Count](rc, ctx, "CountSampleSearch", []string{term}, nil)
+	return rc.CountSampleSearchWithOptions(ctx, term, SampleSearchOptions{})
+}
+
+// CountSampleSearchWithOptions counts optioned sample-search rows through the
+// remote server.
+func (rc *RemoteClient) CountSampleSearchWithOptions(ctx context.Context, term string, opts SampleSearchOptions) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountSampleSearch", []string{term}, remoteSampleSearchOptions(opts))
+}
+
+func remoteSampleSearchOptions(opts SampleSearchOptions) url.Values {
+	query := url.Values{}
+	addSampleSearchOptionValues(query, opts)
+
+	return query
 }
 
 // CountStudies counts the mirrored studies through the remote server.
@@ -1438,9 +1464,24 @@ type RemoteConfig struct {
 	CacheTTL time.Duration
 }
 
+func addSampleSearchOptionValues(query url.Values, opts SampleSearchOptions) {
+	if opts.Words {
+		query.Set("words", "true")
+	}
+	remoteSetNonEmptyQuery(query, "organism", opts.Organism)
+	remoteSetNonEmptyQuery(query, "library_type", opts.LibraryType)
+	remoteSetNonEmptyQuery(query, "qc", opts.QC)
+	if opts.DeliverablesOnly {
+		query.Set("deliverables_only", "true")
+	}
+}
+
 func addIRODSPathOptionValues(values url.Values, opts IRODSPathOptions) {
 	if opts.FileType != "" {
 		values.Set("file_type", opts.FileType)
+	}
+	if opts.DeliverablesOnly {
+		values.Set("deliverables_only", "true")
 	}
 	if opts.OrderBy != "" {
 		values.Set("order_by", opts.OrderBy)

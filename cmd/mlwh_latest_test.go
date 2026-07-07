@@ -27,6 +27,7 @@ package cmd
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -132,4 +133,40 @@ func withStubMLWHLatestClient(t *testing.T, stub *stubMLWHLatestClient) {
 	openMLWHLatestClient = func(context.Context, mlwh.Config) (mlwhLatestClient, error) {
 		return stub, nil
 	}
+}
+
+func TestMLWHLatestInvalidFileTypeBeatsLocalNeverSyncedCacheK(t *testing.T) {
+	convey.Convey("Given local cache-only mode with a never-synced cache, when latest gets an invalid --file-type, then it errors before opening the cache", t, func() {
+		t.Setenv("WA_MLWH_DSN", "")
+		t.Setenv("WA_MLWH_PASSWORD", "")
+		t.Setenv("WA_MLWH_CACHE_PATH", filepath.Join(t.TempDir(), "mlwh-cache.sqlite"))
+		t.Setenv("WA_MLWH_CACHE_PASSWORD", "")
+		t.Setenv("WA_MLWH_SERVER_URL", "")
+		t.Setenv("WA_MLWH_BACKEND_URL", "")
+		t.Setenv("WA_ENV", "")
+		t.Setenv("WA_TEST_SEQMETA_PORT", "")
+		t.Setenv("WA_DEV_SEQMETA_PORT", "")
+		t.Setenv("WA_PROD_SEQMETA_PORT", "")
+
+		opened := false
+		original := openMLWHLatestClient
+		t.Cleanup(func() { openMLWHLatestClient = original })
+		openMLWHLatestClient = func(context.Context, mlwh.Config) (mlwhLatestClient, error) {
+			opened = true
+
+			return &stubMLWHLatestClient{
+				latestStudy: func(context.Context, string, string, int, int) ([]mlwh.RecentDataRow, error) {
+					return nil, mlwh.ErrCacheNeverSynced
+				},
+			}, nil
+		}
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "latest", "5901", "--file-type", "bad/type"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(opened, convey.ShouldBeFalse)
+		convey.So(output, convey.ShouldContainSubstring, "invalid --file-type")
+		convey.So(output, convey.ShouldContainSubstring, "bad/type")
+		convey.So(output, convey.ShouldNotContainSubstring, mlwhCacheUnavailableMessage)
+	})
 }

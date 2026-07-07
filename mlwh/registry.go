@@ -259,7 +259,7 @@ var Registry = []Endpoint{
 		Query:       []string{"since", "until", "platform"},
 		NewResult:   newSliceResult[MonthlyRunCount],
 		Summary:     "List monthly grouped run counts",
-		Description: "Returns monthly grouped run counts across platforms. Manufacturer is derived from platform as Illumina->Illumina, Elembio->Element Biosciences, Ultimagen->Ultima Genomics, PacBio->PacBio and ONT->Oxford Nanopore. Run grain is one run identifier, never wells or flowcells: Illumina, Elembio and Ultimagen count distinct id_run, PacBio counts distinct pac_bio_run_name, and ONT counts distinct experiment_name. Date basis is authoritative and each row states it: Illumina and Elembio use run complete, Ultimagen uses run archived, PacBio uses run_complete, and ONT uses warehouse load time - not a true sequencing date. ONT is included under that labelled warehouse-load basis, never dropped. Optional since and until filter the normalised per-platform run date with since inclusive and until exclusive; platform may be supplied more than once to restrict platforms.",
+		Description: "Returns monthly grouped run counts across platforms. Manufacturer is derived from platform as Illumina->Illumina, Elembio->Element Biosciences, Ultimagen->Ultima Genomics, PacBio->PacBio and ONT->Oxford Nanopore. Run grain is one run identifier, never wells or flowcells: Illumina, Elembio and Ultimagen count distinct id_run, PacBio counts distinct pac_bio_run_name, and ONT counts distinct experiment_name. Date basis is authoritative and each row states date_basis: Illumina and Elembio use run complete, Ultimagen uses run archived, PacBio uses run_complete, and ONT uses warehouse load time - not a true sequencing date. ONT is included under that labelled warehouse-load basis, never dropped. Optional since and until filter the normalised per-platform run date with since inclusive and until exclusive; platform may be supplied more than once to restrict platforms. Each row carries cache_synced_at; values are read from the cache mirrors and complete only up to their sync state (see /freshness).",
 		QueryParams: monthlyRunQueryParams(),
 	},
 	{
@@ -269,7 +269,7 @@ var Registry = []Endpoint{
 		Query:       []string{"since", "until", "platform", "limit", "cursor"},
 		NewResult:   newSliceResult[RunListingRow],
 		Summary:     "List global runs",
-		Description: "Returns a bounded global all-runs listing across platforms, one row per platform-native run identifier. The stable id is the composite <platform>:<native_id> (for example illumina:47409, pacbio:<run_name>, ont:<experiment_name>) and is the keyset cursor. Native_id is also returned separately. Manufacturer is derived from platform as Illumina->Illumina, Elembio->Element Biosciences, Ultimagen->Ultima Genomics, PacBio->PacBio and ONT->Oxford Nanopore. Run grain and date basis match /runs/monthly: Illumina, Elembio and Ultimagen list distinct id_run, PacBio lists distinct pac_bio_run_name, and ONT lists distinct experiment_name; Illumina and Elembio use run complete, Ultimagen uses run archived, PacBio uses run_complete, and ONT uses warehouse load time - not a true sequencing date. Optional since and until filter the normalised per-platform run date with since inclusive and until exclusive; platform may be supplied more than once to restrict platforms. Use limit for a bounded page and cursor=<last id> to continue.",
+		Description: "Returns a bounded global all-runs listing across platforms, one row per platform-native run identifier. The stable id is the composite <platform>:<native_id> (for example illumina:47409, pacbio:<run_name>, ont:<experiment_name>) and is the keyset cursor. Native_id is also returned separately. Manufacturer is derived from platform as Illumina->Illumina, Elembio->Element Biosciences, Ultimagen->Ultima Genomics, PacBio->PacBio and ONT->Oxford Nanopore. Run grain and date_basis match /runs/monthly: Illumina, Elembio and Ultimagen list distinct id_run, PacBio lists distinct pac_bio_run_name, and ONT lists distinct experiment_name; Illumina and Elembio use run complete, Ultimagen uses run archived, PacBio uses run_complete, and ONT uses warehouse load time - not a true sequencing date. Optional since and until filter the normalised per-platform run date with since inclusive and until exclusive; platform may be supplied more than once to restrict platforms. Use limit for a bounded page and cursor=<last id> to continue. Each row carries cache_synced_at; values are read from the cache mirrors and complete only up to their sync state (see /freshness).",
 		QueryParams: runListingQueryParams(),
 	},
 	{
@@ -279,7 +279,7 @@ var Registry = []Endpoint{
 		Query:       []string{"group_by", "unit", "since", "until", "platform"},
 		NewResult:   newSliceResult[SequencingAggregateRow],
 		Summary:     "List grouped sequencing aggregate",
-		Description: "Returns a grouped sequencing aggregate in one call. group_by is required and may be supplied more than once or comma-separated, combining month, platform, manufacturer, programme and faculty_sponsor. unit is required: runs counts platform-native run identifiers using the per-platform date basis from /runs/monthly (Illumina and Elembio run complete, Ultimagen run archived, PacBio run_complete, ONT warehouse load time - not a true sequencing date); a run spanning multiple requested study groups counts once in each group it touches, with no server-side fan-out over studies. samples and products are data-grain aggregates over seq_product_irods_locations_mirror, windowed by iRODS created with since inclusive and until exclusive; each product is attributed through its single study-scoped iRODS row to exactly one study programme/faculty sponsor, and rows state date_basis=iRODS created. platform is optional and repeatable.",
+		Description: "Returns a grouped sequencing aggregate in one call. group_by is required and may be supplied more than once or comma-separated, combining month, platform, manufacturer, programme and faculty_sponsor. unit is required: runs counts platform-native run identifiers using the per-platform date basis from /runs/monthly (Illumina and Elembio run complete, Ultimagen run archived, PacBio run_complete, ONT warehouse load time - not a true sequencing date); a run spanning multiple requested study groups counts once in each group it touches, with no server-side fan-out over studies. samples and products are data-grain aggregates over seq_product_irods_locations_mirror, windowed by iRODS created with since inclusive and until exclusive; each product is attributed through its single study-scoped iRODS row to exactly one study programme/faculty sponsor (one study programme attribution unit), and rows state date_basis=iRODS created. platform is optional and repeatable. Each row carries cache_synced_at; values are read from the cache mirrors and complete only up to their sync state (see /freshness).",
 		QueryParams: sequencingAggregateQueryParams(),
 	},
 	{
@@ -365,7 +365,7 @@ var Registry = []Endpoint{
 		Paginated:   true,
 		NewResult:   newSliceResult[RecentDataRow],
 		Summary:     "List newest data objects for a study",
-		Description: "Returns a bounded, pageable newest-first page of raw iRODS data-object rows for the given study. Rows are ordered by created DESC, with ties by (id_run, id_product); this is a page, NOT an unbounded MAX(created) tie set. Membership is a raw seq_product_irods_locations_mirror scan scoped by (id_study_lims, created), not the study manifest/product grain, so the first row's created timestamp reconciles with StudyOverview.newest_data_added. Each row carries the full irods_path, study id/name, sample name and supplier_name, id_run, lane, tag_index, platform, and merged flag. Set file_type to restrict rows to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with one leading dot stripped. Defaults to 10 rows, maximum 1000; use limit/offset to page.",
+		Description: "Returns a bounded, pageable newest-first page of raw iRODS data-object rows for the given study. Rows are ordered by iRODS created DESC (created is data added, never last_changed), with ties by (id_run, id_product); this is a page, NOT an unbounded MAX(created) tie set. Membership is a raw seq_product_irods_locations_mirror scan scoped by (id_study_lims, created), not the study manifest/product grain, so the first row's created timestamp reconciles with StudyOverview.newest_data_added. Each row carries the full irods_path, study id/name, sample name and supplier_name, id_run, lane, tag_index, platform, and merged flag. Set file_type to restrict rows to data objects whose iRODS file name ends in `.<file_type>` using the filename-suffix rule, matched case-insensitively with one leading dot stripped. Defaults to 10 rows, maximum 1000; use limit/offset to page. The rows are read from cache mirrors; freshness is reported by cache_synced_at on related aggregates and by /freshness.",
 		QueryParams: latestDataPaginationParams(),
 	},
 	{
@@ -377,7 +377,7 @@ var Registry = []Endpoint{
 		Paginated:   true,
 		NewResult:   newSliceResult[RecentDataRow],
 		Summary:     "List newest data objects by faculty sponsor",
-		Description: "Returns a bounded, pageable newest-first page of raw iRODS data-object rows across SQSCP studies whose study_mirror.faculty_sponsor contains the supplied name. Each matching study contributes only its bounded top rows through the (id_study_lims, created) access path, and those per-study candidates are merged by created DESC with ties by (id_run, id_product), avoiding one request per study and avoiding an unbounded global filesort over every file. Membership is the raw seq_product_irods_locations_mirror row set, so results reconcile with each study's StudyOverview.newest_data_added. Set file_type to restrict rows to data objects whose iRODS file name ends in `.<file_type>`. Defaults to 10 rows, maximum 1000; use limit/offset to page.",
+		Description: "Returns a bounded, pageable newest-first page of raw iRODS data-object rows across SQSCP studies whose study_mirror.faculty_sponsor contains the supplied name; faculty_sponsor is a Study field, NOT a study_users role. Each matching study contributes only its bounded top rows through the (id_study_lims, created) access path, and those per-study candidates are merged by iRODS created DESC (created is data added, never last_changed) with ties by (id_run, id_product), avoiding one request per study and avoiding an unbounded global filesort over every file. Membership is the raw seq_product_irods_locations_mirror row set, so results reconcile with each study's StudyOverview.newest_data_added. Set file_type to restrict rows to data objects whose iRODS file name ends in `.<file_type>` using the filename-suffix rule. Defaults to 10 rows, maximum 1000; use limit/offset to page. The rows are read from cache mirrors; freshness is reported by cache_synced_at on related aggregates and by /freshness.",
 		QueryParams: latestDataPaginationParams(),
 	},
 	{
@@ -397,11 +397,11 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/sample/:id/irods",
 		PathParams:  []string{"id"},
-		Query:       []string{"file_type", "order_by", "since", "until"},
+		Query:       []string{"file_type", "deliverables_only", "order_by", "since", "until"},
 		Paginated:   true,
 		NewResult:   newSliceResult[IRODSPath],
 		Summary:     "List iRODS paths for a sample",
-		Description: "Lists the iRODS data-object paths exported for the given sample (by Sanger sample name). Defaults to returning all paths; use limit/offset to page. Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request.",
+		Description: "Lists the iRODS data-object paths exported for the given sample (by Sanger sample name). Rows expose created (iRODS created time: data added, never last_changed), manual_qc (qc.go roll-up fail>pending>pass, empty when no product metrics), deliverable, merged and sample identity fields. deliverable uses iseq_flowcell.entity_type IN ('library','library_indexed') or Element/Ultima is_sequencing_control=0, approximates iRODS target=1, is NOT is_spiked, and is pass-through for PacBio/ONT. Defaults to returning all paths; use limit/offset to page. Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. Set deliverables_only=true to apply the deliverable filter where a discriminator exists. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. The list is read from the cache mirrors, so it is complete only up to their sync state (see /freshness).",
 		QueryParams: fetchAllPaginationWithFileTypeParams("sample-scoped iRODS data objects added to iRODS"),
 	},
 	{
@@ -409,11 +409,11 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/study/:id/irods",
 		PathParams:  []string{"id"},
-		Query:       []string{"file_type", "order_by", "since", "until"},
+		Query:       []string{"file_type", "deliverables_only", "order_by", "since", "until"},
 		Paginated:   true,
 		NewResult:   newSliceResult[IRODSPath],
 		Summary:     "List iRODS paths for a study",
-		Description: "Lists the iRODS data-object paths exported for the given study. Defaults to returning all paths; use limit/offset to page. Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request.",
+		Description: "Lists the iRODS data-object paths exported for the given study. Rows expose created (iRODS created time: data added, never last_changed), manual_qc (qc.go roll-up fail>pending>pass, empty when no product metrics), deliverable, merged and sample/study identity fields; merged=true marks merged multi-lane composite CRAM attribution. deliverable uses iseq_flowcell.entity_type IN ('library','library_indexed') or Element/Ultima is_sequencing_control=0, approximates iRODS target=1, is NOT is_spiked, and is pass-through for PacBio/ONT. Defaults to returning all paths; use limit/offset to page. Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. Set deliverables_only=true to apply the deliverable filter where a discriminator exists. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. The list is read from the cache mirrors, so it is complete only up to their sync state (see /freshness).",
 		QueryParams: fetchAllPaginationWithFileTypeParams("study-scoped iRODS data objects added to iRODS"),
 	},
 	{
@@ -421,11 +421,11 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/run/:id/irods",
 		PathParams:  []string{"id"},
-		Query:       []string{"file_type", "order_by", "since", "until"},
+		Query:       []string{"file_type", "deliverables_only", "order_by", "since", "until"},
 		Paginated:   true,
 		NewResult:   newSliceResult[IRODSPath],
 		Summary:     "List iRODS paths for a run",
-		Description: "Lists the iRODS data objects on the given run by reading seq_product_irods_locations_mirror rows whose denormalized id_run equals the requested run, one row per data object. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Every row carries id_run = the run plus the iRODS row's platform. Defaults to returning all data objects; use limit/offset to page, and it is bounded and paginated like /study/:id/irods and /sample/:id/irods, setting the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /run/:id/irods/count and the two cannot drift). Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. The list is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+		Description: "Lists the iRODS data objects on the given run by reading seq_product_irods_locations_mirror rows whose denormalized id_run equals the requested run, one row per data object. Rows expose created (iRODS created time: data added, never last_changed), manual_qc (qc.go roll-up fail>pending>pass, empty when no product metrics), deliverable and merged fields; merged=true marks merged multi-lane composite CRAM attribution visible to the run when the mirror carries the run. deliverable uses iseq_flowcell.entity_type IN ('library','library_indexed') or Element/Ultima is_sequencing_control=0, approximates iRODS target=1, is NOT is_spiked, and is pass-through for PacBio/ONT. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Every row carries id_run = the run plus the iRODS row's platform. Defaults to returning all data objects; use limit/offset to page, and it is bounded and paginated like /study/:id/irods and /sample/:id/irods, setting the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /run/:id/irods/count and the two cannot drift). Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. Set deliverables_only=true to apply the deliverable filter where a discriminator exists. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. The list is read from the cache mirrors, so it is complete only up to their sync state (see /freshness).",
 		QueryParams: fetchAllPaginationWithFileTypeParams("run-scoped iRODS data objects added to iRODS"),
 	},
 	{
@@ -437,7 +437,7 @@ var Registry = []Endpoint{
 		Paginated:   true,
 		NewResult:   newResult[StudyManifest],
 		Summary:     "Get a study's product manifest",
-		Description: "Returns one bounded, pageable manifest of the given study's sequencing products, so a study's samples-and-data table is one server-side join rather than N per-sample calls. The row grain is ONE row per sequencing product: a distinct (id_run, position, tag_index) from iseq_product_metrics_mirror scoped by the product-metrics id_study_lims, joined to its sample's identity in sample_mirror, so each row carries name, supplier_name, accession_number, sanger_sample_id, id_run, lane (= position) and tag_index. Rows are ordered by (id_run, position, tag_index, name) for determinism. The study-level metadata (id_study_lims, name, accession_number, faculty_sponsor, data_access_group) is carried ONCE in the envelope (read from study_mirror), NOT repeated per row. Set with_irods=true to also carry irods_path on each row: the product's iRODS data object via a set-at-once LEFT JOIN to the iRODS locations mirror on the shared id_iseq_product (and id_study_lims) with GROUP BY product, so the row count stays product-grained (3 products give 3 rows) however many iRODS objects a product has, and a product with no matching iRODS object has irods_path empty. A common cause of empty irods_path for CRAM manifests is a merged multi-lane CRAM: the product rows stay empty rather than copying one composite path onto each single-lane product, each known gap has irods_unmatched=true with reason=merged_multilane, and products_without_irods counts those rows; use sample-crams or export irods for the merged-aware path view. Set file_type to restrict that joined object to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix leaves irods_path empty (not an error). with_irods WITHOUT a file_type returns any one object for the product (it does NOT default to cram). An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. Defaults to returning all products; use limit/offset to page, and it sets the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /study/:id/manifest/count and the two cannot drift; the count is product-grained, unaffected by with_irods / file_type). The never-synced / unknown-study / synced-empty cascade matches /study/:id/samples: an unknown study yields not_found, a never-synced cache yields not_found together with a cache-never-synced signal, and a synced study with no products yields an envelope with the study metadata, an empty rows and a populated cache_synced_at. cache_synced_at is the oldest last_run across the feeding tables (study, sample, the Illumina product-metrics mirror and the iRODS locations mirror), distinct from any data timestamp; every value is read from the cache mirrors, so the manifest is complete only up to that sync (see /freshness).",
+		Description: "Returns one bounded, pageable manifest of the given study's sequencing products, so a study's samples-and-data table is one server-side join rather than N per-sample calls. The row grain is ONE row per sequencing product: a distinct (id_run, position, tag_index) from iseq_product_metrics_mirror scoped by the product-metrics id_study_lims, joined to its sample's identity in sample_mirror, so each row carries name, supplier_name, accession_number, sanger_sample_id, id_run, lane (= position), tag_index and manual_qc. manual_qc is the per-product qc.go roll-up string (pass|fail|pending; fail>pending>pass). Rows are ordered by (id_run, position, tag_index, name) for determinism. The study-level metadata (id_study_lims, name, accession_number, faculty_sponsor, data_access_group) is carried ONCE in the envelope (read from study_mirror), NOT repeated per row. Set with_irods=true to also carry irods_path on each row: the product's iRODS data object via a set-at-once LEFT JOIN to the iRODS locations mirror on the shared id_iseq_product (and id_study_lims) with GROUP BY product, so the row count stays product-grained (3 products give 3 rows) however many iRODS objects a product has, and a product with no matching iRODS object has irods_path empty. A common cause of empty irods_path for CRAM manifests is a merged multi-lane CRAM: the product rows stay empty rather than copying one composite path onto each single-lane product, each known gap has irods_unmatched=true with reason=merged_multilane, and products_without_irods counts those rows; use sample-crams or export irods for the merged-aware path view. Set file_type to restrict that joined object to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix leaves irods_path empty (not an error). with_irods WITHOUT a file_type returns any one object for the product (it does NOT default to cram). An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. Defaults to returning all products; use limit/offset to page, and it sets the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /study/:id/manifest/count and the two cannot drift; the count is product-grained, unaffected by with_irods / file_type). The never-synced / unknown-study / synced-empty cascade matches /study/:id/samples: an unknown study yields not_found, a never-synced cache yields not_found together with a cache-never-synced signal, and a synced study with no products yields an envelope with the study metadata, an empty rows and a populated cache_synced_at. cache_synced_at is the oldest last_run across the feeding tables (study, sample, the Illumina product-metrics mirror and the iRODS locations mirror), distinct from any data timestamp; every value is read from the cache mirrors, so the manifest is complete only up to that sync (see /freshness).",
 		QueryParams: manifestQueryParams(),
 	},
 	{
@@ -479,7 +479,7 @@ var Registry = []Endpoint{
 		Paginated:   true,
 		NewResult:   newSliceResult[Study],
 		Summary:     "List studies by programme",
-		Description: "Lists SQSCP studies whose programme exactly matches the supplied value. Defaults to a page of 100, maximum 1000.",
+		Description: "Lists SQSCP studies whose programme exactly matches the supplied value, the programme grouping / attribution unit used by sequencing aggregates. Defaults to a page of 100, maximum 1000. The list is read from the cache mirror, so it is complete only up to the study table sync (see /freshness).",
 		QueryParams: searchPaginationParams(),
 	},
 	{
@@ -490,7 +490,7 @@ var Registry = []Endpoint{
 		Query:       []string{},
 		NewResult:   newResult[Count],
 		Summary:     "Count studies by programme",
-		Description: "Returns the number of SQSCP studies whose programme exactly matches the supplied value, the count counterpart of /studies/programme/:term.",
+		Description: "Returns the number of SQSCP studies whose programme exactly matches the supplied value, the count counterpart of /studies/programme/:term and the same programme grouping / attribution unit used by sequencing aggregates. The count is read from the cache mirror, so it is complete only up to the study table sync (see /freshness).",
 	},
 	{
 		Method:      "Programmes",
@@ -500,7 +500,7 @@ var Registry = []Endpoint{
 		Query:       []string{},
 		NewResult:   newSliceResult[Programme],
 		Summary:     "List programmes",
-		Description: "Lists the distinct non-empty SQSCP programme values with their study counts, so callers can discover the programme grouping / attribution vocabulary. Each sequencing product maps through exactly one study to that study's programme.",
+		Description: "Lists the distinct non-empty SQSCP programme values with their study counts, so callers can discover the programme grouping / attribution vocabulary. Each sequencing product maps through exactly one study to that study's programme. The list is read from the cache mirror, so it is complete only up to the study table sync (see /freshness).",
 	},
 	{
 		Method:      "StudyUsers",
@@ -511,7 +511,7 @@ var Registry = []Endpoint{
 		Paginated:   true,
 		NewResult:   newSliceResult[StudyUser],
 		Summary:     "List study users",
-		Description: "Lists study_users role assignments for the given study. DEFAULT no role filter returns ALL roles present (unlike /studies/user, whose default is owner, manager and data_access_contact). Set role to a comma-separated stored-role filter over owner, manager, data_access_contact, follower, slf_manager, lab_manager and administrator. The faculty_sponsor is a Study field, NOT a study_users role. Defaults to returning all rows; use limit/offset to page.",
+		Description: "Lists the study->users inverse: study_users role assignments for the given study from a single id_study_tmp lookup. DEFAULT no role filter returns ALL roles present (unlike /studies/user, whose default is owner, manager and data_access_contact). Set role to a comma-separated stored-role filter over owner, manager, data_access_contact, follower, slf_manager, lab_manager and administrator. The faculty_sponsor is a Study field, NOT a study_users role. Defaults to returning all rows; use limit/offset to page. The list is read from the cache mirror, so it is complete only up to the study_users table sync (see /freshness).",
 		QueryParams: fetchAllPaginationWithStudyUsersRoleParams(),
 	},
 	{
@@ -522,7 +522,7 @@ var Registry = []Endpoint{
 		Query:       []string{"role"},
 		NewResult:   newResult[Count],
 		Summary:     "Count study users",
-		Description: "Returns the number of study_users role assignments for the given study, the count counterpart of /study/:id/users, honouring the same optional role filter. DEFAULT no role filter counts ALL roles present.",
+		Description: "Returns the number of study->users role assignments for the given study, the count counterpart of /study/:id/users, honouring the same optional role filter. DEFAULT no role filter counts ALL roles present across owner, manager, data_access_contact, follower, slf_manager, lab_manager and administrator. The faculty_sponsor is a Study field, NOT a study_users role. The count is read from the cache mirror, so it is complete only up to the study_users table sync (see /freshness).",
 		QueryParams: []QueryParam{studyUsersRoleQueryParam()},
 	},
 	{
@@ -534,7 +534,7 @@ var Registry = []Endpoint{
 		Paginated:   true,
 		NewResult:   newSliceResult[SampleCRAM],
 		Summary:     "List sample CRAMs for a study",
-		Description: "Lists one selected CRAM per sample for the given study, resolving each sample through the iRODS mirror's id_sample_tmp linkage and preferring merged composite objects when present. Defaults to returning all rows; use limit/offset to page.",
+		Description: "Lists one selected CRAM per sample for the given study, resolving each sample through the iRODS mirror's id_sample_tmp linkage and the cram filename suffix, and preferring merged composite objects when present. This is the merged-aware per-sample CRAM attribution surface. Defaults to returning all rows; use limit/offset to page. The list is read from the cache mirrors, so it is complete only up to their sync state (see /freshness).",
 		QueryParams: fetchAllPaginationParams(),
 	},
 	{
@@ -545,7 +545,7 @@ var Registry = []Endpoint{
 		Query:       []string{},
 		NewResult:   newResult[Count],
 		Summary:     "Count sample CRAMs for a study",
-		Description: "Returns the number of selected per-sample CRAM rows for the given study, the count counterpart of /study/:id/sample-crams.",
+		Description: "Returns the number of selected per-sample CRAM rows for the given study, the count counterpart of /study/:id/sample-crams. It uses the same cram filename suffix and merged composite preference, so the count is one selected CRAM per sample. The count is read from the cache mirrors, so it is complete only up to their sync state (see /freshness).",
 	},
 	{
 		Method:      "Export",
@@ -774,12 +774,12 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/search/sample/:term",
 		PathParams:  []string{"term"},
-		Query:       []string{},
+		Query:       []string{"words", "organism", "library_type", "qc", "deliverables_only"},
 		Paginated:   true,
 		NewResult:   newSliceResult[Sample],
-		Summary:     "Search samples by word prefix",
-		Description: "Returns samples having a word in name, supplier name, common name, or donor id that starts with the term (case-insensitive word-prefix match, minimum 3 characters), backed by a word-token prefix index for the large sample table. So \"musculus\" and \"mus\" both match \"Mus Musculus\"; a substring inside a word does not. Defaults to a page of 100, maximum 1000.",
-		QueryParams: searchPaginationParams(),
+		Summary:     "Search samples by literal prefix",
+		Description: "Returns samples whose name, supplier_name, common_name, donor_id fields have the term as a literal whole-value prefix by default (case-insensitive, LIKE 'term%' with escaping; minimum 3 characters for the free-text term). Set words=true for the opt-in separator-agnostic word-prefix mode over the same fields; it is NOT the default. Exact filters organism, library_type, qc and deliverables_only AND-combine with the term and are exempt from the 3-character minimum: organism resolves whole-word common_name membership, library_type matches library_samples.pipeline_id_lims exactly, qc uses the per-sample roll-up from qc.go (fail>pending>pass), and deliverables_only uses the deliverable discriminator entity_type / is_sequencing_control, NOT is_spiked, with pass-through for PacBio/ONT. QC grain differs from export: sample search is per-sample roll-up, while export is raw per-product qc. Defaults to a page of 100, maximum 1000.",
+		QueryParams: sampleSearchPaginationParams(),
 	},
 	{
 		Method:      "CountStudySearch",
@@ -796,10 +796,11 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/search/sample/:term/count",
 		PathParams:  []string{"term"},
-		Query:       []string{},
+		Query:       []string{"words", "organism", "library_type", "qc", "deliverables_only"},
 		NewResult:   newResult[Count],
-		Summary:     "Count samples matching a word prefix",
-		Description: "Returns the number of samples matching the same word-prefix search as /search/sample/:term, without transferring rows. The count is exact up to a bound and reports that bound as a floor for very common terms.",
+		Summary:     "Count samples matching literal prefix",
+		Description: "Returns the number of samples matching the same optioned sample search as /search/sample/:term, without transferring rows. The default is a literal whole-value prefix over name, supplier_name, common_name and donor_id; words=true switches to opt-in word-prefix mode, and organism, library_type, qc and deliverables_only are exact filters. qc uses the per-sample roll-up from qc.go (fail>pending>pass), while export QC is raw per-product qc; deliverables_only uses entity_type / is_sequencing_control, NOT is_spiked, with pass-through for PacBio/ONT. The count is exact up to a bound and reports that bound as a floor for very common terms.",
+		QueryParams: sampleSearchOptionQueryParams(),
 	},
 	{
 		Method:      "CountStudies",
@@ -839,7 +840,7 @@ var Registry = []Endpoint{
 		Query:       []string{"file_type"},
 		NewResult:   newResult[Count],
 		Summary:     "Count newest data rows for a study",
-		Description: "Returns the number of raw seq_product_irods_locations_mirror rows for the given study, optionally restricted by file_type, so X-Total-Count on /study/:id/latest-data sizes the same raw iRODS-location membership used by the list. This is a raw data-object count, not a manifest/product count.",
+		Description: "Returns the number of raw seq_product_irods_locations_mirror rows for the given study, optionally restricted by file_type using the filename-suffix rule, so X-Total-Count on /study/:id/latest-data sizes the same raw iRODS-location membership used by the list. This is a raw data-object count over iRODS created (created is data added, never last_changed), not a manifest/product count. The count is read from cache mirrors; freshness is reported by cache_synced_at on related aggregates and by /freshness.",
 		QueryParams: []QueryParam{fileTypeQueryParam()},
 	},
 	{
@@ -850,7 +851,7 @@ var Registry = []Endpoint{
 		Query:       []string{"file_type"},
 		NewResult:   newResult[Count],
 		Summary:     "Count newest data rows by faculty sponsor",
-		Description: "Returns the number of raw seq_product_irods_locations_mirror rows under SQSCP studies whose study_mirror.faculty_sponsor contains the supplied name, optionally restricted by file_type, so X-Total-Count on /latest-data/faculty-sponsor/:name sizes the same raw iRODS-location membership used by the list.",
+		Description: "Returns the number of raw seq_product_irods_locations_mirror rows under SQSCP studies whose study_mirror.faculty_sponsor contains the supplied name; faculty_sponsor is a Study field, NOT a study_users role. file_type uses the filename-suffix rule, so X-Total-Count on /latest-data/faculty-sponsor/:name sizes the same raw iRODS-location membership used by the list. This is a raw data-object count over iRODS created (created is data added, never last_changed). The count is read from cache mirrors; freshness is reported by cache_synced_at on related aggregates and by /freshness.",
 		QueryParams: []QueryParam{fileTypeQueryParam()},
 	},
 	{
@@ -930,7 +931,7 @@ var Registry = []Endpoint{
 		Query:       []string{"since", "until", "platform"},
 		NewResult:   newResult[Count],
 		Summary:     "Count global runs",
-		Description: "Returns the number of rows matching the same global all-runs listing filters as /runs, without transferring rows. The count uses the same run grain as the list: Illumina, Elembio and Ultimagen distinct id_run, PacBio distinct pac_bio_run_name, and ONT distinct experiment_name.",
+		Description: "Returns the number of rows matching the same global all-runs listing filters as /runs, without transferring rows. The count uses the same run grain as the list: Illumina, Elembio and Ultimagen distinct id_run, PacBio distinct pac_bio_run_name, and ONT distinct experiment_name, with the same date_basis including ONT warehouse load time - not a true sequencing date. The count is read from cache mirrors; freshness is reported by cache_synced_at on related list rows and by /freshness.",
 		QueryParams: monthlyRunQueryParams(),
 	},
 	{
@@ -958,10 +959,10 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/sample/:id/irods/count",
 		PathParams:  []string{"id"},
-		Query:       []string{"file_type", "since", "until"},
+		Query:       []string{"file_type", "deliverables_only", "since", "until"},
 		NewResult:   newResult[Count],
 		Summary:     "Count iRODS paths for a sample",
-		Description: "Returns the number of distinct iRODS data objects exported for the given sample (by Sanger sample name), the count counterpart of /sample/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS data objects the list returns with no LIMIT. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. An unknown sample yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+		Description: "Returns the number of distinct iRODS data objects exported for the given sample (by Sanger sample name), the count counterpart of /sample/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS data objects the list returns with no LIMIT. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. Set deliverables_only=true to count only deliverable rows: the mirrored is_deliverable value is derived from Illumina iseq_flowcell.entity_type IN ('library','library_indexed') and Element/Ultima is_sequencing_control=0, approximates iRODS target=1, is NOT is_spiked, and passes through PacBio/ONT rows with no discriminator. The optional since and until query params restrict rows by iRODS created time in the half-open window [since, until): created >= since and created < until; until is optional but requires since, and without since the count is all-time. An unknown sample yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
 		QueryParams: irodsCountQueryParams("sample-scoped iRODS data objects added to iRODS"),
 	},
 	{
@@ -969,10 +970,10 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/study/:id/irods/count",
 		PathParams:  []string{"id"},
-		Query:       []string{"file_type", "since", "until"},
+		Query:       []string{"file_type", "deliverables_only", "since", "until"},
 		NewResult:   newResult[Count],
 		Summary:     "Count iRODS paths for a study",
-		Description: "Returns the number of distinct iRODS data objects exported for the given study, the count counterpart of /study/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS rows the list returns (scoped by id_study_lims) with no LIMIT. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. An unknown study yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+		Description: "Returns the number of distinct iRODS data objects exported for the given study, the count counterpart of /study/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS rows the list returns (scoped by id_study_lims) with no LIMIT. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. Set deliverables_only=true to count only deliverable rows: the mirrored is_deliverable value is derived from Illumina iseq_flowcell.entity_type IN ('library','library_indexed') and Element/Ultima is_sequencing_control=0, approximates iRODS target=1, is NOT is_spiked, and passes through PacBio/ONT rows with no discriminator. The optional since and until query params restrict rows by iRODS created time in the half-open window [since, until): created >= since and created < until; until is optional but requires since, and without since the count is all-time. An unknown study yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
 		QueryParams: irodsCountQueryParams("study-scoped iRODS data objects added to iRODS"),
 	},
 	{
@@ -980,10 +981,10 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/run/:id/irods/count",
 		PathParams:  []string{"id"},
-		Query:       []string{"file_type", "since", "until"},
+		Query:       []string{"file_type", "deliverables_only", "since", "until"},
 		NewResult:   newResult[Count],
 		Summary:     "Count iRODS paths for a run",
-		Description: "Returns the number of iRODS data objects on the given run, the count counterpart of /run/:id/irods (count == the length of that list when all rows are fetched), counting seq_product_irods_locations_mirror rows whose denormalized id_run equals the requested run with no LIMIT. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+		Description: "Returns the number of iRODS data objects on the given run, the count counterpart of /run/:id/irods (count == the length of that list when all rows are fetched), counting seq_product_irods_locations_mirror rows whose denormalized id_run equals the requested run with no LIMIT. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. Set deliverables_only=true to count only deliverable rows: the mirrored is_deliverable value is derived from Illumina iseq_flowcell.entity_type IN ('library','library_indexed') and Element/Ultima is_sequencing_control=0, approximates iRODS target=1, is NOT is_spiked, and passes through PacBio/ONT rows with no discriminator. The optional since and until query params restrict rows by iRODS created time in the half-open window [since, until): created >= since and created < until; until is optional but requires since, and without since the count is all-time. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
 		QueryParams: irodsCountQueryParams("run-scoped iRODS data objects added to iRODS"),
 	},
 	{
@@ -1063,6 +1064,15 @@ func fileTypeQueryParam() QueryParam {
 	}
 }
 
+func deliverablesOnlyQueryParam() QueryParam {
+	return QueryParam{
+		Name:        "deliverables_only",
+		Type:        "boolean",
+		Required:    false,
+		Description: "when true, keeps only deliverable data objects using the platform discriminator: Illumina iseq_flowcell.entity_type IN ('library','library_indexed'), Element/Ultima is_sequencing_control=0; this approximates the iRODS target=1 AVU, is NOT is_spiked, and is pass-through for PacBio/ONT because they have no discriminator",
+	}
+}
+
 // roleQueryParam is the optional role filter QueryParam shared by the
 // /studies/user list and count endpoints: a comma-separated OVERRIDE of the
 // default study_users role set, matched exactly and case-insensitively. The
@@ -1132,7 +1142,7 @@ func detailQueryParams() []QueryParam {
 // endpoints: the fetch-all limit/offset pagination controls plus file_type,
 // order_by, and the optional created-time window.
 func fetchAllPaginationWithFileTypeParams(scope string) []QueryParam {
-	params := append(fetchAllPaginationParams(), fileTypeQueryParam(), QueryParam{
+	params := append(fetchAllPaginationParams(), fileTypeQueryParam(), deliverablesOnlyQueryParam(), QueryParam{
 		Name:        "order_by",
 		Type:        "string",
 		Required:    false,
@@ -1162,7 +1172,7 @@ func latestDataPaginationParams() []QueryParam {
 }
 
 func irodsCountQueryParams(scope string) []QueryParam {
-	params := []QueryParam{fileTypeQueryParam()}
+	params := []QueryParam{fileTypeQueryParam(), deliverablesOnlyQueryParam()}
 	params = append(params, addedWindowQueryParams(scope)...)
 
 	return params
@@ -1255,6 +1265,10 @@ func fetchAllPaginationParams() []QueryParam {
 	}
 }
 
+func sampleSearchPaginationParams() []QueryParam {
+	return append(searchPaginationParams(), sampleSearchOptionQueryParams()...)
+}
+
 // searchPaginationParams are the limit/offset QueryParams for the substring
 // search endpoints, whose limit defaults to 100 and is capped at 1000 (a larger
 // limit is rejected, not clamped).
@@ -1294,6 +1308,36 @@ func addedWindowQueryParams(scope string) []QueryParam {
 			Required:    false,
 			Description: "RFC3339 timestamp; when set with since, the upper bound of the half-open window (created < until, exclusive); optional and open-ended when omitted; only meaningful with since, so an until supplied without a since is rejected with a 400 bad_request rather than silently ignored",
 		},
+	}
+}
+
+func sampleSearchOptionQueryParams() []QueryParam {
+	return []QueryParam{
+		{
+			Name:        "words",
+			Type:        "boolean",
+			Required:    false,
+			Description: "when true, uses the opt-in separator-agnostic word-prefix mode over name, supplier_name, common_name and donor_id; omit for the default literal whole-value prefix over those four fields",
+		},
+		{
+			Name:        "organism",
+			Type:        "string",
+			Required:    false,
+			Description: "exact sample filter over common_name after resolving whole-word organism membership; AND-combines with term and other filters and is exempt from the free-text 3-character minimum",
+		},
+		{
+			Name:        "library_type",
+			Type:        "string",
+			Required:    false,
+			Description: "exact sample filter over library_samples.pipeline_id_lims; AND-combines with term and other filters and is exempt from the free-text 3-character minimum",
+		},
+		{
+			Name:        "qc",
+			Type:        "string",
+			Required:    false,
+			Description: "sample-search QC filter: pass, fail or pending using the per-sample qc.go roll-up (fail>pending>pass); this differs from export QC, which filters raw per-product qc rows",
+		},
+		deliverablesOnlyQueryParam(),
 	}
 }
 

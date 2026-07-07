@@ -338,6 +338,149 @@ func newMethodsExistInRegistry(methods []string) []string {
 	return missing
 }
 
+func TestRegistryPhase10DefinitionsJ(t *testing.T) {
+	convey.Convey("J: Given the Phase 10 endpoint surface, when Registry descriptions are inspected, then the public contract states the exact definitions", t, func() {
+		requirements := map[string][]string{
+			"LatestDataForStudy": {
+				"raw seq_product_irods_locations_mirror", "iRODS created", "data added", "never last_changed",
+				"filename-suffix", "cache_synced_at", "/freshness",
+			},
+			"LatestDataForFacultySponsor": {
+				"study_mirror.faculty_sponsor", "Study field, NOT a study_users role", "raw seq_product_irods_locations_mirror",
+				"iRODS created", "filename-suffix", "cache_synced_at", "/freshness",
+			},
+			"CountLatestDataForStudy": {
+				"raw seq_product_irods_locations_mirror", "iRODS created", "filename-suffix", "cache_synced_at", "/freshness",
+			},
+			"CountLatestDataForFacultySponsor": {
+				"study_mirror.faculty_sponsor", "Study field, NOT a study_users role", "raw seq_product_irods_locations_mirror",
+				"iRODS created", "filename-suffix", "cache_synced_at", "/freshness",
+			},
+			"MonthlyRunCounts": {
+				"date_basis", "run complete", "run archived", "run_complete", "warehouse load time - not a true sequencing date",
+				"cache_synced_at", "/freshness",
+			},
+			"RunListing": {
+				"date_basis", "<platform>:<native_id>", "warehouse load time - not a true sequencing date",
+				"cache_synced_at", "/freshness",
+			},
+			"CountRunListing": {
+				"run grain", "warehouse load time - not a true sequencing date", "cache_synced_at", "/freshness",
+			},
+			"SequencingAggregate": {
+				"programme", "faculty_sponsor", "unit", "runs", "samples", "products", "iRODS created",
+				"one study programme", "cache_synced_at", "/freshness",
+			},
+			"StudiesForProgramme": {
+				"programme exactly matches", "programme grouping", "attribution", "SQSCP", "cache", "/freshness",
+			},
+			"CountStudiesForProgramme": {
+				"programme exactly matches", "programme grouping", "attribution", "SQSCP", "cache", "/freshness",
+			},
+			"Programmes": {
+				"distinct", "programme", "study counts", "programme grouping", "attribution", "cache", "/freshness",
+			},
+			"StudyUsers": {
+				"study->users", "id_study_tmp", "ALL roles", "owner", "manager", "data_access_contact",
+				"follower", "slf_manager", "lab_manager", "administrator", "faculty_sponsor is a Study field, NOT a study_users role",
+				"cache", "/freshness",
+			},
+			"CountStudyUsers": {
+				"study->users", "ALL roles", "owner", "manager", "data_access_contact", "follower",
+				"faculty_sponsor is a Study field, NOT a study_users role", "cache", "/freshness",
+			},
+			"SampleCRAMsForStudy": {
+				"one selected CRAM per sample", "filename suffix", "id_sample_tmp", "merged composite",
+				"preferring merged", "cache", "/freshness",
+			},
+			"CountSampleCRAMsForStudy": {
+				"one selected CRAM per sample", "filename suffix", "merged composite", "cache", "/freshness",
+			},
+			"IRODSPathsForSample": {
+				"manual_qc", "qc.go", "deliverable", "entity_type", "NOT is_spiked", "pass-through for PacBio/ONT",
+				"iRODS created", "data added", "never last_changed", "filename-suffix", "deliverables_only", "cache", "/freshness",
+			},
+			"IRODSPathsForStudy": {
+				"manual_qc", "qc.go", "deliverable", "entity_type", "NOT is_spiked", "pass-through for PacBio/ONT",
+				"iRODS created", "data added", "never last_changed", "filename-suffix", "deliverables_only", "merged", "cache", "/freshness",
+			},
+			"IRODSPathsForRun": {
+				"manual_qc", "qc.go", "deliverable", "entity_type", "NOT is_spiked", "pass-through for PacBio/ONT",
+				"iRODS created", "data added", "never last_changed", "filename-suffix", "deliverables_only", "merged", "cache", "/freshness",
+			},
+			"StudyManifest": {
+				"manual_qc", "qc.go", "filename-suffix", "merged multi-lane CRAM", "products_without_irods",
+				"irods_unmatched", "reason=merged_multilane", "cache_synced_at", "/freshness",
+			},
+			"SearchSamples": {
+				"literal whole-value prefix", "name, supplier_name, common_name, donor_id", "words", "word-prefix",
+				"organism", "library_type", "qc", "per-sample roll-up", "per-product", "export", "deliverables_only",
+				"entity_type", "NOT is_spiked",
+			},
+			"CountSampleSearch": {
+				"literal whole-value prefix", "words", "word-prefix", "organism", "library_type", "qc",
+				"per-sample roll-up", "per-product", "export", "deliverables_only", "entity_type", "NOT is_spiked",
+			},
+		}
+
+		missingEntries := []string{}
+		missingPhrases := []string{}
+		for method, phrases := range requirements {
+			entry, ok := registryEntryByMethod(method)
+			if !ok {
+				missingEntries = append(missingEntries, method)
+
+				continue
+			}
+
+			normalizedDescription := normalizeDocText(entry.Description)
+			for _, phrase := range phrases {
+				if !strings.Contains(normalizedDescription, phrase) {
+					missingPhrases = append(missingPhrases, method+":"+phrase)
+				}
+			}
+		}
+		slices.Sort(missingEntries)
+		slices.Sort(missingPhrases)
+
+		convey.So(missingEntries, convey.ShouldBeEmpty)
+		convey.So(missingPhrases, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("J: Given SearchSamples and CountSampleSearch, then search no longer presents word-prefix as the default and declares all option query params", t, func() {
+		requiredSearchQuery := []string{"words", "organism", "library_type", "qc", "deliverables_only"}
+		missingQuery := []string{}
+		missingStructuredParams := []string{}
+
+		for _, method := range []string{"SearchSamples", "CountSampleSearch"} {
+			entry, ok := registryEntryByMethod(method)
+			if !ok {
+				missingQuery = append(missingQuery, method+":entry")
+
+				continue
+			}
+			for _, name := range requiredSearchQuery {
+				if !slices.Contains(entry.Query, name) {
+					missingQuery = append(missingQuery, method+":"+name)
+				}
+				if _, ok := queryParamByName(entry.QueryParams, name); !ok {
+					missingStructuredParams = append(missingStructuredParams, method+":"+name)
+				}
+			}
+		}
+		slices.Sort(missingQuery)
+		slices.Sort(missingStructuredParams)
+
+		searchEntry, _ := registryEntryByMethod("SearchSamples")
+		countEntry, _ := registryEntryByMethod("CountSampleSearch")
+		convey.So(searchEntry.Summary, convey.ShouldNotContainSubstring, "word prefix")
+		convey.So(searchEntry.Description, convey.ShouldNotContainSubstring, "Returns samples having a word")
+		convey.So(countEntry.Description, convey.ShouldNotContainSubstring, "same word-prefix search")
+		convey.So(missingQuery, convey.ShouldBeEmpty)
+		convey.So(missingStructuredParams, convey.ShouldBeEmpty)
+	})
+}
+
 func TestRegistryRecencyDescriptionsCiteCreationTimestampG1(t *testing.T) {
 	// G1 acceptance test 4: every windowed/recency Description must state that the
 	// "added since" filter is on the iRODS CREATION timestamp (the created column)

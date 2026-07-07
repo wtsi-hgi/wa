@@ -298,6 +298,9 @@ func writeManifestHeader(out io.Writer, manifest mlwh.StudyManifest) {
 func writeManifestRow(out io.Writer, row mlwh.ManifestRow, withIRODS bool) {
 	_, _ = fmt.Fprintf(out, "  name=%s supplier_name=%s accession_number=%s sanger_sample_id=%s id_run=%d lane=%d tag_index=%d",
 		row.Name, row.SupplierName, row.AccessionNumber, row.SangerSampleID, row.IDRun, row.Position, row.TagIndex)
+	if strings.TrimSpace(row.ManualQC) != "" {
+		_, _ = fmt.Fprintf(out, " manual_qc=%s", row.ManualQC)
+	}
 
 	if withIRODS {
 		irodsPath := row.IRODSPath

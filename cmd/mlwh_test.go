@@ -117,6 +117,19 @@ func TestMLWHSyncHelpRendersConfigurationDetails(t *testing.T) {
 	})
 }
 
+func TestMLWHHelpExposesKCommandsWithoutIrods(t *testing.T) {
+	convey.Convey("K acceptance 1: Given wa mlwh --help, then the K commands are listed and the removed irods command is not advertised", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "--help"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "export")
+		convey.So(output, convey.ShouldContainSubstring, "runs")
+		convey.So(output, convey.ShouldContainSubstring, "latest")
+		convey.So(output, convey.ShouldContainSubstring, "programmes")
+		convey.So(output, convey.ShouldNotContainSubstring, "irods")
+	})
+}
+
 type stubMLWHSyncClient struct {
 	reports []mlwh.SyncReport
 	err     error
@@ -376,6 +389,29 @@ func TestMLWHSyncCommandEmitsLinesInFinishOrder(t *testing.T) {
 			convey.So(output, convey.ShouldContainSubstring, table+" inserted=")
 		}
 	})
+}
+
+func startMLWHNeverSyncedServerForTest(t *testing.T) string {
+	t.Helper()
+
+	cachePath := prepareMLWHServeCacheForTest(t, false)
+	client, err := mlwh.OpenCacheOnly(context.Background(), mlwh.CacheConfig{Path: cachePath})
+	if err != nil {
+		t.Fatalf("open never-synced MLWH cache: %v", err)
+	}
+	t.Cleanup(func() {
+		if err = client.Close(); err != nil {
+			t.Fatalf("close never-synced MLWH cache: %v", err)
+		}
+	})
+
+	router := gin.New()
+	configureMLWHServeRouter(router)
+	mlwh.NewServer(client).RegisterRoutes(router, nil)
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+
+	return server.URL
 }
 
 func prepareMLWHServeCacheForTest(t *testing.T, synced bool) string {
@@ -817,6 +853,86 @@ func installFakeMLWHServeAuthServer(t *testing.T, fake *fakeMLWHServeAuthServer)
 	t.Cleanup(func() {
 		mlwhServeNewAuthServer = originalNewAuthServer
 	})
+}
+
+func TestMLWHKCommandsDegradeGracefullyOnNeverSyncedCache(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "export irods created-desc window",
+			args: []string{"mlwh", "export", "irods", "study", "5901", "--sort", "created-desc",
+				"--since", "2026-01-01T00:00:00Z", "--until", "2026-02-01T00:00:00Z"},
+		},
+		{name: "export parent-scoped runs", args: []string{"mlwh", "export", "runs", "study", "5901"}},
+		{name: "export users by role", args: []string{"mlwh", "export", "users", "study", "5901", "--role", "owner,manager,follower"}},
+		{name: "export sample crams", args: []string{"mlwh", "export", "sample-crams", "study", "5901"}},
+		{name: "latest data", args: []string{"mlwh", "latest", "5901", "--file-type", "cram"}},
+		{
+			name: "search sample filters",
+			args: []string{"mlwh", "search", "malaria", "--type", "sample", "--words",
+				"--library-type", "Chromium", "--organism", "Homo sapiens", "--qc", "pass", "--deliverables-only"},
+		},
+		{name: "flat runs", args: []string{"mlwh", "runs", "--platform", "PacBio", "--since", "2026-01-01", "--until", "2026-02-01"}},
+		{
+			name: "monthly programme runs",
+			args: []string{"mlwh", "runs", "--monthly", "--group-by", "programme",
+				"--platform", "PacBio", "--since", "2026-01-01", "--until", "2026-02-01"},
+		},
+		{name: "studies by programme", args: []string{"mlwh", "studies", "--programme", "Human Genetics"}},
+		{name: "programmes", args: []string{"mlwh", "programmes"}},
+		{name: "manifest products", args: []string{"mlwh", "manifest", "5901", "--with-irods", "--file-type", "cram"}},
+		{name: "info study", args: []string{"mlwh", "info", "5901", "--type", "study"}},
+	}
+
+	convey.Convey("K acceptance 2: Given a never-synced local cache, every exposed K command renders a clean message and exits 0", t, func() {
+		cachePath := prepareMLWHServeCacheForTest(t, false)
+		for _, tc := range cases {
+			convey.Convey(tc.name, func() {
+				configureMLWHNeverSyncedCommandEnvForTest(t, cachePath)
+
+				output, err := executeRootCommandForTest(t, tc.args)
+
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(output, convey.ShouldContainSubstring, mlwhCacheUnavailableMessage)
+				convey.So(output, convey.ShouldNotContainSubstring, mlwh.ErrCacheNeverSynced.Error())
+				convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
+			})
+		}
+	})
+
+	convey.Convey("K acceptance 2: Given a never-synced cache via --server, every exposed K command renders a clean message and exits 0", t, func() {
+		serverURL := startMLWHNeverSyncedServerForTest(t)
+		for _, tc := range cases {
+			convey.Convey(tc.name, func() {
+				configureMLWHNeverSyncedCommandEnvForTest(t, "")
+				args := append([]string{}, tc.args...)
+				args = append(args, "--server", serverURL)
+
+				output, err := executeRootCommandForTest(t, args)
+
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(output, convey.ShouldContainSubstring, mlwhCacheUnavailableMessage)
+				convey.So(output, convey.ShouldNotContainSubstring, mlwh.ErrCacheNeverSynced.Error())
+				convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
+			})
+		}
+	})
+}
+
+func configureMLWHNeverSyncedCommandEnvForTest(t *testing.T, cachePath string) {
+	t.Helper()
+
+	t.Setenv("WA_MLWH_DSN", "")
+	t.Setenv("WA_MLWH_PASSWORD", "")
+	t.Setenv("WA_MLWH_SERVER_URL", "")
+	t.Setenv("WA_MLWH_BACKEND_URL", "")
+	t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
+	t.Setenv("WA_ENV", "")
+	t.Setenv("WA_TEST_SEQMETA_PORT", "")
+	t.Setenv("WA_DEV_SEQMETA_PORT", "")
+	t.Setenv("WA_PROD_SEQMETA_PORT", "")
 }
 
 func TestMLWHServeDoesNotSyncOrExposeSyncInterval(t *testing.T) {

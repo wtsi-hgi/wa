@@ -400,16 +400,32 @@ func seedParityCache(t *testing.T, db *sql.DB) {
 	seedIseqProductMetricsMirrorRow(t, db, 9001, 31, 48522, 1, 1, parityStudyID)
 	seedIseqProductMetricsMirrorRow(t, db, 9002, 32, 48522, 1, 2, parityStudyID)
 	seedIseqProductMetricsMirrorRow(t, db, 9003, 31, 48523, 2, 1, parityStudyID)
+	seedIseqProductMetricsMirrorRow(t, db, 9004, 31, 48522, 2, 1, parityStudyID)
+	seedIseqFlowcellMirrorSearchRow(t, db, 31, 31, "library")
+	seedIseqFlowcellMirrorSearchRow(t, db, 32, 32, "library_control")
 	seedIseqRunStatusDictMirrorRow(t, db, 1, "run complete")
 	seedIseqRunStatusMirrorRow(t, db, 9101, 48522, syncedAt, 1, 0)
 	seedIseqRunStatusMirrorRow(t, db, 9102, 48523, syncedAt.Add(time.Hour), 1, 0)
 	seedIRODSLocationMirrorRow(t, db, "9001", "/seq/illumina/runs/48/48522/plex1", "48522#1.cram", 31, parityStudyID)
 	seedIRODSLocationMirrorRow(t, db, "9002", "/seq/illumina/runs/48/48522/plex1", "48522#2.cram", 32, parityStudyID)
+	seedIRODSLocationMirrorRowWithCreatedPlatform(
+		t,
+		db,
+		"9004",
+		"/seq/illumina/runs/48/48522/plex1",
+		"48522#3.cram",
+		31,
+		parityStudyID,
+		parityOptionedNewestCreated(),
+		"illumina",
+	)
+	seedParityOptionedRows(t, db)
 
 	// sample_search is an external-content FTS5 table; raw sample_mirror inserts
 	// do not populate it, so rebuild it (as the sample sync does) before the
 	// parity table exercises SearchSamples/CountSampleSearch.
 	rebuildSampleSearchIndexForTest(t, db)
+	rebuildCommonNameWordMirrorForTest(t, db)
 }
 
 func paritySyncedAt() time.Time {
@@ -437,6 +453,57 @@ func seedParityLibrarySample(
 	)
 	if err != nil {
 		t.Fatalf("seedParityLibrarySample(): %v", err)
+	}
+}
+
+func parityOptionedNewestCreated() time.Time {
+	return time.Date(2026, time.July, 2, 12, 0, 0, 0, time.UTC)
+}
+
+func seedParityOptionedRows(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	setIRODSLocationMirrorRunFields(t, db, 48522, 1, 1, "9001")
+	setIRODSLocationMirrorRunFields(t, db, 48522, 1, 2, "9002")
+	setIRODSLocationMirrorRunFields(t, db, 48522, 2, 1, "9004")
+	setParityIRODSLocationCreated(t, db, "9001", time.Date(2026, time.July, 2, 11, 0, 0, 0, time.UTC))
+	setParityIRODSLocationCreated(t, db, "9002", time.Date(2026, time.July, 2, 10, 0, 0, 0, time.UTC))
+	setIRODSLocationMirrorQCAndDeliverableFields(
+		t,
+		db,
+		"9001",
+		sql.NullInt64{Int64: 1, Valid: true},
+		sql.NullInt64{Int64: 1, Valid: true},
+		false,
+	)
+	setIRODSLocationMirrorQCAndDeliverableFields(
+		t,
+		db,
+		"9002",
+		sql.NullInt64{Int64: 1, Valid: true},
+		sql.NullInt64{Int64: 0, Valid: true},
+		false,
+	)
+	setIRODSLocationMirrorQCAndDeliverableFields(
+		t,
+		db,
+		"9004",
+		sql.NullInt64{Int64: 1, Valid: true},
+		sql.NullInt64{Int64: 1, Valid: true},
+		false,
+	)
+}
+
+func setParityIRODSLocationCreated(t *testing.T, db *sql.DB, idIseqProduct string, created time.Time) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`UPDATE seq_product_irods_locations_mirror SET created = ? WHERE id_iseq_product = ?`,
+		formatSyncTime(created),
+		idIseqProduct,
+	)
+	if err != nil {
+		t.Fatalf("setParityIRODSLocationCreated(): %v", err)
 	}
 }
 
@@ -502,6 +569,92 @@ func TestRemoteClientClientParityB4(t *testing.T) {
 			convey.So(len(cases), convey.ShouldEqual, queryerMethodCount())
 			convey.So(checked, convey.ShouldEqual, queryerMethodCount())
 			convey.So(failures, convey.ShouldHaveLength, 0)
+		})
+	})
+}
+
+func TestRemoteClientClientOptionedParityJ(t *testing.T) {
+	convey.Convey("J: Given a seeded parity cache with option-sensitive search and iRODS rows served over HTTP", t, func() {
+		local := newParitySeededClient(t)
+		defer closeParityClientForTest(t, local)
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		searchOpts := SampleSearchOptions{
+			Words:            true,
+			Organism:         "human",
+			LibraryType:      parityLibraryType,
+			QC:               qcPass,
+			DeliverablesOnly: true,
+		}
+		irodsOpts := parityOptionedIRODSOptions()
+
+		convey.Convey("when optioned sample search runs locally and remotely, then words, exact filters, QC and deliverables-only produce the same row", func() {
+			localSamples, localErr := local.SearchSamplesWithOptions(context.Background(), paritySampleSearchTerm, searchOpts, 100, 0)
+			remoteSamples, remoteErr := remote.SearchSamplesWithOptions(context.Background(), paritySampleSearchTerm, searchOpts, 100, 0)
+			localCount, localCountErr := local.CountSampleSearchWithOptions(context.Background(), paritySampleSearchTerm, searchOpts)
+			remoteCount, remoteCountErr := remote.CountSampleSearchWithOptions(context.Background(), paritySampleSearchTerm, searchOpts)
+
+			convey.So(localErr, convey.ShouldBeNil)
+			convey.So(remoteErr, convey.ShouldBeNil)
+			convey.So(localCountErr, convey.ShouldBeNil)
+			convey.So(remoteCountErr, convey.ShouldBeNil)
+			convey.So(reflect.DeepEqual(localSamples, remoteSamples), convey.ShouldBeTrue)
+			convey.So(localCount, convey.ShouldResemble, remoteCount)
+			convey.So(sampleTmpIDs(localSamples), convey.ShouldResemble, []int64{31})
+			convey.So(localCount, convey.ShouldResemble, Count{Count: 1})
+		})
+
+		convey.Convey("when optioned sample iRODS list/count runs locally and remotely, then deliverables-only, created_desc and the half-open created window agree", func() {
+			localPaths, localErr := local.IRODSPathsForSampleWithOptions(context.Background(), paritySampleName, irodsOpts, 100, 0)
+			remotePaths, remoteErr := remote.IRODSPathsForSampleWithOptions(context.Background(), paritySampleName, irodsOpts, 100, 0)
+			localCount, localCountErr := local.CountIRODSPathsForSampleWithOptions(context.Background(), paritySampleName, irodsOpts)
+			remoteCount, remoteCountErr := remote.CountIRODSPathsForSampleWithOptions(context.Background(), paritySampleName, irodsOpts)
+
+			convey.So(localErr, convey.ShouldBeNil)
+			convey.So(remoteErr, convey.ShouldBeNil)
+			convey.So(localCountErr, convey.ShouldBeNil)
+			convey.So(remoteCountErr, convey.ShouldBeNil)
+			convey.So(reflect.DeepEqual(localPaths, remotePaths), convey.ShouldBeTrue)
+			convey.So(localCount, convey.ShouldResemble, remoteCount)
+			convey.So(irodsProductIDs(localPaths), convey.ShouldResemble, []string{"9004", "9001"})
+			convey.So(irodsCreatedValues(localPaths), convey.ShouldResemble, []string{
+				formatSyncTime(parityOptionedNewestCreated()),
+				formatSyncTime(time.Date(2026, time.July, 2, 11, 0, 0, 0, time.UTC)),
+			})
+			convey.So(localCount, convey.ShouldResemble, Count{Count: 2})
+		})
+
+		convey.Convey("when optioned study iRODS list/count runs locally and remotely, then the study-scoped path matches the same filtered products", func() {
+			localPaths, localErr := local.IRODSPathsForStudyWithOptions(context.Background(), parityStudyID, irodsOpts, 100, 0)
+			remotePaths, remoteErr := remote.IRODSPathsForStudyWithOptions(context.Background(), parityStudyID, irodsOpts, 100, 0)
+			localCount, localCountErr := local.CountIRODSPathsForStudyWithOptions(context.Background(), parityStudyID, irodsOpts)
+			remoteCount, remoteCountErr := remote.CountIRODSPathsForStudyWithOptions(context.Background(), parityStudyID, irodsOpts)
+
+			convey.So(localErr, convey.ShouldBeNil)
+			convey.So(remoteErr, convey.ShouldBeNil)
+			convey.So(localCountErr, convey.ShouldBeNil)
+			convey.So(remoteCountErr, convey.ShouldBeNil)
+			convey.So(reflect.DeepEqual(localPaths, remotePaths), convey.ShouldBeTrue)
+			convey.So(localCount, convey.ShouldResemble, remoteCount)
+			convey.So(irodsProductIDs(localPaths), convey.ShouldResemble, []string{"9004", "9001"})
+			convey.So(localCount, convey.ShouldResemble, Count{Count: 2})
+		})
+
+		convey.Convey("when optioned run iRODS list/count runs locally and remotely, then the run-scoped path matches the same filtered products", func() {
+			localPaths, localErr := local.IRODSPathsForRunWithOptions(context.Background(), parityRunID, irodsOpts, 100, 0)
+			remotePaths, remoteErr := remote.IRODSPathsForRunWithOptions(context.Background(), parityRunID, irodsOpts, 100, 0)
+			localCount, localCountErr := local.CountIRODSPathsForRunWithOptions(context.Background(), parityRunID, irodsOpts)
+			remoteCount, remoteCountErr := remote.CountIRODSPathsForRunWithOptions(context.Background(), parityRunID, irodsOpts)
+
+			convey.So(localErr, convey.ShouldBeNil)
+			convey.So(remoteErr, convey.ShouldBeNil)
+			convey.So(localCountErr, convey.ShouldBeNil)
+			convey.So(remoteCountErr, convey.ShouldBeNil)
+			convey.So(reflect.DeepEqual(localPaths, remotePaths), convey.ShouldBeTrue)
+			convey.So(localCount, convey.ShouldResemble, remoteCount)
+			convey.So(irodsProductIDs(localPaths), convey.ShouldResemble, []string{"9004", "9001"})
+			convey.So(localCount, convey.ShouldResemble, Count{Count: 2})
 		})
 	})
 }
@@ -692,6 +845,24 @@ func everSyncedCount(freshness Freshness) int {
 	}
 
 	return count
+}
+
+func parityOptionedIRODSOptions() IRODSPathOptions {
+	return IRODSPathOptions{
+		FileType:         "cram",
+		DeliverablesOnly: true,
+		OrderBy:          irodsOrderByCreatedDesc,
+		Since:            formatSyncTime(parityOptionedSince()),
+		Until:            formatSyncTime(parityOptionedUntil()),
+	}
+}
+
+func parityOptionedSince() time.Time {
+	return time.Date(2026, time.July, 2, 9, 30, 0, 0, time.UTC)
+}
+
+func parityOptionedUntil() time.Time {
+	return time.Date(2026, time.July, 2, 12, 30, 0, 0, time.UTC)
 }
 
 // queryerMethodCount returns the number of methods declared on the Queryer

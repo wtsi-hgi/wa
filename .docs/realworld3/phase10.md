@@ -57,8 +57,8 @@ handler that round-trip remote == local, and the docs/parity drift guards
 pass). Depends on Phases 4-8 (the endpoints being wired) and Phase 1 (A8
 APIVersion 1.8.0).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 10.2: K - CLI exposure
 
@@ -84,8 +84,8 @@ non-blank `manual_qc` for a study with non-Illumina products). Depends on
 10.1 (the `--server` round-trip needs J's remote/server wiring) and the
 CLI commands built in Phases 4-8.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For sequential items, a single review pass after each item is
 acceptable; reviewers must confirm every Description states the exact

@@ -1775,6 +1775,57 @@ func TestRemoteClientD1cCountEndpointsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRemoteClientSearchSamplesWithOptionsRoundTripsJ(t *testing.T) {
+	convey.Convey("J: Given a RemoteClient pointed at a server returning optioned sample search rows", t, func() {
+		requestURIs := make(chan string, 2)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestURIs <- r.URL.RequestURI()
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/search/sample/hek_r":
+				writeRemoteClientJSONForTest(w, []Sample{{IDSampleTmp: 1, Name: "Hek_R1"}})
+			case "/search/sample/hek_r/count":
+				writeRemoteClientJSONForTest(w, Count{Count: 1})
+			default:
+				w.WriteHeader(http.StatusNotFound)
+				writeRemoteClientJSONForTest(w, map[string]string{"code": "not_found", "message": "missing"})
+			}
+		}))
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		opts := SampleSearchOptions{
+			Words:            true,
+			Organism:         "musculus",
+			LibraryType:      "Standard",
+			QC:               qcPass,
+			DeliverablesOnly: true,
+		}
+
+		convey.Convey("when optioned search and count run, then the remote query carries every search option", func() {
+			samples, sampleErr := client.SearchSamplesWithOptions(context.Background(), "hek_r", opts, 25, 5)
+			count, countErr := client.CountSampleSearchWithOptions(context.Background(), "hek_r", opts)
+
+			convey.So(sampleErr, convey.ShouldBeNil)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldResemble, []Sample{{IDSampleTmp: 1, Name: "Hek_R1"}})
+			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+			convey.So(
+				receiveRemoteClientTestValue(t, requestURIs, "search request URI"),
+				convey.ShouldEqual,
+				"/search/sample/hek_r?deliverables_only=true&library_type=Standard&limit=25&offset=5&organism=musculus&qc=pass&words=true",
+			)
+			convey.So(
+				receiveRemoteClientTestValue(t, requestURIs, "count request URI"),
+				convey.ShouldEqual,
+				"/search/sample/hek_r/count?deliverables_only=true&library_type=Standard&organism=musculus&qc=pass&words=true",
+			)
+		})
+	})
+}
+
 func newRemoteClientErrorServerForTest(status int, code string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

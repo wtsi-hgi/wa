@@ -108,9 +108,9 @@ func TestMLWHManifestPrintsMetadataOnceAndRows(t *testing.T) {
 					DataAccessGroup: "group-1",
 					CacheSyncedAt:   "2026-06-27T06:00:00Z",
 					Rows: []mlwh.ManifestRow{
-						{Name: "S1-sample-alpha", SupplierName: "supplier-alpha", AccessionNumber: "EGAN-alpha", SangerSampleID: "sanger-alpha", IDRun: 52553, Position: 1, TagIndex: 1},
-						{Name: "S1-sample-alpha", SupplierName: "supplier-alpha", AccessionNumber: "EGAN-alpha", SangerSampleID: "sanger-alpha", IDRun: 52553, Position: 1, TagIndex: 2},
-						{Name: "S1-sample-beta", SupplierName: "supplier-beta", AccessionNumber: "EGAN-beta", SangerSampleID: "sanger-beta", IDRun: 52554, Position: 2, TagIndex: 3},
+						{Name: "S1-sample-alpha", SupplierName: "supplier-alpha", AccessionNumber: "EGAN-alpha", SangerSampleID: "sanger-alpha", IDRun: 52553, Position: 1, TagIndex: 1, ManualQC: "pass"},
+						{Name: "S1-sample-alpha", SupplierName: "supplier-alpha", AccessionNumber: "EGAN-alpha", SangerSampleID: "sanger-alpha", IDRun: 52553, Position: 1, TagIndex: 2, ManualQC: "fail"},
+						{Name: "S1-sample-beta", SupplierName: "supplier-beta", AccessionNumber: "EGAN-beta", SangerSampleID: "sanger-beta", IDRun: 52554, Position: 2, TagIndex: 3, ManualQC: "pending"},
 					},
 				}, nil
 			},
@@ -142,6 +142,9 @@ func TestMLWHManifestPrintsMetadataOnceAndRows(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "supplier-beta")
 		convey.So(output, convey.ShouldContainSubstring, "sanger-beta")
 		convey.So(output, convey.ShouldContainSubstring, "52554")
+		convey.So(output, convey.ShouldContainSubstring, "manual_qc=pass")
+		convey.So(output, convey.ShouldContainSubstring, "manual_qc=fail")
+		convey.So(output, convey.ShouldContainSubstring, "manual_qc=pending")
 
 		// The header line must NOT carry an irods_path column when --with-irods is
 		// not set, and no row line should either.

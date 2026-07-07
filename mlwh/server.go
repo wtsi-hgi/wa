@@ -87,13 +87,20 @@ type irodsPathsWithOptionsQueryer interface {
 	CountIRODSPathsForRunWithOptions(ctx context.Context, idRun string, opts IRODSPathOptions) (Count, error)
 }
 
-// Both the local Client and the RemoteClient provide the extended iRODS variants,
-// so a server over either can dispatch optional filters and created-time sorting.
+type sampleSearchWithOptionsQueryer interface {
+	SearchSamplesWithOptions(ctx context.Context, term string, opts SampleSearchOptions, limit, offset int) ([]Sample, error)
+	CountSampleSearchWithOptions(ctx context.Context, term string, opts SampleSearchOptions) (Count, error)
+}
+
+// Both the local Client and the RemoteClient provide the extended variants, so a
+// server over either can dispatch optional filters and created-time sorting.
 var (
-	_ irodsPathsByFileTypeQueryer  = (*Client)(nil)
-	_ irodsPathsByFileTypeQueryer  = (*RemoteClient)(nil)
-	_ irodsPathsWithOptionsQueryer = (*Client)(nil)
-	_ irodsPathsWithOptionsQueryer = (*RemoteClient)(nil)
+	_ irodsPathsByFileTypeQueryer    = (*Client)(nil)
+	_ irodsPathsByFileTypeQueryer    = (*RemoteClient)(nil)
+	_ irodsPathsWithOptionsQueryer   = (*Client)(nil)
+	_ irodsPathsWithOptionsQueryer   = (*RemoteClient)(nil)
+	_ sampleSearchWithOptionsQueryer = (*Client)(nil)
+	_ sampleSearchWithOptionsQueryer = (*RemoteClient)(nil)
 )
 
 func irodsPathsForSampleResult(c *gin.Context, queryer Queryer, id string, opts IRODSPathOptions, pagination mlwhPagination) ([]IRODSPath, error) {
@@ -290,6 +297,10 @@ func mlwhIRODSPathOptionsFromQuery(c *gin.Context) (IRODSPathOptions, bool) {
 	if !ok {
 		return IRODSPathOptions{}, false
 	}
+	deliverablesOnly, ok := mlwhQueryBool(c, "deliverables_only")
+	if !ok {
+		return IRODSPathOptions{}, false
+	}
 	orderBy, ok := mlwhIRODSOrderByFromQuery(c)
 	if !ok {
 		return IRODSPathOptions{}, false
@@ -300,10 +311,11 @@ func mlwhIRODSPathOptionsFromQuery(c *gin.Context) (IRODSPathOptions, bool) {
 	}
 
 	return IRODSPathOptions{
-		FileType: fileType,
-		OrderBy:  orderBy,
-		Since:    since,
-		Until:    until,
+		FileType:         fileType,
+		DeliverablesOnly: deliverablesOnly,
+		OrderBy:          orderBy,
+		Since:            since,
+		Until:            until,
 	}, true
 }
 
@@ -319,6 +331,51 @@ func mlwhIRODSOrderByFromQuery(c *gin.Context) (string, bool) {
 	}
 
 	return irodsOrderByCreatedDesc, true
+}
+
+func mlwhSampleSearchOptionsFromQuery(c *gin.Context) (SampleSearchOptions, bool) {
+	words, ok := mlwhQueryBool(c, "words")
+	if !ok {
+		return SampleSearchOptions{}, false
+	}
+	deliverablesOnly, ok := mlwhQueryBool(c, "deliverables_only")
+	if !ok {
+		return SampleSearchOptions{}, false
+	}
+
+	return SampleSearchOptions{
+		Words:            words,
+		Organism:         c.Query("organism"),
+		LibraryType:      c.Query("library_type"),
+		QC:               c.Query("qc"),
+		DeliverablesOnly: deliverablesOnly,
+	}, true
+}
+
+func searchSamplesResult(ctx context.Context, queryer Queryer, term string, opts SampleSearchOptions, pagination mlwhPagination) ([]Sample, error) {
+	if !sampleSearchOptionsNeedExtended(opts) {
+		return queryer.SearchSamples(ctx, term, pagination.limit, pagination.offset)
+	}
+	if extended, ok := queryer.(sampleSearchWithOptionsQueryer); ok {
+		return extended.SearchSamplesWithOptions(ctx, term, opts, pagination.limit, pagination.offset)
+	}
+
+	return nil, fmt.Errorf("%w: sample search options require SearchSamplesWithOptions", ErrUnsupportedIdentifier)
+}
+
+func sampleSearchOptionsNeedExtended(opts SampleSearchOptions) bool {
+	return opts.Words || opts.Organism != "" || opts.LibraryType != "" || opts.QC != "" || opts.DeliverablesOnly
+}
+
+func countSampleSearchResult(ctx context.Context, queryer Queryer, term string, opts SampleSearchOptions) (Count, error) {
+	if !sampleSearchOptionsNeedExtended(opts) {
+		return queryer.CountSampleSearch(ctx, term)
+	}
+	if extended, ok := queryer.(sampleSearchWithOptionsQueryer); ok {
+		return extended.CountSampleSearchWithOptions(ctx, term, opts)
+	}
+
+	return Count{}, fmt.Errorf("%w: sample search options require CountSampleSearchWithOptions", ErrUnsupportedIdentifier)
 }
 
 // Server serves the MLWH read/query REST API.
@@ -1221,10 +1278,14 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
+			opts, ok := mlwhSampleSearchOptionsFromQuery(c)
+			if !ok {
+				return
+			}
 			ctx := c.Request.Context()
-			result, err := queryer.SearchSamples(ctx, term, pagination.limit, pagination.offset)
+			result, err := searchSamplesResult(ctx, queryer, term, opts, pagination)
 			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
-				return countValue(queryer.CountSampleSearch(ctx, term))
+				return countValue(countSampleSearchResult(ctx, queryer, term, opts))
 			})
 		}
 	case "CountStudySearch":
@@ -1242,7 +1303,11 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			result, err := queryer.CountSampleSearch(c.Request.Context(), term)
+			opts, ok := mlwhSampleSearchOptionsFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := countSampleSearchResult(c.Request.Context(), queryer, term, opts)
 			writeMLWHResult(c, result, err)
 		}
 	case "CountStudies":

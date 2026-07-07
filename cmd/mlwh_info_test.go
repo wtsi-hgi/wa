@@ -94,6 +94,7 @@ type stubMLWHInfoClient struct {
 	samplesForLibrary   func(ctx context.Context, pipelineID, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
 
 	studyOverview          func(ctx context.Context, id string) (mlwh.StudyOverview, error)
+	studyManifest          func(ctx context.Context, id, fileType string, withIRODS bool, limit, offset int) (mlwh.StudyManifest, error)
 	statusBreakdown        func(ctx context.Context, id string) (mlwh.StatusBreakdown, error)
 	countSamplesWithData   func(ctx context.Context, id string) (mlwh.Count, error)
 	countSamplesWithDataAt func(ctx context.Context, id, since, until string) (mlwh.Count, error)
@@ -111,6 +112,14 @@ func (s *stubMLWHInfoClient) StudyOverview(ctx context.Context, id string) (mlwh
 	}
 
 	return mlwh.StudyOverview{IDStudyLims: id}, nil
+}
+
+func (s *stubMLWHInfoClient) StudyManifest(ctx context.Context, id, fileType string, withIRODS bool, limit, offset int) (mlwh.StudyManifest, error) {
+	if s.studyManifest != nil {
+		return s.studyManifest(ctx, id, fileType, withIRODS, limit, offset)
+	}
+
+	return mlwh.StudyManifest{}, nil
 }
 
 func (s *stubMLWHInfoClient) StatusBreakdown(ctx context.Context, id string) (mlwh.StatusBreakdown, error) {
@@ -805,6 +814,59 @@ func TestMLWHInfoStudyOverviewMetadata(t *testing.T) {
 	})
 }
 
+func TestMLWHInfoStudyShowsProgrammeAndManualQCProducts(t *testing.T) {
+	convey.Convey("K acceptance 3: Given a study with sequenced products, when wa mlwh info <study> runs, then programme and non-blank manual_qc product values render, including a non-Illumina row", t, func() {
+		stub := &stubMLWHInfoClient{
+			resolveStudy: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{
+					Kind:      mlwh.KindStudyLimsID,
+					Canonical: raw,
+					Study: &mlwh.Study{
+						IDStudyLims: raw,
+						Name:        "Product QC study",
+					},
+				}, nil
+			},
+			studyOverview: func(_ context.Context, id string) (mlwh.StudyOverview, error) {
+				return mlwh.StudyOverview{
+					IDStudyLims: id,
+					Programme:   "Human Genetics",
+					Runs:        2,
+					Libraries:   1,
+				}, nil
+			},
+			studyManifest: func(_ context.Context, id, fileType string, withIRODS bool, limit, offset int) (mlwh.StudyManifest, error) {
+				convey.So(id, convey.ShouldEqual, "5901")
+				convey.So(fileType, convey.ShouldEqual, "")
+				convey.So(withIRODS, convey.ShouldBeFalse)
+				convey.So(limit, convey.ShouldEqual, infoMaxRelated)
+				convey.So(offset, convey.ShouldEqual, 0)
+
+				return mlwh.StudyManifest{
+					IDStudyLims: id,
+					Rows: []mlwh.ManifestRow{
+						{Name: "illumina-sample", IDRun: 52553, Position: 1, TagIndex: 1, ManualQC: "pass"},
+						{Name: "pacbio-sample", IDRun: 0, Position: 0, TagIndex: 0, ManualQC: "pending"},
+					},
+				}, nil
+			},
+		}
+
+		withStubMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901", "--type", "study"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "Programme")
+		convey.So(output, convey.ShouldContainSubstring, "Human Genetics")
+		convey.So(output, convey.ShouldContainSubstring, "Products (2)")
+		convey.So(output, convey.ShouldContainSubstring, "illumina-sample")
+		convey.So(output, convey.ShouldContainSubstring, "manual_qc=pass")
+		convey.So(output, convey.ShouldContainSubstring, "pacbio-sample")
+		convey.So(output, convey.ShouldContainSubstring, "manual_qc=pending")
+	})
+}
+
 func TestMLWHInfoStudyMetadataFallsBackToBaseStudyDataAccess(t *testing.T) {
 	convey.Convey("Given the base study carries a data access group and the overview endpoint fails, "+
 		"when wa mlwh info <study> runs, then the study section still surfaces the data access group", t, func() {
@@ -1041,7 +1103,7 @@ func TestMLWHInfoCommandServerModeNeverSyncedDoesNotMentionSync(t *testing.T) {
 
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901"})
 
-		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err, convey.ShouldBeNil)
 		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
 		convey.So(output, convey.ShouldNotContainSubstring, mlwh.ErrCacheNeverSynced.Error())
 		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "not available")
@@ -1081,12 +1143,7 @@ func TestMLWHInfoStudyServerModeNeverSyncedDegradesGracefully(t *testing.T) {
 
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "7699", "--type", "study"})
 
-		// Degradation mirrors the existing info behaviour exactly (e.g.
-		// TestMLWHInfoCommandServerModeNeverSyncedDoesNotMentionSync): a neutral
-		// cache-unavailable message with no sync hint, and no embedded
-		// ErrCacheNeverSynced text. The study-rendering changes in this item do not
-		// alter the resolve-not-found degradation path.
-		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err, convey.ShouldBeNil)
 		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
 		convey.So(output, convey.ShouldNotContainSubstring, mlwh.ErrCacheNeverSynced.Error())
 		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "not available")
@@ -1538,7 +1595,7 @@ func TestMLWHInfoCommandCacheOnlyNeverSyncedDoesNotMentionSync(t *testing.T) {
 
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901"})
 
-		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err, convey.ShouldBeNil)
 		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
 		convey.So(output, convey.ShouldNotContainSubstring, mlwh.ErrCacheNeverSynced.Error())
 		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "not available")

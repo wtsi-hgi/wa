@@ -215,6 +215,10 @@ func runMLWHExport(
 			return writeMLWHExportCacheUnavailable(dataOut, statusOut, opts.Format)
 		}
 		if errors.Is(err, mlwh.ErrNotFound) {
+			if mlwhClientNeverSynced(ctx, client) {
+				return writeMLWHExportCacheUnavailable(dataOut, statusOut, opts.Format)
+			}
+
 			writeMLWHExportNotFound(statusOut, rel, parentID)
 
 			return nil
@@ -309,6 +313,10 @@ func mlwhExportRemoteQuery(opts mlwh.ExportOptions) url.Values {
 	}
 
 	return query
+}
+
+func (c *mlwhExportRemoteClient) Freshness(ctx context.Context) (mlwh.Freshness, error) {
+	return c.remote.Freshness(ctx)
 }
 
 func (c *mlwhExportRemoteClient) Close() error {

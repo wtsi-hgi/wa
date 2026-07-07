@@ -72,10 +72,12 @@ func TestMLWHSearchHelpRendersConfigurationDetails(t *testing.T) {
 }
 
 type stubMLWHSearchClient struct {
-	searchStudies     func(ctx context.Context, term string, limit, offset int) ([]mlwh.Study, error)
-	searchSamples     func(ctx context.Context, term string, limit, offset int) ([]mlwh.Sample, error)
-	countStudySearch  func(ctx context.Context, term string) (mlwh.Count, error)
-	countSampleSearch func(ctx context.Context, term string) (mlwh.Count, error)
+	searchStudies                func(ctx context.Context, term string, limit, offset int) ([]mlwh.Study, error)
+	searchSamples                func(ctx context.Context, term string, limit, offset int) ([]mlwh.Sample, error)
+	searchSamplesWithOptions     func(ctx context.Context, term string, opts mlwh.SampleSearchOptions, limit, offset int) ([]mlwh.Sample, error)
+	countStudySearch             func(ctx context.Context, term string) (mlwh.Count, error)
+	countSampleSearch            func(ctx context.Context, term string) (mlwh.Count, error)
+	countSampleSearchWithOptions func(ctx context.Context, term string, opts mlwh.SampleSearchOptions) (mlwh.Count, error)
 
 	closed bool
 }
@@ -110,6 +112,22 @@ func (s *stubMLWHSearchClient) CountSampleSearch(ctx context.Context, term strin
 	}
 
 	return mlwh.Count{}, errors.New("CountSampleSearch not stubbed")
+}
+
+func (s *stubMLWHSearchClient) SearchSamplesWithOptions(ctx context.Context, term string, opts mlwh.SampleSearchOptions, limit, offset int) ([]mlwh.Sample, error) {
+	if s.searchSamplesWithOptions != nil {
+		return s.searchSamplesWithOptions(ctx, term, opts, limit, offset)
+	}
+
+	return s.SearchSamples(ctx, term, limit, offset)
+}
+
+func (s *stubMLWHSearchClient) CountSampleSearchWithOptions(ctx context.Context, term string, opts mlwh.SampleSearchOptions) (mlwh.Count, error) {
+	if s.countSampleSearchWithOptions != nil {
+		return s.countSampleSearchWithOptions(ctx, term, opts)
+	}
+
+	return s.CountSampleSearch(ctx, term)
 }
 
 func (s *stubMLWHSearchClient) Close() error {
@@ -228,6 +246,62 @@ func TestMLWHSearchCommandTypeSampleOnly(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "Samples (1)")
 		convey.So(output, convey.ShouldContainSubstring, "DN1234")
 		convey.So(output, convey.ShouldNotContainSubstring, "Studies")
+	})
+}
+
+func TestMLWHSearchCommandPassesD3SampleFilters(t *testing.T) {
+	convey.Convey("K/D3: Given sample search flags, when wa mlwh search runs, then the optioned sample search API receives the mode override and filters", t, func() {
+		stub := &stubMLWHSearchClient{
+			searchStudies: func(_ context.Context, _ string, _, _ int) ([]mlwh.Study, error) {
+				t.Fatalf("SearchStudies must not be called for --type sample")
+
+				return nil, nil
+			},
+			countStudySearch: func(_ context.Context, _ string) (mlwh.Count, error) {
+				t.Fatalf("CountStudySearch must not be called for --type sample")
+
+				return mlwh.Count{}, nil
+			},
+			searchSamplesWithOptions: func(_ context.Context, term string, opts mlwh.SampleSearchOptions, limit, offset int) ([]mlwh.Sample, error) {
+				convey.So(term, convey.ShouldEqual, "supplier")
+				convey.So(limit, convey.ShouldEqual, 25)
+				convey.So(offset, convey.ShouldEqual, 5)
+				convey.So(opts.Words, convey.ShouldBeTrue)
+				convey.So(opts.Organism, convey.ShouldEqual, "Homo sapiens")
+				convey.So(opts.LibraryType, convey.ShouldEqual, "Chromium")
+				convey.So(opts.QC, convey.ShouldEqual, "fail")
+				convey.So(opts.DeliverablesOnly, convey.ShouldBeTrue)
+
+				return []mlwh.Sample{{Name: "SUPPLIER-1"}}, nil
+			},
+			countSampleSearchWithOptions: func(_ context.Context, term string, opts mlwh.SampleSearchOptions) (mlwh.Count, error) {
+				convey.So(term, convey.ShouldEqual, "supplier")
+				convey.So(opts.Words, convey.ShouldBeTrue)
+				convey.So(opts.Organism, convey.ShouldEqual, "Homo sapiens")
+				convey.So(opts.LibraryType, convey.ShouldEqual, "Chromium")
+				convey.So(opts.QC, convey.ShouldEqual, "fail")
+				convey.So(opts.DeliverablesOnly, convey.ShouldBeTrue)
+
+				return mlwh.Count{Count: 1}, nil
+			},
+		}
+
+		withStubMLWHSearchClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{
+			"mlwh", "search", "supplier",
+			"--type", "sample",
+			"--words",
+			"--organism", "Homo sapiens",
+			"--library-type", "Chromium",
+			"--qc", "fail",
+			"--deliverables-only",
+			"--limit", "25",
+			"--offset", "5",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "SUPPLIER-1")
 	})
 }
 
