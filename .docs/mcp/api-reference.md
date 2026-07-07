@@ -177,6 +177,16 @@ Lists the sequencing runs associated with the given study. Defaults to returning
 - Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0
 - Response: `[]Run`
 
+### `GET /sample/:id/runs`
+
+List runs for a sample
+
+Lists the distinct sequencing runs associated with the given sample. Defaults to returning all runs; use limit/offset to page.
+
+- Path parameters: `id`
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0
+- Response: `[]Run`
+
 ### `GET /study/:id/overview`
 
 Get a study's sequencing overview
@@ -234,7 +244,7 @@ List a study's samples that have sequencing data
 Lists the distinct samples linked to the given study (via library_samples) that have sequencing data available for this study, each qualified by the platforms it has products on. A sample has data for this study iff it has at least one row in the iRODS locations mirror scoped by id_study_lims = the study (real data objects in iRODS), so scoping is by the study the data is under, NOT data the sample has anywhere. Together with /study/:id/samples-without-data this partitions the study's linked samples (with_data + without_data = samples_total). platforms lists the canonical platform names the sample has products on in this study (e.g. Illumina, PacBio, Elembio, Ultimagen); it is ["ONT"] for an ONT sample (Oxford Nanopore is not tracked for availability/QC, only identity and study) and empty for a registered-only sample with no products. The optional since and until RFC3339 query params restrict the list to samples whose study-scoped data was ADDED to iRODS in the half-open window [since, until): the filter is on the iRODS creation timestamp (the created column), NEVER on last_updated or last_run (last_updated conflates newly-added with later-modified rows, and last_run is only when wa synced), so it answers "added since X"; since is inclusive and until is exclusive (created >= since AND created < until), comparison is in normalised UTC, and until is optional (the window is open-ended when omitted). The in-window list and /study/:id/samples-with-data/count with the same since/until stay the exact count<->list cross-check. Without since the list is all-time. A malformed since or until, or an until supplied without a since (until is only the upper bound of a window, so it is meaningless alone), is rejected with a 400 bad_request before the query runs. Membership is read from the cache mirrors, so results are complete only up to the feeding tables' last sync (see /freshness). Defaults to returning all samples; use limit/offset to page.
 
 - Path parameters: `id`
-- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `since` (string): RFC3339 timestamp; when set, restricts the result to samples whose study-scoped data was added to iRODS at or after this instant (created >= since, inclusive), filtering on the iRODS creation timestamp and never on last_updated/last_run; omit for an all-time result; `until` (string): RFC3339 timestamp; when set with since, the upper bound of the half-open window (created < until, exclusive); optional and open-ended when omitted; only meaningful with since, so an until supplied without a since is rejected with a 400 bad_request rather than silently ignored
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `since` (string): RFC3339 timestamp; when set, restricts the result to samples whose study-scoped data was added to iRODS at or after this instant (the lower bound of the half-open [since, until) window; created >= since, inclusive), filtering on the iRODS creation timestamp (the data-added time) and never on last_updated/last_run; omit for an all-time result; `until` (string): RFC3339 timestamp; when set with since, the upper bound of the half-open window (created < until, exclusive); optional and open-ended when omitted; only meaningful with since, so an until supplied without a since is rejected with a 400 bad_request rather than silently ignored
 - Response: `[]SampleWithData`
 
 ### `GET /study/:id/samples-without-data`
@@ -246,6 +256,26 @@ Lists the distinct samples linked to the given study (via library_samples) that 
 - Path parameters: `id`
 - Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0
 - Response: `[]SampleWithData`
+
+### `GET /study/:id/latest-data`
+
+List newest data objects for a study
+
+Returns a bounded, pageable newest-first page of raw iRODS data-object rows for the given study. Rows are ordered by created DESC, with ties by (id_run, id_product); this is a page, NOT an unbounded MAX(created) tie set. Membership is a raw seq_product_irods_locations_mirror scan scoped by (id_study_lims, created), not the study manifest/product grain, so the first row's created timestamp reconciles with StudyOverview.newest_data_added. Each row carries the full irods_path, study id/name, sample name and supplier_name, id_run, lane, tag_index, platform, and merged flag. Set file_type to restrict rows to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with one leading dot stripped. Defaults to 10 rows, maximum 1000; use limit/offset to page.
+
+- Path parameters: `id`
+- Query parameters: `limit` (integer): maximum number of newest rows to return; defaults to 10 and must not exceed 1000; `offset` (integer): number of leading newest rows to skip before returning results; defaults to 0; `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types
+- Response: `[]RecentDataRow`
+
+### `GET /latest-data/faculty-sponsor/:name`
+
+List newest data objects by faculty sponsor
+
+Returns a bounded, pageable newest-first page of raw iRODS data-object rows across SQSCP studies whose study_mirror.faculty_sponsor contains the supplied name. Each matching study contributes only its bounded top rows through the (id_study_lims, created) access path, and those per-study candidates are merged by created DESC with ties by (id_run, id_product), avoiding one request per study and avoiding an unbounded global filesort over every file. Membership is the raw seq_product_irods_locations_mirror row set, so results reconcile with each study's StudyOverview.newest_data_added. Set file_type to restrict rows to data objects whose iRODS file name ends in `.<file_type>`. Defaults to 10 rows, maximum 1000; use limit/offset to page.
+
+- Path parameters: `name`
+- Query parameters: `limit` (integer): maximum number of newest rows to return; defaults to 10 and must not exceed 1000; `offset` (integer): number of leading newest rows to skip before returning results; defaults to 0; `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types
+- Response: `[]RecentDataRow`
 
 ### `GET /sample/:id/lanes`
 
@@ -264,7 +294,7 @@ List iRODS paths for a sample
 Lists the iRODS data-object paths exported for the given sample (by Sanger sample name). Defaults to returning all paths; use limit/offset to page. Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '\_' or '/' is rejected with a 400 bad_request.
 
 - Path parameters: `id`
-- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types; `order_by` (string): optional iRODS row order; supported value created_desc orders by iRODS created time newest-first; omit to keep the default stable listing order; `since` (string): RFC3339 timestamp; when set, restricts the result to sample-scoped iRODS data objects added to iRODS at or after this instant (the lower bound of the half-open [since, until) window; created >= since, inclusive), filtering on the iRODS creation timestamp (the data-added time) and never on last_updated/last_run; omit for an all-time result; `until` (string): RFC3339 timestamp; when set with since, the upper bound of the half-open window (created < until, exclusive); optional and open-ended when omitted; only meaningful with since, so an until supplied without a since is rejected with a 400 bad_request rather than silently ignored
 - Response: `[]IRODSPath`
 
 ### `GET /study/:id/irods`
@@ -274,17 +304,17 @@ List iRODS paths for a study
 Lists the iRODS data-object paths exported for the given study. Defaults to returning all paths; use limit/offset to page. Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '\_' or '/' is rejected with a 400 bad_request.
 
 - Path parameters: `id`
-- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types; `order_by` (string): optional iRODS row order; supported value created_desc orders by iRODS created time newest-first; omit to keep the default stable listing order; `since` (string): RFC3339 timestamp; when set, restricts the result to study-scoped iRODS data objects added to iRODS at or after this instant (the lower bound of the half-open [since, until) window; created >= since, inclusive), filtering on the iRODS creation timestamp (the data-added time) and never on last_updated/last_run; omit for an all-time result; `until` (string): RFC3339 timestamp; when set with since, the upper bound of the half-open window (created < until, exclusive); optional and open-ended when omitted; only meaningful with since, so an until supplied without a since is rejected with a 400 bad_request rather than silently ignored
 - Response: `[]IRODSPath`
 
 ### `GET /run/:id/irods`
 
 List iRODS paths for a run
 
-Lists the iRODS data objects on the given run: the run's iseq_product_metrics rows (filtered by id_run) joined to the iRODS locations mirror by the shared id_iseq_product (the run's real data files in iRODS), one row per data object. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Every row carries id_run = the run plus the iRODS row's platform. Defaults to returning all data objects; use limit/offset to page, and it is bounded and paginated like /study/:id/irods and /sample/:id/irods, setting the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /run/:id/irods/count and the two cannot drift). Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '\_' or '/' is rejected with a 400 bad_request. The list is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).
+Lists the iRODS data objects on the given run by reading seq_product_irods_locations_mirror rows whose denormalized id_run equals the requested run, one row per data object. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Every row carries id_run = the run plus the iRODS row's platform. Defaults to returning all data objects; use limit/offset to page, and it is bounded and paginated like /study/:id/irods and /sample/:id/irods, setting the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /run/:id/irods/count and the two cannot drift). Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '\_' or '/' is rejected with a 400 bad_request. The list is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).
 
 - Path parameters: `id`
-- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types; `order_by` (string): optional iRODS row order; supported value created_desc orders by iRODS created time newest-first; omit to keep the default stable listing order; `since` (string): RFC3339 timestamp; when set, restricts the result to run-scoped iRODS data objects added to iRODS at or after this instant (the lower bound of the half-open [since, until) window; created >= since, inclusive), filtering on the iRODS creation timestamp (the data-added time) and never on last_updated/last_run; omit for an all-time result; `until` (string): RFC3339 timestamp; when set with since, the upper bound of the half-open window (created < until, exclusive); optional and open-ended when omitted; only meaningful with since, so an until supplied without a since is rejected with a 400 bad_request rather than silently ignored
 - Response: `[]IRODSPath`
 
 ### `GET /study/:id/manifest`
@@ -311,11 +341,91 @@ Returns the number of distinct sequencing products in the given study, the count
 
 List studies for a sample
 
-Lists the studies the given sample (by Sanger sample name) belongs to.
+Lists the studies the given sample (by Sanger sample name) belongs to and sets X-Total-Count / X-Next-Offset from /sample/:id/studies/count.
 
 - Path parameters: `id`
 - Query parameters: none
 - Response: `[]Study`
+
+### `GET /sample/:id/studies/count`
+
+Count studies for a sample
+
+Returns the number of distinct studies the given sample belongs to, the count counterpart of /sample/:id/studies.
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /studies/programme/:term`
+
+List studies by programme
+
+Lists SQSCP studies whose programme exactly matches the supplied value. Defaults to a page of 100, maximum 1000.
+
+- Path parameters: `term`
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to 100, maximum 1000 (a larger limit is rejected); `offset` (integer): number of leading rows to skip before returning results; defaults to 0
+- Response: `[]Study`
+
+### `GET /studies/programme/:term/count`
+
+Count studies by programme
+
+Returns the number of SQSCP studies whose programme exactly matches the supplied value, the count counterpart of /studies/programme/:term.
+
+- Path parameters: `term`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /study/:id/users`
+
+List study users
+
+Lists study_users role assignments for the given study. Defaults to returning all rows; use limit/offset to page.
+
+- Path parameters: `id`
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0
+- Response: `[]StudyUser`
+
+### `GET /study/:id/users/count`
+
+Count study users
+
+Returns the number of study_users role assignments for the given study, the count counterpart of /study/:id/users.
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /study/:id/sample-crams`
+
+List sample CRAMs for a study
+
+Lists one selected deliverable CRAM per sample for the given study, preferring merged composite objects when present. Defaults to returning all rows; use limit/offset to page.
+
+- Path parameters: `id`
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0
+- Response: `[]SampleCRAM`
+
+### `GET /study/:id/sample-crams/count`
+
+Count sample CRAMs for a study
+
+Returns the number of selected per-sample CRAM rows for the given study, the count counterpart of /study/:id/sample-crams.
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /export/:children/:parent_kind/:parent_id`
+
+Export relationship rows
+
+Projects one supported MLWH export relationship into ordered string rows for the selected columns, matching `wa mlwh export <children> <parent-kind> <parent-id>`. The response body carries Columns, Rows, Total, NextCursor, Complete and Format. Query parameters mirror the CLI: columns is an ordered comma-separated projection; file_type restricts file exports by filename suffix; deliverables_only, qc, library_type and organism apply the shared export filters where supported; limit/offset request a bounded page; all requests the complete matching set; cursor continues keyset pagination for iRODS exports; format is tsv, csv or json metadata for callers that render the result. A never-synced cache returns cache_never_synced so CLIs can degrade cleanly.
+
+- Path parameters: `children`, `parent_kind`, `parent_id`
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `columns` (string): ordered comma-separated export columns to emit; omit to use the relationship default projection; `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types; `deliverables_only` (boolean): when true, restricts supported file exports to deliverable rows; when false, includes controls/sub-products; omit to use the relationship default; `qc` (string): optional QC filter for product-backed exports: pass, fail, or pending; `library_type` (string): optional exact library type filter for sample-backed exports; `organism` (string): optional organism/common-name filter for sample-backed exports; `sort` (string): optional iRODS export sort mode; supported value created-desc orders by iRODS created time newest-first; `order_by` (string): alias for sort on iRODS exports; supported value created_desc; `since` (string): RFC3339 lower bound for iRODS created-date exports (created >= since); supported for iRODS exports; `until` (string): RFC3339 upper bound for iRODS created-date exports (created < until); requires since; `all` (boolean): when true, emits the complete matching set rather than a bounded page; `cursor` (string): opaque keyset cursor returned by a previous iRODS export page; `format` (string): output rendering format metadata: tsv, csv or json; defaults to tsv
+- Response: `ExportResult`
 
 ### `GET /studies/faculty-sponsor/:name`
 
@@ -574,7 +684,27 @@ Count a study's samples that have sequencing data
 Returns the number of distinct samples linked to the given study (via library_samples) that have sequencing data available for this study, the count counterpart of /study/:id/samples-with-data (count == the length of that list when all rows are fetched). A sample has data for this study iff it has at least one row in the iRODS locations mirror scoped by id_study_lims = the study (real data objects in iRODS); scoping is by the study the data is under, NOT data the sample has anywhere. The figure counts distinct samples, never iRODS data objects, so a sample with many study-scoped iRODS rows is counted once. The optional since and until RFC3339 query params restrict the count to samples whose study-scoped data was ADDED to iRODS in the half-open window [since, until): the filter is on the iRODS creation timestamp (the created column), NEVER on last_updated or last_run (last_updated conflates newly-added with later-modified rows, and last_run is only when wa synced), so it answers "added since X"; since is inclusive and until is exclusive (created >= since AND created < until), comparison is in normalised UTC, and until is optional (the window is open-ended when omitted). Without since the count is all-time. A malformed since or until, or an until supplied without a since (until is only the upper bound of a window, so it is meaningless alone), is rejected with a 400 bad_request before the query runs. Membership is read from the cache mirrors, so the count is complete only up to the feeding tables' last sync (see /freshness).
 
 - Path parameters: `id`
-- Query parameters: `since` (string): RFC3339 timestamp; when set, restricts the result to samples whose study-scoped data was added to iRODS at or after this instant (created >= since, inclusive), filtering on the iRODS creation timestamp and never on last_updated/last_run; omit for an all-time result; `until` (string): RFC3339 timestamp; when set with since, the upper bound of the half-open window (created < until, exclusive); optional and open-ended when omitted; only meaningful with since, so an until supplied without a since is rejected with a 400 bad_request rather than silently ignored
+- Query parameters: `since` (string): RFC3339 timestamp; when set, restricts the result to samples whose study-scoped data was added to iRODS at or after this instant (the lower bound of the half-open [since, until) window; created >= since, inclusive), filtering on the iRODS creation timestamp (the data-added time) and never on last_updated/last_run; omit for an all-time result; `until` (string): RFC3339 timestamp; when set with since, the upper bound of the half-open window (created < until, exclusive); optional and open-ended when omitted; only meaningful with since, so an until supplied without a since is rejected with a 400 bad_request rather than silently ignored
+- Response: `Count`
+
+### `GET /study/:id/latest-data/count`
+
+Count newest data rows for a study
+
+Returns the number of raw seq_product_irods_locations_mirror rows for the given study, optionally restricted by file_type, so X-Total-Count on /study/:id/latest-data sizes the same raw iRODS-location membership used by the list. This is a raw data-object count, not a manifest/product count.
+
+- Path parameters: `id`
+- Query parameters: `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types
+- Response: `Count`
+
+### `GET /latest-data/faculty-sponsor/:name/count`
+
+Count newest data rows by faculty sponsor
+
+Returns the number of raw seq_product_irods_locations_mirror rows under SQSCP studies whose study_mirror.faculty_sponsor contains the supplied name, optionally restricted by file_type, so X-Total-Count on /latest-data/faculty-sponsor/:name sizes the same raw iRODS-location membership used by the list.
+
+- Path parameters: `name`
+- Query parameters: `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types
 - Response: `Count`
 
 ### `GET /run/:id/samples/count`
@@ -637,6 +767,16 @@ Returns the number of distinct sequencing runs associated with the given study, 
 - Query parameters: none
 - Response: `Count`
 
+### `GET /sample/:id/runs/count`
+
+Count runs for a sample
+
+Returns the number of distinct sequencing runs associated with the given sample, the count counterpart of /sample/:id/runs.
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
 ### `GET /study/:id/libraries/count`
 
 Count libraries in a study
@@ -664,7 +804,7 @@ Count iRODS paths for a sample
 Returns the number of distinct iRODS data objects exported for the given sample (by Sanger sample name), the count counterpart of /sample/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS data objects the list returns with no LIMIT. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '\_' or '/' is rejected with a 400 bad_request. An unknown sample yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).
 
 - Path parameters: `id`
-- Query parameters: `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types
+- Query parameters: `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types; `since` (string): RFC3339 timestamp; when set, restricts the result to sample-scoped iRODS data objects added to iRODS at or after this instant (the lower bound of the half-open [since, until) window; created >= since, inclusive), filtering on the iRODS creation timestamp (the data-added time) and never on last_updated/last_run; omit for an all-time result; `until` (string): RFC3339 timestamp; when set with since, the upper bound of the half-open window (created < until, exclusive); optional and open-ended when omitted; only meaningful with since, so an until supplied without a since is rejected with a 400 bad_request rather than silently ignored
 - Response: `Count`
 
 ### `GET /study/:id/irods/count`
@@ -674,17 +814,17 @@ Count iRODS paths for a study
 Returns the number of distinct iRODS data objects exported for the given study, the count counterpart of /study/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS rows the list returns (scoped by id_study_lims) with no LIMIT. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '\_' or '/' is rejected with a 400 bad_request. An unknown study yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).
 
 - Path parameters: `id`
-- Query parameters: `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types
+- Query parameters: `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types; `since` (string): RFC3339 timestamp; when set, restricts the result to study-scoped iRODS data objects added to iRODS at or after this instant (the lower bound of the half-open [since, until) window; created >= since, inclusive), filtering on the iRODS creation timestamp (the data-added time) and never on last_updated/last_run; omit for an all-time result; `until` (string): RFC3339 timestamp; when set with since, the upper bound of the half-open window (created < until, exclusive); optional and open-ended when omitted; only meaningful with since, so an until supplied without a since is rejected with a 400 bad_request rather than silently ignored
 - Response: `Count`
 
 ### `GET /run/:id/irods/count`
 
 Count iRODS paths for a run
 
-Returns the number of iRODS data objects on the given run, the count counterpart of /run/:id/irods (count == the length of that list when all rows are fetched), counting the run's iseq_product_metrics rows joined to the iRODS locations mirror by the shared id_iseq_product with no LIMIT. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '\_' or '/' is rejected with a 400 bad_request. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).
+Returns the number of iRODS data objects on the given run, the count counterpart of /run/:id/irods (count == the length of that list when all rows are fetched), counting seq_product_irods_locations_mirror rows whose denormalized id_run equals the requested run with no LIMIT. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '\_' or '/' is rejected with a 400 bad_request. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).
 
 - Path parameters: `id`
-- Query parameters: `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types
+- Query parameters: `file_type` (string): when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '\_' or '/' is rejected with a 400 bad_request; omit to return all file types; `since` (string): RFC3339 timestamp; when set, restricts the result to run-scoped iRODS data objects added to iRODS at or after this instant (the lower bound of the half-open [since, until) window; created >= since, inclusive), filtering on the iRODS creation timestamp (the data-added time) and never on last_updated/last_run; omit for an all-time result; `until` (string): RFC3339 timestamp; when set with since, the upper bound of the half-open window (created < until, exclusive); optional and open-ended when omitted; only meaningful with since, so an until supplied without a since is rejected with a 400 bad_request rather than silently ignored
 - Response: `Count`
 
 ### `GET /find/sample/sanger-id/:id/count`

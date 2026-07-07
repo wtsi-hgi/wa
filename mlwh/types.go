@@ -136,6 +136,7 @@ type IRODSPath struct {
 	IRODSPath   string `json:"irods_path" doc:"full iRODS path of the data object"`
 	IDSampleTmp int64  `json:"id_sample_tmp" doc:"internal MLWH surrogate key of the sample the data object belongs to"`
 	Name        string `json:"name" doc:"Sanger sample name of the sample the data object belongs to; empty when the sample is not present in the sample mirror"`
+	Created     string `json:"created" doc:"iRODS created time (data added), UTC RFC3339; empty if unknown"`
 	IDRun       int    `json:"id_run" doc:"Illumina NPG run id of the data object; 0 when not derivable (non-Illumina or unmatched)"`
 	Platform    string `json:"platform" doc:"platform string the iRODS row was synced with (source seq_platform_name); disambiguates a 0 id_run as ONT/non-Illumina"`
 	ManualQC    string `json:"manual_qc" doc:"per-product QC roll-up pass|fail|pending from the denormalized product qc; empty when no product-metrics (e.g. ONT)"`
@@ -146,6 +147,24 @@ type IRODSPath struct {
 type IRODSPathOptions struct {
 	FileType         string
 	DeliverablesOnly bool
+	OrderBy          string
+	Since            string
+	Until            string
+}
+
+// RecentDataRow is one row of a "latest data" listing, ordered created DESC.
+type RecentDataRow struct {
+	Created      string `json:"created" doc:"iRODS created time, UTC RFC3339"`
+	IRODSPath    string `json:"irods_path" doc:"full iRODS path"`
+	IDStudyLims  string `json:"id_study_lims" doc:"LIMS study id"`
+	StudyName    string `json:"study_name" doc:"study name"`
+	Name         string `json:"name" doc:"Sanger sample name"`
+	SupplierName string `json:"supplier_name" doc:"supplier-given sample name"`
+	IDRun        int    `json:"id_run" doc:"Illumina NPG run id; 0 for merged/non-Illumina"`
+	Position     int    `json:"lane" doc:"lane position; 0 for merged"`
+	TagIndex     int    `json:"tag_index" doc:"tag index; 0 for merged"`
+	Platform     string `json:"platform" doc:"platform string"`
+	Merged       bool   `json:"merged" doc:"true for a merged composite object"`
 }
 
 // SampleSearchOptions carries optional sample-search modes and filters. Phase 2

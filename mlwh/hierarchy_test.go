@@ -673,8 +673,8 @@ func TestIRODSPathsForSampleReturnsJoinedPaths(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(paths, convey.ShouldResemble, []IRODSPath{
-			{IDProduct: "4001", Collection: "/seq/1234", DataObject: "1234_1#1.cram", IRODSPath: "/seq/1234/1234_1#1.cram", Platform: "illumina"},
-			{IDProduct: "4002", Collection: "/seq/1234", DataObject: "1234_1#2.cram", IRODSPath: "/seq/1234/1234_1#2.cram", Platform: "illumina"},
+			{IDProduct: "4001", Collection: "/seq/1234", DataObject: "1234_1#1.cram", IRODSPath: "/seq/1234/1234_1#1.cram", Created: "2026-05-06T12:11:00Z", Platform: "illumina"},
+			{IDProduct: "4002", Collection: "/seq/1234", DataObject: "1234_1#2.cram", IRODSPath: "/seq/1234/1234_1#2.cram", Created: "2026-05-06T12:11:00Z", Platform: "illumina"},
 		})
 	})
 }
@@ -717,6 +717,7 @@ func TestIRODSPathsForSampleReturnsCompositeProductPathForEveryLinkedSample(t *t
 			Collection: "/seq/illumina/runs/48/48522/plex1",
 			DataObject: "48522#1.cram",
 			IRODSPath:  "/seq/illumina/runs/48/48522/plex1/48522#1.cram",
+			Created:    "2026-05-06T12:11:00Z",
 			Platform:   "illumina",
 		}})
 		convey.So(secondErr, convey.ShouldBeNil)
@@ -828,8 +829,8 @@ func TestIRODSPathsForStudyReturnsJoinedPaths(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(paths, convey.ShouldResemble, []IRODSPath{
-			{IDProduct: "5001", Collection: "/seq/5678", DataObject: "5678_1#1.cram", IRODSPath: "/seq/5678/5678_1#1.cram", IDSampleTmp: 91, Platform: "illumina"},
-			{IDProduct: "5002", Collection: "/seq/5678", DataObject: "5678_1#2.cram", IRODSPath: "/seq/5678/5678_1#2.cram", IDSampleTmp: 92, Platform: "illumina"},
+			{IDProduct: "5001", Collection: "/seq/5678", DataObject: "5678_1#1.cram", IRODSPath: "/seq/5678/5678_1#1.cram", IDSampleTmp: 91, Created: "2026-05-06T12:11:00Z", Platform: "illumina"},
+			{IDProduct: "5002", Collection: "/seq/5678", DataObject: "5678_1#2.cram", IRODSPath: "/seq/5678/5678_1#2.cram", IDSampleTmp: 92, Created: "2026-05-06T12:11:00Z", Platform: "illumina"},
 		})
 	})
 }
@@ -870,6 +871,129 @@ func TestIRODSPathsForStudyCarrySampleIdentityGroupableBySample(t *testing.T) {
 	})
 }
 
+// E1 acceptance test 1: study-scoped iRODS rows can be ordered newest-first by
+// iRODS created time, and each returned IRODSPath carries that UTC RFC3339 value.
+func TestIRODSPathsForStudyCreatedDescIncludesCreatedE1(t *testing.T) {
+	convey.Convey("E1.1: Given a study with iRODS rows at distinct created times", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		oldest := time.Date(2026, time.July, 1, 8, 0, 0, 0, time.UTC)
+		middle := oldest.Add(time.Hour)
+		newest := oldest.Add(2 * time.Hour)
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 1, "S1", "S1STDY1")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "oldest", "/seq/s1", "oldest.cram", 1, "S1", oldest, "illumina")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "newest", "/seq/s1", "newest.cram", 1, "S1", newest, "illumina")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "middle", "/seq/s1", "middle.cram", 1, "S1", middle, "illumina")
+
+		paths, err := client.IRODSPathsForStudyWithOptions(context.Background(), "S1", IRODSPathOptions{OrderBy: irodsOrderByCreatedDesc}, 100, 0)
+
+		convey.Convey("when listed with order_by=created_desc, then rows are newest-first with populated UTC RFC3339 created values", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(irodsProductIDs(paths), convey.ShouldResemble, []string{"newest", "middle", "oldest"})
+			convey.So(irodsCreatedValues(paths), convey.ShouldResemble, []string{formatSyncTime(newest), formatSyncTime(middle), formatSyncTime(oldest)})
+			for _, path := range paths {
+				created, parseErr := time.Parse(time.RFC3339Nano, path.Created)
+				convey.So(parseErr, convey.ShouldBeNil)
+				convey.So(created.Location(), convey.ShouldEqual, time.UTC)
+			}
+		})
+	})
+}
+
+// E1 acceptance tests 2 and 4: sample-scoped created windows are half-open
+// [since, until), include the lower bound, exclude the upper bound, and sort
+// newest-first when requested.
+func TestIRODSPathsForSampleCreatedWindowE1(t *testing.T) {
+	convey.Convey("E1.2/E1.4: Given a sample with iRODS rows around a created window", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		before := time.Date(2026, time.July, 2, 8, 0, 0, 0, time.UTC)
+		since := before.Add(time.Hour)
+		inside := before.Add(2 * time.Hour)
+		until := before.Add(3 * time.Hour)
+		seedHierarchySample(t, client.cache.DB(), 31, "S1", "S1STDY1")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "before-window", "/seq/s1", "before.cram", 31, "S1", before, "illumina")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "at-since", "/seq/s1", "since.cram", 31, "S1", since, "illumina")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "inside-window", "/seq/s1", "inside.cram", 31, "S1", inside, "illumina")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "at-until", "/seq/s1", "until.cram", 31, "S1", until, "illumina")
+
+		paths, err := client.IRODSPathsForSampleWithOptions(context.Background(), "S1STDY1", IRODSPathOptions{
+			OrderBy: irodsOrderByCreatedDesc,
+			Since:   formatSyncTime(since),
+			Until:   formatSyncTime(until),
+		}, 100, 0)
+
+		convey.Convey("when listed with created_desc inside the window, then only since <= created < until rows return newest-first", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(irodsProductIDs(paths), convey.ShouldResemble, []string{"inside-window", "at-since"})
+			convey.So(irodsCreatedValues(paths), convey.ShouldResemble, []string{formatSyncTime(inside), formatSyncTime(since)})
+		})
+	})
+}
+
+// E1 acceptance tests 3 and 4: run-scoped recency reads the iRODS mirror's
+// denormalised id_run/created path, so rows with no product-metrics join still
+// appear when their mirror id_run is in scope.
+func TestIRODSPathsForRunCreatedWindowUsesMirrorRunE1(t *testing.T) {
+	convey.Convey("E1.3/E1.4: Given a run with mirror-scoped iRODS rows around a created window", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		before := time.Date(2026, time.July, 3, 8, 0, 0, 0, time.UTC)
+		since := before.Add(time.Hour)
+		inside := before.Add(2 * time.Hour)
+		until := before.Add(3 * time.Hour)
+		seedSyncState(t, client.cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.July, 3, 7, 0, 0, 0, time.UTC))
+		seedSyncState(t, client.cache.DB(), syncTableSeqProductIRODSLocations, time.Date(2026, time.July, 3, 7, 5, 0, 0, time.UTC))
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 31, "S1", "S1STDY1")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 9001, 31, 52553, 1, 1, "S1")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "mirror-before-no-ipm", "/seq/52553", "before.cram", 31, "S1", before, "illumina")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "mirror-since-no-ipm", "/seq/52553", "since.cram", 31, "S1", since, "illumina")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "mirror-inside-no-ipm", "/seq/52553", "inside.cram", 31, "S1", inside, "illumina")
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, client.cache.DB(), "mirror-until-no-ipm", "/seq/52553", "until.cram", 31, "S1", until, "illumina")
+		setIRODSLocationMirrorRunFields(t, client.cache.DB(), 52553, 1, 1, "mirror-before-no-ipm", "mirror-since-no-ipm", "mirror-inside-no-ipm", "mirror-until-no-ipm")
+
+		paths, err := client.IRODSPathsForRunWithOptions(context.Background(), "52553", IRODSPathOptions{
+			OrderBy: irodsOrderByCreatedDesc,
+			Since:   formatSyncTime(since),
+			Until:   formatSyncTime(until),
+		}, 100, 0)
+
+		convey.Convey("when listed with created_desc inside the window, then mirror id_run rows return newest-first", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(irodsProductIDs(paths), convey.ShouldResemble, []string{"mirror-inside-no-ipm", "mirror-since-no-ipm"})
+			convey.So(irodsCreatedValues(paths), convey.ShouldResemble, []string{formatSyncTime(inside), formatSyncTime(since)})
+			for _, path := range paths {
+				convey.So(path.IDRun, convey.ShouldEqual, 52553)
+			}
+		})
+	})
+}
+
+func TestIRODSPathsUntilWithoutSinceErrorsE1(t *testing.T) {
+	convey.Convey("E1.4: Given until without since on each iRODS scope", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 101, "S1")
+		seedHierarchySample(t, client.cache.DB(), 31, "S1", "S1STDY1")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 9001, 31, 52553, 1, 1, "S1")
+		untilOnly := IRODSPathOptions{Until: formatSyncTime(time.Date(2026, time.July, 4, 8, 0, 0, 0, time.UTC))}
+
+		_, studyErr := client.IRODSPathsForStudyWithOptions(context.Background(), "S1", untilOnly, 100, 0)
+		_, sampleErr := client.IRODSPathsForSampleWithOptions(context.Background(), "S1STDY1", untilOnly, 100, 0)
+		_, runErr := client.IRODSPathsForRunWithOptions(context.Background(), "52553", untilOnly, 100, 0)
+
+		convey.So(errors.Is(studyErr, errUntilRequiresSince), convey.ShouldBeTrue)
+		convey.So(errors.Is(sampleErr, errUntilRequiresSince), convey.ShouldBeTrue)
+		convey.So(errors.Is(runErr, errUntilRequiresSince), convey.ShouldBeTrue)
+	})
+}
+
 // B1 acceptance test 1: a study Illumina iRODS row whose id_iseq_product matches
 // an iseq_product_metrics_mirror row on a run carries that run id and the iRODS
 // row's platform, derived by the LEFT JOIN on id_iseq_product.
@@ -894,6 +1018,7 @@ func TestIRODSPathsForStudyCarryIDRunAndPlatformWhenProductMetricsMatch(t *testi
 				IRODSPath:   "/seq/52553/52553_1#1.cram",
 				IDSampleTmp: 1,
 				Name:        "S1STDY1",
+				Created:     "2026-06-25T09:00:00Z",
 				IDRun:       52553,
 				Platform:    "illumina",
 			}})
@@ -924,6 +1049,7 @@ func TestIRODSPathsForStudyUnmatchedRowGetsZeroIDRunAndKeepsPlatform(t *testing.
 				IRODSPath:   "/seq/ont/ont_run.fast5",
 				IDSampleTmp: 2,
 				Name:        "S1STDY2",
+				Created:     "2026-06-25T09:00:00Z",
 				IDRun:       0,
 				Platform:    "ont",
 			}})
@@ -1218,12 +1344,14 @@ func seedB3RunIRODSScenario(t *testing.T, db *sql.DB) {
 	for _, product := range runProducts {
 		seedIseqProductMetricsMirrorRow(t, db, product.idIseqProduct, product.idSampleTmp, 52553, product.position, 1, "S1")
 		seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, formatInt(product.idIseqProduct), "/seq/52553", product.fileName, product.idSampleTmp, "S1", time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC), "illumina")
+		setIRODSLocationMirrorRunFields(t, db, 52553, product.position, 1, formatInt(product.idIseqProduct))
 	}
 
 	// A decoy product + iRODS object on a different run; the run-scope query must
 	// exclude it.
 	seedIseqProductMetricsMirrorRow(t, db, 9999, 1, 52554, 1, 1, "S1")
 	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "9999", "/seq/52554", "52554_1#1.cram", 1, "S1", time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC), "illumina")
+	setIRODSLocationMirrorRunFields(t, db, 52554, 1, 1, "9999")
 }
 
 // B3 acceptance test 1: the run iRODS list returns one row per iRODS data object
@@ -2166,6 +2294,13 @@ func seedOseqFlowcellMirrorRow(t *testing.T, db *sql.DB, idOseqFlowcellTmp, idSa
 	}
 }
 
+func seedB3MirrorOnlyRunIRODSRow(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "mirror-only-52553", "/seq/52553", "52553_mirror_only.cram", 1, "S1", time.Date(2026, time.June, 25, 9, 10, 0, 0, time.UTC), "illumina")
+	setIRODSLocationMirrorRunFields(t, db, 52553, 5, 1, "mirror-only-52553")
+}
+
 // seedIRODSLocationMirrorRowWithCreatedPlatform inserts an iRODS location mirror
 // row with explicit created and platform values. seedIRODSLocationMirrorRow
 // wraps it with sensible Illumina defaults so existing callers stay unchanged.
@@ -2188,6 +2323,23 @@ func seedIRODSLocationMirrorRowWithCreatedPlatform(t *testing.T, db *sql.DB, idI
 	)
 	if err != nil {
 		t.Fatalf("seedIRODSLocationMirrorRow(): %v", err)
+	}
+}
+
+func setIRODSLocationMirrorRunFields(t *testing.T, db *sql.DB, idRun, position, tagIndex int, productIDs ...string) {
+	t.Helper()
+
+	for _, productID := range productIDs {
+		_, err := db.Exec(
+			`UPDATE seq_product_irods_locations_mirror SET id_run = ?, position = ?, tag_index = ? WHERE id_iseq_product = ?`,
+			idRun,
+			position,
+			tagIndex,
+			productID,
+		)
+		if err != nil {
+			t.Fatalf("setIRODSLocationMirrorRunFields(): %v", err)
+		}
 	}
 }
 
@@ -2227,4 +2379,13 @@ func setIRODSLocationMirrorManualQCFields(t *testing.T, db *sql.DB, idIseqProduc
 	if err != nil {
 		t.Fatalf("setIRODSLocationMirrorManualQCFields(): %v", err)
 	}
+}
+
+func irodsCreatedValues(paths []IRODSPath) []string {
+	values := make([]string, len(paths))
+	for index, path := range paths {
+		values[index] = path.Created
+	}
+
+	return values
 }

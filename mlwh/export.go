@@ -200,6 +200,22 @@ func validateExportContinuationSupport(kind exportRelationshipKind, rel ExportRe
 	return nil
 }
 
+func normaliseExportCreatedSort(kind exportRelationshipKind, raw string) (bool, error) {
+	if kind != exportRelationshipIRODS || strings.TrimSpace(raw) == "" {
+		return false, nil
+	}
+
+	return normaliseIRODSOrderBy(raw)
+}
+
+func normaliseExportCreatedWindow(kind exportRelationshipKind, since, until string) ([]any, error) {
+	if kind != exportRelationshipIRODS {
+		return nil, nil
+	}
+
+	return normaliseIRODSCreatedWindowArgs(since, until)
+}
+
 func exportFileFilters(kind exportRelationshipKind, opts ExportOptions) (string, bool, error) {
 	if !exportRelationshipUsesFileType(kind) && strings.TrimSpace(opts.FileType) != "" {
 		return "", false, fmt.Errorf("%w: --file-type applies only to file exports", ErrUnsupportedIdentifier)
@@ -613,10 +629,21 @@ func newExportPlan(rel ExportRelationship, parentID string, opts ExportOptions) 
 	if strings.TrimSpace(parentID) == "" {
 		return exportPlan{}, fmt.Errorf("%w: export parent id is required", ErrUnsupportedIdentifier)
 	}
-	if opts.Sort != "" || opts.Since != "" || opts.Until != "" {
-		return exportPlan{}, fmt.Errorf("%w: created-date export sorting/windows are not supported by D1a", ErrUnsupportedIdentifier)
+	if kind != exportRelationshipIRODS && (opts.Sort != "" || opts.Since != "" || opts.Until != "") {
+		return exportPlan{}, fmt.Errorf("%w: created-date export sorting/windows are supported only for iRODS exports", ErrUnsupportedIdentifier)
 	}
 	if err = validateExportContinuationSupport(kind, normalisedRel, opts); err != nil {
+		return exportPlan{}, err
+	}
+	sortCreatedDesc, err := normaliseExportCreatedSort(kind, opts.Sort)
+	if err != nil {
+		return exportPlan{}, err
+	}
+	if sortCreatedDesc && (opts.All || strings.TrimSpace(opts.Cursor) != "") {
+		return exportPlan{}, fmt.Errorf("%w: created-date sorted iRODS exports require bounded limit/offset pages", ErrUnsupportedIdentifier)
+	}
+	createdWindowArgs, err := normaliseExportCreatedWindow(kind, opts.Since, opts.Until)
+	if err != nil {
 		return exportPlan{}, err
 	}
 
@@ -654,17 +681,19 @@ func newExportPlan(rel ExportRelationship, parentID string, opts ExportOptions) 
 	}
 
 	return exportPlan{
-		rel:              normalisedRel,
-		kind:             kind,
-		columns:          columns,
-		format:           format,
-		normalisedFile:   normalisedFile,
-		deliverablesOnly: deliverablesOnly,
-		filters:          filters,
-		limit:            limit,
-		offset:           offset,
-		all:              opts.All,
-		cursor:           cursor,
+		rel:               normalisedRel,
+		kind:              kind,
+		columns:           columns,
+		format:            format,
+		normalisedFile:    normalisedFile,
+		deliverablesOnly:  deliverablesOnly,
+		filters:           filters,
+		limit:             limit,
+		offset:            offset,
+		all:               opts.All,
+		cursor:            cursor,
+		sortCreatedDesc:   sortCreatedDesc,
+		createdWindowArgs: createdWindowArgs,
 	}, nil
 }
 
@@ -934,6 +963,8 @@ func (c *Client) exportIRODS(ctx context.Context, plan exportPlan, parent export
 		limit:               plan.limit,
 		offset:              plan.offset,
 		cursor:              plan.cursor,
+		sortCreatedDesc:     plan.sortCreatedDesc,
+		createdWindowArgs:   plan.createdWindowArgs,
 	}
 
 	if plan.all {
@@ -1608,17 +1639,19 @@ type exportCursor struct {
 }
 
 type exportPlan struct {
-	rel              ExportRelationship
-	kind             exportRelationshipKind
-	columns          []exportColumn
-	format           string
-	normalisedFile   string
-	deliverablesOnly bool
-	filters          exportFilters
-	limit            int
-	offset           int
-	all              bool
-	cursor           exportCursor
+	rel               ExportRelationship
+	kind              exportRelationshipKind
+	columns           []exportColumn
+	format            string
+	normalisedFile    string
+	deliverablesOnly  bool
+	filters           exportFilters
+	limit             int
+	offset            int
+	all               bool
+	cursor            exportCursor
+	sortCreatedDesc   bool
+	createdWindowArgs []any
 }
 
 func (c *Client) streamExportIRODSRows(ctx context.Context, db *sql.DB, plan exportPlan, input exportIRODSQueryInput, emit func([]string) error) (int, error) {
@@ -1743,6 +1776,8 @@ type exportIRODSQueryInput struct {
 	limit               int
 	offset              int
 	cursor              exportCursor
+	sortCreatedDesc     bool
+	createdWindowArgs   []any
 }
 
 func (c *Client) exportIRODSTotal(ctx context.Context, db *sql.DB, input exportIRODSQueryInput) (int, error) {
@@ -1856,7 +1891,11 @@ func exportIRODSPageQuery(input exportIRODSQueryInput) (string, []any, error) {
 		query += ` AND (spi.id_run, spi.position, spi.tag_index, spi.id_seq_product_irods_locations_tmp) > (?, ?, ?, ?)`
 		args = append(args, input.cursor.IDRun, input.cursor.Position, input.cursor.TagIndex, input.cursor.IDSeqProductLocation)
 	}
-	query += ` ORDER BY spi.id_run, spi.position, spi.tag_index, spi.id_seq_product_irods_locations_tmp LIMIT ?`
+	if input.sortCreatedDesc {
+		query += ` ORDER BY spi.created DESC LIMIT ?`
+	} else {
+		query += ` ORDER BY spi.id_run, spi.position, spi.tag_index, spi.id_seq_product_irods_locations_tmp LIMIT ?`
+	}
 	args = append(args, input.limit)
 	if input.offset > 0 && !input.cursor.set {
 		query += ` OFFSET ?`
@@ -1917,6 +1956,10 @@ func exportIRODSWhere(input exportIRODSQueryInput, count bool) (string, []any, e
 	}
 	if input.deliverablesOnly {
 		query += ` AND (spi.is_deliverable = 1 OR spi.is_deliverable IS NULL)`
+	}
+	if len(input.createdWindowArgs) > 0 {
+		query += ` AND spi.created >= ? AND spi.created < ?`
+		args = append(args, input.createdWindowArgs...)
 	}
 	query, args = appendExportIRODSQCWhere(query, args, input.filters.QC)
 	if input.filters.LibraryType != "" {

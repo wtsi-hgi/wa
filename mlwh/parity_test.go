@@ -139,6 +139,12 @@ func parityQueryCases() []parityQueryCase {
 		{name: "SamplesWithoutData", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.SamplesWithoutData(ctx, parityStudyID, 100, 0)
 		}},
+		{name: "LatestDataForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.LatestDataForStudy(ctx, parityStudyID, "", 10, 0)
+		}},
+		{name: "LatestDataForFacultySponsor", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.LatestDataForFacultySponsor(ctx, parityFacultySponsorTerm, "", 10, 0)
+		}},
 		{name: "LanesForSample", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.LanesForSample(ctx, paritySampleName, 100, 0)
 		}},
@@ -251,6 +257,12 @@ func parityQueryCases() []parityQueryCase {
 		}},
 		{name: "CountSamplesWithData", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountSamplesWithData(ctx, parityStudyID)
+		}},
+		{name: "CountLatestDataForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountLatestDataForStudy(ctx, parityStudyID, "")
+		}},
+		{name: "CountLatestDataForFacultySponsor", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountLatestDataForFacultySponsor(ctx, parityFacultySponsorTerm, "")
 		}},
 		{name: "CountSamplesForRun", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountSamplesForRun(ctx, parityRunID)

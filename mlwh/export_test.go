@@ -166,6 +166,7 @@ type exportIRODSSeedRow struct {
 	IDProduct            string
 	Collection           string
 	FileName             string
+	Created              time.Time
 	IDSampleTmp          int64
 	StudyID              string
 	Platform             string
@@ -175,6 +176,48 @@ type exportIRODSSeedRow struct {
 	QC                   sql.NullInt64
 	IsDeliverable        sql.NullInt64
 	Merged               bool
+}
+
+func TestExportIRODSCreatedSortAndWindowE1(t *testing.T) {
+	convey.Convey("E1: Given a study iRODS export with distinct created times", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+
+		before := time.Date(2026, time.July, 5, 8, 0, 0, 0, time.UTC)
+		since := before.Add(time.Hour)
+		inside := before.Add(2 * time.Hour)
+		until := before.Add(3 * time.Hour)
+		seedHierarchyStudy(t, client.cache.DB(), 901, "E1")
+		seedManifestSampleRow(t, client.cache.DB(), 21, "sample-e1", "supplier-e1", "EGAN-e1", "sanger-e1")
+		seedLibrarySample(t, client.cache.DB(), "Standard", 21, "E1")
+		seedExportSyncState(t, client.cache.DB())
+		for _, row := range []exportIRODSSeedRow{
+			{IDSeqProductLocation: 1, IDProduct: "before-window", FileName: "before.cram", Created: before, IDSampleTmp: 21, StudyID: "E1", IDRun: 52553, Position: 1, TagIndex: 1},
+			{IDSeqProductLocation: 2, IDProduct: "at-since", FileName: "since.cram", Created: since, IDSampleTmp: 21, StudyID: "E1", IDRun: 52553, Position: 1, TagIndex: 2},
+			{IDSeqProductLocation: 3, IDProduct: "inside-window", FileName: "inside.cram", Created: inside, IDSampleTmp: 21, StudyID: "E1", IDRun: 52553, Position: 1, TagIndex: 3},
+			{IDSeqProductLocation: 4, IDProduct: "at-until", FileName: "until.cram", Created: until, IDSampleTmp: 21, StudyID: "E1", IDRun: 52553, Position: 1, TagIndex: 4},
+		} {
+			seedExportIRODSRow(t, client.cache.DB(), row)
+		}
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "E1", ExportOptions{
+			Columns: []string{"id_product", "created"},
+			Sort:    "created-desc",
+			Since:   formatSyncTime(since),
+			Until:   formatSyncTime(until),
+			Limit:   100,
+		})
+
+		convey.Convey("when created is selected with created-desc and a half-open window, then only in-window rows render newest-first", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Columns, convey.ShouldResemble, []string{"id_product", "created"})
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"inside-window", formatSyncTime(inside)},
+				{"at-since", formatSyncTime(since)},
+			})
+			convey.So(result.Total, convey.ShouldEqual, 2)
+		})
+	})
 }
 
 func seedExport7556Scenario(t *testing.T, db *sql.DB) {
@@ -360,7 +403,10 @@ func seedExportIRODSRow(t *testing.T, db *sql.DB, row exportIRODSSeedRow) {
 		row.Platform = "illumina"
 	}
 
-	created := time.Date(2026, time.July, 1, 8, 30, 0, 0, time.UTC)
+	created := row.Created
+	if created.IsZero() {
+		created = time.Date(2026, time.July, 1, 8, 30, 0, 0, time.UTC)
+	}
 	_, err := db.Exec(
 		`INSERT INTO seq_product_irods_locations_mirror(id_seq_product_irods_locations_tmp, id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform, id_run, position, tag_index, qc, is_deliverable, merged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.IDSeqProductLocation,

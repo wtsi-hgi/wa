@@ -269,6 +269,31 @@ func TestCountIRODSPathsForRunEqualsListLength(t *testing.T) {
 	})
 }
 
+// E1 reviewer regression: default run count/list both scope by the denormalised
+// iRODS mirror id_run, so mirror-only run rows are counted and returned.
+func TestCountIRODSPathsForRunIncludesMirrorOnlyRowsE1(t *testing.T) {
+	convey.Convey("Given run 52553 with a mirror-only iRODS row carrying id_run", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedB3RunIRODSScenario(t, cache.DB())
+		seedB3MirrorOnlyRunIRODSRow(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		ctx := context.Background()
+		count, countErr := client.CountIRODSPathsForRun(ctx, "52553", "")
+		list, listErr := client.IRODSPathsForRun(ctx, "52553", "", countListFetchAll, 0)
+
+		convey.Convey("when the default count and full list are fetched, then they both include the mirror-only row", func() {
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(listErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(list))
+			convey.So(count.Count, convey.ShouldEqual, 7)
+			convey.So(irodsProductIDs(list), convey.ShouldContain, "mirror-only-52553")
+		})
+	})
+}
+
 // C2 acceptance test 1: CountStudyManifest counts the distinct (id_run, position,
 // tag_index) products that ARE the manifest's row grain, so for study S1 with 3
 // distinct products it is Count{3} AND equal to len(StudyManifest("S1","",false,

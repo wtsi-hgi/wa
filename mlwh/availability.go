@@ -191,6 +191,16 @@ var samplesAddedSinceCacheSQL = `SELECT DISTINCT ` + sampleMirrorSelectColumns +
 	` WHERE library_samples.id_study_lims = ? AND EXISTS (` + studyScopedIRODSExists(studyScopedIRODSAddedWindow) + `)` +
 	` ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 
+const latestDataSelectColumns = `COALESCE(spi.created, '') AS created, spi.id_iseq_product AS id_product, spi.irods_collection AS collection, spi.irods_file_name AS data_object, spi.id_study_lims AS id_study_lims, COALESCE(study_mirror.name, '') AS study_name, COALESCE(sample_mirror.name, '') AS name, COALESCE(sample_mirror.supplier_name, '') AS supplier_name, spi.id_run AS id_run, spi.position AS lane, spi.tag_index AS tag_index, spi.platform AS platform, spi.merged AS merged`
+
+const latestDataFromSQL = ` FROM seq_product_irods_locations_mirror spi INNER JOIN study_mirror ON study_mirror.id_study_lims = spi.id_study_lims AND study_mirror.id_lims = 'SQSCP' LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp`
+
+const latestDataForStudySQLPrefix = `SELECT ` + latestDataSelectColumns + latestDataFromSQL + ` WHERE spi.id_study_lims = ?`
+
+const latestDataCreatedOrderSQL = ` ORDER BY spi.created DESC, spi.id_run, spi.id_iseq_product`
+
+var latestDataFacultySponsorStudyIDsSQL = `SELECT id_study_lims FROM study_mirror WHERE ` + facultySponsorWhereClause + ` ORDER BY id_study_lims`
+
 // addedWindowOpenEnded is the upper bound used by the [since, until) created
 // filter when until is omitted: a sentinel string that sorts after every RFC3339
 // UTC created string, so created < until is always satisfied (the window is
@@ -324,6 +334,71 @@ func normalizeAddedWindowArgs(since, until string) ([]any, error) {
 	return []any{formatSyncTime(sinceUTC), untilArg}, nil
 }
 
+func latestDataForStudyQuery(studyLimsID, fileType string, limit, offset int) (string, []any, error) {
+	query, args, err := latestDataFilterQuery(latestDataForStudySQLPrefix, "", fileType, studyLimsID)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return query + latestDataCreatedOrderSQL + ` LIMIT ? OFFSET ?`, append(args, limit, offset), nil
+}
+
+func latestDataForFacultySponsorQuery(studyIDs []string, fileType string, limit, offset int) (string, []any, error) {
+	perStudyLimit := limit + offset
+	parts := make([]string, 0, len(studyIDs))
+	args := make([]any, 0, len(studyIDs)*3+2)
+
+	for index, studyID := range studyIDs {
+		query, queryArgs, err := latestDataFilterQuery(latestDataForStudySQLPrefix, "", fileType, studyID)
+		if err != nil {
+			return "", nil, err
+		}
+
+		parts = append(parts, fmt.Sprintf("SELECT * FROM (%s%s LIMIT ?) AS latest_%d", query, latestDataCreatedOrderSQL, index))
+		args = append(args, queryArgs...)
+		args = append(args, perStudyLimit)
+	}
+
+	query := `SELECT created, id_product, collection, data_object, id_study_lims, study_name, name, supplier_name, id_run, lane, tag_index, platform, merged FROM (` +
+		strings.Join(parts, ` UNION ALL `) +
+		`) AS per_study_latest ORDER BY created DESC, id_run, id_product LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+
+	return query, args, nil
+}
+
+func scanRecentDataRow(scan func(dest ...any) error) (RecentDataRow, error) {
+	var (
+		row        RecentDataRow
+		idProduct  string
+		collection string
+		dataObject string
+		merged     int
+	)
+	if err := scan(
+		&row.Created,
+		&idProduct,
+		&collection,
+		&dataObject,
+		&row.IDStudyLims,
+		&row.StudyName,
+		&row.Name,
+		&row.SupplierName,
+		&row.IDRun,
+		&row.Position,
+		&row.TagIndex,
+		&row.Platform,
+		&merged,
+	); err != nil {
+		return RecentDataRow{}, err
+	}
+
+	row.IRODSPath = strings.TrimRight(collection, "/") + "/" + dataObject
+	row.Merged = merged != 0
+
+	return row, nil
+}
+
 // SamplesWithData lists the distinct samples linked to the study that have at
 // least one study-scoped iRODS row ("data available for this study"), paginated
 // like the other study fan-outs. Each row is platform-qualified (see
@@ -443,6 +518,156 @@ func (c *Client) CountSamplesWithDataSince(ctx context.Context, studyLimsID, sin
 	}
 
 	return c.countSamplesForEmptyStudy(ctx, studyLimsID)
+}
+
+// LatestDataForStudy returns one bounded, pageable newest-first page of raw iRODS
+// location rows for a study. Membership is the raw
+// seq_product_irods_locations_mirror scan scoped by (id_study_lims, created),
+// not the manifest/product grain, so the first row's created timestamp reconciles
+// with StudyOverview.newest_data_added. Ties are stable by (id_run, id_product).
+func (c *Client) LatestDataForStudy(ctx context.Context, studyLimsID, fileType string, limit, offset int) ([]RecentDataRow, error) {
+	study, err := c.resolveStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, studyLimsID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireAnySyncState(ctx, syncTableStudy); syncErr != nil {
+				if errors.Is(syncErr, ErrCacheNeverSynced) {
+					return []RecentDataRow{}, syncErr
+				}
+
+				return nil, syncErr
+			}
+
+			return nil, ErrNotFound
+		}
+
+		return nil, err
+	}
+
+	query, args, err := latestDataForStudyQuery(study.IDStudyLims, fileType, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := c.queryRecentDataRows(ctx, query, args, "query latest data for study")
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		if syncErr := c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); syncErr != nil {
+			if errors.Is(syncErr, ErrCacheNeverSynced) {
+				return []RecentDataRow{}, syncErr
+			}
+
+			return nil, syncErr
+		}
+	}
+
+	return rows, nil
+}
+
+// LatestDataForFacultySponsor returns a newest-first page across all SQSCP
+// studies whose faculty_sponsor contains name. It fetches each matching study's
+// bounded top rows through the study+created access path and merges that bounded
+// candidate set, avoiding both one-query-per-study fan-out and an unbounded
+// all-files sort.
+func (c *Client) LatestDataForFacultySponsor(ctx context.Context, name, fileType string, limit, offset int) ([]RecentDataRow, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("%w: faculty sponsor name is required", ErrUnsupportedIdentifier)
+	}
+	if _, err := normaliseFileType(fileType); err != nil {
+		return nil, err
+	}
+
+	studyIDs, err := c.latestDataFacultySponsorStudyIDs(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(studyIDs) == 0 || limit == 0 {
+		return []RecentDataRow{}, nil
+	}
+
+	query, args, err := latestDataForFacultySponsorQuery(studyIDs, fileType, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := c.queryRecentDataRows(ctx, query, args, "query latest data for faculty sponsor")
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		if syncErr := c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); syncErr != nil {
+			if errors.Is(syncErr, ErrCacheNeverSynced) {
+				return []RecentDataRow{}, syncErr
+			}
+
+			return nil, syncErr
+		}
+	}
+
+	return rows, nil
+}
+
+func (c *Client) latestDataFacultySponsorStudyIDs(ctx context.Context, name string) ([]string, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	rows, err := db.QueryContext(ctx, latestDataFacultySponsorStudyIDsSQL, likeContainsArgs(escapeLIKEPattern(name), facultySponsorField)...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: query latest-data faculty sponsor studies: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	studyIDs := make([]string, 0)
+	for rows.Next() {
+		var studyID string
+		if err = rows.Scan(&studyID); err != nil {
+			return nil, fmt.Errorf("%w: scan latest-data faculty sponsor studies: %w", ErrUpstreamImpaired, err)
+		}
+
+		studyIDs = append(studyIDs, studyID)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: query latest-data faculty sponsor studies: %w", ErrUpstreamImpaired, err)
+	}
+	if len(studyIDs) > 0 {
+		return studyIDs, nil
+	}
+	if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+		return []string{}, err
+	}
+
+	return []string{}, nil
+}
+
+func (c *Client) queryRecentDataRows(ctx context.Context, query string, args []any, action string) ([]RecentDataRow, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	recent := make([]RecentDataRow, 0)
+	for rows.Next() {
+		row, scanErr := scanRecentDataRow(rows.Scan)
+		if scanErr != nil {
+			return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, scanErr)
+		}
+
+		recent = append(recent, row)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
+	}
+
+	return recent, nil
 }
 
 // StudyOverview returns the fixed-size study aggregate (spec B1): the

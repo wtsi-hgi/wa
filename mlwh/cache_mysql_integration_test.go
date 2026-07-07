@@ -1639,6 +1639,17 @@ func assertC4QCPlanUsesSampleIndex(t *testing.T, plans []mysqlExplainPlanRow, ta
 	convey.So(plan.key, convey.ShouldEqual, indexName)
 }
 
+func assertE1IRODSRecencyPlan(t *testing.T, plans []mysqlExplainPlanRow, indexName string) {
+	t.Helper()
+
+	plan, ok := findExplainPlanRow(plans, "spi")
+	convey.So(ok, convey.ShouldBeTrue)
+	convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+	convey.So(plan.key, convey.ShouldEqual, indexName)
+	convey.So(plan.possibleKeys, convey.ShouldContainSubstring, indexName)
+	convey.So(strings.ToLower(plan.extra), convey.ShouldNotContainSubstring, "filesort")
+}
+
 // assertMirrorIndexServed asserts the EXPLAIN plan row for the given query alias
 // exists, is served by a non-empty real index (key) and is not a full table scan
 // (type != ALL) -- i.e. the id-scoped join into a multi-million-row mirror is
@@ -1994,6 +2005,44 @@ func a6MonthlyRunCountMySQLPlanCases(since, until string) []a6MonthlyRunCountMyS
 			args:      []any{since, until},
 		},
 	}
+}
+
+func TestRealMySQLE1IRODSCreatedDescUsesRecencyIndexes(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	writeDB := cache.cache.DB()
+	seedA4StudyExportScanScenarioMySQL(t, writeDB)
+
+	convey.Convey("E1.5: Given a MySQL cache with sample- and run-scoped iRODS rows", t, func() {
+		convey.Convey("when EXPLAIN runs the sample created_desc path, then it uses the sample recency index without filesort", func() {
+			query, args, queryErr := irodsListQueryForSample(IRODSPathOptions{OrderBy: irodsOrderByCreatedDesc}, int64(2000), 100, 0)
+			convey.So(queryErr, convey.ShouldBeNil)
+
+			plans := explainPlanRows(t, writeDB, query, args...)
+			assertE1IRODSRecencyPlan(t, plans, "spi_mirror_sample_tmp_created_idx")
+		})
+
+		convey.Convey("when EXPLAIN runs the run created_desc path, then it uses the run recency index without full scan or filesort", func() {
+			query, args, queryErr := irodsListQueryForRun(IRODSPathOptions{OrderBy: irodsOrderByCreatedDesc}, 50000, 100, 0)
+			convey.So(queryErr, convey.ShouldBeNil)
+
+			plans := explainPlanRows(t, writeDB, query, args...)
+			assertE1IRODSRecencyPlan(t, plans, "spi_mirror_run_created_idx")
+		})
+	})
 }
 
 func TestRealMySQLD1aFlagshipStudyExportsMatchSyncedCache(t *testing.T) {

@@ -31,6 +31,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -1043,6 +1044,77 @@ func TestRunOverviewSequencedNoIRODSHasNoDateRange(t *testing.T) {
 	})
 }
 
+// E2 acceptance test 2: the faculty-sponsor variant returns the newest bounded
+// page across multiple Anderson studies in one client call.
+func TestLatestDataForFacultySponsorReturnsTopNAcrossStudiesE2(t *testing.T) {
+	convey.Convey("Given Carl Anderson studies with data interleaved by created time", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedLatestDataFacultySponsorScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		rows, err := client.LatestDataForFacultySponsor(context.Background(), "Anderson", "", 3, 0)
+
+		convey.Convey("when LatestDataForFacultySponsor(\"Anderson\") runs, then it returns the top-N newest rows across those studies", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(rows, convey.ShouldHaveLength, 3)
+			convey.So(rows[0].IDStudyLims, convey.ShouldEqual, "SAND1")
+			convey.So(rows[0].Created, convey.ShouldEqual, "2026-07-04T10:00:00Z")
+			convey.So(rows[1].IDStudyLims, convey.ShouldEqual, "SAND2")
+			convey.So(rows[1].Created, convey.ShouldEqual, "2026-07-03T10:00:00Z")
+			convey.So(rows[2].IDStudyLims, convey.ShouldEqual, "SAND2")
+			convey.So(rows[2].Created, convey.ShouldEqual, "2026-07-02T10:00:00Z")
+			convey.So(rows[0].StudyName, convey.ShouldEqual, "Study SAND1")
+			convey.So(rows[1].Name, convey.ShouldEqual, "anderson-sample-1203")
+			convey.So(rows[0].IRODSPath, convey.ShouldContainSubstring, ".cram")
+		})
+	})
+}
+
+func seedLatestDataFacultySponsorScenario(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedHierarchyStudy(t, db, 901, "SAND1")
+	seedHierarchyStudy(t, db, 902, "SAND2")
+	seedHierarchyStudy(t, db, 903, "SOTHER")
+	setStudyFacultySponsorForTest(t, db, "SAND1", "Carl Anderson")
+	setStudyFacultySponsorForTest(t, db, "SAND2", "Carl Anderson")
+	setStudyFacultySponsorForTest(t, db, "SOTHER", "Jane Doe")
+
+	seedLatestDataProduct(t, db, "SAND1", 1201, 9101, 61001, 1, 1, time.Date(2026, time.July, 1, 10, 0, 0, 0, time.UTC))
+	seedLatestDataProduct(t, db, "SAND1", 1202, 9102, 61002, 1, 2, time.Date(2026, time.July, 4, 10, 0, 0, 0, time.UTC))
+	seedLatestDataProduct(t, db, "SAND2", 1203, 9201, 62001, 2, 1, time.Date(2026, time.July, 3, 10, 0, 0, 0, time.UTC))
+	seedLatestDataProduct(t, db, "SAND2", 1204, 9202, 62002, 2, 2, time.Date(2026, time.July, 2, 10, 0, 0, 0, time.UTC))
+	seedLatestDataProduct(t, db, "SOTHER", 1205, 9301, 63001, 3, 1, time.Date(2026, time.July, 5, 10, 0, 0, 0, time.UTC))
+
+	seedB3AvailabilitySyncState(t, db)
+}
+
+func setStudyFacultySponsorForTest(t *testing.T, db *sql.DB, studyID, sponsor string) {
+	t.Helper()
+
+	if _, err := db.Exec(`UPDATE study_mirror SET faculty_sponsor = ? WHERE id_study_lims = ?`, sponsor, studyID); err != nil {
+		t.Fatalf("setStudyFacultySponsorForTest(): %v", err)
+	}
+}
+
+func seedLatestDataProduct(t *testing.T, db *sql.DB, studyID string, sampleID, productID int64, runID, lane, tag int, created time.Time) {
+	t.Helper()
+
+	name := strings.ToLower(studyID) + "-sample-" + formatInt(sampleID)
+	if strings.HasPrefix(studyID, "SAND") {
+		name = "anderson-sample-" + formatInt(sampleID)
+	}
+
+	seedHierarchySample(t, db, sampleID, studyID, name)
+	seedLibrarySample(t, db, "Standard", sampleID, studyID)
+	seedIseqProductMetricsMirrorRow(t, db, productID, sampleID, runID, lane, tag, studyID)
+	product := formatInt(productID)
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, product, "/seq/"+formatInt(int64(runID)), product+".cram", sampleID, studyID, created, "illumina")
+	setIRODSLocationMirrorRunFields(t, db, runID, lane, tag, product)
+}
+
 // seedB3AvailabilitySyncState marks every feeding table synced, so the B3
 // availability queries return data rather than the never-synced sentinel.
 func seedB3AvailabilitySyncState(t *testing.T, db *sql.DB) {
@@ -1065,6 +1137,52 @@ func sampleWithDataIDs(rows []SampleWithData) map[int64]struct{} {
 	}
 
 	return ids
+}
+
+// E2 acceptance test 1: /study/:id/latest-data returns a bounded created-desc
+// page from the raw iRODS locations mirror, and the newest row reconciles with
+// StudyOverview.newest_data_added.
+func TestLatestDataForStudyEndpointReturnsBoundedNewestRowsE2(t *testing.T) {
+	convey.Convey("Given the B1 overview scenario with denormalized iRODS run/lane/tag fields", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedB1OverviewScenario(t, cache.DB())
+		setIRODSLocationMirrorRunFields(t, cache.DB(), 52553, 1, 1, "1101")
+		setIRODSLocationMirrorRunFields(t, cache.DB(), 52553, 2, 1, "1201")
+		setIRODSLocationMirrorRunFields(t, cache.DB(), 52553, 2, 2, "1202")
+		setIRODSLocationMirrorRunFields(t, cache.DB(), 52553, 2, 3, "1203")
+		setIRODSLocationMirrorRunFields(t, cache.DB(), 52554, 1, 1, "1301")
+		setIRODSLocationMirrorRunFields(t, cache.DB(), 52554, 1, 2, "1302")
+		setIRODSLocationMirrorRunFields(t, cache.DB(), 52554, 1, 3, "1303")
+
+		client := newB1OverviewClient(cache)
+		overview, overviewErr := client.StudyOverview(context.Background(), "S1")
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/study/S1/latest-data?limit=2")
+
+		convey.Convey("when GET /study/S1/latest-data?limit=2 is served, then it returns <= N newest rows with the named fields populated", func() {
+			convey.So(overviewErr, convey.ShouldBeNil)
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+			var rows []RecentDataRow
+			decodeMLWHJSONResponseForTest(t, response, &rows)
+
+			convey.So(rows, convey.ShouldHaveLength, 2)
+			convey.So(rows[0].Created, convey.ShouldEqual, overview.NewestDataAdded)
+			convey.So(rows[0].Created >= rows[1].Created, convey.ShouldBeTrue)
+			convey.So(rows[0].IRODSPath, convey.ShouldEqual, "/seq/52554/52554_1#1301.cram")
+			convey.So(rows[0].IDStudyLims, convey.ShouldEqual, "S1")
+			convey.So(rows[0].StudyName, convey.ShouldEqual, "Study S1")
+			convey.So(rows[0].Name, convey.ShouldEqual, "ov-sample-13")
+			convey.So(rows[0].SupplierName, convey.ShouldEqual, "supplier-13")
+			convey.So(rows[0].IDRun, convey.ShouldEqual, 52554)
+			convey.So(rows[0].Position, convey.ShouldEqual, 1)
+			convey.So(rows[0].TagIndex, convey.ShouldEqual, 1)
+			convey.So(rows[0].Platform, convey.ShouldEqual, "illumina")
+			convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "7")
+			convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "2")
+		})
+	})
 }
 
 // B1 acceptance test 1: the full figures for a five-sample study, including the

@@ -55,23 +55,25 @@ func TestServerHandlersDoNotOwnCachesB2(t *testing.T) {
 }
 
 type serverFakeQueryer struct {
-	classifyIdentifierFunc   func(context.Context, string) (Match, error)
-	resolveStudyFunc         func(context.Context, string) (Match, error)
-	samplesForStudyFunc      func(context.Context, string, int, int) ([]Sample, error)
-	studyManifestFunc        func(context.Context, string, string, bool, int, int) (StudyManifest, error)
-	enrichFunc               func(context.Context, string) (EnrichmentResult, error)
-	expandIdentifierFunc     func(context.Context, IdentifierKind, string) ([]TaggedID, error)
-	searchStudiesFunc        func(context.Context, string, int, int) ([]Study, error)
-	searchSamplesFunc        func(context.Context, string, int, int) ([]Sample, error)
-	studyUsersFunc           func(context.Context, string, int, int) ([]StudyUser, error)
-	countStudySearchFunc     func(context.Context, string) (Count, error)
-	countSampleSearchFunc    func(context.Context, string) (Count, error)
-	countStudiesFunc         func(context.Context) (Count, error)
-	countStudyManifestFunc   func(context.Context, string) (Count, error)
-	countSamplesForStudyFunc func(context.Context, string) (Count, error)
-	countSamplesWithDataFunc func(context.Context, string) (Count, error)
-	countStudyUsersFunc      func(context.Context, string) (Count, error)
-	freshnessFunc            func(context.Context) (Freshness, error)
+	classifyIdentifierFunc    func(context.Context, string) (Match, error)
+	resolveStudyFunc          func(context.Context, string) (Match, error)
+	samplesForStudyFunc       func(context.Context, string, int, int) ([]Sample, error)
+	studyManifestFunc         func(context.Context, string, string, bool, int, int) (StudyManifest, error)
+	enrichFunc                func(context.Context, string) (EnrichmentResult, error)
+	expandIdentifierFunc      func(context.Context, IdentifierKind, string) ([]TaggedID, error)
+	searchStudiesFunc         func(context.Context, string, int, int) ([]Study, error)
+	searchSamplesFunc         func(context.Context, string, int, int) ([]Sample, error)
+	studyUsersFunc            func(context.Context, string, int, int) ([]StudyUser, error)
+	countStudySearchFunc      func(context.Context, string) (Count, error)
+	countSampleSearchFunc     func(context.Context, string) (Count, error)
+	countStudiesFunc          func(context.Context) (Count, error)
+	countStudyManifestFunc    func(context.Context, string) (Count, error)
+	countSamplesForStudyFunc  func(context.Context, string) (Count, error)
+	countSamplesWithDataFunc  func(context.Context, string) (Count, error)
+	countLatestDataStudyFunc  func(context.Context, string, string) (Count, error)
+	countLatestDataPINameFunc func(context.Context, string, string) (Count, error)
+	countStudyUsersFunc       func(context.Context, string) (Count, error)
+	freshnessFunc             func(context.Context) (Freshness, error)
 
 	samplesForStudyCall struct {
 		studyLimsID string
@@ -89,6 +91,14 @@ type serverFakeQueryer struct {
 		studyLimsID string
 		fileType    string
 		withIRODS   bool
+		limit       int
+		offset      int
+	}
+
+	latestDataCall struct {
+		studyLimsID string
+		name        string
+		fileType    string
 		limit       int
 		offset      int
 	}
@@ -203,6 +213,24 @@ func (q *serverFakeQueryer) SamplesWithData(_ context.Context, _ string, _ int, 
 
 func (q *serverFakeQueryer) SamplesWithoutData(_ context.Context, _ string, _ int, _ int) ([]SampleWithData, error) {
 	panic("unexpected SamplesWithoutData call")
+}
+
+func (q *serverFakeQueryer) LatestDataForStudy(ctx context.Context, studyLimsID, fileType string, limit, offset int) ([]RecentDataRow, error) {
+	q.latestDataCall.studyLimsID = studyLimsID
+	q.latestDataCall.fileType = fileType
+	q.latestDataCall.limit = limit
+	q.latestDataCall.offset = offset
+
+	return []RecentDataRow{}, nil
+}
+
+func (q *serverFakeQueryer) LatestDataForFacultySponsor(ctx context.Context, name, fileType string, limit, offset int) ([]RecentDataRow, error) {
+	q.latestDataCall.name = name
+	q.latestDataCall.fileType = fileType
+	q.latestDataCall.limit = limit
+	q.latestDataCall.offset = offset
+
+	return []RecentDataRow{}, nil
 }
 
 func (q *serverFakeQueryer) LanesForSample(_ context.Context, _ string, _ int, _ int) ([]Lane, error) {
@@ -392,6 +420,28 @@ func (q *serverFakeQueryer) CountSamplesWithData(ctx context.Context, studyLimsI
 	}
 
 	return q.countSamplesWithDataFunc(ctx, studyLimsID)
+}
+
+func (q *serverFakeQueryer) CountLatestDataForStudy(ctx context.Context, studyLimsID, fileType string) (Count, error) {
+	q.latestDataCall.studyLimsID = studyLimsID
+	q.latestDataCall.fileType = fileType
+
+	if q.countLatestDataStudyFunc == nil {
+		return Count{}, nil
+	}
+
+	return q.countLatestDataStudyFunc(ctx, studyLimsID, fileType)
+}
+
+func (q *serverFakeQueryer) CountLatestDataForFacultySponsor(ctx context.Context, name, fileType string) (Count, error) {
+	q.latestDataCall.name = name
+	q.latestDataCall.fileType = fileType
+
+	if q.countLatestDataPINameFunc == nil {
+		return Count{}, nil
+	}
+
+	return q.countLatestDataPINameFunc(ctx, name, fileType)
 }
 
 func (q *serverFakeQueryer) Freshness(ctx context.Context) (Freshness, error) {
@@ -1380,6 +1430,7 @@ func seedListSizingStudy(t *testing.T, db *sql.DB, idStudyLims string, idStudyTm
 		seedLibrarySample(t, db, "Standard", idSampleTmp, idStudyLims)
 		seedIseqProductMetricsMirrorRow(t, db, 700000+idSampleTmp, idSampleTmp, 99000, 1, int(i), idStudyLims)
 		seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, formatInt(700000+idSampleTmp), "/seq/99000", "99000_1#"+formatInt(idSampleTmp)+".cram", idSampleTmp, idStudyLims, created, "illumina")
+		setIRODSLocationMirrorRunFields(t, db, 99000, 1, int(i), formatInt(700000+idSampleTmp))
 	}
 
 	seedB3AvailabilitySyncState(t, db)
@@ -1419,6 +1470,28 @@ func TestServerIRODSPathsForRunPaginationHeadersB3(t *testing.T) {
 			convey.So(paths, convey.ShouldHaveLength, 2)
 			convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "6")
 			convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "2")
+		})
+	})
+}
+
+func TestServerIRODSPathsForRunTotalCountIncludesMirrorOnlyRowsE1(t *testing.T) {
+	convey.Convey("E1 regression: Given run 52553 with a mirror-only iRODS row", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		seedB3RunIRODSScenario(t, cache.DB())
+		seedB3MirrorOnlyRunIRODSRow(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		defer closeParityClientForTest(t, client)
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/run/52553/irods?limit=100&offset=0")
+
+		convey.Convey("when GET /run/52553/irods is served, then X-Total-Count matches the mirror-scoped full list", func() {
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+			var paths []IRODSPath
+			decodeMLWHJSONResponseForTest(t, response, &paths)
+			convey.So(paths, convey.ShouldHaveLength, 7)
+			convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "7")
+			convey.So(irodsProductIDs(paths), convey.ShouldContain, "mirror-only-52553")
 		})
 	})
 }

@@ -313,6 +313,51 @@ func (rc *RemoteClient) SamplesWithoutDataPage(ctx context.Context, studyLimsID 
 	return remoteCallPage[SampleWithData](rc, ctx, "SamplesWithoutData", []string{studyLimsID}, remotePagination(limit, offset))
 }
 
+// LatestDataForStudy lists newest raw iRODS data rows for a study through the
+// remote server, optionally filtered to a file-type suffix.
+func (rc *RemoteClient) LatestDataForStudy(ctx context.Context, studyLimsID, fileType string, limit, offset int) ([]RecentDataRow, error) {
+	return remoteCall[[]RecentDataRow](rc, ctx, "LatestDataForStudy", []string{studyLimsID}, remotePaginationWithFileType(limit, offset, fileType))
+}
+
+// LatestDataForStudyPage is the Page[RecentDataRow] variant of
+// LatestDataForStudy.
+func (rc *RemoteClient) LatestDataForStudyPage(ctx context.Context, studyLimsID, fileType string, limit, offset int) (Page[RecentDataRow], error) {
+	return remoteCallPage[RecentDataRow](rc, ctx, "LatestDataForStudy", []string{studyLimsID}, remotePaginationWithFileType(limit, offset, fileType))
+}
+
+// LatestDataForFacultySponsor lists newest raw iRODS data rows across studies
+// whose faculty_sponsor contains name.
+func (rc *RemoteClient) LatestDataForFacultySponsor(ctx context.Context, name, fileType string, limit, offset int) ([]RecentDataRow, error) {
+	return remoteCall[[]RecentDataRow](rc, ctx, "LatestDataForFacultySponsor", []string{name}, remotePaginationWithFileType(limit, offset, fileType))
+}
+
+// LatestDataForFacultySponsorPage is the Page[RecentDataRow] variant of
+// LatestDataForFacultySponsor.
+func (rc *RemoteClient) LatestDataForFacultySponsorPage(ctx context.Context, name, fileType string, limit, offset int) (Page[RecentDataRow], error) {
+	return remoteCallPage[RecentDataRow](rc, ctx, "LatestDataForFacultySponsor", []string{name}, remotePaginationWithFileType(limit, offset, fileType))
+}
+
+// CountLatestDataForStudy counts newest-list raw iRODS data rows for a study
+// through the remote server, optionally filtered to a file-type suffix.
+func (rc *RemoteClient) CountLatestDataForStudy(ctx context.Context, studyLimsID, fileType string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountLatestDataForStudy", []string{studyLimsID}, remoteFileType(fileType))
+}
+
+func remoteFileType(fileType string) url.Values {
+	values := url.Values{}
+	if fileType != "" {
+		values.Set("file_type", fileType)
+	}
+
+	return values
+}
+
+// CountLatestDataForFacultySponsor counts newest-list raw iRODS data rows across
+// studies whose faculty_sponsor contains name through the remote server.
+func (rc *RemoteClient) CountLatestDataForFacultySponsor(ctx context.Context, name, fileType string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountLatestDataForFacultySponsor", []string{name}, remoteFileType(fileType))
+}
+
 // SamplesWithDataSince lists the distinct samples whose study-scoped iRODS data
 // was added in the half-open window [since, until) through the remote server. It
 // is the windowed variant of SamplesWithData and issues the same
@@ -372,7 +417,7 @@ func (rc *RemoteClient) IRODSPathsForSample(ctx context.Context, sangerName stri
 // parameterised by the filter); an empty fileType requests all file types. The
 // server validates the file_type and returns 400 for an invalid value.
 func (rc *RemoteClient) IRODSPathsForSampleByFileType(ctx context.Context, sangerName, fileType string, limit, offset int) ([]IRODSPath, error) {
-	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForSample", []string{sangerName}, remotePaginationWithFileType(limit, offset, fileType))
+	return rc.IRODSPathsForSampleWithOptions(ctx, sangerName, IRODSPathOptions{FileType: fileType}, limit, offset)
 }
 
 // remotePaginationWithFileType builds the query values for an iRODS list: the
@@ -383,6 +428,19 @@ func remotePaginationWithFileType(limit, offset int, fileType string) url.Values
 	if fileType != "" {
 		values.Set("file_type", fileType)
 	}
+
+	return values
+}
+
+// IRODSPathsForSampleWithOptions lists iRODS paths for a sample through the
+// remote server with file-type and created-date ordering/window options.
+func (rc *RemoteClient) IRODSPathsForSampleWithOptions(ctx context.Context, sangerName string, opts IRODSPathOptions, limit, offset int) ([]IRODSPath, error) {
+	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForSample", []string{sangerName}, remotePaginationWithIRODSPathOptions(limit, offset, opts))
+}
+
+func remotePaginationWithIRODSPathOptions(limit, offset int, opts IRODSPathOptions) url.Values {
+	values := remotePagination(limit, offset)
+	addIRODSPathOptionValues(values, opts)
 
 	return values
 }
@@ -411,7 +469,13 @@ func (rc *RemoteClient) IRODSPathsForStudy(ctx context.Context, studyLimsID stri
 // server, optionally filtered to a file-type suffix, the same way as
 // IRODSPathsForSampleByFileType.
 func (rc *RemoteClient) IRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, fileType string, limit, offset int) ([]IRODSPath, error) {
-	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForStudy", []string{studyLimsID}, remotePaginationWithFileType(limit, offset, fileType))
+	return rc.IRODSPathsForStudyWithOptions(ctx, studyLimsID, IRODSPathOptions{FileType: fileType}, limit, offset)
+}
+
+// IRODSPathsForStudyWithOptions lists iRODS paths for a study through the remote
+// server with file-type and created-date ordering/window options.
+func (rc *RemoteClient) IRODSPathsForStudyWithOptions(ctx context.Context, studyLimsID string, opts IRODSPathOptions, limit, offset int) ([]IRODSPath, error) {
+	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForStudy", []string{studyLimsID}, remotePaginationWithIRODSPathOptions(limit, offset, opts))
 }
 
 // IRODSPathsForStudyByFileTypePage is the Page[IRODSPath] variant of
@@ -436,7 +500,13 @@ func (rc *RemoteClient) IRODSPathsForStudyPage(ctx context.Context, studyLimsID 
 // all file types. The server validates the file_type and returns 400 for an invalid
 // value, and resolves :id through the run space (ResolveRun).
 func (rc *RemoteClient) IRODSPathsForRun(ctx context.Context, idRun, fileType string, limit, offset int) ([]IRODSPath, error) {
-	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForRun", []string{idRun}, remotePaginationWithFileType(limit, offset, fileType))
+	return rc.IRODSPathsForRunWithOptions(ctx, idRun, IRODSPathOptions{FileType: fileType}, limit, offset)
+}
+
+// IRODSPathsForRunWithOptions lists iRODS paths for a run through the remote
+// server with file-type and created-date ordering/window options.
+func (rc *RemoteClient) IRODSPathsForRunWithOptions(ctx context.Context, idRun string, opts IRODSPathOptions, limit, offset int) ([]IRODSPath, error) {
+	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForRun", []string{idRun}, remotePaginationWithIRODSPathOptions(limit, offset, opts))
 }
 
 // IRODSPathsForRunByFileTypePage is the Page[IRODSPath] variant of
@@ -871,19 +941,32 @@ func (rc *RemoteClient) CountIRODSPathsForSample(ctx context.Context, sangerName
 // all-file-types count. The server validates the file_type and returns 400 for an
 // invalid value.
 func (rc *RemoteClient) CountIRODSPathsForSampleByFileType(ctx context.Context, sangerName, fileType string) (Count, error) {
-	return remoteCall[Count](rc, ctx, "CountIRODSPathsForSample", []string{sangerName}, remoteFileType(fileType))
+	return rc.CountIRODSPathsForSampleWithOptions(ctx, sangerName, IRODSPathOptions{FileType: fileType})
 }
 
-// remoteFileType builds the file_type query values for a filtered iRODS count,
-// omitting an empty fileType so an all-file-types request sends no query string
-// (matching the bare count call).
-func remoteFileType(fileType string) url.Values {
+// CountIRODSPathsForSampleWithOptions counts sample iRODS paths through the
+// remote server with file-type and created-date window options.
+func (rc *RemoteClient) CountIRODSPathsForSampleWithOptions(ctx context.Context, sangerName string, opts IRODSPathOptions) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountIRODSPathsForSample", []string{sangerName}, remoteIRODSPathOptions(opts))
+}
+
+func remoteIRODSPathOptions(opts IRODSPathOptions) url.Values {
 	values := url.Values{}
-	if fileType != "" {
-		values.Set("file_type", fileType)
-	}
+	addIRODSPathOptionValues(values, opts)
 
 	return values
+}
+
+// CountIRODSPathsForStudyWithOptions counts study iRODS paths through the remote
+// server with file-type and created-date window options.
+func (rc *RemoteClient) CountIRODSPathsForStudyWithOptions(ctx context.Context, studyLimsID string, opts IRODSPathOptions) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountIRODSPathsForStudy", []string{studyLimsID}, remoteIRODSPathOptions(opts))
+}
+
+// CountIRODSPathsForRunWithOptions counts run iRODS paths through the remote
+// server with file-type and created-date window options.
+func (rc *RemoteClient) CountIRODSPathsForRunWithOptions(ctx context.Context, idRun string, opts IRODSPathOptions) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountIRODSPathsForRun", []string{idRun}, remoteIRODSPathOptions(opts))
 }
 
 // CountIRODSPathsForStudy counts the distinct iRODS data objects for a study through the remote server.
@@ -895,7 +978,7 @@ func (rc *RemoteClient) CountIRODSPathsForStudy(ctx context.Context, studyLimsID
 // study through the remote server, optionally filtered to a file-type suffix, the
 // same way as CountIRODSPathsForSampleByFileType.
 func (rc *RemoteClient) CountIRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, fileType string) (Count, error) {
-	return remoteCall[Count](rc, ctx, "CountIRODSPathsForStudy", []string{studyLimsID}, remoteFileType(fileType))
+	return rc.CountIRODSPathsForStudyWithOptions(ctx, studyLimsID, IRODSPathOptions{FileType: fileType})
 }
 
 // CountIRODSPathsForRun counts the iRODS data objects on a run through the remote
@@ -904,7 +987,7 @@ func (rc *RemoteClient) CountIRODSPathsForStudyByFileType(ctx context.Context, s
 // counts all file types. The server validates the file_type and resolves :id
 // through the run space (ResolveRun).
 func (rc *RemoteClient) CountIRODSPathsForRun(ctx context.Context, idRun, fileType string) (Count, error) {
-	return remoteCall[Count](rc, ctx, "CountIRODSPathsForRun", []string{idRun}, remoteFileType(fileType))
+	return rc.CountIRODSPathsForRunWithOptions(ctx, idRun, IRODSPathOptions{FileType: fileType})
 }
 
 // CountFindSamplesBySangerID counts the samples matching a Sanger sample id through the remote server.
@@ -1278,6 +1361,21 @@ type RemoteConfig struct {
 	Token    string
 	CACert   string
 	CacheTTL time.Duration
+}
+
+func addIRODSPathOptionValues(values url.Values, opts IRODSPathOptions) {
+	if opts.FileType != "" {
+		values.Set("file_type", opts.FileType)
+	}
+	if opts.OrderBy != "" {
+		values.Set("order_by", opts.OrderBy)
+	}
+	if opts.Since != "" {
+		values.Set("since", opts.Since)
+	}
+	if opts.Until != "" {
+		values.Set("until", opts.Until)
+	}
 }
 
 func remoteSetNonEmptyQuery(query url.Values, key, value string) {

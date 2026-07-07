@@ -47,8 +47,8 @@ newest-first; `since <= created < until` on any scope and `until` without
 sample-scoped and run-scoped `created_desc` paths each uses its recency
 index, no full scan, no filesort). Depends on Phase 1 (A4).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 5.2: E2 - latest-data endpoints (study + faculty-sponsor)
 
@@ -73,8 +73,8 @@ in ONE call, not one-per-study fan-out; `wa mlwh latest 5901 --file-type
 cram` prints newest cram rows and exits 0). Depends on 5.1 (`created` +
 recency indexes) and Phase 1 (A4).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For sequential items, a single review pass after each item is
 acceptable; reviewers must confirm `created` uses the iRODS "data added"

@@ -30,6 +30,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -96,7 +97,7 @@ const (
 	// parent predicate and the closing paren, so the count honours the same filter
 	// as the list and count == len(list) for every file_type/deliverables-only
 	// combination.
-	countIRODSPathsForSampleCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ?`
+	countIRODSPathsForSampleCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name FROM seq_product_irods_locations_mirror spi WHERE spi.id_sample_tmp = ?`
 	countIRODSPathsForSampleCacheSQLSuffix = `) AS distinct_sample_irods`
 
 	// countIRODSPathsForStudyCacheSQLPrefix/Suffix size IRODSPathsForStudy: the
@@ -107,15 +108,24 @@ const (
 	countIRODSPathsForStudyCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, '') FROM seq_product_irods_locations_mirror spi LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp WHERE spi.id_study_lims = ?`
 	countIRODSPathsForStudyCacheSQLSuffix = `) AS distinct_study_irods`
 
-	// countIRODSPathsForRunCacheSQLPrefix/Suffix size IRODSPathsForRun (B3): the
-	// run's iseq_product_metrics_mirror rows joined to the iRODS mirror on
-	// id_iseq_product, the same join as irodsPathsForRunCacheSQL with no LIMIT.
-	// COUNT(*) over the SELECT DISTINCT of the same iRODS data-object columns the
-	// list groups by collapses the product-metrics fan-out identically, so
-	// count == len(list) for the run scope. The file-type filter (B2) splices into
-	// the inner WHERE between the id_run predicate and the closing paren.
-	countIRODSPathsForRunCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.platform FROM seq_product_irods_locations_mirror spi INNER JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE ipm.id_run = ?`
+	// countIRODSPathsForRunCacheSQLPrefix/Suffix size IRODSPathsForRun: the
+	// run-scoped iRODS rows are read through the denormalized id_run on the iRODS
+	// mirror, so created-window counts and recency lists share the same scoped
+	// access path. COUNT(*) over the SELECT DISTINCT of the iRODS data-object
+	// columns preserves count == len(list) for the run scope. The file-type filter
+	// (B2) splices into the inner WHERE between the id_run predicate and the
+	// closing paren.
+	countIRODSPathsForRunCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.platform FROM seq_product_irods_locations_mirror spi WHERE spi.id_run = ?`
 	countIRODSPathsForRunCacheSQLSuffix = `) AS distinct_run_irods`
+
+	// countLatestDataForStudySQLPrefix/Suffix size the latest-data study list at
+	// the raw iRODS-location row grain. This intentionally does NOT reuse the
+	// manifest/product count: latest-data membership is the raw
+	// seq_product_irods_locations_mirror scan on (id_study_lims, created), so the
+	// count reconciles with StudyOverview.newest_data_added and the list's
+	// X-Total-Count.
+	countLatestDataForStudySQLPrefix = `SELECT COUNT(*) FROM seq_product_irods_locations_mirror spi INNER JOIN study_mirror ON study_mirror.id_study_lims = spi.id_study_lims AND study_mirror.id_lims = 'SQSCP' WHERE spi.id_study_lims = ?`
+	countLatestDataForStudySQLSuffix = ``
 
 	// runsForSampleD1cSQL sizes/lists the D1 export "runs of sample"
 	// relationship at the public endpoint grain: distinct Illumina run ids for
@@ -137,6 +147,14 @@ const (
 	// row.
 	studyUsersForStudyD1cSQL      = `SELECT study_users_mirror.role, study_users_mirror.name, study_users_mirror.login, study_users_mirror.email FROM study_users_mirror INNER JOIN study_mirror ON study_mirror.id_study_tmp = study_users_mirror.id_study_tmp WHERE study_mirror.id_lims = 'SQSCP' AND study_mirror.id_study_lims = ? ORDER BY study_users_mirror.role, study_users_mirror.login LIMIT ? OFFSET ?`
 	countStudyUsersForStudyD1cSQL = `SELECT COUNT(*) FROM study_users_mirror INNER JOIN study_mirror ON study_mirror.id_study_tmp = study_users_mirror.id_study_tmp WHERE study_mirror.id_lims = 'SQSCP' AND study_mirror.id_study_lims = ?`
+)
+
+// countLatestDataForFacultySponsorSQLPrefix/Suffix count raw iRODS-location
+// rows under SQSCP studies whose faculty_sponsor contains the term. The same
+// file-type clause is spliced before the suffix when requested.
+var (
+	countLatestDataForFacultySponsorSQLPrefix = `SELECT COUNT(*) FROM seq_product_irods_locations_mirror spi INNER JOIN study_mirror ON study_mirror.id_study_lims = spi.id_study_lims AND study_mirror.id_lims = 'SQSCP' WHERE ` + likeContainsClause([]string{"study_mirror.faculty_sponsor"})
+	countLatestDataForFacultySponsorSQLSuffix = ``
 )
 
 var studiesForProgrammeD1cSQL = `SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE id_lims = 'SQSCP' AND programme = ? ORDER BY id_study_lims LIMIT ? OFFSET ?`
@@ -293,18 +311,24 @@ func sampleCRAMRows(rows []exportSampleCRAMRow) []SampleCRAM {
 	return sampleCRAMs
 }
 
-// irodsCountFilterQuery assembles an iRODS count query with the same optional
-// file-type and deliverables-only clauses used by the matching list query.
-func irodsCountFilterQuery(prefix, suffix, normalised string, deliverablesOnly bool, parent any) (string, []any) {
+func latestDataFilterQuery(prefix, suffix, fileType string, args ...any) (string, []any, error) {
+	normalised, err := normaliseFileType(fileType)
+	if err != nil {
+		return "", nil, err
+	}
+
 	query := prefix
-	args := []any{parent}
+	queryArgs := slices.Clone(args)
 	if normalised != "" {
 		query += irodsFileTypeFilterClause
-		args = append(args, irodsFileTypeLikePattern(normalised))
+		queryArgs = append(queryArgs, irodsFileTypeLikePattern(normalised))
 	}
-	if deliverablesOnly {
-		query += irodsDeliverablesOnlyFilterClause
-	}
+
+	return query + suffix, queryArgs, nil
+}
+
+func irodsCountFilterQueryWithOptions(prefix, suffix string, opts irodsPathQueryOptions, parent any) (string, []any) {
+	query, args := appendIRODSPathQueryFilters(prefix, []any{parent}, opts)
 
 	return query + suffix, args
 }
@@ -351,6 +375,84 @@ func (c *Client) CountSamplesForStudy(ctx context.Context, studyLimsID string) (
 	}
 
 	return c.countSamplesForEmptyStudy(ctx, studyLimsID)
+}
+
+// CountLatestDataForStudy counts raw iRODS-location rows for the study, with the
+// optional filename-suffix filter used by LatestDataForStudy. The row grain is
+// seq_product_irods_locations_mirror rows, not manifest products, so the count
+// sizes /study/:id/latest-data exactly and reconciles with
+// StudyOverview.newest_data_added.
+func (c *Client) CountLatestDataForStudy(ctx context.Context, studyLimsID, fileType string) (Count, error) {
+	study, err := c.resolveStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, studyLimsID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireAnySyncState(ctx, syncTableStudy); syncErr != nil {
+				return Count{}, syncErr
+			}
+
+			return Count{}, ErrNotFound
+		}
+
+		return Count{}, err
+	}
+
+	query, args, err := latestDataFilterQuery(countLatestDataForStudySQLPrefix, countLatestDataForStudySQLSuffix, fileType, study.IDStudyLims)
+	if err != nil {
+		return Count{}, err
+	}
+
+	count, err := c.queryCount(ctx, query, "count latest data for study", args...)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+	if err = c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); err != nil {
+		return Count{}, err
+	}
+
+	return Count{Count: 0}, nil
+}
+
+// CountLatestDataForFacultySponsor counts raw iRODS-location rows under SQSCP
+// studies whose faculty_sponsor contains name. It mirrors
+// LatestDataForFacultySponsor's membership and optional file-type filter.
+func (c *Client) CountLatestDataForFacultySponsor(ctx context.Context, name, fileType string) (Count, error) {
+	if strings.TrimSpace(name) == "" {
+		return Count{}, fmt.Errorf("%w: faculty sponsor name is required", ErrUnsupportedIdentifier)
+	}
+
+	query, args, err := latestDataFilterQuery(
+		countLatestDataForFacultySponsorSQLPrefix,
+		countLatestDataForFacultySponsorSQLSuffix,
+		fileType,
+		likeContainsArgs(escapeLIKEPattern(name), []string{"study_mirror.faculty_sponsor"})...,
+	)
+	if err != nil {
+		return Count{}, err
+	}
+
+	count, err := c.queryCount(ctx, query, "count latest data for faculty sponsor", args...)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	sponsorStudies, err := c.CountStudiesForFacultySponsor(ctx, name)
+	if err != nil {
+		return Count{}, err
+	}
+	if sponsorStudies.Count == 0 {
+		return Count{Count: 0}, nil
+	}
+	if err = c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); err != nil {
+		return Count{}, err
+	}
+
+	return Count{Count: 0}, nil
 }
 
 // countSamplesForEmptyStudy resolves the result when no samples were counted for
@@ -892,7 +994,7 @@ func (c *Client) CountIRODSPathsForSampleByFileType(ctx context.Context, sangerN
 // CountIRODSPathsForSampleWithOptions counts sample iRODS data objects after the
 // optional file-type and deliverables-only filters.
 func (c *Client) CountIRODSPathsForSampleWithOptions(ctx context.Context, sangerName string, opts IRODSPathOptions) (Count, error) {
-	normalised, err := normaliseFileType(opts.FileType)
+	queryOpts, err := normaliseIRODSPathQueryOptions(opts)
 	if err != nil {
 		return Count{}, err
 	}
@@ -910,7 +1012,7 @@ func (c *Client) CountIRODSPathsForSampleWithOptions(ctx context.Context, sanger
 		return Count{}, err
 	}
 
-	query, args := irodsCountFilterQuery(countIRODSPathsForSampleCacheSQLPrefix, countIRODSPathsForSampleCacheSQLSuffix, normalised, opts.DeliverablesOnly, sample.IDSampleTmp)
+	query, args := irodsCountFilterQueryWithOptions(countIRODSPathsForSampleCacheSQLPrefix, countIRODSPathsForSampleCacheSQLSuffix, queryOpts, sample.IDSampleTmp)
 	count, err := c.queryCount(ctx, query, "count sample irods paths", args...)
 	if err != nil {
 		return Count{}, err
@@ -949,7 +1051,7 @@ func (c *Client) CountIRODSPathsForStudyByFileType(ctx context.Context, studyLim
 // CountIRODSPathsForStudyWithOptions counts study iRODS data objects after the
 // optional file-type and deliverables-only filters.
 func (c *Client) CountIRODSPathsForStudyWithOptions(ctx context.Context, studyLimsID string, opts IRODSPathOptions) (Count, error) {
-	normalised, err := normaliseFileType(opts.FileType)
+	queryOpts, err := normaliseIRODSPathQueryOptions(opts)
 	if err != nil {
 		return Count{}, err
 	}
@@ -967,7 +1069,7 @@ func (c *Client) CountIRODSPathsForStudyWithOptions(ctx context.Context, studyLi
 		return Count{}, err
 	}
 
-	query, args := irodsCountFilterQuery(countIRODSPathsForStudyCacheSQLPrefix, countIRODSPathsForStudyCacheSQLSuffix, normalised, opts.DeliverablesOnly, study.IDStudyLims)
+	query, args := irodsCountFilterQueryWithOptions(countIRODSPathsForStudyCacheSQLPrefix, countIRODSPathsForStudyCacheSQLSuffix, queryOpts, study.IDStudyLims)
 	count, err := c.queryCount(ctx, query, "count study irods paths", args...)
 	if err != nil {
 		return Count{}, err
@@ -984,12 +1086,12 @@ func (c *Client) CountIRODSPathsForStudyWithOptions(ctx context.Context, studyLi
 }
 
 // CountIRODSPathsForRun counts the iRODS data objects on a run, the count
-// counterpart of IRODSPathsForRun (same iseq_product_metrics_mirror -> iRODS join
-// on id_iseq_product, filtered by id_run, with no LIMIT), so
-// CountIRODSPathsForRun(run, fileType) equals len(IRODSPathsForRun(run, fileType,
-// all)) for any fileType. idRun is the Illumina NPG id_run, resolved via ResolveRun:
-// a non-numeric run is ErrUnsupportedIdentifier, a numeric run absent from a synced
-// cache is ErrNotFound, and a never-synced cache returns Count{} with both
+// counterpart of IRODSPathsForRun (same denormalised iRODS mirror id_run scope,
+// with no LIMIT), so CountIRODSPathsForRun(run, fileType) equals
+// len(IRODSPathsForRun(run, fileType, all)) for any fileType. idRun is the
+// Illumina NPG id_run, resolved via ResolveRun: a non-numeric run is
+// ErrUnsupportedIdentifier, a numeric run absent from a synced cache is
+// ErrNotFound, and a never-synced cache returns Count{} with both
 // ErrCacheNeverSynced and ErrNotFound -- the same run-space cascade as
 // CountSamplesForRun. An empty fileType counts all objects; an invalid fileType is
 // rejected with ErrUnsupportedIdentifier. A valid but unmatched suffix, or a run
@@ -1001,7 +1103,7 @@ func (c *Client) CountIRODSPathsForRun(ctx context.Context, idRun, fileType stri
 // CountIRODSPathsForRunWithOptions counts run iRODS data objects after the
 // optional file-type and deliverables-only filters.
 func (c *Client) CountIRODSPathsForRunWithOptions(ctx context.Context, idRun string, opts IRODSPathOptions) (Count, error) {
-	normalised, err := normaliseFileType(opts.FileType)
+	queryOpts, err := normaliseIRODSPathQueryOptions(opts)
 	if err != nil {
 		return Count{}, err
 	}
@@ -1011,7 +1113,7 @@ func (c *Client) CountIRODSPathsForRunWithOptions(ctx context.Context, idRun str
 		return Count{}, err
 	}
 
-	query, args := irodsCountFilterQuery(countIRODSPathsForRunCacheSQLPrefix, countIRODSPathsForRunCacheSQLSuffix, normalised, opts.DeliverablesOnly, match.Run.IDRun)
+	query, args := irodsCountFilterQueryWithOptions(countIRODSPathsForRunCacheSQLPrefix, countIRODSPathsForRunCacheSQLSuffix, queryOpts, match.Run.IDRun)
 	count, err := c.queryCount(ctx, query, "count run irods paths", args...)
 	if err != nil {
 		return Count{}, err

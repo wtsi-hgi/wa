@@ -327,6 +327,30 @@ var Registry = []Endpoint{
 		QueryParams: fetchAllPaginationParams(),
 	},
 	{
+		Method:      "LatestDataForStudy",
+		Verb:        registryVerbGet,
+		Path:        "/study/:id/latest-data",
+		PathParams:  []string{"id"},
+		Query:       []string{"file_type"},
+		Paginated:   true,
+		NewResult:   newSliceResult[RecentDataRow],
+		Summary:     "List newest data objects for a study",
+		Description: "Returns a bounded, pageable newest-first page of raw iRODS data-object rows for the given study. Rows are ordered by created DESC, with ties by (id_run, id_product); this is a page, NOT an unbounded MAX(created) tie set. Membership is a raw seq_product_irods_locations_mirror scan scoped by (id_study_lims, created), not the study manifest/product grain, so the first row's created timestamp reconciles with StudyOverview.newest_data_added. Each row carries the full irods_path, study id/name, sample name and supplier_name, id_run, lane, tag_index, platform, and merged flag. Set file_type to restrict rows to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with one leading dot stripped. Defaults to 10 rows, maximum 1000; use limit/offset to page.",
+		QueryParams: latestDataPaginationParams(),
+	},
+	{
+		Method:      "LatestDataForFacultySponsor",
+		Verb:        registryVerbGet,
+		Path:        "/latest-data/faculty-sponsor/:name",
+		PathParams:  []string{"name"},
+		Query:       []string{"file_type"},
+		Paginated:   true,
+		NewResult:   newSliceResult[RecentDataRow],
+		Summary:     "List newest data objects by faculty sponsor",
+		Description: "Returns a bounded, pageable newest-first page of raw iRODS data-object rows across SQSCP studies whose study_mirror.faculty_sponsor contains the supplied name. Each matching study contributes only its bounded top rows through the (id_study_lims, created) access path, and those per-study candidates are merged by created DESC with ties by (id_run, id_product), avoiding one request per study and avoiding an unbounded global filesort over every file. Membership is the raw seq_product_irods_locations_mirror row set, so results reconcile with each study's StudyOverview.newest_data_added. Set file_type to restrict rows to data objects whose iRODS file name ends in `.<file_type>`. Defaults to 10 rows, maximum 1000; use limit/offset to page.",
+		QueryParams: latestDataPaginationParams(),
+	},
+	{
 		Method:      "LanesForSample",
 		Verb:        registryVerbGet,
 		Path:        "/sample/:id/lanes",
@@ -343,36 +367,36 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/sample/:id/irods",
 		PathParams:  []string{"id"},
-		Query:       []string{"file_type"},
+		Query:       []string{"file_type", "order_by", "since", "until"},
 		Paginated:   true,
 		NewResult:   newSliceResult[IRODSPath],
 		Summary:     "List iRODS paths for a sample",
 		Description: "Lists the iRODS data-object paths exported for the given sample (by Sanger sample name). Defaults to returning all paths; use limit/offset to page. Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request.",
-		QueryParams: fetchAllPaginationWithFileTypeParams(),
+		QueryParams: fetchAllPaginationWithFileTypeParams("sample-scoped iRODS data objects added to iRODS"),
 	},
 	{
 		Method:      "IRODSPathsForStudy",
 		Verb:        registryVerbGet,
 		Path:        "/study/:id/irods",
 		PathParams:  []string{"id"},
-		Query:       []string{"file_type"},
+		Query:       []string{"file_type", "order_by", "since", "until"},
 		Paginated:   true,
 		NewResult:   newSliceResult[IRODSPath],
 		Summary:     "List iRODS paths for a study",
 		Description: "Lists the iRODS data-object paths exported for the given study. Defaults to returning all paths; use limit/offset to page. Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request.",
-		QueryParams: fetchAllPaginationWithFileTypeParams(),
+		QueryParams: fetchAllPaginationWithFileTypeParams("study-scoped iRODS data objects added to iRODS"),
 	},
 	{
 		Method:      "IRODSPathsForRun",
 		Verb:        registryVerbGet,
 		Path:        "/run/:id/irods",
 		PathParams:  []string{"id"},
-		Query:       []string{"file_type"},
+		Query:       []string{"file_type", "order_by", "since", "until"},
 		Paginated:   true,
 		NewResult:   newSliceResult[IRODSPath],
 		Summary:     "List iRODS paths for a run",
-		Description: "Lists the iRODS data objects on the given run: the run's iseq_product_metrics rows (filtered by id_run) joined to the iRODS locations mirror by the shared id_iseq_product (the run's real data files in iRODS), one row per data object. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Every row carries id_run = the run plus the iRODS row's platform. Defaults to returning all data objects; use limit/offset to page, and it is bounded and paginated like /study/:id/irods and /sample/:id/irods, setting the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /run/:id/irods/count and the two cannot drift). Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. The list is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
-		QueryParams: fetchAllPaginationWithFileTypeParams(),
+		Description: "Lists the iRODS data objects on the given run by reading seq_product_irods_locations_mirror rows whose denormalized id_run equals the requested run, one row per data object. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Every row carries id_run = the run plus the iRODS row's platform. Defaults to returning all data objects; use limit/offset to page, and it is bounded and paginated like /study/:id/irods and /sample/:id/irods, setting the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /run/:id/irods/count and the two cannot drift). Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. The list is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+		QueryParams: fetchAllPaginationWithFileTypeParams("run-scoped iRODS data objects added to iRODS"),
 	},
 	{
 		Method:      "StudyManifest",
@@ -487,7 +511,7 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/export/:children/:parent_kind/:parent_id",
 		PathParams:  []string{"children", "parent_kind", "parent_id"},
-		Query:       []string{"columns", "file_type", "deliverables_only", "qc", "library_type", "organism", "sort", "since", "until", "all", "cursor", "format"},
+		Query:       []string{"columns", "file_type", "deliverables_only", "qc", "library_type", "organism", "sort", "order_by", "since", "until", "all", "cursor", "format"},
 		NewResult:   newResult[ExportResult],
 		Summary:     "Export relationship rows",
 		Description: "Projects one supported MLWH export relationship into ordered string rows for the selected columns, matching `wa mlwh export <children> <parent-kind> <parent-id>`. The response body carries Columns, Rows, Total, NextCursor, Complete and Format. Query parameters mirror the CLI: columns is an ordered comma-separated projection; file_type restricts file exports by filename suffix; deliverables_only, qc, library_type and organism apply the shared export filters where supported; limit/offset request a bounded page; all requests the complete matching set; cursor continues keyset pagination for iRODS exports; format is tsv, csv or json metadata for callers that render the result. A never-synced cache returns cache_never_synced so CLIs can degrade cleanly.",
@@ -764,7 +788,29 @@ var Registry = []Endpoint{
 		NewResult:   newResult[Count],
 		Summary:     "Count a study's samples that have sequencing data",
 		Description: "Returns the number of distinct samples linked to the given study (via library_samples) that have sequencing data available for this study, the count counterpart of /study/:id/samples-with-data (count == the length of that list when all rows are fetched). A sample has data for this study iff it has at least one row in the iRODS locations mirror scoped by id_study_lims = the study (real data objects in iRODS); scoping is by the study the data is under, NOT data the sample has anywhere. The figure counts distinct samples, never iRODS data objects, so a sample with many study-scoped iRODS rows is counted once. The optional since and until RFC3339 query params restrict the count to samples whose study-scoped data was ADDED to iRODS in the half-open window [since, until): the filter is on the iRODS creation timestamp (the created column), NEVER on last_updated or last_run (last_updated conflates newly-added with later-modified rows, and last_run is only when wa synced), so it answers \"added since X\"; since is inclusive and until is exclusive (created >= since AND created < until), comparison is in normalised UTC, and until is optional (the window is open-ended when omitted). Without since the count is all-time. A malformed since or until, or an until supplied without a since (until is only the upper bound of a window, so it is meaningless alone), is rejected with a 400 bad_request before the query runs. Membership is read from the cache mirrors, so the count is complete only up to the feeding tables' last sync (see /freshness).",
-		QueryParams: addedWindowQueryParams(),
+		QueryParams: addedWindowQueryParams("samples whose study-scoped data was added to iRODS"),
+	},
+	{
+		Method:      "CountLatestDataForStudy",
+		Verb:        registryVerbGet,
+		Path:        "/study/:id/latest-data/count",
+		PathParams:  []string{"id"},
+		Query:       []string{"file_type"},
+		NewResult:   newResult[Count],
+		Summary:     "Count newest data rows for a study",
+		Description: "Returns the number of raw seq_product_irods_locations_mirror rows for the given study, optionally restricted by file_type, so X-Total-Count on /study/:id/latest-data sizes the same raw iRODS-location membership used by the list. This is a raw data-object count, not a manifest/product count.",
+		QueryParams: []QueryParam{fileTypeQueryParam()},
+	},
+	{
+		Method:      "CountLatestDataForFacultySponsor",
+		Verb:        registryVerbGet,
+		Path:        "/latest-data/faculty-sponsor/:name/count",
+		PathParams:  []string{"name"},
+		Query:       []string{"file_type"},
+		NewResult:   newResult[Count],
+		Summary:     "Count newest data rows by faculty sponsor",
+		Description: "Returns the number of raw seq_product_irods_locations_mirror rows under SQSCP studies whose study_mirror.faculty_sponsor contains the supplied name, optionally restricted by file_type, so X-Total-Count on /latest-data/faculty-sponsor/:name sizes the same raw iRODS-location membership used by the list.",
+		QueryParams: []QueryParam{fileTypeQueryParam()},
 	},
 	{
 		Method:      "CountSamplesForRun",
@@ -861,33 +907,33 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/sample/:id/irods/count",
 		PathParams:  []string{"id"},
-		Query:       []string{"file_type"},
+		Query:       []string{"file_type", "since", "until"},
 		NewResult:   newResult[Count],
 		Summary:     "Count iRODS paths for a sample",
 		Description: "Returns the number of distinct iRODS data objects exported for the given sample (by Sanger sample name), the count counterpart of /sample/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS data objects the list returns with no LIMIT. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. An unknown sample yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
-		QueryParams: []QueryParam{fileTypeQueryParam()},
+		QueryParams: irodsCountQueryParams("sample-scoped iRODS data objects added to iRODS"),
 	},
 	{
 		Method:      "CountIRODSPathsForStudy",
 		Verb:        registryVerbGet,
 		Path:        "/study/:id/irods/count",
 		PathParams:  []string{"id"},
-		Query:       []string{"file_type"},
+		Query:       []string{"file_type", "since", "until"},
 		NewResult:   newResult[Count],
 		Summary:     "Count iRODS paths for a study",
 		Description: "Returns the number of distinct iRODS data objects exported for the given study, the count counterpart of /study/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS rows the list returns (scoped by id_study_lims) with no LIMIT. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. An unknown study yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
-		QueryParams: []QueryParam{fileTypeQueryParam()},
+		QueryParams: irodsCountQueryParams("study-scoped iRODS data objects added to iRODS"),
 	},
 	{
 		Method:      "CountIRODSPathsForRun",
 		Verb:        registryVerbGet,
 		Path:        "/run/:id/irods/count",
 		PathParams:  []string{"id"},
-		Query:       []string{"file_type"},
+		Query:       []string{"file_type", "since", "until"},
 		NewResult:   newResult[Count],
 		Summary:     "Count iRODS paths for a run",
-		Description: "Returns the number of iRODS data objects on the given run, the count counterpart of /run/:id/irods (count == the length of that list when all rows are fetched), counting the run's iseq_product_metrics rows joined to the iRODS locations mirror by the shared id_iseq_product with no LIMIT. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
-		QueryParams: []QueryParam{fileTypeQueryParam()},
+		Description: "Returns the number of iRODS data objects on the given run, the count counterpart of /run/:id/irods (count == the length of that list when all rows are fetched), counting seq_product_irods_locations_mirror rows whose denormalized id_run equals the requested run with no LIMIT. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Set file_type to count only data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (the same filename-suffix filter as the list, so the count honours it and a valid but unmatched suffix yields 0, not an error); an empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+		QueryParams: irodsCountQueryParams("run-scoped iRODS data objects added to iRODS"),
 	},
 	{
 		Method:      "CountFindSamplesBySangerID",
@@ -997,7 +1043,7 @@ func searchPaginationWithRoleParams() []QueryParam {
 // shares its single endpoint with the windowed variant (parameterised by
 // since/until), so it documents both the pagination and the window controls.
 func fetchAllPaginationWithAddedWindowParams() []QueryParam {
-	return append(fetchAllPaginationParams(), addedWindowQueryParams()...)
+	return append(fetchAllPaginationParams(), addedWindowQueryParams("samples whose study-scoped data was added to iRODS")...)
 }
 
 // detailQueryParams are the QueryParams for the de-duplicated detail endpoints
@@ -1019,12 +1065,43 @@ func detailQueryParams() []QueryParam {
 }
 
 // fetchAllPaginationWithFileTypeParams are the QueryParams for the iRODS list
-// endpoints: the fetch-all limit/offset pagination controls plus the optional
-// file_type filter. The list shares its single endpoint with the filtered
-// variant (parameterised by file_type), so it documents both the pagination and
-// the filter controls.
-func fetchAllPaginationWithFileTypeParams() []QueryParam {
-	return append(fetchAllPaginationParams(), fileTypeQueryParam())
+// endpoints: the fetch-all limit/offset pagination controls plus file_type,
+// order_by, and the optional created-time window.
+func fetchAllPaginationWithFileTypeParams(scope string) []QueryParam {
+	params := append(fetchAllPaginationParams(), fileTypeQueryParam(), QueryParam{
+		Name:        "order_by",
+		Type:        "string",
+		Required:    false,
+		Description: "optional iRODS row order; supported value created_desc orders by iRODS created time newest-first; omit to keep the default stable listing order",
+	})
+	params = append(params, addedWindowQueryParams(scope)...)
+
+	return params
+}
+
+func latestDataPaginationParams() []QueryParam {
+	return []QueryParam{
+		{
+			Name:        "limit",
+			Type:        "integer",
+			Required:    false,
+			Description: "maximum number of newest rows to return; defaults to 10 and must not exceed 1000",
+		},
+		{
+			Name:        "offset",
+			Type:        "integer",
+			Required:    false,
+			Description: "number of leading newest rows to skip before returning results; defaults to 0",
+		},
+		fileTypeQueryParam(),
+	}
+}
+
+func irodsCountQueryParams(scope string) []QueryParam {
+	params := []QueryParam{fileTypeQueryParam()}
+	params = append(params, addedWindowQueryParams(scope)...)
+
+	return params
 }
 
 // manifestQueryParams are the QueryParams for the study manifest list endpoint:
@@ -1053,9 +1130,10 @@ func exportQueryParams() []QueryParam {
 		QueryParam{Name: "qc", Type: "string", Description: "optional QC filter for product-backed exports: pass, fail, or pending"},
 		QueryParam{Name: "library_type", Type: "string", Description: "optional exact library type filter for sample-backed exports"},
 		QueryParam{Name: "organism", Type: "string", Description: "optional organism/common-name filter for sample-backed exports"},
-		QueryParam{Name: "sort", Type: "string", Description: "reserved export sort mode; unsupported values are rejected by the query layer"},
-		QueryParam{Name: "since", Type: "string", Description: "reserved RFC3339 lower bound for created-date exports; unsupported values are rejected by the query layer"},
-		QueryParam{Name: "until", Type: "string", Description: "reserved RFC3339 upper bound for created-date exports; unsupported values are rejected by the query layer"},
+		QueryParam{Name: "sort", Type: "string", Description: "optional iRODS export sort mode; supported value created-desc orders by iRODS created time newest-first"},
+		QueryParam{Name: "order_by", Type: "string", Description: "alias for sort on iRODS exports; supported value created_desc"},
+		QueryParam{Name: "since", Type: "string", Description: "RFC3339 lower bound for iRODS created-date exports (created >= since); supported for iRODS exports"},
+		QueryParam{Name: "until", Type: "string", Description: "RFC3339 upper bound for iRODS created-date exports (created < until); requires since"},
 		QueryParam{Name: "all", Type: "boolean", Description: "when true, emits the complete matching set rather than a bounded page"},
 		QueryParam{Name: "cursor", Type: "string", Description: "opaque keyset cursor returned by a previous iRODS export page"},
 		QueryParam{Name: "format", Type: "string", Description: "output rendering format metadata: tsv, csv or json; defaults to tsv"},
@@ -1105,20 +1183,17 @@ func searchPaginationParams() []QueryParam {
 }
 
 // addedWindowQueryParams are the optional since/until RFC3339 QueryParams shared
-// by the windowed samples-with-data count and the windowed samples-with-data
-// list: a half-open [since, until) filter on the iRODS creation timestamp (the
-// created column, never last_updated/last_run). The wording is surface-neutral
-// ("restricts the result"/"an all-time result") so it reads correctly whether it
-// documents the count endpoint or the list endpoint. They are not pagination
-// controls, so they are declared on a non-paginated entry (and appended to the
-// list endpoint's pagination params by fetchAllPaginationWithAddedWindowParams).
-func addedWindowQueryParams() []QueryParam {
+// by created-time windowed endpoints: a half-open [since, until) filter on the
+// iRODS creation timestamp (the created column, never last_updated/last_run).
+// The caller supplies scope-specific wording for the row or sample set being
+// filtered.
+func addedWindowQueryParams(scope string) []QueryParam {
 	return []QueryParam{
 		{
 			Name:        "since",
 			Type:        "string",
 			Required:    false,
-			Description: "RFC3339 timestamp; when set, restricts the result to samples whose study-scoped data was added to iRODS at or after this instant (created >= since, inclusive), filtering on the iRODS creation timestamp and never on last_updated/last_run; omit for an all-time result",
+			Description: "RFC3339 timestamp; when set, restricts the result to " + scope + " at or after this instant (the lower bound of the half-open [since, until) window; created >= since, inclusive), filtering on the iRODS creation timestamp (the data-added time) and never on last_updated/last_run; omit for an all-time result",
 		},
 		{
 			Name:        "until",
