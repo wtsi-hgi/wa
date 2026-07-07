@@ -247,6 +247,16 @@ func (rc *RemoteClient) RunsForStudyPage(ctx context.Context, studyLimsID string
 	return remoteCallPage[Run](rc, ctx, "RunsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
 }
 
+// RunsForSample lists runs for a sample through the remote server.
+func (rc *RemoteClient) RunsForSample(ctx context.Context, sangerName string, limit, offset int) ([]Run, error) {
+	return remoteCall[[]Run](rc, ctx, "RunsForSample", []string{sangerName}, remotePagination(limit, offset))
+}
+
+// RunsForSamplePage is the Page[Run] variant of RunsForSample.
+func (rc *RemoteClient) RunsForSamplePage(ctx context.Context, sangerName string, limit, offset int) (Page[Run], error) {
+	return remoteCallPage[Run](rc, ctx, "RunsForSample", []string{sangerName}, remotePagination(limit, offset))
+}
+
 // StudyOverview returns a study's overview aggregate through the remote server.
 func (rc *RemoteClient) StudyOverview(ctx context.Context, studyLimsID string) (StudyOverview, error) {
 	return remoteCall[StudyOverview](rc, ctx, "StudyOverview", []string{studyLimsID}, nil)
@@ -494,6 +504,89 @@ func (rc *RemoteClient) StudiesForSample(ctx context.Context, sangerName string)
 	return remoteCall[[]Study](rc, ctx, "StudiesForSample", []string{sangerName}, nil)
 }
 
+// CountStudiesForSample counts the studies for a sample through the remote server.
+func (rc *RemoteClient) CountStudiesForSample(ctx context.Context, sangerName string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudiesForSample", []string{sangerName}, nil)
+}
+
+// StudiesForProgramme lists studies for an exact programme through the remote server.
+func (rc *RemoteClient) StudiesForProgramme(ctx context.Context, programme string, limit, offset int) ([]Study, error) {
+	return remoteCall[[]Study](rc, ctx, "StudiesForProgramme", []string{programme}, remotePagination(limit, offset))
+}
+
+// StudiesForProgrammePage is the Page[Study] variant of StudiesForProgramme.
+func (rc *RemoteClient) StudiesForProgrammePage(ctx context.Context, programme string, limit, offset int) (Page[Study], error) {
+	return remoteCallPage[Study](rc, ctx, "StudiesForProgramme", []string{programme}, remotePagination(limit, offset))
+}
+
+// CountStudiesForProgramme counts exact-programme studies through the remote server.
+func (rc *RemoteClient) CountStudiesForProgramme(ctx context.Context, programme string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudiesForProgramme", []string{programme}, nil)
+}
+
+// StudyUsers lists study_users assignments for a study through the remote server.
+func (rc *RemoteClient) StudyUsers(ctx context.Context, studyLimsID string, limit, offset int) ([]StudyUser, error) {
+	return remoteCall[[]StudyUser](rc, ctx, "StudyUsers", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// StudyUsersPage is the Page[StudyUser] variant of StudyUsers.
+func (rc *RemoteClient) StudyUsersPage(ctx context.Context, studyLimsID string, limit, offset int) (Page[StudyUser], error) {
+	return remoteCallPage[StudyUser](rc, ctx, "StudyUsers", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// CountStudyUsers counts study_users assignments for a study through the remote server.
+func (rc *RemoteClient) CountStudyUsers(ctx context.Context, studyLimsID string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudyUsers", []string{studyLimsID}, nil)
+}
+
+// SampleCRAMsForStudy lists selected sample CRAMs for a study through the remote server.
+func (rc *RemoteClient) SampleCRAMsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleCRAM, error) {
+	return remoteCall[[]SampleCRAM](rc, ctx, "SampleCRAMsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// SampleCRAMsForStudyPage is the Page[SampleCRAM] variant of SampleCRAMsForStudy.
+func (rc *RemoteClient) SampleCRAMsForStudyPage(ctx context.Context, studyLimsID string, limit, offset int) (Page[SampleCRAM], error) {
+	return remoteCallPage[SampleCRAM](rc, ctx, "SampleCRAMsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// CountSampleCRAMsForStudy counts selected sample CRAMs for a study through the remote server.
+func (rc *RemoteClient) CountSampleCRAMsForStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountSampleCRAMsForStudy", []string{studyLimsID}, nil)
+}
+
+// Export projects a supported parent-child relationship through the remote server.
+func (rc *RemoteClient) Export(ctx context.Context, rel ExportRelationship, parentID string, opts ExportOptions) (ExportResult, error) {
+	return remoteCall[ExportResult](rc, ctx, "Export", []string{rel.Children, rel.ParentKind, parentID}, remoteExportQuery(opts))
+}
+
+func remoteExportQuery(opts ExportOptions) url.Values {
+	query := url.Values{}
+	remoteSetNonEmptyQuery(query, "columns", strings.Join(opts.Columns, ","))
+	remoteSetNonEmptyQuery(query, "file_type", opts.FileType)
+	remoteSetNonEmptyQuery(query, "qc", opts.QC)
+	remoteSetNonEmptyQuery(query, "library_type", opts.LibraryType)
+	remoteSetNonEmptyQuery(query, "organism", opts.Organism)
+	remoteSetNonEmptyQuery(query, "sort", opts.Sort)
+	remoteSetNonEmptyQuery(query, "since", opts.Since)
+	remoteSetNonEmptyQuery(query, "until", opts.Until)
+	remoteSetNonEmptyQuery(query, "cursor", opts.Cursor)
+	remoteSetNonEmptyQuery(query, "format", opts.Format)
+	if opts.DeliverablesOnly != nil {
+		query.Set("deliverables_only", strconv.FormatBool(*opts.DeliverablesOnly))
+	}
+	if opts.Limit > 0 {
+		query.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if opts.Offset > 0 {
+		query.Set("offset", strconv.Itoa(opts.Offset))
+	}
+	if opts.All {
+		query.Set("all", "true")
+	}
+
+	return query
+}
+
 // StudiesForFacultySponsor lists the studies of a named PI/sponsor through the
 // remote server (the named study.faculty_sponsor, case-insensitive substring),
 // each as a PersonStudy with an empty Role.
@@ -739,6 +832,11 @@ func (rc *RemoteClient) CountSamplesForLibraryType(ctx context.Context, pipeline
 // CountRunsForStudy counts the distinct runs for a study through the remote server.
 func (rc *RemoteClient) CountRunsForStudy(ctx context.Context, studyLimsID string) (Count, error) {
 	return remoteCall[Count](rc, ctx, "CountRunsForStudy", []string{studyLimsID}, nil)
+}
+
+// CountRunsForSample counts the distinct runs for a sample through the remote server.
+func (rc *RemoteClient) CountRunsForSample(ctx context.Context, sangerName string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountRunsForSample", []string{sangerName}, nil)
 }
 
 // CountStudyManifest counts the distinct products in a study's manifest through
@@ -1180,6 +1278,12 @@ type RemoteConfig struct {
 	Token    string
 	CACert   string
 	CacheTTL time.Duration
+}
+
+func remoteSetNonEmptyQuery(query url.Values, key, value string) {
+	if strings.TrimSpace(value) != "" {
+		query.Set(key, value)
+	}
 }
 
 func invalidRemoteErrorEnvelopeError(response *http.Response, entry Endpoint, proxyURL *url.URL) error {

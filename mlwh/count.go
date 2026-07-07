@@ -27,9 +27,11 @@ package mlwh
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // countStudiesCacheSQL counts the SQSCP studies mirrored in the cache, matching
@@ -114,7 +116,30 @@ const (
 	// the inner WHERE between the id_run predicate and the closing paren.
 	countIRODSPathsForRunCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.platform FROM seq_product_irods_locations_mirror spi INNER JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE ipm.id_run = ?`
 	countIRODSPathsForRunCacheSQLSuffix = `) AS distinct_run_irods`
+
+	// runsForSampleD1cSQL sizes/lists the D1 export "runs of sample"
+	// relationship at the public endpoint grain: distinct Illumina run ids for
+	// the resolved sample.
+	runsForSampleD1cSQL      = `SELECT DISTINCT id_run FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? ORDER BY id_run LIMIT ? OFFSET ?`
+	countRunsForSampleD1cSQL = `SELECT COUNT(DISTINCT id_run) FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ?`
+
+	// countStudiesForSampleD1cSQL sizes the existing StudiesForSample list: the
+	// distinct SQSCP studies linked through library_samples for the named SQSCP
+	// sample.
+	countStudiesForSampleD1cSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT study_mirror.id_study_tmp FROM sample_mirror INNER JOIN library_samples ON library_samples.id_sample_tmp = sample_mirror.id_sample_tmp INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims WHERE sample_mirror.name = ? AND sample_mirror.id_lims = 'SQSCP' AND study_mirror.id_lims = 'SQSCP') AS distinct_sample_studies`
+
+	// studiesForProgrammeD1cSQL lists/counts the D1 export "studies of programme"
+	// relationship using the exact programme value.
+	countStudiesForProgrammeD1cSQL = `SELECT COUNT(*) FROM study_mirror WHERE id_lims = 'SQSCP' AND programme = ?`
+
+	// studyUsersForStudyD1cSQL lists/counts the D1 export "users of study"
+	// relationship: one study_users_mirror row linked to the study per returned
+	// row.
+	studyUsersForStudyD1cSQL      = `SELECT study_users_mirror.role, study_users_mirror.name, study_users_mirror.login, study_users_mirror.email FROM study_users_mirror INNER JOIN study_mirror ON study_mirror.id_study_tmp = study_users_mirror.id_study_tmp WHERE study_mirror.id_lims = 'SQSCP' AND study_mirror.id_study_lims = ? ORDER BY study_users_mirror.role, study_users_mirror.login LIMIT ? OFFSET ?`
+	countStudyUsersForStudyD1cSQL = `SELECT COUNT(*) FROM study_users_mirror INNER JOIN study_mirror ON study_mirror.id_study_tmp = study_users_mirror.id_study_tmp WHERE study_mirror.id_lims = 'SQSCP' AND study_mirror.id_study_lims = ?`
 )
+
+var studiesForProgrammeD1cSQL = `SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE id_lims = 'SQSCP' AND programme = ? ORDER BY id_study_lims LIMIT ? OFFSET ?`
 
 // countFindSamplesBySangerIDSQL and its siblings size the find/sample/* lists:
 // each counts the SQSCP sample_mirror rows matching the exact field the
@@ -132,6 +157,141 @@ const (
 	// a library type, mirroring findSamplesByLibraryTypeSQL's join and filter.
 	countFindSamplesByLibraryTypeSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND sample_mirror.id_lims = 'SQSCP'`
 )
+
+// StudyUser is one study_users role assignment linked to a study.
+type StudyUser struct {
+	Role  string `json:"role" doc:"study_users role"`
+	Name  string `json:"name" doc:"stored person name"`
+	Login string `json:"login" doc:"Sanger username"`
+	Email string `json:"email" doc:"email address"`
+}
+
+// StudyUsers lists study_users role assignments for a study.
+func (c *Client) StudyUsers(ctx context.Context, studyLimsID string, limit, offset int) ([]StudyUser, error) {
+	studyExists, err := c.cacheStudyExists(ctx, studyLimsID)
+	if err != nil {
+		return nil, err
+	}
+	if !studyExists {
+		if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+			if errors.Is(err, ErrCacheNeverSynced) {
+				return []StudyUser{}, err
+			}
+
+			return nil, err
+		}
+
+		return nil, ErrNotFound
+	}
+
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	users, err := queryStudyUsers(ctx, db, studyUsersForStudyD1cSQL, studyLimsID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	if len(users) == 0 {
+		if err = c.requireAnySyncState(ctx, syncTableStudyUsers); err != nil {
+			if errors.Is(err, ErrCacheNeverSynced) {
+				return []StudyUser{}, err
+			}
+
+			return nil, err
+		}
+	}
+
+	return users, nil
+}
+
+func queryStudyUsers(ctx context.Context, db *sql.DB, query string, args ...any) ([]StudyUser, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: query study users: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	users := make([]StudyUser, 0)
+	for rows.Next() {
+		var user StudyUser
+		if err = rows.Scan(&user.Role, &user.Name, &user.Login, &user.Email); err != nil {
+			return nil, fmt.Errorf("%w: scan study user: %w", ErrUpstreamImpaired, err)
+		}
+
+		users = append(users, user)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: query study users: %w", ErrUpstreamImpaired, err)
+	}
+
+	return users, nil
+}
+
+// SampleCRAM is one de-duplicated sample CRAM row for a study.
+type SampleCRAM struct {
+	Name          string `json:"name" doc:"Sanger sample name"`
+	EGAID         string `json:"ega_id" doc:"sample public archive accession number"`
+	IRODSCRAMPath string `json:"irods_cram_path" doc:"selected iRODS CRAM path for the sample"`
+	Merged        bool   `json:"merged" doc:"whether the selected CRAM is a merged composite object"`
+}
+
+// SampleCRAMsForStudy lists one selected CRAM per sample for a study, matching
+// the D1a sample-crams export default of CRAM suffix plus deliverables-only.
+func (c *Client) SampleCRAMsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleCRAM, error) {
+	studyExists, err := c.cacheStudyExists(ctx, studyLimsID)
+	if err != nil {
+		return nil, err
+	}
+	if !studyExists {
+		if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+			if errors.Is(err, ErrCacheNeverSynced) {
+				return []SampleCRAM{}, err
+			}
+
+			return nil, err
+		}
+
+		return nil, ErrNotFound
+	}
+
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	rows, err := c.queryExportSampleCRAMRows(ctx, db, defaultSampleCRAMInput(studyLimsID, limit, offset))
+	if err != nil {
+		return nil, err
+	}
+
+	return sampleCRAMRows(rows), nil
+}
+
+func defaultSampleCRAMInput(studyLimsID string, limit, offset int) exportSampleCRAMQueryInput {
+	return exportSampleCRAMQueryInput{
+		studyID:          studyLimsID,
+		normalisedFile:   "cram",
+		deliverablesOnly: true,
+		limit:            limit,
+		offset:           offset,
+	}
+}
+
+func sampleCRAMRows(rows []exportSampleCRAMRow) []SampleCRAM {
+	sampleCRAMs := make([]SampleCRAM, len(rows))
+	for index, row := range rows {
+		sampleCRAMs[index] = SampleCRAM{
+			Name:          row.Name,
+			EGAID:         row.EGAID,
+			IRODSCRAMPath: row.IRODSPath(),
+			Merged:        row.Merged,
+		}
+	}
+
+	return sampleCRAMs
+}
 
 // irodsCountFilterQuery assembles an iRODS count query with the same optional
 // file-type and deliverables-only clauses used by the matching list query.
@@ -381,6 +541,232 @@ func (c *Client) countStudyManifestForEmptyStudy(ctx context.Context, studyLimsI
 	}
 
 	return Count{}, ErrNotFound
+}
+
+// RunsForSample lists the distinct sequencing runs associated with a sample.
+func (c *Client) RunsForSample(ctx context.Context, sangerName string, limit, offset int) ([]Run, error) {
+	sample, err := c.resolveSampleFromCache(ctx, `SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, sangerName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireAnySyncState(ctx, syncTableSample); syncErr != nil {
+				return []Run{}, syncErr
+			}
+
+			return nil, ErrNotFound
+		}
+
+		return nil, err
+	}
+
+	runs, err := c.queryRunIDs(ctx, runsForSampleD1cSQL, "query sample runs", sample.IDSampleTmp, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	if len(runs) == 0 {
+		if syncErr := c.requireAnySyncState(ctx, syncTableIseqProductMetrics); syncErr != nil {
+			if errors.Is(syncErr, ErrCacheNeverSynced) {
+				return []Run{}, syncErr
+			}
+
+			return nil, syncErr
+		}
+	}
+
+	return runs, nil
+}
+
+// CountRunsForSample counts the distinct sequencing runs associated with a
+// sample, the count counterpart of RunsForSample.
+func (c *Client) CountRunsForSample(ctx context.Context, sangerName string) (Count, error) {
+	sample, err := c.resolveSampleFromCache(ctx, `SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, sangerName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireAnySyncState(ctx, syncTableSample); syncErr != nil {
+				return Count{}, syncErr
+			}
+
+			return Count{}, ErrNotFound
+		}
+
+		return Count{}, err
+	}
+
+	count, err := c.queryCount(ctx, countRunsForSampleD1cSQL, "count sample runs", sample.IDSampleTmp)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+	if err = c.requireAnySyncState(ctx, syncTableIseqProductMetrics); err != nil {
+		return Count{}, err
+	}
+
+	return Count{Count: 0}, nil
+}
+
+// CountStudiesForSample counts the distinct studies linked to a sample, the
+// count counterpart of StudiesForSample.
+func (c *Client) CountStudiesForSample(ctx context.Context, sangerName string) (Count, error) {
+	count, err := c.queryCount(ctx, countStudiesForSampleD1cSQL, "count sample studies", sangerName)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	sampleExists, err := c.cacheSampleExists(ctx, sangerName)
+	if err != nil {
+		return Count{}, err
+	}
+	if sampleExists {
+		if err = c.requireAnySyncState(ctx, syncTableStudy, syncTableIseqFlowcell); err != nil {
+			return Count{}, err
+		}
+
+		return Count{}, ErrNotFound
+	}
+	if err = c.requireAnySyncState(ctx, syncTableSample); err != nil {
+		return Count{}, err
+	}
+
+	return Count{}, ErrNotFound
+}
+
+// StudiesForProgramme lists studies whose programme exactly matches programme.
+func (c *Client) StudiesForProgramme(ctx context.Context, programme string, limit, offset int) ([]Study, error) {
+	if strings.TrimSpace(programme) == "" {
+		return nil, fmt.Errorf("%w: programme is required", ErrUnsupportedIdentifier)
+	}
+
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	studies, err := c.queryStudySearch(ctx, db, studiesForProgrammeD1cSQL, programme, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	if len(studies) == 0 {
+		if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+			if errors.Is(err, ErrCacheNeverSynced) {
+				return []Study{}, err
+			}
+
+			return nil, err
+		}
+	}
+
+	return studies, nil
+}
+
+// CountStudiesForProgramme counts studies whose programme exactly matches
+// programme, the count counterpart of StudiesForProgramme.
+func (c *Client) CountStudiesForProgramme(ctx context.Context, programme string) (Count, error) {
+	if strings.TrimSpace(programme) == "" {
+		return Count{}, fmt.Errorf("%w: programme is required", ErrUnsupportedIdentifier)
+	}
+
+	count, err := c.queryCount(ctx, countStudiesForProgrammeD1cSQL, "count programme studies", programme)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+	if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+		return Count{}, err
+	}
+
+	return Count{Count: 0}, nil
+}
+
+// CountStudyUsers counts study_users role assignments for a study, the count
+// counterpart of StudyUsers.
+func (c *Client) CountStudyUsers(ctx context.Context, studyLimsID string) (Count, error) {
+	studyExists, err := c.cacheStudyExists(ctx, studyLimsID)
+	if err != nil {
+		return Count{}, err
+	}
+	if !studyExists {
+		if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+			return Count{}, err
+		}
+
+		return Count{}, ErrNotFound
+	}
+
+	count, err := c.queryCount(ctx, countStudyUsersForStudyD1cSQL, "count study users", studyLimsID)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+	if err = c.requireAnySyncState(ctx, syncTableStudyUsers); err != nil {
+		return Count{}, err
+	}
+
+	return Count{Count: 0}, nil
+}
+
+// CountSampleCRAMsForStudy counts the rows SampleCRAMsForStudy would return.
+func (c *Client) CountSampleCRAMsForStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	studyExists, err := c.cacheStudyExists(ctx, studyLimsID)
+	if err != nil {
+		return Count{}, err
+	}
+	if !studyExists {
+		if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+			return Count{}, err
+		}
+
+		return Count{}, ErrNotFound
+	}
+
+	query, args := exportSampleCRAMCountQuery(defaultSampleCRAMInput(studyLimsID, 0, 0))
+	count, err := c.queryCount(ctx, query, "count study sample crams", args...)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+	if err = c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); err != nil {
+		return Count{}, err
+	}
+
+	return Count{Count: 0}, nil
+}
+
+func (c *Client) queryRunIDs(ctx context.Context, query, action string, args ...any) ([]Run, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	runs := make([]Run, 0)
+	for rows.Next() {
+		run := Run{}
+		if err = rows.Scan(&run.IDRun); err != nil {
+			return nil, fmt.Errorf("%w: scan sample runs: %w", ErrUpstreamImpaired, err)
+		}
+
+		runs = append(runs, run)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
+	}
+
+	return runs, nil
 }
 
 // CountRunsForStudy counts the distinct runs for a study, the count counterpart

@@ -393,6 +393,76 @@ type e1Count struct {
 	zeroIsNotFound bool
 }
 
+// D1c acceptance test: the D1 export relationship set's new count siblings match
+// their full list length. Earlier E1/F2/B3/C2 tests already cover the older
+// hierarchy relationships; this pins the D1a relationships that did not yet have
+// public /count counterparts.
+func TestD1cExportRelationshipCountsMatchListLength(t *testing.T) {
+	convey.Convey("D1c: Given a cache seeded for the remaining D1 export relationships", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedExportSampleCRAMScenario(t, cache.DB())
+		seedHierarchyStudy(t, cache.DB(), 301, "E1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, e1SampleWithData, "e1-supplier-1", "Homo sapiens", "e1-donor-1")
+		seedLibrarySample(t, cache.DB(), "Standard", 1, "E1")
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 7001, 1, 70001, 1, 1, "E1")
+		seedStudyUsersMirrorRow(t, cache.DB(), 9801, 301, "owner", "d1c-owner", "d1c-owner@sanger.ac.uk", "D One")
+		seedStudyUsersMirrorRow(t, cache.DB(), 9802, 301, "manager", "d1c-manager", "d1c-manager@sanger.ac.uk", "D Two")
+		seedSyncState(t, cache.DB(), syncTableStudyUsers, time.Date(2026, time.July, 1, 6, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		ctx := context.Background()
+		cases := []e1Count{
+			{
+				name:  "CountRunsForSample",
+				count: func(c *Client) (Count, error) { return c.CountRunsForSample(ctx, e1SampleWithData) },
+				listLen: func(c *Client) (int, error) {
+					return listLen(c.RunsForSample(ctx, e1SampleWithData, countListFetchAll, 0))
+				},
+			},
+			{
+				name:    "CountStudiesForSample",
+				count:   func(c *Client) (Count, error) { return c.CountStudiesForSample(ctx, e1SampleWithData) },
+				listLen: func(c *Client) (int, error) { return listLen(c.StudiesForSample(ctx, e1SampleWithData)) },
+			},
+			{
+				name:  "CountStudiesForProgramme",
+				count: func(c *Client) (Count, error) { return c.CountStudiesForProgramme(ctx, "programme") },
+				listLen: func(c *Client) (int, error) {
+					return listLen(c.StudiesForProgramme(ctx, "programme", countListFetchAll, 0))
+				},
+			},
+			{
+				name:    "CountStudyUsers",
+				count:   func(c *Client) (Count, error) { return c.CountStudyUsers(ctx, "E1") },
+				listLen: func(c *Client) (int, error) { return listLen(c.StudyUsers(ctx, "E1", countListFetchAll, 0)) },
+			},
+			{
+				name:  "CountSampleCRAMsForStudy",
+				count: func(c *Client) (Count, error) { return c.CountSampleCRAMsForStudy(ctx, "CRAMS") },
+				listLen: func(c *Client) (int, error) {
+					return listLen(c.SampleCRAMsForStudy(ctx, "CRAMS", countListFetchAll, 0))
+				},
+			},
+		}
+
+		convey.Convey("when each relationship count and full list are fetched, then count == len(rows)", func() {
+			mismatches := []string{}
+
+			for _, tc := range cases {
+				count, countErr := tc.count(client)
+				length, listErr := tc.listLen(client)
+				if countErr != nil || listErr != nil || count.Count != length {
+					mismatches = append(mismatches, tc.name)
+				}
+			}
+
+			convey.So(mismatches, convey.ShouldBeEmpty)
+		})
+	})
+}
+
 // e1CountCases enumerates the fifteen new /count endpoints added for E1, bound to
 // the e1CountScenario fixture identifiers. Each pairs the count with its list so a
 // single table drives the count<->list cross-check, the never-synced cascade, and

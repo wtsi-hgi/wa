@@ -125,6 +125,9 @@ func parityQueryCases() []parityQueryCase {
 			return q.LibrariesForStudy(ctx, parityStudyID, 100, 0)
 		}},
 		{name: "RunsForStudy", call: func(ctx context.Context, q Queryer) (any, error) { return q.RunsForStudy(ctx, parityStudyID, 100, 0) }},
+		{name: "RunsForSample", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.RunsForSample(ctx, paritySampleName, 100, 0)
+		}},
 		{name: "StudyOverview", call: func(ctx context.Context, q Queryer) (any, error) { return q.StudyOverview(ctx, parityStudyID) }},
 		{name: "RunOverview", call: func(ctx context.Context, q Queryer) (any, error) { return q.RunOverview(ctx, parityRunID) }},
 		{name: "RunStatus", call: func(ctx context.Context, q Queryer) (any, error) { return q.RunStatus(ctx, parityRunID) }},
@@ -152,6 +155,35 @@ func parityQueryCases() []parityQueryCase {
 			return q.StudyManifest(ctx, parityStudyID, "", false, 100, 0)
 		}},
 		{name: "StudiesForSample", call: func(ctx context.Context, q Queryer) (any, error) { return q.StudiesForSample(ctx, paritySampleName) }},
+		{name: "CountStudiesForSample", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountStudiesForSample(ctx, paritySampleName)
+		}},
+		{name: "StudiesForProgramme", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.StudiesForProgramme(ctx, "programme", 100, 0)
+		}},
+		{name: "CountStudiesForProgramme", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountStudiesForProgramme(ctx, "programme")
+		}},
+		{name: "StudyUsers", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.StudyUsers(ctx, parityStudyID, 100, 0)
+		}},
+		{name: "CountStudyUsers", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountStudyUsers(ctx, parityStudyID)
+		}},
+		{name: "SampleCRAMsForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.SampleCRAMsForStudy(ctx, parityStudyID, 100, 0)
+		}},
+		{name: "CountSampleCRAMsForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountSampleCRAMsForStudy(ctx, parityStudyID)
+		}},
+		{name: "Export", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.Export(ctx, ExportRelationship{Children: "irods", ParentKind: "study"}, parityStudyID, ExportOptions{
+				Columns:  []string{"name", "irods_path"},
+				FileType: "cram",
+				Limit:    100,
+				Format:   "tsv",
+			})
+		}},
 		{name: "StudiesForFacultySponsor", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.StudiesForFacultySponsor(ctx, parityFacultySponsorTerm, 100, 0)
 		}},
@@ -237,6 +269,9 @@ func parityQueryCases() []parityQueryCase {
 		}},
 		{name: "CountRunsForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountRunsForStudy(ctx, parityStudyID)
+		}},
+		{name: "CountRunsForSample", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountRunsForSample(ctx, paritySampleName)
 		}},
 		{name: "CountStudyManifest", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountStudyManifest(ctx, parityStudyID)

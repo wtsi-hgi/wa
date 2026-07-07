@@ -48,6 +48,7 @@ type Queryer interface {
 	SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]Sample, error)
 	LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]Library, error)
 	RunsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]Run, error)
+	RunsForSample(ctx context.Context, sangerName string, limit, offset int) ([]Run, error)
 	StudyOverview(ctx context.Context, studyLimsID string) (StudyOverview, error)
 	RunOverview(ctx context.Context, idRun string) (RunOverview, error)
 	RunStatus(ctx context.Context, idRun string) (RunStatusTimeline, error)
@@ -61,6 +62,12 @@ type Queryer interface {
 	IRODSPathsForRun(ctx context.Context, idRun, fileType string, limit, offset int) ([]IRODSPath, error)
 	StudyManifest(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (StudyManifest, error)
 	StudiesForSample(ctx context.Context, sangerName string) ([]Study, error)
+	StudiesForProgramme(ctx context.Context, programme string, limit, offset int) ([]Study, error)
+	StudyUsers(ctx context.Context, studyLimsID string, limit, offset int) ([]StudyUser, error)
+	SampleCRAMsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleCRAM, error)
+
+	// Generic export projection.
+	Export(ctx context.Context, rel ExportRelationship, parentID string, opts ExportOptions) (ExportResult, error)
 
 	// People to studies (a named PI/sponsor to their studies; name is a path
 	// param; limit/offset pagination).
@@ -102,9 +109,14 @@ type Queryer interface {
 	CountSamplesForLibraryLimsID(ctx context.Context, idLibraryLims string) (Count, error)
 	CountSamplesForLibraryType(ctx context.Context, pipelineIDLims string) (Count, error)
 	CountRunsForStudy(ctx context.Context, studyLimsID string) (Count, error)
+	CountRunsForSample(ctx context.Context, sangerName string) (Count, error)
+	CountStudiesForSample(ctx context.Context, sangerName string) (Count, error)
+	CountStudiesForProgramme(ctx context.Context, programme string) (Count, error)
 	CountStudyManifest(ctx context.Context, studyLimsID string) (Count, error)
 	CountLibrariesForStudy(ctx context.Context, studyLimsID string) (Count, error)
 	CountLanesForSample(ctx context.Context, sangerName string) (Count, error)
+	CountStudyUsers(ctx context.Context, studyLimsID string) (Count, error)
+	CountSampleCRAMsForStudy(ctx context.Context, studyLimsID string) (Count, error)
 	CountIRODSPathsForSample(ctx context.Context, sangerName string) (Count, error)
 	CountIRODSPathsForStudy(ctx context.Context, studyLimsID string) (Count, error)
 	CountIRODSPathsForRun(ctx context.Context, idRun, fileType string) (Count, error)

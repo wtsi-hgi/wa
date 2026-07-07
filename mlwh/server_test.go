@@ -63,12 +63,14 @@ type serverFakeQueryer struct {
 	expandIdentifierFunc     func(context.Context, IdentifierKind, string) ([]TaggedID, error)
 	searchStudiesFunc        func(context.Context, string, int, int) ([]Study, error)
 	searchSamplesFunc        func(context.Context, string, int, int) ([]Sample, error)
+	studyUsersFunc           func(context.Context, string, int, int) ([]StudyUser, error)
 	countStudySearchFunc     func(context.Context, string) (Count, error)
 	countSampleSearchFunc    func(context.Context, string) (Count, error)
 	countStudiesFunc         func(context.Context) (Count, error)
 	countStudyManifestFunc   func(context.Context, string) (Count, error)
 	countSamplesForStudyFunc func(context.Context, string) (Count, error)
 	countSamplesWithDataFunc func(context.Context, string) (Count, error)
+	countStudyUsersFunc      func(context.Context, string) (Count, error)
 	freshnessFunc            func(context.Context) (Freshness, error)
 
 	samplesForStudyCall struct {
@@ -87,6 +89,12 @@ type serverFakeQueryer struct {
 		studyLimsID string
 		fileType    string
 		withIRODS   bool
+		limit       int
+		offset      int
+	}
+
+	studyUsersCall struct {
+		studyLimsID string
 		limit       int
 		offset      int
 	}
@@ -165,6 +173,10 @@ func (q *serverFakeQueryer) RunsForStudy(_ context.Context, _ string, _ int, _ i
 	panic("unexpected RunsForStudy call")
 }
 
+func (q *serverFakeQueryer) RunsForSample(_ context.Context, _ string, _ int, _ int) ([]Run, error) {
+	panic("unexpected RunsForSample call")
+}
+
 func (q *serverFakeQueryer) StudyOverview(_ context.Context, _ string) (StudyOverview, error) {
 	panic("unexpected StudyOverview call")
 }
@@ -225,6 +237,30 @@ func (q *serverFakeQueryer) StudyManifest(ctx context.Context, studyLimsID, file
 
 func (q *serverFakeQueryer) StudiesForSample(_ context.Context, _ string) ([]Study, error) {
 	panic("unexpected StudiesForSample call")
+}
+
+func (q *serverFakeQueryer) StudiesForProgramme(_ context.Context, _ string, _ int, _ int) ([]Study, error) {
+	panic("unexpected StudiesForProgramme call")
+}
+
+func (q *serverFakeQueryer) StudyUsers(ctx context.Context, studyLimsID string, limit, offset int) ([]StudyUser, error) {
+	if q.studyUsersFunc == nil {
+		panic("unexpected StudyUsers call")
+	}
+
+	q.studyUsersCall.studyLimsID = studyLimsID
+	q.studyUsersCall.limit = limit
+	q.studyUsersCall.offset = offset
+
+	return q.studyUsersFunc(ctx, studyLimsID, limit, offset)
+}
+
+func (q *serverFakeQueryer) SampleCRAMsForStudy(_ context.Context, _ string, _ int, _ int) ([]SampleCRAM, error) {
+	panic("unexpected SampleCRAMsForStudy call")
+}
+
+func (q *serverFakeQueryer) Export(_ context.Context, _ ExportRelationship, _ string, _ ExportOptions) (ExportResult, error) {
+	panic("unexpected Export call")
 }
 
 func (q *serverFakeQueryer) StudiesForFacultySponsor(_ context.Context, _ string, _ int, _ int) ([]PersonStudy, error) {
@@ -418,6 +454,18 @@ func (q *serverFakeQueryer) CountRunsForStudy(_ context.Context, _ string) (Coun
 	panic("unexpected CountRunsForStudy call")
 }
 
+func (q *serverFakeQueryer) CountRunsForSample(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountRunsForSample call")
+}
+
+func (q *serverFakeQueryer) CountStudiesForSample(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountStudiesForSample call")
+}
+
+func (q *serverFakeQueryer) CountStudiesForProgramme(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountStudiesForProgramme call")
+}
+
 func (q *serverFakeQueryer) CountStudyManifest(ctx context.Context, studyLimsID string) (Count, error) {
 	q.countCall.studyLimsID = studyLimsID
 
@@ -434,6 +482,20 @@ func (q *serverFakeQueryer) CountLibrariesForStudy(_ context.Context, _ string) 
 
 func (q *serverFakeQueryer) CountLanesForSample(_ context.Context, _ string) (Count, error) {
 	panic("unexpected CountLanesForSample call")
+}
+
+func (q *serverFakeQueryer) CountStudyUsers(ctx context.Context, studyLimsID string) (Count, error) {
+	q.countCall.studyLimsID = studyLimsID
+
+	if q.countStudyUsersFunc == nil {
+		return Count{}, nil
+	}
+
+	return q.countStudyUsersFunc(ctx, studyLimsID)
+}
+
+func (q *serverFakeQueryer) CountSampleCRAMsForStudy(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountSampleCRAMsForStudy call")
 }
 
 func (q *serverFakeQueryer) CountIRODSPathsForSample(_ context.Context, _ string) (Count, error) {
@@ -529,6 +591,32 @@ func decodeMLWHJSONResponseForTest(t *testing.T, response *httptest.ResponseReco
 	if err := json.NewDecoder(bytes.NewReader(response.Body.Bytes())).Decode(target); err != nil {
 		t.Fatalf("decode JSON response: %v", err)
 	}
+}
+
+func TestServerD1cStudyUsersSizingHeaders(t *testing.T) {
+	convey.Convey("D1c: Given a server over a fake Queryer for study users", t, func() {
+		queryer := &serverFakeQueryer{
+			studyUsersFunc: func(_ context.Context, _ string, _ int, _ int) ([]StudyUser, error) {
+				return []StudyUser{{Role: "owner", Name: "Ana Owner", Login: "ao1", Email: "ao1@sanger.ac.uk"}}, nil
+			},
+			countStudyUsersFunc: func(_ context.Context, _ string) (Count, error) {
+				return Count{Count: 2}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/E1/users?limit=1&offset=0")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "2")
+		convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "1")
+		convey.So(queryer.studyUsersCall.studyLimsID, convey.ShouldEqual, "E1")
+		convey.So(queryer.studyUsersCall.limit, convey.ShouldEqual, 1)
+		convey.So(queryer.studyUsersCall.offset, convey.ShouldEqual, 0)
+
+		var users []StudyUser
+		decodeMLWHJSONResponseForTest(t, response, &users)
+		convey.So(users, convey.ShouldResemble, []StudyUser{{Role: "owner", Name: "Ana Owner", Login: "ao1", Email: "ao1@sanger.ac.uk"}})
+	})
 }
 
 func TestServerErrorEnvelopeB2(t *testing.T) {

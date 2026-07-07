@@ -489,6 +489,18 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 				return countValue(queryer.CountRunsForStudy(ctx, id))
 			})
 		}
+	case "RunsForSample":
+		return func(c *gin.Context) {
+			id, pagination, ok := mlwhIDAndPagination(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.RunsForSample(ctx, id, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountRunsForSample(ctx, id))
+			})
+		}
 	case "StudyOverview":
 		return func(c *gin.Context) {
 			id, ok := mlwhPathParam(c, "id")
@@ -645,7 +657,94 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			result, err := queryer.StudiesForSample(c.Request.Context(), id)
+			ctx := c.Request.Context()
+			result, err := queryer.StudiesForSample(ctx, id)
+			writeMLWHPaginatedResult(c, result, err, 0, func() (int, error) {
+				return countValue(queryer.CountStudiesForSample(ctx, id))
+			})
+		}
+	case "CountStudiesForSample":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountStudiesForSample(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
+	case "StudiesForProgramme":
+		return func(c *gin.Context) {
+			name, pagination, ok := mlwhTermAndSearchPagination(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.StudiesForProgramme(ctx, name, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountStudiesForProgramme(ctx, name))
+			})
+		}
+	case "CountStudiesForProgramme":
+		return func(c *gin.Context) {
+			name, ok := mlwhPathParam(c, "term")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountStudiesForProgramme(c.Request.Context(), name)
+			writeMLWHResult(c, result, err)
+		}
+	case "StudyUsers":
+		return func(c *gin.Context) {
+			id, pagination, ok := mlwhIDAndPagination(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.StudyUsers(ctx, id, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountStudyUsers(ctx, id))
+			})
+		}
+	case "CountStudyUsers":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountStudyUsers(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
+	case "SampleCRAMsForStudy":
+		return func(c *gin.Context) {
+			id, pagination, ok := mlwhIDAndPagination(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.SampleCRAMsForStudy(ctx, id, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountSampleCRAMsForStudy(ctx, id))
+			})
+		}
+	case "CountSampleCRAMsForStudy":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountSampleCRAMsForStudy(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
+	case "Export":
+		return func(c *gin.Context) {
+			rel, parentID, opts, ok := mlwhExportRequest(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.Export(c.Request.Context(), rel, parentID, opts)
+			if err == nil {
+				result, err = materializeMLWHExportResult(c.Request.Context(), result)
+			}
 			writeMLWHResult(c, result, err)
 		}
 	case "StudiesForFacultySponsor":
@@ -960,6 +1059,15 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 				return
 			}
 			result, err := queryer.CountRunsForStudy(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
+	case "CountRunsForSample":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountRunsForSample(c.Request.Context(), id)
 			writeMLWHResult(c, result, err)
 		}
 	case "CountStudyManifest":
@@ -1292,6 +1400,130 @@ func writeMLWHStudyManifest(c *gin.Context, manifest StudyManifest, err error, o
 // remote, and external Queryer implementations.
 func studyManifestTotal(ctx context.Context, queryer Queryer, studyLimsID string) (int, error) {
 	return countValue(queryer.CountStudyManifest(ctx, studyLimsID))
+}
+
+func mlwhExportRequest(c *gin.Context) (ExportRelationship, string, ExportOptions, bool) {
+	children, ok := mlwhPathParam(c, "children")
+	if !ok {
+		return ExportRelationship{}, "", ExportOptions{}, false
+	}
+	parentKind, ok := mlwhPathParam(c, "parent_kind")
+	if !ok {
+		return ExportRelationship{}, "", ExportOptions{}, false
+	}
+	parentID, ok := mlwhPathParam(c, "parent_id")
+	if !ok {
+		return ExportRelationship{}, "", ExportOptions{}, false
+	}
+	opts, ok := mlwhExportOptionsFromQuery(c)
+	if !ok {
+		return ExportRelationship{}, "", ExportOptions{}, false
+	}
+
+	return ExportRelationship{Children: children, ParentKind: parentKind}, parentID, opts, true
+}
+
+func mlwhExportOptionsFromQuery(c *gin.Context) (ExportOptions, bool) {
+	columns, ok := mlwhExportColumnsFromQuery(c)
+	if !ok {
+		return ExportOptions{}, false
+	}
+	deliverablesOnly, ok := mlwhQueryOptionalBool(c, "deliverables_only")
+	if !ok {
+		return ExportOptions{}, false
+	}
+	limit, ok := mlwhQueryInt(c, "limit", 0)
+	if !ok {
+		return ExportOptions{}, false
+	}
+	offset, ok := mlwhQueryInt(c, "offset", 0)
+	if !ok {
+		return ExportOptions{}, false
+	}
+	all, ok := mlwhQueryBool(c, "all")
+	if !ok {
+		return ExportOptions{}, false
+	}
+
+	return ExportOptions{
+		Columns:          columns,
+		FileType:         c.Query("file_type"),
+		DeliverablesOnly: deliverablesOnly,
+		QC:               c.Query("qc"),
+		LibraryType:      c.Query("library_type"),
+		Organism:         c.Query("organism"),
+		Sort:             c.Query("sort"),
+		Since:            c.Query("since"),
+		Until:            c.Query("until"),
+		Limit:            limit,
+		Offset:           offset,
+		All:              all,
+		Cursor:           c.Query("cursor"),
+		Format:           c.Query("format"),
+	}, true
+}
+
+func mlwhExportColumnsFromQuery(c *gin.Context) ([]string, bool) {
+	raw := strings.TrimSpace(c.Query("columns"))
+	if raw == "" {
+		return nil, true
+	}
+
+	parts := strings.Split(raw, ",")
+	columns := make([]string, 0, len(parts))
+	for _, part := range parts {
+		column := strings.TrimSpace(part)
+		if column == "" {
+			writeMLWHBadRequest(c, "invalid columns: contains an empty column name")
+
+			return nil, false
+		}
+		columns = append(columns, column)
+	}
+
+	return columns, true
+}
+
+func mlwhQueryOptionalBool(c *gin.Context, name string) (*bool, bool) {
+	raw, present := c.GetQuery(name)
+	if !present {
+		return nil, true
+	}
+
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		writeMLWHBadRequest(c, "invalid "+name+": must be a boolean")
+
+		return nil, false
+	}
+
+	return &value, true
+}
+
+func materializeMLWHExportResult(ctx context.Context, result ExportResult) (ExportResult, error) {
+	if result.streamRows == nil {
+		if result.Rows == nil {
+			result.Rows = [][]string{}
+		}
+
+		return result, nil
+	}
+
+	rows := make([][]string, 0)
+	_, err := result.ForEachRow(ctx, func(row []string) error {
+		rows = append(rows, append([]string(nil), row...))
+
+		return nil
+	})
+	if err != nil {
+		return ExportResult{}, err
+	}
+
+	result.Rows = rows
+	result.streamRows = nil
+	result.Complete = true
+
+	return result, nil
 }
 
 // mlwhPeopleName reads a people-endpoint path param (e.g. the faculty-sponsor

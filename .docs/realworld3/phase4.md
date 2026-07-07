@@ -59,8 +59,8 @@ bounded page `Total >= len(Rows)` + non-empty `NextCursor`; MySQL EXPLAIN
 = index range scan on the A4 covering index, <1s per page). Depends on
 Phase 1 (A4), Phase 2 (B), Phase 3 (C4 shared filters).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 1 (parallel, after item 4.1 is reviewed)
 
@@ -85,8 +85,8 @@ id_run,platform,run_date`; the CLI states bounded-page + total + next
 cursor without `--all` and complete-set with `--all`; unknown parent id
 renders a clean not-found and exits 0). Depends on 4.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.3: D1c - per-relationship /count and sizing [parallel with 4.2]
 
@@ -99,8 +99,8 @@ machinery). Counts must match `len(list-all)` per relationship. Files:
 from D1c (for any relationship, count == len(rows)). Depends on 4.1 (the
 relationship set).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items

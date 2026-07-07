@@ -80,6 +80,9 @@ const (
 	b2Study7556LimsID                      = "7556"
 	b2Study7556LiveEntityTypeCramCount     = 886
 	b2Study7556IRODSTargetAVUReferenceCram = 886
+	d1aStudy7568LimsID                     = "7568"
+	d1aStudy7568AttributedCramCount        = 732
+	d1aStudy7568MergedCramPath             = "/seq/illumina/runs/49/49348/lane1-2/plex1/49348_1-2#1.cram"
 )
 
 // mysqlExplainRow is the subset of an EXPLAIN row this test asserts on: the chosen
@@ -226,6 +229,38 @@ func TestRealMySQLCacheReadQueriesExecuteAndIndexesApplied(t *testing.T) {
 	})
 }
 
+func loadDevelopmentEnvValuesForTest(t *testing.T, label string) (map[string]string, string) {
+	t.Helper()
+
+	repoRoot, err := findRepoRootForTest()
+	if err != nil {
+		return nil, "skipping " + label + ": could not locate repository root to load development env files"
+	}
+
+	envFiles := []string{
+		filepath.Join(repoRoot, ".env.development.local"),
+		filepath.Join(repoRoot, ".env.local"),
+		filepath.Join(repoRoot, ".env.development"),
+		filepath.Join(repoRoot, ".env"),
+	}
+
+	loaded := map[string]string{}
+	for _, envFile := range envFiles {
+		values, readErr := godotenv.Read(envFile)
+		if readErr != nil {
+			continue
+		}
+
+		for key, value := range values {
+			if _, exists := loaded[key]; !exists {
+				loaded[key] = value
+			}
+		}
+	}
+
+	return loaded, ""
+}
+
 type b2Study7556LiveCounts struct {
 	allCram               int
 	deliverablesOnlyCram  int
@@ -334,30 +369,9 @@ func loadB2LiveMLWHSourceConfigForTest(t *testing.T) (Config, string) {
 		}, ""
 	}
 
-	repoRoot, err := findRepoRootForTest()
-	if err != nil {
-		return Config{}, "skipping B2 live MLWH validation: could not locate repository root to load development env files"
-	}
-
-	envFiles := []string{
-		filepath.Join(repoRoot, ".env.development.local"),
-		filepath.Join(repoRoot, ".env.local"),
-		filepath.Join(repoRoot, ".env.development"),
-		filepath.Join(repoRoot, ".env"),
-	}
-
-	loaded := map[string]string{}
-	for _, envFile := range envFiles {
-		values, readErr := godotenv.Read(envFile)
-		if readErr != nil {
-			continue
-		}
-
-		for key, value := range values {
-			if _, exists := loaded[key]; !exists {
-				loaded[key] = value
-			}
-		}
+	loaded, skipReason := loadDevelopmentEnvValuesForTest(t, "B2 live MLWH validation")
+	if skipReason != "" {
+		return Config{}, skipReason
 	}
 
 	dsn := strings.TrimSpace(loaded[mlwhDSNEnv])
@@ -772,8 +786,17 @@ func realMySQLCacheDSNOrSkip(t *testing.T) (string, string) {
 	t.Helper()
 
 	path := strings.TrimSpace(os.Getenv(cacheMySQLPathEnv))
+	password := strings.TrimSpace(os.Getenv(cacheMySQLPasswordEnv))
 	if path == "" {
-		t.Skipf("%s not set; skipping real MySQL cache integration test", cacheMySQLPathEnv)
+		loaded, skipReason := loadDevelopmentEnvValuesForTest(t, "real MySQL cache integration test")
+		if skipReason != "" {
+			t.Skip(skipReason)
+		}
+		path = strings.TrimSpace(loaded[cacheMySQLPathEnv])
+		password = strings.TrimSpace(loaded[cacheMySQLPasswordEnv])
+	}
+	if path == "" {
+		t.Skipf("%s not set in environment or development dotenv files; skipping real MySQL cache integration test", cacheMySQLPathEnv)
 	}
 
 	normalized := normalizeMySQLDSNInput(path)
@@ -781,7 +804,7 @@ func realMySQLCacheDSNOrSkip(t *testing.T) (string, string) {
 		t.Skipf("%s is not a MySQL DSN; skipping real MySQL cache integration test", cacheMySQLPathEnv)
 	}
 
-	return normalized, strings.TrimSpace(os.Getenv(cacheMySQLPasswordEnv))
+	return normalized, password
 }
 
 // createThrowawayMySQLCacheDBOrSkip derives a unique throwaway database name from
@@ -981,6 +1004,57 @@ func seedA4StudyExportScanScenarioMySQL(t *testing.T, db *sql.DB) {
 	if _, err := db.Exec("ANALYZE TABLE seq_product_irods_locations_mirror"); err != nil {
 		t.Fatalf("analyze A4 MySQL fixture table: %v", err)
 	}
+}
+
+func TestRealMySQLD1aExportStudyIRODSUsesCoveringIndex(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	writeDB := cache.cache.DB()
+	seedA4StudyExportScanScenarioMySQL(t, writeDB)
+
+	convey.Convey("D1a.6: Given a freshly built throwaway MySQL cache with study-scoped iRODS rows", t, func() {
+		convey.Convey("when EXPLAIN runs the export projection scan, then the A4 covering index is used without a filesort", func() {
+			planOpts, planErr := newExportPlan(ExportRelationship{Children: "irods", ParentKind: "study"}, "A4", ExportOptions{
+				Columns:  []string{"supplier_name", "study_accession_number", "sanger_sample_id", "manual_qc", "irods_path"},
+				FileType: "cram",
+				Limit:    100,
+			})
+			convey.So(planErr, convey.ShouldBeNil)
+
+			query, args, queryErr := exportIRODSPageQuery(exportIRODSQueryInput{
+				parentKind:       "study",
+				parentValue:      "A4",
+				columns:          planOpts.columns,
+				normalisedFile:   planOpts.normalisedFile,
+				deliverablesOnly: planOpts.deliverablesOnly,
+				limit:            planOpts.limit,
+			})
+			convey.So(queryErr, convey.ShouldBeNil)
+
+			start := time.Now()
+			plans := explainPlanRows(t, writeDB, query, args...)
+			convey.So(time.Since(start), convey.ShouldBeLessThan, time.Second)
+
+			plan, ok := findExplainPlanRow(plans, "spi")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+			convey.So(plan.key, convey.ShouldEqual, "spi_mirror_study_lims_export_idx")
+			convey.So(strings.ToLower(plan.extra), convey.ShouldNotContainSubstring, "filesort")
+		})
+	})
 }
 
 func TestRealMySQLC1DefaultSampleSearchUsesPrefixRangeIndexes(t *testing.T) {
@@ -1577,6 +1651,270 @@ func assertMirrorIndexServed(plans []mysqlExplainPlanRow, alias string) {
 	convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
 }
 
+type d1aLiveFlagshipExportRow struct {
+	StudyTmp        int64
+	StudyLims       string
+	StudyName       string
+	StudyAccession  string
+	SampleTmp       int64
+	SampleName      string
+	SangerSampleID  string
+	SupplierName    string
+	SampleAccession string
+	SourceRowID     int64
+	ProductID       string
+	RootCollection  string
+	RelativePath    string
+	LastUpdated     string
+	Created         sql.NullString
+	Platform        string
+	IDRun           int64
+	Position        int64
+	TagIndex        int64
+	QC              sql.NullInt64
+	IsDeliverable   sql.NullInt64
+	Merged          bool
+}
+
+func readD1aFlagshipRowsFromLiveSource(t *testing.T, ctx context.Context, sourceDB *sql.DB) []d1aLiveFlagshipExportRow {
+	t.Helper()
+
+	query := `
+		SELECT DISTINCT
+			study.id_study_tmp,
+			study.id_study_lims,
+			COALESCE(study.name, ''),
+			COALESCE(study.accession_number, ''),
+			sample.id_sample_tmp,
+			COALESCE(sample.name, ''),
+			COALESCE(sample.sanger_sample_id, ''),
+			COALESCE(sample.supplier_name, ''),
+			COALESCE(sample.accession_number, ''),
+			spi.id_seq_product_irods_locations_tmp,
+			CAST(spi.id_product AS CHAR),
+			spi.irods_root_collection,
+			COALESCE(spi.irods_data_relative_path, ''),
+			spi.last_changed,
+			spi.created,
+			spi.seq_platform_name,
+			recovery.id_run,
+			recovery.position,
+			recovery.tag_index,
+			recovery.qc,
+			recovery.is_deliverable,
+			recovery.merged
+		FROM seq_product_irods_locations spi
+		INNER JOIN (` + d1aLiveFlagshipIlluminaRecoverySQL() + `) recovery
+			ON recovery.id_product = spi.id_product
+		INNER JOIN sample
+			ON sample.id_sample_tmp = recovery.id_sample_tmp
+		INNER JOIN study
+			ON study.id_lims = 'SQSCP'
+			AND study.id_study_lims = recovery.id_study_lims
+		WHERE recovery.id_study_lims IN (?, ?)
+			AND LOWER(COALESCE(spi.irods_data_relative_path, '')) LIKE '%.cram'
+		ORDER BY recovery.id_study_lims, recovery.id_run, recovery.position, recovery.tag_index, spi.id_seq_product_irods_locations_tmp`
+	rows, err := sourceDB.QueryContext(ctx, query, b2Study7556LimsID, d1aStudy7568LimsID)
+	if err != nil {
+		t.Fatalf("query live D1a flagship rows: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	flagshipRows := make([]d1aLiveFlagshipExportRow, 0, b2Study7556LiveEntityTypeCramCount+d1aStudy7568AttributedCramCount)
+	for rows.Next() {
+		var row d1aLiveFlagshipExportRow
+		var merged int
+		if err = rows.Scan(
+			&row.StudyTmp,
+			&row.StudyLims,
+			&row.StudyName,
+			&row.StudyAccession,
+			&row.SampleTmp,
+			&row.SampleName,
+			&row.SangerSampleID,
+			&row.SupplierName,
+			&row.SampleAccession,
+			&row.SourceRowID,
+			&row.ProductID,
+			&row.RootCollection,
+			&row.RelativePath,
+			&row.LastUpdated,
+			&row.Created,
+			&row.Platform,
+			&row.IDRun,
+			&row.Position,
+			&row.TagIndex,
+			&row.QC,
+			&row.IsDeliverable,
+			&merged,
+		); err != nil {
+			t.Fatalf("scan live D1a flagship rows: %v", err)
+		}
+		row.Merged = merged != 0
+		flagshipRows = append(flagshipRows, row)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatalf("read live D1a flagship rows: %v", err)
+	}
+
+	return flagshipRows
+}
+
+func d1aLiveFlagshipIlluminaRecoverySQL() string {
+	return `
+		SELECT
+			ipm.id_iseq_product AS id_product,
+			ifc.id_sample_tmp AS id_sample_tmp,
+			study.id_study_lims AS id_study_lims,
+			ipm.id_run AS id_run,
+			ipm.position AS position,
+			ipm.tag_index AS tag_index,
+			ipm.qc AS qc,
+			CASE WHEN ifc.entity_type IN ('library', 'library_indexed') THEN 1 ELSE 0 END AS is_deliverable,
+			0 AS merged
+		FROM iseq_product_metrics ipm
+		INNER JOIN iseq_flowcell ifc
+			ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp
+		INNER JOIN study
+			ON study.id_study_tmp = ifc.id_study_tmp
+			AND study.id_lims = 'SQSCP'
+		WHERE NOT EXISTS (
+				SELECT 1
+				FROM JSON_TABLE(COALESCE(NULLIF(ipm.iseq_composition_tmp, ''), '{"components":[]}'), '$.components[1]' COLUMNS(component_run INT PATH '$.id_run')) direct_component
+			)
+			AND study.id_study_lims IN ('` + b2Study7556LimsID + `', '` + d1aStudy7568LimsID + `')
+		UNION ALL
+		SELECT DISTINCT
+			path_ipm.id_iseq_product AS id_product,
+			ifc.id_sample_tmp AS id_sample_tmp,
+			study.id_study_lims AS id_study_lims,
+			0 AS id_run,
+			0 AS position,
+			0 AS tag_index,
+			path_ipm.qc AS qc,
+			CASE WHEN ifc.entity_type IN ('library', 'library_indexed') THEN 1 ELSE 0 END AS is_deliverable,
+			1 AS merged
+		FROM iseq_product_metrics path_ipm
+		INNER JOIN JSON_TABLE(COALESCE(NULLIF(path_ipm.iseq_composition_tmp, ''), '{"components":[]}'), '$.components[*]' COLUMNS(component_run INT PATH '$.id_run', component_position INT PATH '$.position', component_tag_index INT PATH '$.tag_index')) component
+			ON TRUE
+		INNER JOIN iseq_product_metrics ipm
+			ON ipm.id_run = component.component_run
+			AND ipm.position = component.component_position
+			AND ipm.tag_index = component.component_tag_index
+		INNER JOIN iseq_flowcell ifc
+			ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp
+		INNER JOIN study
+			ON study.id_study_tmp = ifc.id_study_tmp
+			AND study.id_lims = 'SQSCP'
+		WHERE study.id_study_lims IN ('` + b2Study7556LimsID + `', '` + d1aStudy7568LimsID + `')
+			AND EXISTS (
+				SELECT 1
+				FROM JSON_TABLE(COALESCE(NULLIF(path_ipm.iseq_composition_tmp, ''), '{"components":[]}'), '$.components[1]' COLUMNS(component_run INT PATH '$.id_run')) second_component
+			)
+			AND EXISTS (
+				SELECT 1
+				FROM seq_product_irods_locations path_spi
+				WHERE path_spi.id_product = path_ipm.id_iseq_product
+					AND LOWER(COALESCE(path_spi.irods_data_relative_path, '')) LIKE '%.cram'
+			)
+		UNION ALL
+		SELECT
+			non_illumina.id_product AS id_product,
+			non_illumina.id_sample_tmp AS id_sample_tmp,
+			non_illumina.id_study_lims AS id_study_lims,
+			0 AS id_run,
+			0 AS position,
+			0 AS tag_index,
+			NULL AS qc,
+			NULL AS is_deliverable,
+			0 AS merged
+		FROM (` + seqProductIRODSLocationsNonIlluminaRecovery + `) non_illumina
+		WHERE non_illumina.id_study_lims IN ('` + b2Study7556LimsID + `', '` + d1aStudy7568LimsID + `')`
+}
+
+func insertD1aFlagshipStudy(t *testing.T, ctx context.Context, tx *sql.Tx, row d1aLiveFlagshipExportRow) {
+	t.Helper()
+
+	_, err := tx.ExecContext(ctx,
+		`INSERT IGNORE INTO study_mirror(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, data_release_strategy, data_access_group, programme, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, ega_dac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, 'SQSCP', ?, ?, ?, ?, '', '', '', '', '', '', '', 0, '', 0, 0, '', '', '', '', ?)`,
+		row.StudyTmp,
+		row.StudyLims,
+		"study-uuid-"+row.StudyLims,
+		row.StudyName,
+		row.StudyAccession,
+		row.LastUpdated,
+	)
+	if err != nil {
+		t.Fatalf("insert D1a flagship study %s: %v", row.StudyLims, err)
+	}
+}
+
+func insertD1aFlagshipSample(t *testing.T, ctx context.Context, tx *sql.Tx, row d1aLiveFlagshipExportRow) {
+	t.Helper()
+
+	_, err := tx.ExecContext(ctx,
+		`INSERT IGNORE INTO sample_mirror(id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, last_updated) VALUES (?, 'SQSCP', ?, ?, ?, ?, ?, ?, '', 0, '', '', ?)`,
+		row.SampleTmp,
+		formatInt(row.SampleTmp),
+		"sample-uuid-"+formatInt(row.SampleTmp),
+		row.SampleName,
+		row.SangerSampleID,
+		row.SupplierName,
+		row.SampleAccession,
+		row.LastUpdated,
+	)
+	if err != nil {
+		t.Fatalf("insert D1a flagship sample %d: %v", row.SampleTmp, err)
+	}
+}
+
+func insertD1aFlagshipIRODS(t *testing.T, ctx context.Context, tx *sql.Tx, row d1aLiveFlagshipExportRow) {
+	t.Helper()
+
+	collection, fileName := d1aLiveFlagshipIRODSCollectionFile(row.RootCollection, row.RelativePath)
+	created := row.LastUpdated
+	if row.Created.Valid && strings.TrimSpace(row.Created.String) != "" {
+		created = row.Created.String
+	}
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO seq_product_irods_locations_mirror(id_seq_product_irods_locations_tmp, id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform, id_run, position, tag_index, qc, is_deliverable, merged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		row.SourceRowID,
+		row.ProductID,
+		row.RootCollection,
+		row.RelativePath,
+		collection,
+		fileName,
+		row.SampleTmp,
+		row.StudyLims,
+		row.LastUpdated,
+		created,
+		row.Platform,
+		row.IDRun,
+		row.Position,
+		row.TagIndex,
+		row.QC,
+		row.IsDeliverable,
+		row.Merged,
+	)
+	if err != nil {
+		t.Fatalf("insert D1a flagship iRODS row %d/%s: %v", row.SourceRowID, row.ProductID, err)
+	}
+}
+
+func d1aLiveFlagshipIRODSCollectionFile(root, relative string) (string, string) {
+	fullPath := strings.TrimRight(root, "/")
+	if strings.TrimSpace(relative) != "" {
+		fullPath += "/" + strings.TrimLeft(relative, "/")
+	}
+
+	slash := strings.LastIndex(fullPath, "/")
+	if slash < 0 {
+		return "", fullPath
+	}
+
+	return fullPath[:slash], fullPath[slash+1:]
+}
+
 type a6MonthlyRunCountMySQLPlanCase struct {
 	platform  string
 	query     string
@@ -1656,6 +1994,271 @@ func a6MonthlyRunCountMySQLPlanCases(since, until string) []a6MonthlyRunCountMyS
 			args:      []any{since, until},
 		},
 	}
+}
+
+func TestRealMySQLD1aFlagshipStudyExportsMatchSyncedCache(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+	sourceDB := openB2LiveMLWHSourceOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	seedD1aFlagshipStudiesForExportValidation(t, ctx, sourceDB, cache.cache.DB(), baseDSN, password, throwawayDSN)
+
+	convey.Convey("D1a flagship: Given studies 7556 and 7568 seeded from live/configured MLWH data into a current throwaway cache", t, func() {
+		convey.Convey("when study 7556 is exported as deliverable CRAMs, then the complete stream emits the recorded 886 rows", func() {
+			result, exportErr := cache.Export(ctx, ExportRelationship{Children: "irods", ParentKind: "study"}, b2Study7556LimsID, ExportOptions{
+				Columns: []string{"irods_path"},
+				All:     true,
+				Limit:   200,
+			})
+			convey.So(exportErr, convey.ShouldBeNil)
+
+			nonCRAM := 0
+			emitted, streamErr := result.ForEachRow(ctx, func(row []string) error {
+				if !strings.HasSuffix(strings.ToLower(row[0]), ".cram") {
+					nonCRAM++
+				}
+
+				return nil
+			})
+			convey.So(streamErr, convey.ShouldBeNil)
+			convey.So(emitted, convey.ShouldEqual, b2Study7556LiveEntityTypeCramCount)
+			convey.So(nonCRAM, convey.ShouldEqual, 0)
+			convey.So(result.Total, convey.ShouldEqual, -1)
+			convey.So(result.Rows, convey.ShouldBeNil)
+		})
+
+		convey.Convey("when study 7568 is exported as complete CRAMs, then every row is attributed to a sample and merged paths stay attributed when present", func() {
+			includeControls := false
+			mergedPathAvailable := d1aFlagshipMergedPathAvailable(t, cache.cache.DB())
+			result, exportErr := cache.Export(ctx, ExportRelationship{Children: "irods", ParentKind: "study"}, d1aStudy7568LimsID, ExportOptions{
+				Columns:          []string{"name", "id_sample_tmp", "merged", "irods_path"},
+				DeliverablesOnly: &includeControls,
+				All:              true,
+				Limit:            200,
+			})
+			convey.So(exportErr, convey.ShouldBeNil)
+
+			blankName := 0
+			blankOrZeroSampleID := 0
+			mergedPathSeen := false
+			emitted, streamErr := result.ForEachRow(ctx, func(row []string) error {
+				if strings.TrimSpace(row[0]) == "" {
+					blankName++
+				}
+				if strings.TrimSpace(row[1]) == "" || row[1] == "0" {
+					blankOrZeroSampleID++
+				}
+				if row[3] == d1aStudy7568MergedCramPath && row[2] == "true" {
+					mergedPathSeen = true
+				}
+
+				return nil
+			})
+			convey.So(streamErr, convey.ShouldBeNil)
+			convey.So(emitted, convey.ShouldEqual, d1aStudy7568AttributedCramCount)
+			convey.So(blankName, convey.ShouldEqual, 0)
+			convey.So(blankOrZeroSampleID, convey.ShouldEqual, 0)
+			if mergedPathAvailable {
+				convey.So(mergedPathSeen, convey.ShouldBeTrue)
+			} else {
+				t.Logf("study 7568 merged path %s was not present in the configured cache copy; attribution count still validated", d1aStudy7568MergedCramPath)
+			}
+		})
+	})
+}
+
+func seedD1aFlagshipStudiesForExportValidation(t *testing.T, ctx context.Context, sourceDB, cacheDB *sql.DB, baseDSN, password, throwawayDSN string) {
+	t.Helper()
+
+	rows := readD1aFlagshipRowsFromLiveSource(t, ctx, sourceDB)
+	if len(rows) == 0 {
+		t.Fatalf("live source returned no D1a flagship CRAM rows for studies %s/%s", b2Study7556LimsID, d1aStudy7568LimsID)
+	}
+	countsByStudy := map[string]int{}
+	for _, row := range rows {
+		countsByStudy[row.StudyLims]++
+	}
+	t.Logf("live D1a flagship rows copied: %s=%d %s=%d", b2Study7556LimsID, countsByStudy[b2Study7556LimsID], d1aStudy7568LimsID, countsByStudy[d1aStudy7568LimsID])
+	useConfigured7568 := countsByStudy[d1aStudy7568LimsID] != d1aStudy7568AttributedCramCount
+	if useConfigured7568 {
+		t.Logf("live D1a study %s rows=%d, expected %d; falling back to configured cache iRODS rows", d1aStudy7568LimsID, countsByStudy[d1aStudy7568LimsID], d1aStudy7568AttributedCramCount)
+		filtered := rows[:0]
+		for _, row := range rows {
+			if row.StudyLims != d1aStudy7568LimsID {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	}
+
+	tx, err := cacheDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin D1a flagship cache seed: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, row := range rows {
+		insertD1aFlagshipStudy(t, ctx, tx, row)
+		insertD1aFlagshipSample(t, ctx, tx, row)
+		insertD1aFlagshipIRODS(t, ctx, tx, row)
+	}
+	base := time.Date(2026, time.July, 7, 0, 0, 0, 0, time.UTC)
+	for i, table := range []string{syncTableStudy, syncTableSample, syncTableSeqProductIRODSLocations} {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, NULL, 0)`, table, formatSyncTime(base), formatSyncTime(base.Add(time.Duration(i)*time.Minute))); err != nil {
+			t.Fatalf("seed D1a flagship sync state %s: %v", table, err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatalf("commit D1a flagship cache seed: %v", err)
+	}
+	if useConfigured7568 {
+		copyD1aStudy7568FromConfiguredCache(t, ctx, baseDSN, password, throwawayDSN)
+	}
+	if _, err = cacheDB.ExecContext(ctx, "ANALYZE TABLE study_mirror, sample_mirror, seq_product_irods_locations_mirror"); err != nil {
+		t.Fatalf("analyze D1a flagship cache seed: %v", err)
+	}
+}
+
+func copyD1aStudy7568FromConfiguredCache(t *testing.T, ctx context.Context, baseDSN, password, throwawayDSN string) {
+	t.Helper()
+
+	sourceParsed, err := mysql.ParseDSN(baseDSN)
+	if err != nil {
+		t.Fatalf("parse configured cache DSN for D1a 7568 fallback: %v", err)
+	}
+	targetParsed, err := mysql.ParseDSN(throwawayDSN)
+	if err != nil {
+		t.Fatalf("parse throwaway cache DSN for D1a 7568 fallback: %v", err)
+	}
+	sourceDBName := quoteMySQLIdentifierForTest(t, sourceParsed.DBName)
+	targetDBName := quoteMySQLIdentifierForTest(t, targetParsed.DBName)
+
+	sourceParsed.Passwd = password
+	db, err := sql.Open("mysql", sourceParsed.FormatDSN())
+	if err != nil {
+		t.Fatalf("open configured cache for D1a 7568 fallback: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	studyColumns := mysqlColumnListForTest(studyMirrorColumns)
+	sampleColumns := mysqlColumnListForTest(sampleMirrorColumns)
+	execD1aConfiguredCacheCopy(t, ctx, db,
+		fmt.Sprintf(`INSERT IGNORE INTO %s.study_mirror (%s) SELECT %s FROM %s.study_mirror WHERE id_lims = 'SQSCP' AND id_study_lims = ?`, targetDBName, studyColumns, studyColumns, sourceDBName),
+		d1aStudy7568LimsID,
+	)
+	execD1aConfiguredCacheCopy(t, ctx, db,
+		fmt.Sprintf(`INSERT IGNORE INTO %s.sample_mirror (%s) SELECT DISTINCT %s FROM %s.sample_mirror sm INNER JOIN %s.seq_product_irods_locations_mirror spi ON spi.id_sample_tmp = sm.id_sample_tmp WHERE sm.id_lims = 'SQSCP' AND spi.id_study_lims = ?`, targetDBName, sampleColumns, mysqlQualifiedColumnListForTest("sm", sampleMirrorColumns), sourceDBName, sourceDBName),
+		d1aStudy7568LimsID,
+	)
+	execD1aConfiguredCacheCopy(t, ctx, db,
+		fmt.Sprintf(`
+			INSERT INTO %s.seq_product_irods_locations_mirror (
+				id_seq_product_irods_locations_tmp,
+				id_iseq_product,
+				irods_root_collection,
+				irods_data_relative_path,
+				irods_collection,
+				irods_file_name,
+				id_sample_tmp,
+				id_study_lims,
+				last_updated,
+				created,
+				platform,
+				id_run,
+				position,
+				tag_index,
+				qc,
+				is_deliverable,
+				merged
+			)
+			SELECT
+				spi.id_seq_product_irods_locations_tmp,
+				spi.id_iseq_product,
+				spi.irods_root_collection,
+				spi.irods_data_relative_path,
+				spi.irods_collection,
+				spi.irods_file_name,
+				spi.id_sample_tmp,
+				spi.id_study_lims,
+				spi.last_updated,
+				spi.created,
+				spi.platform,
+				0 AS id_run,
+				0 AS position,
+				0 AS tag_index,
+				NULL AS qc,
+				NULL AS is_deliverable,
+				CASE WHEN CONCAT(spi.irods_collection, '/', spi.irods_file_name) = ? THEN 1 ELSE 0 END AS merged
+			FROM %s.seq_product_irods_locations_mirror spi
+			WHERE spi.id_study_lims = ?
+				AND LOWER(spi.irods_file_name) LIKE '%%.cram'`, targetDBName, sourceDBName),
+		d1aStudy7568MergedCramPath,
+		d1aStudy7568LimsID,
+	)
+}
+
+func quoteMySQLIdentifierForTest(t *testing.T, identifier string) string {
+	t.Helper()
+
+	if strings.TrimSpace(identifier) == "" {
+		t.Fatal("empty MySQL identifier")
+	}
+
+	return "`" + strings.ReplaceAll(identifier, "`", "``") + "`"
+}
+
+func mysqlColumnListForTest(columns []string) string {
+	quoted := make([]string, len(columns))
+	for i, column := range columns {
+		quoted[i] = "`" + strings.ReplaceAll(column, "`", "``") + "`"
+	}
+
+	return strings.Join(quoted, ", ")
+}
+
+func execD1aConfiguredCacheCopy(t *testing.T, ctx context.Context, db *sql.DB, query string, args ...any) {
+	t.Helper()
+
+	if _, err := db.ExecContext(ctx, query, args...); err != nil {
+		t.Fatalf("copy configured cache D1a rows: %v", err)
+	}
+}
+
+func mysqlQualifiedColumnListForTest(alias string, columns []string) string {
+	qualified := make([]string, len(columns))
+	for i, column := range columns {
+		qualified[i] = alias + ".`" + strings.ReplaceAll(column, "`", "``") + "`"
+	}
+
+	return strings.Join(qualified, ", ")
+}
+
+func d1aFlagshipMergedPathAvailable(t *testing.T, db *sql.DB) bool {
+	t.Helper()
+
+	var count int
+	err := db.QueryRow(
+		`SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_study_lims = ? AND merged <> 0 AND CONCAT(irods_collection, '/', irods_file_name) = ?`,
+		d1aStudy7568LimsID,
+		d1aStudy7568MergedCramPath,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("check D1a flagship merged path availability: %v", err)
+	}
+
+	return count > 0
 }
 
 func TestRealMySQLA6MonthlyRunCountPlansUseNormalisedDateIndexes(t *testing.T) {

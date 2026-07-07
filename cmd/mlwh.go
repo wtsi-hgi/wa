@@ -309,6 +309,7 @@ func newMLWHCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "mlwh",
 		Short: "Manage the local cache of Sanger MLWH metadata",
+		Args:  cobra.NoArgs,
 		Long: strings.Join([]string{
 			"Manage the local cache of Sanger Multi-LIMS Warehouse (MLWH) metadata.",
 			"",
@@ -350,7 +351,7 @@ func newMLWHCommand() *cobra.Command {
 	command.AddCommand(newMLWHSyncCommand())
 	command.AddCommand(newMLWHInfoCommand())
 	command.AddCommand(newMLWHSearchCommand())
-	command.AddCommand(newMLWHIRODSCommand())
+	command.AddCommand(newMLWHExportCommand())
 	command.AddCommand(newMLWHManifestCommand())
 	command.AddCommand(newMLWHStudiesCommand())
 	command.AddCommand(newMLWHPeopleCommand())
