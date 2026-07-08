@@ -9,7 +9,7 @@ REST APIs and CLIs, and a Next.js web UI for browsing results.
 | Sub-product     | What it does                                                                                                                                          |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **results**     | REST API + CLI for registering, searching, and browsing pipeline output files. Deterministic IDs, file previews, aggregate stats.                     |
-| **mlwh**        | Go client library, cache sync CLI, and current-state REST query server for MLWH-backed study, sample, library, run, and iRODS lookups.                |
+| **mlwh**        | Go client library, cache sync CLI, current-state REST query server, and reporting commands for MLWH-backed studies, samples, libraries, runs, iRODS paths, manifests, latest data, and programmes. |
 | **mlwhdiff**    | Hash-based MLWH change detection with watermarks in SQLite, a REST polling API, and a CLI for ad-hoc diffs.                                           |
 | **results-web** | Next.js web UI for the results API - searchable table, file browser with inline preview, dashboard stats, and study-based search via the MLWH server. |
 
@@ -36,7 +36,7 @@ Requires **Go 1.25+**.
 
 ```
 wa results   — Pipeline results tracker
-wa mlwh      — MLWH cache sync, inspector, and query server
+wa mlwh      — MLWH cache sync, query server, inspector, and reporting tools
 wa mlwhdiff  — MLWH change detection
 ```
 
@@ -171,16 +171,33 @@ default MLWH server is plain HTTP, so publish an `https://` URL only when
 `WA_MLWH_SERVER_KEY`, and `WA_MLWH_SERVER_TOKEN`.
 
 Normal CLI users can query that server without local MLWH database or cache
-credentials:
+credentials. The MLWH CLI covers identifier summaries, sample/study search,
+relationship exports, latest data, run aggregation, study-owner/programme
+lookups, and product manifests:
 
 ```bash
 export WA_MLWH_SERVER_URL=http://host:8091
 wa mlwh info DN1234
 wa mlwh info 5901 --type study --json
+wa mlwh search hek_r --type sample --library-type Standard --organism "Homo sapiens"
+wa mlwh export irods study 5901 --file-type cram --columns supplier_name,manual_qc,irods_path
+wa mlwh export sample-crams study 7568 --json
+wa mlwh latest 5901 --file-type cram
+wa mlwh runs --monthly --group-by platform,programme --since 2024-01-01
+wa mlwh studies --programme "Human Genetics"
+wa mlwh programmes
+wa mlwh manifest 7568 --with-irods --file-type cram
 ```
 
 When using the local development scenario, `wa --env development mlwh info
 DN1234` defaults to the MLWH API port from the scenario env file.
+Use `wa mlwh export irods ...` for iRODS path exports; the older standalone
+`wa mlwh irods` command has been replaced by the generic export surface.
+`wa mlwh manifest` is deliberately separate from `export`: it returns study
+metadata once, one row per sequencing product, and a full-scope
+`products_without_irods` count. `export irods` and `export sample-crams` are
+file/path views, so they cannot represent products that have no matching iRODS
+object.
 
 ### Poll for metadata changes
 
@@ -217,7 +234,7 @@ make dev
 # Same, but seed demo fixtures into the dev DB for browsing
 make dev-fixtures
 
-# Run all tests (Go + Vitest + Playwright). Hermetic — never touches dev/prod.
+# Run all tests (Go + Vitest + Playwright). Live MLWH checks skip unless configured.
 make test
 
 # Run the production stack (uses .env.production + .env.production.local)
@@ -245,9 +262,18 @@ beyond loopback, set `WA_DEV_RESULTS_HOST=0.0.0.0` in
 `.env.development.local`; keep `WA_DEV_RESULTS_PORT` as the single source of the
 port.
 
-`make test` skips live MLWH integration tests by default. Set
-`WA_LIVE_MLWH_TESTS=1` explicitly to run live MLWH checks; real cold-sync
-performance tests also require `MLWH_SYNC_PERF_TEST=1`.
+Most tests use in-memory SQLite, temporary on-disk SQLite caches, fake HTTP
+servers, or throwaway databases. When `.env.development.local` contains
+`WA_MLWH_DSN` / `WA_MLWH_PASSWORD`, `make test` surfaces those only to the
+`./mlwh` package so its source-schema integration checks can run locally. When
+the same file contains `WA_MLWH_CACHE_PATH` / `WA_MLWH_CACHE_PASSWORD`, the
+real-MySQL cache integration tests create and drop a unique throwaway database
+on that server; they do not use the configured cache database itself. If those
+values are absent, the tests skip.
+
+The broader live MLWH checks are still opt-in. Set `WA_LIVE_MLWH_TESTS=1`
+explicitly to run them; real cold-sync performance tests also require
+`MLWH_SYNC_PERF_TEST=1`.
 
 ## Licence
 
