@@ -51,8 +51,8 @@ Grammar:
 The first two words choose the relationship. The third word is the parent
 identifier or text value interpreted according to parent-kind. Output is TSV by
 default, or CSV/JSON with --format. Use --columns for an ordered comma-separated
-projection. Exports always emit the complete matching set, and successful output
-contains only the requested data so it can be redirected to a file.`
+set of columns. The command writes only export data to stdout, so it is safe to
+redirect to a file.`
 
 const mlwhExportParentIDHelp = `Parent kinds and parent-id values:
   study: a study LIMS id, study UUID, accession number or study name
@@ -84,17 +84,17 @@ Filters:
 
 Sorting and date windows:
   --sort created-desc is the only supported explicit sort because the default
-  canonical iRODS order is the stable run/lane/tag/file order. Use created-desc
-  when you want newest data first or a created-date window. --since is inclusive
-  and --until is exclusive; both use an RFC3339 timestamp such as
+  iRODS order is run/lane/tag/file order. Use created-desc when you want newest
+  data first or a created-date window. --since is inclusive and --until is
+  exclusive; both use an RFC3339 timestamp such as
   2026-07-01T00:00:00Z.
 
 Completeness:
-  Exports always emit the complete matching set. The command may use internal
-  pages when talking to a server or cache, but there are no user-facing paging
-  controls and no success status lines mixed into the export.`
+  Exports include every matching row. There are no paging flags and no success
+  message is appended after the data.`
 
 const mlwhExportExamplesHelp = `Examples:
+  wa mlwh export sample-crams study 5901
   wa --env development mlwh export irods study 5901 --file-type cram
   wa mlwh export runs sample DN1234 --columns id_run,platform,run_date
   wa mlwh export irods study 5901 --sort created-desc --since 2026-07-01T00:00:00Z

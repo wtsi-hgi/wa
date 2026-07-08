@@ -419,12 +419,32 @@ func TestSampleCRAMsForStudyReturnsOneCramPerSampleH3(t *testing.T) {
 			convey.So(countErr, convey.ShouldBeNil)
 			convey.So(count.Count, convey.ShouldEqual, len(rows))
 			convey.So(rows, convey.ShouldResemble, []SampleCRAM{
-				{Name: "cram-control-only", EGAID: "EGAN-control", IRODSCRAMPath: "/seq/crams/control/52554_1#1.cram", Merged: false},
-				{Name: "cram-merged", EGAID: "EGAN-merged", IRODSCRAMPath: "/seq/crams/merged/49348_1-2#1.cram", Merged: true},
-				{Name: "cram-null-deliverable", EGAID: "EGAN-null", IRODSCRAMPath: "/seq/crams/null/pacbio.cram", Merged: false},
-				{Name: "cram-single", EGAID: "EGAN-single", IRODSCRAMPath: "/seq/crams/single/52553_1#1.cram", Merged: false},
+				{Name: "cram-control-only", AccessionNumber: "EGAN-control", IRODSPath: "/seq/crams/control/52554_1#1.cram", Merged: false},
+				{Name: "cram-merged", AccessionNumber: "EGAN-merged", IRODSPath: "/seq/crams/merged/49348_1-2#1.cram", Merged: true},
+				{Name: "cram-null-deliverable", AccessionNumber: "EGAN-null", IRODSPath: "/seq/crams/null/pacbio.cram", Merged: false},
+				{Name: "cram-single", AccessionNumber: "EGAN-single", IRODSPath: "/seq/crams/single/52553_1#1.cram", Merged: false},
 			})
 		})
+	})
+}
+
+func TestSampleCRAMJSONUsesCanonicalFieldsAndReadsLegacyAliasesD1(t *testing.T) {
+	convey.Convey("Given a sample CRAM row, when it is encoded, then only canonical fields are present", t, func() {
+		encoded, err := json.Marshal(SampleCRAM{Name: "sample-1", AccessionNumber: "EGAN0001", IRODSPath: "/seq/sample-1.cram", Merged: true})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(encoded), convey.ShouldContainSubstring, `"accession_number":"EGAN0001"`)
+		convey.So(string(encoded), convey.ShouldContainSubstring, `"irods_path":"/seq/sample-1.cram"`)
+		convey.So(string(encoded), convey.ShouldNotContainSubstring, `"ega_id"`)
+		convey.So(string(encoded), convey.ShouldNotContainSubstring, `"irods_cram_path"`)
+	})
+
+	convey.Convey("Given a legacy sample CRAM JSON row, when it is decoded, then canonical fields are populated", t, func() {
+		var decoded SampleCRAM
+		err := json.Unmarshal([]byte(`{"name":"sample-1","ega_id":"EGAN0001","irods_cram_path":"/seq/sample-1.cram","merged":true}`), &decoded)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(decoded, convey.ShouldResemble, SampleCRAM{Name: "sample-1", AccessionNumber: "EGAN0001", IRODSPath: "/seq/sample-1.cram", Merged: true})
 	})
 }
 

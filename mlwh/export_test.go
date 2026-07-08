@@ -558,26 +558,27 @@ func TestExportStudyIRODSCramColumnsAliasAndDeliverablesD1a(t *testing.T) {
 		seedExport7556Scenario(t, client.cache.DB())
 
 		result, err := client.Export(context.Background(), ExportRelationship{Children: "files", ParentKind: "study"}, "EGAS00007556", ExportOptions{
-			Columns:  []string{"supplier_sample_name", "study_accession_number", "sanger_sample_id", "manual_qc", "irods_path"},
+			Columns:  []string{"supplier_sample_name", "accession_number", "study_accession_number", "sanger_sample_id", "manual_qc", "irods_path"},
 			FileType: "cram",
 		})
 
-		convey.Convey("when the files alias export runs, then supplier_sample_name is canonicalised, controls/non-crams are dropped, and merged CRAMs sort first", func() {
+		convey.Convey("when the files alias export runs, then sample identity columns are canonicalised, controls/non-crams are dropped, and merged CRAMs sort first", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(result.Columns, convey.ShouldResemble, []string{"supplier_name", "study_accession_number", "sanger_sample_id", "manual_qc", "irods_path"})
+			convey.So(result.Columns, convey.ShouldResemble, []string{"supplier_name", "accession_number", "study_accession_number", "sanger_sample_id", "manual_qc", "irods_path"})
 			convey.So(result.Rows, convey.ShouldHaveLength, 3)
 			convey.So(result.Total, convey.ShouldEqual, 3)
 			convey.So(result.Complete, convey.ShouldBeTrue)
 			convey.So(result.NextCursor, convey.ShouldBeEmpty)
 			convey.So(result.Rows[0][0], convey.ShouldEqual, "supplier-beta")
-			convey.So(result.Rows[0][1], convey.ShouldEqual, "EGAS00007556")
-			convey.So(result.Rows[0][2], convey.ShouldEqual, "sanger-beta")
-			convey.So(result.Rows[0][3], convey.ShouldEqual, "pass")
-			convey.So(result.Rows[0][4], convey.ShouldContainSubstring, "/lane1-2/plex1/49348_1-2#1.cram")
+			convey.So(result.Rows[0][1], convey.ShouldEqual, "EGAN-beta")
+			convey.So(result.Rows[0][2], convey.ShouldEqual, "EGAS00007556")
+			convey.So(result.Rows[0][3], convey.ShouldEqual, "sanger-beta")
+			convey.So(result.Rows[0][4], convey.ShouldEqual, "pass")
+			convey.So(result.Rows[0][5], convey.ShouldContainSubstring, "/lane1-2/plex1/49348_1-2#1.cram")
 
 			nonCramPaths := 0
 			for _, row := range result.Rows {
-				if !strings.HasSuffix(row[4], ".cram") {
+				if !strings.HasSuffix(row[5], ".cram") {
 					nonCramPaths++
 				}
 			}
@@ -808,6 +809,7 @@ func TestExportStudySampleCRAMsAppliesSharedFilterFamilyD1aC4(t *testing.T) {
 		seedExportFilterScenario(t, client.cache.DB())
 
 		result, err := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "FILTER", ExportOptions{
+			Columns:     []string{"name", "accession_number", "irods_path", "merged"},
 			Organism:    "musculus",
 			LibraryType: "Standard",
 			QC:          "pass",
@@ -1287,6 +1289,33 @@ func TestExportStudySampleCramsBackedByIRODSMirrorD1a(t *testing.T) {
 		seedExportSampleCRAMScenario(t, client.cache.DB())
 
 		result, err := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "CRAMS", ExportOptions{})
+		projectedResult, projectedErr := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "CRAMS", ExportOptions{
+			Columns: []string{
+				"supplier_name",
+				"sanger_sample_id",
+				"accession_number",
+				"study_accession_number",
+				"id_study_lims",
+				"manual_qc",
+				"id_run",
+				"lane",
+				"tag_index",
+				"platform",
+				"created",
+				"deliverable",
+				"id_product",
+				"id_sample_tmp",
+				"collection",
+				"data_object",
+				"irods_path",
+				"merged",
+			},
+			Limit: 1,
+		})
+		aliasResult, aliasErr := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "CRAMS", ExportOptions{
+			Columns: []string{"ega_id", "irods_cram_path"},
+			Limit:   1,
+		})
 		includeControls := false
 		includeControlsResult, includeControlsErr := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "CRAMS", ExportOptions{
 			DeliverablesOnly: &includeControls,
@@ -1294,7 +1323,7 @@ func TestExportStudySampleCramsBackedByIRODSMirrorD1a(t *testing.T) {
 
 		convey.Convey("when sample-crams are exported by default, then deliverable CRAM rows are returned with merged objects preferred", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(result.Columns, convey.ShouldResemble, []string{"name", "ega_id", "irods_cram_path", "merged"})
+			convey.So(result.Columns, convey.ShouldResemble, []string{"name", "accession_number", "irods_path", "merged"})
 			convey.So(result.Rows, convey.ShouldResemble, [][]string{
 				{"cram-merged", "EGAN-merged", "/seq/crams/merged/49348_1-2#1.cram", "true"},
 				{"cram-null-deliverable", "EGAN-null", "/seq/crams/null/pacbio.cram", "false"},
@@ -1303,6 +1332,60 @@ func TestExportStudySampleCramsBackedByIRODSMirrorD1a(t *testing.T) {
 			convey.So(result.Total, convey.ShouldEqual, 3)
 			convey.So(result.Complete, convey.ShouldBeTrue)
 			convey.So(result.NextCursor, convey.ShouldBeEmpty)
+		})
+
+		convey.Convey("when sample-crams selects file export columns, then it projects the chosen CRAM row with canonical names", func() {
+			convey.So(projectedErr, convey.ShouldBeNil)
+			convey.So(projectedResult.Columns, convey.ShouldResemble, []string{
+				"supplier_name",
+				"sanger_sample_id",
+				"accession_number",
+				"study_accession_number",
+				"id_study_lims",
+				"manual_qc",
+				"id_run",
+				"lane",
+				"tag_index",
+				"platform",
+				"created",
+				"deliverable",
+				"id_product",
+				"id_sample_tmp",
+				"collection",
+				"data_object",
+				"irods_path",
+				"merged",
+			})
+			convey.So(projectedResult.Rows, convey.ShouldResemble, [][]string{{
+				"supplier-merged",
+				"sanger-merged",
+				"EGAN-merged",
+				"EGAS0000CRAMS",
+				"CRAMS",
+				"pending",
+				"0",
+				"0",
+				"0",
+				"illumina",
+				"2026-07-01T08:30:00Z",
+				"true",
+				"merged-composite",
+				"102",
+				"/seq/crams/merged",
+				"49348_1-2#1.cram",
+				"/seq/crams/merged/49348_1-2#1.cram",
+				"true",
+			}})
+			convey.So(projectedResult.Total, convey.ShouldEqual, 3)
+		})
+
+		convey.Convey("when legacy sample-crams column aliases are selected, then they resolve to canonical export column names", func() {
+			convey.So(aliasErr, convey.ShouldBeNil)
+			convey.So(aliasResult.Columns, convey.ShouldResemble, []string{"accession_number", "irods_path"})
+			convey.So(aliasResult.Rows, convey.ShouldResemble, [][]string{{
+				"EGAN-merged",
+				"/seq/crams/merged/49348_1-2#1.cram",
+			}})
 		})
 
 		convey.Convey("when controls are explicitly included, then the non-deliverable-only CRAM is restored", func() {

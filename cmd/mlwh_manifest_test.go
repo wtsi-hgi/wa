@@ -35,12 +35,14 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-func TestMLWHManifestHelpRendersConfigurationDetails(t *testing.T) {
-	convey.Convey("wa mlwh manifest --help renders documentation about env vars and an example", t, func() {
+func TestMLWHManifestHelpRendersConfigurationPointer(t *testing.T) {
+	convey.Convey("wa mlwh manifest --help points to centralized configuration help and keeps command-specific usage", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "manifest", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_SERVER_URL")
+		convey.So(output, convey.ShouldContainSubstring, "see `wa mlwh -h`")
+		convey.So(output, convey.ShouldNotContainSubstring, "before resolving:")
+		convey.So(output, convey.ShouldNotContainSubstring, "Normal CLI users")
 		convey.So(output, convey.ShouldContainSubstring, "--with-irods")
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh manifest")
 	})

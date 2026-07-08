@@ -80,7 +80,7 @@ func TestMLWHSyncCommandRequiresDSN(t *testing.T) {
 }
 
 func TestMLWHCommandsHaveDescriptiveLongHelp(t *testing.T) {
-	convey.Convey("Every wa mlwh command and subcommand has a substantive Long help that documents required configuration", t, func() {
+	convey.Convey("Every wa mlwh command and subcommand has substantive Long help with centralized configuration guidance", t, func() {
 		root := newMLWHCommand()
 
 		var visit func(*cobra.Command)
@@ -88,10 +88,16 @@ func TestMLWHCommandsHaveDescriptiveLongHelp(t *testing.T) {
 			convey.Convey("command "+c.CommandPath(), func() {
 				convey.So(strings.TrimSpace(c.Long), convey.ShouldNotBeBlank)
 				convey.So(len(c.Long), convey.ShouldBeGreaterThan, 200)
-				convey.So(c.Long, convey.ShouldContainSubstring, "WA_MLWH_DSN")
-				convey.So(c.Long, convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
-				convey.So(c.Long, convey.ShouldContainSubstring, "--env")
 				convey.So(c.Long, convey.ShouldContainSubstring, "Example")
+				convey.So(c.Long, convey.ShouldNotContainSubstring, "Normal CLI users")
+				if c.CommandPath() == "mlwh" || c.CommandPath() == "mlwh sync" || c.CommandPath() == "mlwh serve" {
+					convey.So(c.Long, convey.ShouldContainSubstring, "WA_MLWH_DSN")
+					convey.So(c.Long, convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
+					convey.So(c.Long, convey.ShouldContainSubstring, "--env")
+				} else {
+					convey.So(c.Long, convey.ShouldContainSubstring, "see `wa mlwh -h`")
+					convey.So(c.Long, convey.ShouldNotContainSubstring, "before resolving:")
+				}
 			})
 
 			for _, child := range c.Commands() {

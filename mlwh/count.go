@@ -28,6 +28,7 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -274,10 +275,41 @@ func queryStudyUsers(ctx context.Context, db *sql.DB, query string, args ...any)
 
 // SampleCRAM is one de-duplicated sample CRAM row for a study.
 type SampleCRAM struct {
-	Name          string `json:"name" doc:"Sanger sample name"`
-	EGAID         string `json:"ega_id" doc:"sample public archive accession number"`
-	IRODSCRAMPath string `json:"irods_cram_path" doc:"selected iRODS CRAM path for the sample"`
-	Merged        bool   `json:"merged" doc:"whether the selected CRAM is a merged composite object"`
+	Name            string `json:"name" doc:"Sanger sample name"`
+	AccessionNumber string `json:"accession_number" doc:"sample public archive accession number"`
+	IRODSPath       string `json:"irods_path" doc:"selected iRODS CRAM path for the sample"`
+	Merged          bool   `json:"merged" doc:"whether the selected CRAM is a merged composite object"`
+}
+
+type sampleCRAMJSON struct {
+	Name            string `json:"name"`
+	AccessionNumber string `json:"accession_number"`
+	IRODSPath       string `json:"irods_path"`
+	EGAID           string `json:"ega_id,omitempty"`
+	IRODSCRAMPath   string `json:"irods_cram_path,omitempty"`
+	Merged          bool   `json:"merged"`
+}
+
+// UnmarshalJSON accepts the legacy response aliases used by older servers.
+func (sampleCRAM *SampleCRAM) UnmarshalJSON(data []byte) error {
+	var decoded sampleCRAMJSON
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.AccessionNumber == "" {
+		decoded.AccessionNumber = decoded.EGAID
+	}
+	if decoded.IRODSPath == "" {
+		decoded.IRODSPath = decoded.IRODSCRAMPath
+	}
+	*sampleCRAM = SampleCRAM{
+		Name:            decoded.Name,
+		AccessionNumber: decoded.AccessionNumber,
+		IRODSPath:       decoded.IRODSPath,
+		Merged:          decoded.Merged,
+	}
+
+	return nil
 }
 
 // SampleCRAMsForStudy lists one selected CRAM per sample for a study.
@@ -324,10 +356,10 @@ func sampleCRAMRows(rows []exportSampleCRAMRow) []SampleCRAM {
 	sampleCRAMs := make([]SampleCRAM, len(rows))
 	for index, row := range rows {
 		sampleCRAMs[index] = SampleCRAM{
-			Name:          row.Name,
-			EGAID:         row.EGAID,
-			IRODSCRAMPath: row.IRODSPath(),
-			Merged:        row.Merged,
+			Name:            row.Name,
+			AccessionNumber: row.SampleAccession,
+			IRODSPath:       row.IRODSPath(),
+			Merged:          row.Merged,
 		}
 	}
 

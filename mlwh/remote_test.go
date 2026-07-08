@@ -63,7 +63,7 @@ func b1RemotePageMethodCases() []remotePageMethodCase {
 	runs := []Run{{IDRun: 12345}, {IDRun: 12346}}
 	lanes := []Lane{{IDRun: 12345, Position: 1, TagIndex: 0}, {IDRun: 12346, Position: 2, TagIndex: 1}}
 	studyUsers := []StudyUser{{Role: "owner", Name: "Ana Owner", Login: "ao1", Email: "ao1@sanger.ac.uk"}}
-	sampleCRAMs := []SampleCRAM{{Name: "sample-1", EGAID: "EGAN0001", IRODSCRAMPath: "/seq/sample-1.cram"}}
+	sampleCRAMs := []SampleCRAM{{Name: "sample-1", AccessionNumber: "EGAN0001", IRODSPath: "/seq/sample-1.cram"}}
 
 	return []remotePageMethodCase{
 		{

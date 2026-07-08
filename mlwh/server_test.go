@@ -803,7 +803,7 @@ func TestServerSampleCRAMsForStudySizingHeadersH3(t *testing.T) {
 	convey.Convey("H3: Given a server over a fake Queryer for sample-crams", t, func() {
 		queryer := &serverFakeQueryer{
 			sampleCRAMsFunc: func(_ context.Context, _ string, _ int, _ int) ([]SampleCRAM, error) {
-				return []SampleCRAM{{Name: "7568STDY9419243", EGAID: "ERS7568001", IRODSCRAMPath: "/seq/49348_1-2#1.cram", Merged: true}}, nil
+				return []SampleCRAM{{Name: "7568STDY9419243", AccessionNumber: "ERS7568001", IRODSPath: "/seq/49348_1-2#1.cram", Merged: true}}, nil
 			},
 			countSampleCRAMsFunc: func(_ context.Context, _ string) (Count, error) {
 				return Count{Count: 732}, nil
@@ -823,11 +823,15 @@ func TestServerSampleCRAMsForStudySizingHeadersH3(t *testing.T) {
 		var rows []SampleCRAM
 		decodeMLWHJSONResponseForTest(t, response, &rows)
 		convey.So(rows, convey.ShouldResemble, []SampleCRAM{{
-			Name:          "7568STDY9419243",
-			EGAID:         "ERS7568001",
-			IRODSCRAMPath: "/seq/49348_1-2#1.cram",
-			Merged:        true,
+			Name:            "7568STDY9419243",
+			AccessionNumber: "ERS7568001",
+			IRODSPath:       "/seq/49348_1-2#1.cram",
+			Merged:          true,
 		}})
+		convey.So(response.Body.String(), convey.ShouldContainSubstring, `"accession_number":"ERS7568001"`)
+		convey.So(response.Body.String(), convey.ShouldContainSubstring, `"irods_path":"/seq/49348_1-2#1.cram"`)
+		convey.So(response.Body.String(), convey.ShouldNotContainSubstring, `"ega_id"`)
+		convey.So(response.Body.String(), convey.ShouldNotContainSubstring, `"irods_cram_path"`)
 	})
 }
 

@@ -30,6 +30,8 @@
 // Queryer member, and add one Registry entry.
 package mlwh
 
+import "strings"
+
 const registryVerbGet = "GET"
 
 // Endpoint describes one Queryer method's REST endpoint. Summary, Description,
@@ -1226,7 +1228,7 @@ func sequencingAggregateQueryParams() []QueryParam {
 func exportQueryParams() []QueryParam {
 	params := fetchAllPaginationParams()
 	params = append(params,
-		QueryParam{Name: "columns", Type: "string", Description: "ordered comma-separated export columns to emit; omit to use the relationship default projection"},
+		QueryParam{Name: "columns", Type: "string", Description: exportColumnsQueryParamDescription()},
 		fileTypeQueryParam(),
 		QueryParam{Name: "deliverables_only", Type: "boolean", Description: "when true, restricts supported file exports to deliverable rows; when false, includes controls/sub-products; omit to use the relationship default, which is true for CRAM irods/files/sample-crams exports"},
 		QueryParam{Name: "role", Type: "string", Description: "optional comma-separated study_users role filter for study_users-backed exports; users-of-study omits to return all roles present, studies-of-user omits to use owner, manager and data_access_contact"},
@@ -1243,6 +1245,43 @@ func exportQueryParams() []QueryParam {
 	)
 
 	return params
+}
+
+func exportColumnsQueryParamDescription() string {
+	var builder strings.Builder
+	builder.WriteString("ordered comma-separated export columns to emit; omit to use the relationship default projection. Choices by child: ")
+	for index, vocab := range ExportColumnVocabularies() {
+		if index > 0 {
+			builder.WriteString("; ")
+		}
+		builder.WriteString(exportColumnVocabularyLabel(vocab))
+		builder.WriteString(" default ")
+		builder.WriteString(strings.Join(vocab.Default, ","))
+		builder.WriteString("; available ")
+		builder.WriteString(strings.Join(exportColumnDescriptionNames(vocab.Columns), ","))
+	}
+
+	return builder.String()
+}
+
+func exportColumnVocabularyLabel(vocab ExportColumnVocabulary) string {
+	if len(vocab.Aliases) == 0 {
+		return vocab.Children
+	}
+
+	return vocab.Children + "/" + strings.Join(vocab.Aliases, "/")
+}
+
+func exportColumnDescriptionNames(columns []ExportColumnDescription) []string {
+	names := make([]string, len(columns))
+	for index, column := range columns {
+		names[index] = column.Name
+		if len(column.Aliases) > 0 {
+			names[index] += " (alias: " + strings.Join(column.Aliases, ", ") + ")"
+		}
+	}
+
+	return names
 }
 
 // fetchAllPaginationParams are the limit/offset QueryParams for the fetch-all

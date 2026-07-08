@@ -57,14 +57,14 @@ func TestMLWHSearchCommandRequiresTerm(t *testing.T) {
 	})
 }
 
-func TestMLWHSearchHelpRendersConfigurationDetails(t *testing.T) {
-	convey.Convey("wa mlwh search --help renders documentation about env vars and an example", t, func() {
+func TestMLWHSearchHelpRendersConfigurationPointer(t *testing.T) {
+	convey.Convey("wa mlwh search --help points to centralized configuration help and keeps examples", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "search", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_DSN")
-		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
-		convey.So(output, convey.ShouldContainSubstring, "--env")
+		convey.So(output, convey.ShouldContainSubstring, "see `wa mlwh -h`")
+		convey.So(output, convey.ShouldNotContainSubstring, "before resolving:")
+		convey.So(output, convey.ShouldNotContainSubstring, "Normal CLI users")
 		convey.So(output, convey.ShouldContainSubstring, "Example")
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh search")
 		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")

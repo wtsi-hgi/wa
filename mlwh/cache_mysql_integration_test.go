@@ -2535,13 +2535,13 @@ func TestRealMySQLD1aFlagshipStudyExportsMatchSyncedCache(t *testing.T) {
 			mergedCount := 0
 			run49348MergedCount := 0
 			for _, cram := range crams {
-				if strings.TrimSpace(cram.IRODSCRAMPath) == "" {
+				if strings.TrimSpace(cram.IRODSPath) == "" {
 					blankPathCount++
 				}
 				if cram.Merged {
 					mergedCount++
 				}
-				if cram.Merged && strings.Contains(cram.IRODSCRAMPath, "/runs/49/49348/lane1-2/") {
+				if cram.Merged && strings.Contains(cram.IRODSPath, "/runs/49/49348/lane1-2/") {
 					run49348MergedCount++
 				}
 			}

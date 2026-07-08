@@ -64,6 +64,8 @@ func TestMLWHExportHelpDocumentsGrammarVocabularyAndFilters(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh export <children> <parent-kind> <parent-id>")
 		convey.So(output, convey.ShouldNotContainSubstring, "Relationships include")
 		convey.So(output, convey.ShouldContainSubstring, "Children:")
+		convey.So(strings.Index(output, "  sample-crams:"), convey.ShouldBeLessThan, strings.Index(output, "  irods (alias: files)"))
+		convey.So(output, convey.ShouldContainSubstring, "  sample-crams")
 		convey.So(output, convey.ShouldContainSubstring, "  irods (alias: files)")
 		convey.So(output, convey.ShouldContainSubstring, "  samples")
 		convey.So(output, convey.ShouldContainSubstring, "  runs")
@@ -86,15 +88,24 @@ func TestMLWHExportHelpDocumentsGrammarVocabularyAndFilters(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "supplier_sample_name")
 		convey.So(output, convey.ShouldContainSubstring, "irods_path")
 		convey.So(output, convey.ShouldContainSubstring, "sample-crams")
-		convey.So(output, convey.ShouldContainSubstring, "irods_cram_path")
+		convey.So(output, convey.ShouldContainSubstring, "accession_number")
+		convey.So(output, convey.ShouldNotContainSubstring, "ega_id")
+		convey.So(output, convey.ShouldNotContainSubstring, "irods_cram_path")
 		convey.So(output, convey.ShouldContainSubstring, "Deliverables:")
 		convey.So(output, convey.ShouldContainSubstring, "iseq_flowcell.entity_type IN ('library','library_indexed')")
 		convey.So(output, convey.ShouldContainSubstring, "approximates iRODS target=1")
 		convey.So(output, convey.ShouldContainSubstring, "not is_spiked")
 		convey.So(output, convey.ShouldContainSubstring, "--sort created-desc is the only supported explicit sort")
-		convey.So(output, convey.ShouldContainSubstring, "Exports always emit the complete matching set")
+		convey.So(output, convey.ShouldContainSubstring, "Exports include every matching row")
+		convey.So(output, convey.ShouldContainSubstring, "There are no paging flags and no success")
+		convey.So(output, convey.ShouldNotContainSubstring, "user-facing paging")
+		convey.So(output, convey.ShouldNotContainSubstring, "internal pages")
+		convey.So(output, convey.ShouldContainSubstring, "see `wa mlwh -h`")
+		convey.So(output, convey.ShouldNotContainSubstring, "before resolving:")
+		convey.So(output, convey.ShouldNotContainSubstring, "Normal CLI users")
 		convey.So(output, convey.ShouldContainSubstring, "RFC3339 timestamp such as")
 		convey.So(output, convey.ShouldContainSubstring, "2026-07-01T00:00:00Z")
+		convey.So(output, convey.ShouldContainSubstring, "wa mlwh export sample-crams study 5901")
 		convey.So(output, convey.ShouldNotContainSubstring, "--all")
 		convey.So(output, convey.ShouldNotContainSubstring, "--limit")
 		convey.So(output, convey.ShouldNotContainSubstring, "--cursor")
@@ -300,7 +311,7 @@ func TestMLWHExportSampleCramsStudy7568H3(t *testing.T) {
 				capturedOptions = opts
 
 				return mlwh.ExportResult{
-					Columns: []string{"name", "ega_id", "irods_cram_path", "merged"},
+					Columns: []string{"name", "accession_number", "irods_path", "merged"},
 					Rows: [][]string{
 						{"7568STDYCONTROL", "ERS7568CTRL", "/seq/illumina/runs/49/52554/lane1/plex1/52554_1#1.cram", "false"},
 						{"7568STDY9419243", "ERS7568001", "/seq/illumina/runs/49/49348/lane1-2/plex1/49348_1-2#1.cram", "true"},
@@ -315,7 +326,7 @@ func TestMLWHExportSampleCramsStudy7568H3(t *testing.T) {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "export", "sample-crams", "study", "7568"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "name\tega_id\tirods_cram_path\tmerged")
+		convey.So(output, convey.ShouldContainSubstring, "name\taccession_number\tirods_path\tmerged")
 		convey.So(output, convey.ShouldContainSubstring, "7568STDYCONTROL\tERS7568CTRL\t/seq/illumina/runs/49/52554/lane1/plex1/52554_1#1.cram\tfalse")
 		convey.So(output, convey.ShouldContainSubstring, "7568STDY9419243\tERS7568001\t/seq/illumina/runs/49/49348/lane1-2/plex1/49348_1-2#1.cram\ttrue")
 		convey.So(output, convey.ShouldNotContainSubstring, "total=732")

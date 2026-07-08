@@ -59,16 +59,15 @@ func TestMLWHInfoCommandRequiresIdentifier(t *testing.T) {
 	})
 }
 
-func TestMLWHInfoHelpRendersConfigurationDetails(t *testing.T) {
-	convey.Convey("wa mlwh info --help renders documentation about env vars and an example", t, func() {
+func TestMLWHInfoHelpRendersConfigurationPointer(t *testing.T) {
+	convey.Convey("wa mlwh info --help points to centralized configuration help and keeps examples", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_DSN")
-		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
-		convey.So(output, convey.ShouldContainSubstring, "--env")
+		convey.So(output, convey.ShouldContainSubstring, "see `wa mlwh -h`")
+		convey.So(output, convey.ShouldNotContainSubstring, "before resolving:")
+		convey.So(output, convey.ShouldNotContainSubstring, "Normal CLI users")
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh info")
-		convey.So(output, convey.ShouldContainSubstring, "wa mlwh sync")
 	})
 }
 

@@ -70,6 +70,12 @@ type exportRelationshipSpec struct {
 
 var exportRelationshipSpecs = []exportRelationshipSpec{
 	{
+		Children:    "sample-crams",
+		ParentKinds: []string{"study"},
+		Description: "one merged-aware CRAM row per sample",
+		Kind:        exportRelationshipSampleCRAMs,
+	},
+	{
 		Children:    "irods",
 		Aliases:     []string{"files"},
 		ParentKinds: []string{"study", "sample", "run"},
@@ -112,17 +118,12 @@ var exportRelationshipSpecs = []exportRelationshipSpec{
 		Description: "study_users rows for a study",
 		Kind:        exportRelationshipUsers,
 	},
-	{
-		Children:    "sample-crams",
-		ParentKinds: []string{"study"},
-		Description: "one merged-aware CRAM row per sample",
-		Kind:        exportRelationshipSampleCRAMs,
-	},
 }
 
 type exportColumn struct {
 	Name          string
 	Aliases       []string
+	HiddenAliases []string
 	NeedsSample   bool
 	NeedsStudy    bool
 	Supported     bool
@@ -136,26 +137,7 @@ type exportVocabulary struct {
 
 var (
 	irodsExportVocabulary = exportVocabulary{
-		Columns: []exportColumn{
-			{Name: "supplier_name", Aliases: []string{"supplier_sample_name"}, NeedsSample: true, Supported: true},
-			{Name: "sanger_sample_id", NeedsSample: true, Supported: true},
-			{Name: "name", NeedsSample: true, Supported: true},
-			{Name: "study_accession_number", NeedsStudy: true, Supported: true},
-			{Name: "id_study_lims", Supported: true},
-			{Name: "manual_qc", Supported: true},
-			{Name: "id_run", Supported: true},
-			{Name: "lane", Aliases: []string{"position"}, Supported: true},
-			{Name: "tag_index", Supported: true},
-			{Name: "platform", Supported: true},
-			{Name: "created", Supported: true},
-			{Name: "merged", Supported: true},
-			{Name: "deliverable", Supported: true},
-			{Name: "irods_path", Supported: true},
-			{Name: "id_product", Supported: true},
-			{Name: "id_sample_tmp", Supported: true},
-			{Name: "collection", Supported: true},
-			{Name: "data_object", Supported: true},
-		},
+		Columns: fileExportColumns(nil),
 		Default: []string{"supplier_name", "sanger_sample_id", "manual_qc", "irods_path"},
 	}
 	sampleExportVocabulary = exportVocabulary{
@@ -226,13 +208,11 @@ var (
 		Default: []string{"role", "name", "login", "email"},
 	}
 	sampleCRAMExportVocabulary = exportVocabulary{
-		Columns: []exportColumn{
-			{Name: "name", Supported: true},
-			{Name: "ega_id", Supported: true},
-			{Name: "irods_cram_path", Supported: true},
-			{Name: "merged", Supported: true},
-		},
-		Default: []string{"name", "ega_id", "irods_cram_path", "merged"},
+		Columns: fileExportColumns(map[string][]string{
+			"accession_number": {"ega_id"},
+			"irods_path":       {"irods_cram_path"},
+		}),
+		Default: []string{"name", "accession_number", "irods_path", "merged"},
 	}
 )
 
@@ -330,6 +310,37 @@ func exportRelationshipSpecMatchesChildren(spec exportRelationshipSpec, children
 	return false
 }
 
+func fileExportColumns(hiddenAliases map[string][]string) []exportColumn {
+	columns := []exportColumn{
+		{Name: "supplier_name", Aliases: []string{"supplier_sample_name"}, NeedsSample: true, Supported: true},
+		{Name: "sanger_sample_id", NeedsSample: true, Supported: true},
+		{Name: "name", NeedsSample: true, Supported: true},
+		{Name: "accession_number", NeedsSample: true, Supported: true},
+		{Name: "study_accession_number", NeedsStudy: true, Supported: true},
+		{Name: "id_study_lims", Supported: true},
+		{Name: "manual_qc", Supported: true},
+		{Name: "id_run", Supported: true},
+		{Name: "lane", Aliases: []string{"position"}, Supported: true},
+		{Name: "tag_index", Supported: true},
+		{Name: "platform", Supported: true},
+		{Name: "created", Supported: true},
+		{Name: "merged", Supported: true},
+		{Name: "deliverable", Supported: true},
+		{Name: "irods_path", Supported: true},
+		{Name: "id_product", Supported: true},
+		{Name: "id_sample_tmp", Supported: true},
+		{Name: "collection", Supported: true},
+		{Name: "data_object", Supported: true},
+	}
+	for index := range columns {
+		if aliases := hiddenAliases[columns[index].Name]; len(aliases) > 0 {
+			columns[index].HiddenAliases = append([]string(nil), aliases...)
+		}
+	}
+
+	return columns
+}
+
 func resolveExportColumns(rel ExportRelationship, vocab exportVocabulary, requested []string) ([]exportColumn, error) {
 	rawColumns := requested
 	if len(rawColumns) == 0 {
@@ -361,6 +372,9 @@ func exportColumnLookup(columns []exportColumn) map[string]exportColumn {
 		for _, alias := range column.Aliases {
 			lookup[alias] = column
 		}
+		for _, alias := range column.HiddenAliases {
+			lookup[alias] = column
+		}
 	}
 
 	return lookup
@@ -382,6 +396,7 @@ func validExportColumnNames(columns []exportColumn) []string {
 	for _, column := range columns {
 		names = append(names, column.Name)
 		names = append(names, column.Aliases...)
+		names = append(names, column.HiddenAliases...)
 	}
 
 	return names
@@ -548,13 +563,10 @@ func projectStudyUsers(users []StudyUser, columns []exportColumn) [][]string {
 func projectSampleCRAMs(sampleCRAMs []exportSampleCRAMRow, columns []exportColumn) [][]string {
 	rows := make([][]string, len(sampleCRAMs))
 	for rowIndex, sampleCRAM := range sampleCRAMs {
-		values := map[string]string{
-			"name":            sampleCRAM.Name,
-			"ega_id":          sampleCRAM.EGAID,
-			"irods_cram_path": sampleCRAM.IRODSPath(),
-			"merged":          strconv.FormatBool(sampleCRAM.Merged),
+		rows[rowIndex] = make([]string, len(columns))
+		for columnIndex, column := range columns {
+			rows[rowIndex][columnIndex] = sampleCRAM.cell(column.Name)
 		}
-		rows[rowIndex] = projectMap(values, columns)
 	}
 
 	return rows
@@ -1322,14 +1334,10 @@ func (c *Client) queryExportSampleCRAMRows(ctx context.Context, db *sql.DB, inpu
 
 	sampleCRAMs := make([]exportSampleCRAMRow, 0)
 	for rows.Next() {
-		var (
-			row    exportSampleCRAMRow
-			merged sql.NullInt64
-		)
-		if err = rows.Scan(&row.Name, &row.EGAID, &row.Collection, &row.FileName, &merged); err != nil {
-			return nil, fmt.Errorf("%w: scan export sample cram row: %w", ErrUpstreamImpaired, err)
+		row, scanErr := scanExportIRODSRow(rows.Scan)
+		if scanErr != nil {
+			return nil, fmt.Errorf("%w: scan export sample cram row: %w", ErrUpstreamImpaired, scanErr)
 		}
-		row.Merged = merged.Valid && merged.Int64 != 0
 		sampleCRAMs = append(sampleCRAMs, row)
 	}
 	if err = rows.Err(); err != nil {
@@ -1351,8 +1359,12 @@ func (c *Client) queryExportSampleCRAMRows(ctx context.Context, db *sql.DB, inpu
 
 func exportSampleCRAMPageQuery(input exportSampleCRAMQueryInput) (string, []any) {
 	ranked, args := exportSampleCRAMRankedQuery(input)
-	query := `SELECT sm.name, COALESCE(sm.accession_number, '') AS ega_id, ranked.irods_collection, ranked.irods_file_name, ranked.merged FROM (` + ranked +
-		`) ranked INNER JOIN sample_mirror sm ON sm.id_sample_tmp = ranked.id_sample_tmp AND sm.id_lims = 'SQSCP' WHERE ranked.rn = 1`
+	query := `SELECT ranked.id_seq_product_irods_locations_tmp, ranked.id_iseq_product, ranked.irods_collection, ranked.irods_file_name, ` +
+		`ranked.id_sample_tmp, ranked.id_study_lims, COALESCE(ranked.created, ''), ranked.platform, ranked.id_run, ranked.position, ` +
+		`ranked.tag_index, ranked.qc, ranked.is_deliverable, ranked.merged, COALESCE(sm.name, ''), COALESCE(sm.supplier_name, ''), ` +
+		`COALESCE(sm.sanger_sample_id, ''), COALESCE(sm.accession_number, ''), COALESCE(study_mirror.accession_number, '') FROM (` + ranked +
+		`) ranked INNER JOIN sample_mirror sm ON sm.id_sample_tmp = ranked.id_sample_tmp AND sm.id_lims = 'SQSCP' ` +
+		`LEFT JOIN study_mirror ON study_mirror.id_study_lims = ranked.id_study_lims AND study_mirror.id_lims = 'SQSCP' WHERE ranked.rn = 1`
 	query, args = appendExportSampleCRAMSampleFilters(query, args, input)
 	query += ` ORDER BY sm.name, ranked.id_sample_tmp LIMIT ? OFFSET ?`
 	args = append(args, input.limit, input.offset)
@@ -1362,7 +1374,9 @@ func exportSampleCRAMPageQuery(input exportSampleCRAMQueryInput) (string, []any)
 
 func exportSampleCRAMRankedQuery(input exportSampleCRAMQueryInput) (string, []any) {
 	where, args := exportSampleCRAMWhere(input)
-	query := `SELECT spi.id_sample_tmp, spi.irods_collection, spi.irods_file_name, spi.merged, ` +
+	query := `SELECT spi.id_seq_product_irods_locations_tmp, spi.id_iseq_product, spi.id_sample_tmp, spi.id_study_lims, ` +
+		`spi.irods_collection, spi.irods_file_name, spi.created, spi.platform, spi.id_run, spi.position, spi.tag_index, ` +
+		`spi.qc, spi.is_deliverable, spi.merged, ` +
 		`ROW_NUMBER() OVER (PARTITION BY spi.id_sample_tmp ORDER BY ` +
 		`CASE WHEN spi.merged <> 0 THEN 0 ELSE 1 END, ` +
 		`spi.id_run, spi.position, spi.tag_index, spi.id_seq_product_irods_locations_tmp) AS rn ` +
@@ -1419,17 +1433,11 @@ func placeholders(count int) string {
 	return strings.TrimSuffix(strings.Repeat("?, ", count), ", ")
 }
 
-type exportSampleCRAMRow struct {
-	Name       string
-	EGAID      string
-	Collection string
-	FileName   string
-	Merged     bool
-}
-
-func (row exportSampleCRAMRow) IRODSPath() string {
+func (row exportIRODSRow) IRODSPath() string {
 	return strings.TrimRight(row.Collection, "/") + "/" + row.FileName
 }
+
+type exportSampleCRAMRow = exportIRODSRow
 
 type exportParent struct {
 	Value     any
@@ -2108,13 +2116,14 @@ func (c *Client) queryExportIRODSRows(ctx context.Context, db *sql.DB, input exp
 
 func scanExportIRODSRow(scan func(dest ...any) error) (exportIRODSRow, error) {
 	var (
-		row            exportIRODSRow
-		created        sql.NullString
-		merged         sql.NullInt64
-		name           sql.NullString
-		supplierName   sql.NullString
-		sangerSampleID sql.NullString
-		studyAccession sql.NullString
+		row             exportIRODSRow
+		created         sql.NullString
+		merged          sql.NullInt64
+		name            sql.NullString
+		supplierName    sql.NullString
+		sangerSampleID  sql.NullString
+		sampleAccession sql.NullString
+		studyAccession  sql.NullString
 	)
 
 	if err := scan(
@@ -2135,6 +2144,7 @@ func scanExportIRODSRow(scan func(dest ...any) error) (exportIRODSRow, error) {
 		&name,
 		&supplierName,
 		&sangerSampleID,
+		&sampleAccession,
 		&studyAccession,
 	); err != nil {
 		return exportIRODSRow{}, err
@@ -2145,6 +2155,7 @@ func scanExportIRODSRow(scan func(dest ...any) error) (exportIRODSRow, error) {
 	row.Name = nullStringValue(name)
 	row.SupplierName = nullStringValue(supplierName)
 	row.SangerSampleID = nullStringValue(sangerSampleID)
+	row.SampleAccession = nullStringValue(sampleAccession)
 	row.StudyAccession = nullStringValue(studyAccession)
 
 	return row, nil
@@ -2196,11 +2207,12 @@ func exportIRODSFromWhere(input exportIRODSQueryInput, count bool) (string, []an
 }
 
 func exportIRODSSelect(input exportIRODSQueryInput) string {
-	sampleName, supplierName, sangerSampleID := `''`, `''`, `''`
+	sampleName, supplierName, sangerSampleID, sampleAccession := `''`, `''`, `''`, `''`
 	if exportNeedsSample(input) {
 		sampleName = `COALESCE(sm.name, '')`
 		supplierName = `COALESCE(sm.supplier_name, '')`
 		sangerSampleID = `COALESCE(sm.sanger_sample_id, '')`
+		sampleAccession = `COALESCE(sm.accession_number, '')`
 	}
 
 	studyAccession := `''`
@@ -2211,7 +2223,7 @@ func exportIRODSSelect(input exportIRODSQueryInput) string {
 	return `SELECT spi.id_seq_product_irods_locations_tmp, spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, ` +
 		`spi.id_sample_tmp, spi.id_study_lims, COALESCE(spi.created, ''), spi.platform, spi.id_run, spi.position, ` +
 		`spi.tag_index, spi.qc, spi.is_deliverable, spi.merged, ` + sampleName + `, ` + supplierName + `, ` +
-		sangerSampleID + `, ` + studyAccession
+		sangerSampleID + `, ` + sampleAccession + `, ` + studyAccession
 }
 
 func exportNeedsSample(input exportIRODSQueryInput) bool {
@@ -2287,6 +2299,7 @@ type exportIRODSRow struct {
 	Name                 string
 	SupplierName         string
 	SangerSampleID       string
+	SampleAccession      string
 	StudyAccession       string
 }
 
@@ -2298,6 +2311,8 @@ func (row exportIRODSRow) cell(column string) string {
 		return row.SangerSampleID
 	case "name":
 		return row.Name
+	case "accession_number":
+		return row.SampleAccession
 	case "study_accession_number":
 		return row.StudyAccession
 	case "id_study_lims":
@@ -2335,7 +2350,7 @@ func (row exportIRODSRow) cell(column string) string {
 	case "deliverable":
 		return deliverableString(row.IsDeliverable)
 	case "irods_path":
-		return strings.TrimRight(row.Collection, "/") + "/" + row.FileName
+		return row.IRODSPath()
 	case "id_product":
 		return row.IDProduct
 	case "id_sample_tmp":

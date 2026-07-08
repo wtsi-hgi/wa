@@ -164,6 +164,14 @@ func TestEndpointReferenceIncludesParamsDescriptionAndResponseG1(t *testing.T) {
 			section := registryEntrySectionForTest(t, reference, "/studies")
 			convey.So(section, convey.ShouldContainSubstring, "Study")
 		})
+
+		convey.Convey("the export endpoint documents generated canonical column choices", func() {
+			section := registryEntrySectionForTest(t, reference, "/export/:children/:parent_kind/:parent_id")
+			convey.So(section, convey.ShouldContainSubstring, "sample-crams default name,accession_number,irods_path,merged")
+			convey.So(section, convey.ShouldContainSubstring, "irods/files default supplier_name,sanger_sample_id,manual_qc,irods_path")
+			convey.So(section, convey.ShouldNotContainSubstring, "ega_id")
+			convey.So(section, convey.ShouldNotContainSubstring, "irods_cram_path")
+		})
 	})
 }
 

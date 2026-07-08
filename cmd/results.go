@@ -1177,7 +1177,7 @@ Files:
 Metadata:
   --run, --study, --sample and --library are sent to the results server, which
     resolves them through its configured MLWH cache and stores canonical seqmeta
-    metadata keys. Normal CLI users do not need WA_MLWH_CACHE_PATH.
+    metadata keys. For metadata-resolution setup, see ` + "`wa results serve -h`" + `.
   --run accepts numeric run IDs.
   --study accepts LIMS ID, accession, UUID, or name.
   --sample accepts Sanger name, supplier name, id_sample_lims, sample UUID, or

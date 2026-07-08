@@ -2025,7 +2025,8 @@ func TestResultsRegisterCommand(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(output, convey.ShouldContainSubstring, "sent to the results server")
-		convey.So(output, convey.ShouldContainSubstring, "Normal CLI users do not need WA_MLWH_CACHE_PATH")
+		convey.So(output, convey.ShouldContainSubstring, "For metadata-resolution setup, see `wa results serve -h`")
+		convey.So(output, convey.ShouldNotContainSubstring, "Normal CLI users")
 		convey.So(output, convey.ShouldNotContainSubstring, "requires a previously synced MLWH cache")
 	})
 

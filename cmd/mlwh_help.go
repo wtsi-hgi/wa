@@ -25,30 +25,9 @@
 
 package cmd
 
-const mlwhQueryCommandConfigurationHelp = `Normal CLI users should point this command at the MLWH query server
-with --server or WA_MLWH_SERVER_URL; database and cache credentials
-stay with the server process. When WA_ENV selects a scenario and no
-server URL is set, the command defaults to the active local MLWH API
-port from WA_*_SEQMETA_PORT. Operators can still run against a local
-cache with WA_MLWH_CACHE_PATH, or use WA_MLWH_DSN for direct local
-operator mode.
+const mlwhQueryCommandConfigurationHelp = `Configuration:
+  Use --server to choose a specific wa mlwh serve API. If --server is omitted,
+  wa uses the active MLWH server setting from the environment. For setup,
+  environment variables and local-cache operator mode, see ` + "`wa mlwh -h`" + `.`
 
-Configuration is read from the environment. Use the persistent --env
-flag (or WA_ENV=development|test|production) to load matching
-.env.<name> / .env.<name>.local files from the working directory
-before resolving:
-
-  WA_MLWH_SERVER_URL      Preferred. Base URL for wa mlwh serve.
-  WA_MLWH_BACKEND_URL     Lower-precedence compatibility default.
-  WA_*_SEQMETA_PORT       Scenario-local default API port.
-  WA_MLWH_DSN             Optional direct operator mode only.
-  WA_MLWH_PASSWORD        Optional. Password used with WA_MLWH_DSN.
-  WA_MLWH_CACHE_PATH      Optional local operator cache path or
-                          MySQL cache DSN without a password.
-  WA_MLWH_CACHE_PASSWORD  Optional. SQLCipher key used to encrypt
-                          the local cache when set.`
-
-const mlwhInfoCommandConfigurationHelp = mlwhQueryCommandConfigurationHelp + `
-
-Local operator note: wa mlwh sync requires WA_MLWH_DSN when you are maintaining
-the cache yourself.`
+const mlwhInfoCommandConfigurationHelp = mlwhQueryCommandConfigurationHelp

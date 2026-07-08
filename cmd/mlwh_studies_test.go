@@ -37,12 +37,14 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-func TestMLWHStudiesHelpRendersConfigurationDetails(t *testing.T) {
-	convey.Convey("wa mlwh studies --help renders documentation about env vars and the mode flags", t, func() {
+func TestMLWHStudiesHelpRendersConfigurationPointer(t *testing.T) {
+	convey.Convey("wa mlwh studies --help points to centralized configuration help and keeps the mode flags", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "studies", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_SERVER_URL")
+		convey.So(output, convey.ShouldContainSubstring, "see `wa mlwh -h`")
+		convey.So(output, convey.ShouldNotContainSubstring, "before resolving:")
+		convey.So(output, convey.ShouldNotContainSubstring, "Normal CLI users")
 		convey.So(output, convey.ShouldContainSubstring, "--faculty-sponsor")
 		convey.So(output, convey.ShouldContainSubstring, "--programme")
 		convey.So(output, convey.ShouldContainSubstring, "--user")
@@ -50,23 +52,27 @@ func TestMLWHStudiesHelpRendersConfigurationDetails(t *testing.T) {
 	})
 }
 
-func TestMLWHProgrammesHelpRendersConfigurationDetails(t *testing.T) {
-	convey.Convey("wa mlwh programmes --help renders documentation about env vars and JSON output", t, func() {
+func TestMLWHProgrammesHelpRendersConfigurationPointer(t *testing.T) {
+	convey.Convey("wa mlwh programmes --help points to centralized configuration help and keeps JSON output", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "programmes", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_SERVER_URL")
+		convey.So(output, convey.ShouldContainSubstring, "see `wa mlwh -h`")
+		convey.So(output, convey.ShouldNotContainSubstring, "before resolving:")
+		convey.So(output, convey.ShouldNotContainSubstring, "Normal CLI users")
 		convey.So(output, convey.ShouldContainSubstring, "--json")
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh programmes")
 	})
 }
 
-func TestMLWHPeopleHelpRendersConfigurationDetails(t *testing.T) {
-	convey.Convey("wa mlwh people --help renders documentation about env vars and an example", t, func() {
+func TestMLWHPeopleHelpRendersConfigurationPointer(t *testing.T) {
+	convey.Convey("wa mlwh people --help points to centralized configuration help and keeps examples", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "people", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_SERVER_URL")
+		convey.So(output, convey.ShouldContainSubstring, "see `wa mlwh -h`")
+		convey.So(output, convey.ShouldNotContainSubstring, "before resolving:")
+		convey.So(output, convey.ShouldNotContainSubstring, "Normal CLI users")
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh people")
 	})
 }
