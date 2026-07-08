@@ -275,7 +275,7 @@ type StudyManifest struct {
 	AccessionNumber      string        `json:"accession_number" doc:"study accession number"`
 	FacultySponsor       string        `json:"faculty_sponsor" doc:"study faculty sponsor"`
 	DataAccessGroup      string        `json:"data_access_group" doc:"study data access group"`
-	ProductsWithoutIRODS int           `json:"products_without_irods" doc:"count of product rows whose iRODS path is absent for a known reason such as merged multi-lane CRAM"`
+	ProductsWithoutIRODS int           `json:"products_without_irods" doc:"full unpaginated count of product rows whose iRODS path is absent for a known reason such as merged multi-lane CRAM in the requested with_irods/file_type scope"`
 	Rows                 []ManifestRow `json:"rows" doc:"page of per-product manifest rows"`
 	CacheSyncedAt        string        `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
 }

@@ -267,6 +267,27 @@ func TestMLWHExportSampleCramsStudy7568H3(t *testing.T) {
 	})
 }
 
+func TestMLWHExportSampleCramsIncludeControlsD1(t *testing.T) {
+	convey.Convey("D1: Given sample-crams export controls are requested, when the export command runs, then it passes an explicit include-controls override", t, func() {
+		var capturedOptions mlwh.ExportOptions
+		stub := &stubMLWHExportClient{
+			export: func(_ context.Context, _ mlwh.ExportRelationship, _ string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
+				capturedOptions = opts
+
+				return mlwh.ExportResult{Columns: []string{"name"}, Rows: [][]string{}, Total: 0, Format: "tsv"}, nil
+			},
+		}
+		withStubMLWHExportClient(t, stub)
+
+		_, err := executeRootCommandForTest(t, []string{"mlwh", "export", "sample-crams", "study", "7568", "--include-controls"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(capturedOptions.DeliverablesOnly, convey.ShouldNotBeNil)
+		convey.So(*capturedOptions.DeliverablesOnly, convey.ShouldBeFalse)
+		convey.So(stub.closed, convey.ShouldBeTrue)
+	})
+}
+
 func TestMLWHExportAllStatesCompleteSetD1b(t *testing.T) {
 	convey.Convey("D1b.3: Given --all, when the export command runs, then it states the complete set was emitted", t, func() {
 		var capturedOptions mlwh.ExportOptions

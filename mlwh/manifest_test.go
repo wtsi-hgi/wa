@@ -410,6 +410,60 @@ func seedManifestStudy7568MergedCRAMScenario(t *testing.T, db *sql.DB) {
 	seedManifestSyncState(t, db)
 }
 
+func TestStudyManifestProductsWithoutIRODSCountsFullEnvelopeAcrossPagesH4(t *testing.T) {
+	convey.Convey("H4 pagination: Given a study has direct product rows before and after merged CRAM gaps", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedManifestPagedGapScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		beforeGap, beforeErr := client.StudyManifest(context.Background(), "PAGES", "cram", true, 1, 0)
+		afterGap, afterErr := client.StudyManifest(context.Background(), "PAGES", "cram", true, 1, 3)
+
+		convey.Convey("when pages before and after the gap rows are requested, then both envelopes carry the full gap count", func() {
+			convey.So(beforeErr, convey.ShouldBeNil)
+			convey.So(afterErr, convey.ShouldBeNil)
+			convey.So(beforeGap.Rows, convey.ShouldHaveLength, 1)
+			convey.So(afterGap.Rows, convey.ShouldHaveLength, 1)
+			convey.So(beforeGap.Rows[0].Name, convey.ShouldEqual, "paged-direct-before")
+			convey.So(afterGap.Rows[0].Name, convey.ShouldEqual, "paged-direct-after")
+			convey.So(beforeGap.Rows[0].IRODSUnmatched, convey.ShouldBeFalse)
+			convey.So(afterGap.Rows[0].IRODSUnmatched, convey.ShouldBeFalse)
+			convey.So(beforeGap.ProductsWithoutIRODS, convey.ShouldEqual, 2)
+			convey.So(afterGap.ProductsWithoutIRODS, convey.ShouldEqual, 2)
+		})
+	})
+}
+
+func seedManifestPagedGapScenario(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedHierarchyStudy(t, db, 860, "PAGES")
+	seedManifestSampleRow(t, db, 86_001, "paged-direct-before", "supplier-before", "EGAN-before", "sanger-before")
+	seedManifestSampleRow(t, db, 86_002, "paged-merged-gap", "supplier-gap", "EGAN-gap", "sanger-gap")
+	seedManifestSampleRow(t, db, 86_003, "paged-direct-after", "supplier-after", "EGAN-after", "sanger-after")
+
+	seedIseqProductMetricsMirrorRow(t, db, 8_600_001, 86_001, 86000, 1, 1, "PAGES")
+	seedIseqProductMetricsMirrorRow(t, db, 8_600_101, 86_002, 86001, 1, 1, "PAGES")
+	seedIseqProductMetricsMirrorRow(t, db, 8_600_102, 86_002, 86001, 2, 1, "PAGES")
+	seedIseqProductMetricsMirrorRow(t, db, 8_600_201, 86_003, 86002, 1, 1, "PAGES")
+
+	seedIRODSLocationMirrorRow(t, db, "8600001", "/seq/pages/before", "86000_1#1.cram", 86_001, "PAGES")
+	seedIRODSLocationMirrorRow(t, db, "paged-merged", "/seq/pages/merged", "86001_1-2#1.cram", 86_002, "PAGES")
+	setIRODSLocationMirrorQCAndDeliverableFields(
+		t,
+		db,
+		"paged-merged",
+		sql.NullInt64{Int64: 1, Valid: true},
+		sql.NullInt64{Int64: 1, Valid: true},
+		true,
+	)
+	seedIRODSLocationMirrorRow(t, db, "8600201", "/seq/pages/after", "86002_1#1.cram", 86_003, "PAGES")
+
+	seedManifestSyncState(t, db)
+}
+
 func TestStudyManifestRowsRenderManualQCFromProductQC(t *testing.T) {
 	convey.Convey("B1.1: Given study S1 with products whose qc values are 1, 0 and NULL", t, func() {
 		cache := openSQLiteSyncTestCache(t)

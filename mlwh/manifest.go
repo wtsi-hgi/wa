@@ -84,7 +84,8 @@ const (
 	// merged CRAM object in the study. It deliberately reports only the gap; it
 	// does not select the composite path and therefore cannot duplicate that path
 	// across the sample's single-lane product rows.
-	manifestListIRODSUnmatchedSelect = `, MAX(CASE WHEN ipm.id_run <> 0 AND ipm.position <> 0 AND spi.id_iseq_product IS NULL AND mcram.id_sample_tmp IS NOT NULL THEN 1 ELSE 0 END)`
+	manifestListIRODSUnmatchedExpression = `MAX(CASE WHEN ipm.id_run <> 0 AND ipm.position <> 0 AND spi.id_iseq_product IS NULL AND mcram.id_sample_tmp IS NOT NULL THEN 1 ELSE 0 END)`
+	manifestListIRODSUnmatchedSelect     = `, ` + manifestListIRODSUnmatchedExpression
 
 	// manifestListIRODSNoUnmatchedSelect keeps the with_irods scan shape stable
 	// when the request is not a CRAM-aware view.
@@ -201,23 +202,9 @@ func manifestListQuery(studyLimsID string, withIRODS bool, normalised string, li
 		return query, []any{studyLimsID, limit, offset}
 	}
 
-	detectMergedCRAMGap := normalised == "" || normalised == "cram"
-
-	// Bind args in SQL-text order: the derived table's id_study_lims (in its
-	// WHERE), then the file-type LIKE pattern when filtered (also in that WHERE),
-	// then the optional merged-CRAM sample marker's id_study_lims + CRAM pattern,
-	// then the outer WHERE's id_study_lims, then limit/offset.
-	join := manifestListIRODSJoinPrefix
-	args := []any{studyLimsID}
-	if normalised != "" {
-		join += manifestListIRODSFileTypeClause
-		args = append(args, irodsFileTypeLikePattern(normalised))
-	}
-	join += manifestListIRODSJoinSuffix
+	join, args, detectMergedCRAMGap := manifestIRODSJoin(studyLimsID, normalised)
 	unmatchedSelect := manifestListIRODSNoUnmatchedSelect
 	if detectMergedCRAMGap {
-		join += manifestListMergedCRAMJoin
-		args = append(args, studyLimsID, irodsFileTypeLikePattern("cram"))
 		unmatchedSelect = manifestListIRODSUnmatchedSelect
 	}
 	args = append(args, studyLimsID, limit, offset)
@@ -225,6 +212,26 @@ func manifestListQuery(studyLimsID string, withIRODS bool, normalised string, li
 	query := manifestListSelectPrefix + manifestListIRODSSelect + unmatchedSelect + manifestListBaseFrom + join + manifestListWhere + manifestListSuffix
 
 	return query, args
+}
+
+// manifestIRODSJoin builds the with_irods LEFT JOIN block and its arguments in
+// SQL-text order. The returned boolean tells callers whether the joined view is
+// CRAM-aware and therefore able to mark merged multi-lane CRAM gaps.
+func manifestIRODSJoin(studyLimsID, normalised string) (string, []any, bool) {
+	detectMergedCRAMGap := normalised == "" || normalised == "cram"
+	join := manifestListIRODSJoinPrefix
+	args := []any{studyLimsID}
+	if normalised != "" {
+		join += manifestListIRODSFileTypeClause
+		args = append(args, irodsFileTypeLikePattern(normalised))
+	}
+	join += manifestListIRODSJoinSuffix
+	if detectMergedCRAMGap {
+		join += manifestListMergedCRAMJoin
+		args = append(args, studyLimsID, irodsFileTypeLikePattern("cram"))
+	}
+
+	return join, args, detectMergedCRAMGap
 }
 
 // scanManifestRow scans one manifest list row into a ManifestRow, applying the
@@ -284,17 +291,6 @@ func scanManifestRow(scan func(dest ...any) error, withIRODS bool) (ManifestRow,
 	return row, nil
 }
 
-func manifestProductsWithoutIRODS(rows []ManifestRow) int {
-	count := 0
-	for _, row := range rows {
-		if row.IRODSUnmatched {
-			count++
-		}
-	}
-
-	return count
-}
-
 // StudyManifest returns one bounded, pageable manifest of a study's sequencing
 // products (spec D2/C1): the StudyManifest envelope carries the study
 // id_study_lims / name / accession_number / faculty_sponsor / data_access_group
@@ -338,13 +334,17 @@ func (c *Client) StudyManifest(ctx context.Context, studyLimsID, fileType string
 			return StudyManifest{}, err
 		}
 	}
+	productsWithoutIRODS, err := c.countManifestProductsWithoutIRODS(ctx, studyLimsID, withIRODS, normalised)
+	if err != nil {
+		return StudyManifest{}, err
+	}
 
 	manifest, err := c.studyManifestEnvelope(ctx, studyLimsID)
 	if err != nil {
 		return StudyManifest{}, err
 	}
 	manifest.Rows = rows
-	manifest.ProductsWithoutIRODS = manifestProductsWithoutIRODS(rows)
+	manifest.ProductsWithoutIRODS = productsWithoutIRODS
 
 	return manifest, nil
 }
@@ -361,6 +361,30 @@ func (c *Client) StudyManifest(ctx context.Context, studyLimsID, fileType string
 // cascade: the handler only sizes a manifest that already resolved.
 func (c *Client) countStudyManifestProducts(ctx context.Context, studyLimsID string) (int, error) {
 	return c.queryCount(ctx, `SELECT COUNT(*) FROM (`+manifestProductGrainDistinctSQL+`) AS manifest_products`, "count study manifest products", studyLimsID)
+}
+
+// countManifestProductsWithoutIRODS counts merged multi-lane CRAM gaps across the
+// whole manifest product set for the same with_irods/file_type scope as the row
+// query. It intentionally ignores pagination so the envelope stays stable across
+// pages.
+func (c *Client) countManifestProductsWithoutIRODS(ctx context.Context, studyLimsID string, withIRODS bool, normalised string) (int, error) {
+	if !withIRODS {
+		return 0, nil
+	}
+
+	join, args, detectMergedCRAMGap := manifestIRODSJoin(studyLimsID, normalised)
+	if !detectMergedCRAMGap {
+		return 0, nil
+	}
+	args = append(args, studyLimsID)
+
+	query := `SELECT COUNT(*) FROM (` +
+		`SELECT ` + manifestListIRODSUnmatchedExpression + ` AS irods_unmatched` +
+		manifestListBaseFrom + join + manifestListWhere +
+		` GROUP BY ipm.id_run, ipm.position, ipm.tag_index` +
+		`) AS manifest_gaps WHERE irods_unmatched <> 0`
+
+	return c.queryCount(ctx, query, "count study manifest products without irods", args...)
 }
 
 // queryManifestRows runs the manifest list query and scans the product rows. The

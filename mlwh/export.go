@@ -234,7 +234,7 @@ func exportFileFilters(kind exportRelationshipKind, opts ExportOptions) (string,
 	deliverablesOnly := false
 	if opts.DeliverablesOnly != nil {
 		deliverablesOnly = *opts.DeliverablesOnly
-	} else if kind == exportRelationshipIRODS && normalised == "cram" {
+	} else if exportRelationshipUsesFileType(kind) && normalised == "cram" {
 		deliverablesOnly = true
 	}
 
@@ -804,7 +804,7 @@ func decodeExportCursor(raw string) (exportCursor, error) {
 
 // ExportOptions controls column selection, shared filters, paging, and rendering
 // format for Export. A nil DeliverablesOnly applies the relationship default:
-// cram file listings exclude only known controls/sub-products.
+// CRAM file listings exclude known controls/sub-products.
 type ExportOptions struct {
 	Columns          []string
 	FileType         string

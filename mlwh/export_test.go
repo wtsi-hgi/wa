@@ -1008,33 +1008,33 @@ func TestExportStudySampleCramsBackedByIRODSMirrorD1a(t *testing.T) {
 		seedExportSampleCRAMScenario(t, client.cache.DB())
 
 		result, err := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "CRAMS", ExportOptions{})
-		deliverablesOnly := true
-		deliverableResult, deliverableErr := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "CRAMS", ExportOptions{
-			DeliverablesOnly: &deliverablesOnly,
+		includeControls := false
+		includeControlsResult, includeControlsErr := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "CRAMS", ExportOptions{
+			DeliverablesOnly: &includeControls,
 		})
 
-		convey.Convey("when sample-crams are exported by default, then every selected CRAM row is returned with merged objects preferred", func() {
+		convey.Convey("when sample-crams are exported by default, then deliverable CRAM rows are returned with merged objects preferred", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(result.Columns, convey.ShouldResemble, []string{"name", "ega_id", "irods_cram_path", "merged"})
 			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"cram-merged", "EGAN-merged", "/seq/crams/merged/49348_1-2#1.cram", "true"},
+				{"cram-null-deliverable", "EGAN-null", "/seq/crams/null/pacbio.cram", "false"},
+				{"cram-single", "EGAN-single", "/seq/crams/single/52553_1#1.cram", "false"},
+			})
+			convey.So(result.Total, convey.ShouldEqual, 3)
+			convey.So(result.Complete, convey.ShouldBeTrue)
+			convey.So(result.NextCursor, convey.ShouldBeEmpty)
+		})
+
+		convey.Convey("when controls are explicitly included, then the non-deliverable-only CRAM is restored", func() {
+			convey.So(includeControlsErr, convey.ShouldBeNil)
+			convey.So(includeControlsResult.Rows, convey.ShouldResemble, [][]string{
 				{"cram-control-only", "EGAN-control", "/seq/crams/control/52554_1#1.cram", "false"},
 				{"cram-merged", "EGAN-merged", "/seq/crams/merged/49348_1-2#1.cram", "true"},
 				{"cram-null-deliverable", "EGAN-null", "/seq/crams/null/pacbio.cram", "false"},
 				{"cram-single", "EGAN-single", "/seq/crams/single/52553_1#1.cram", "false"},
 			})
-			convey.So(result.Total, convey.ShouldEqual, 4)
-			convey.So(result.Complete, convey.ShouldBeTrue)
-			convey.So(result.NextCursor, convey.ShouldBeEmpty)
-		})
-
-		convey.Convey("when deliverables-only is explicit, then the non-deliverable-only CRAM is filtered", func() {
-			convey.So(deliverableErr, convey.ShouldBeNil)
-			convey.So(deliverableResult.Rows, convey.ShouldResemble, [][]string{
-				{"cram-merged", "EGAN-merged", "/seq/crams/merged/49348_1-2#1.cram", "true"},
-				{"cram-null-deliverable", "EGAN-null", "/seq/crams/null/pacbio.cram", "false"},
-				{"cram-single", "EGAN-single", "/seq/crams/single/52553_1#1.cram", "false"},
-			})
-			convey.So(deliverableResult.Total, convey.ShouldEqual, 3)
+			convey.So(includeControlsResult.Total, convey.ShouldEqual, 4)
 		})
 	})
 }
