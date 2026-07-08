@@ -207,10 +207,26 @@ func newMLWHRunsCommand() *cobra.Command {
 
 func cliSequencingAggregateGroupBy(monthly bool, groupBy []string) []string {
 	groups := make([]string, 0, len(groupBy)+1)
-	if monthly {
-		groups = append(groups, "month")
+	seen := make(map[string]struct{}, len(groupBy)+1)
+	addGroup := func(group string) {
+		normalized := strings.ToLower(strings.TrimSpace(group))
+		if normalized == "" {
+			return
+		}
+		if _, ok := seen[normalized]; ok {
+			return
+		}
+		seen[normalized] = struct{}{}
+		groups = append(groups, normalized)
 	}
-	groups = append(groups, groupBy...)
+	if monthly {
+		addGroup("month")
+	}
+	for _, value := range groupBy {
+		for _, part := range strings.Split(value, ",") {
+			addGroup(part)
+		}
+	}
 
 	return groups
 }

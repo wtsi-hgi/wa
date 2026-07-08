@@ -167,6 +167,41 @@ func TestMLWHRunsMonthlyGroupByProgrammeUsesSequencingAggregateG2(t *testing.T) 
 	})
 }
 
+func TestMLWHRunsCommaSeparatedGroupByRendersEachGroup(t *testing.T) {
+	convey.Convey("Given a fake runs client returning a multi-key sequencing aggregate", t, func() {
+		var captured mlwh.SequencingAggregateOptions
+		stub := &stubMLWHRunsClient{
+			agg: func(_ context.Context, opts mlwh.SequencingAggregateOptions) ([]mlwh.SequencingAggregateRow, error) {
+				captured = opts
+
+				return []mlwh.SequencingAggregateRow{{
+					Group: map[string]string{
+						"platform":  "PacBio",
+						"programme": "Cancer",
+					},
+					Unit:          "samples",
+					Count:         12,
+					DateBasis:     "created",
+					CacheSyncedAt: "2026-07-02T08:00:00Z",
+				}}, nil
+			},
+		}
+		withStubMLWHRunsClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{
+			"mlwh", "runs",
+			"--group-by", "platform,programme",
+			"--unit", "samples",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(captured.GroupBy, convey.ShouldResemble, []string{"platform", "programme"})
+		convey.So(captured.Unit, convey.ShouldEqual, "samples")
+		convey.So(output, convey.ShouldContainSubstring, "platform=PacBio programme=Cancer unit=samples count=12")
+		convey.So(output, convey.ShouldNotContainSubstring, "platform,programme=")
+	})
+}
+
 func TestMLWHRunsFlatListingPagesAllByCompositeIDF2(t *testing.T) {
 	convey.Convey("Given a fake runs client with three global run listing rows split over two keyset pages", t, func() {
 		var (
