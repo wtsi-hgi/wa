@@ -641,7 +641,7 @@ func (c *Client) Export(ctx context.Context, rel ExportRelationship, parentID st
 	case exportRelationshipLanes:
 		return c.exportLanes(ctx, plan, parent)
 	case exportRelationshipStudies:
-		return c.exportStudies(ctx, plan, parentID)
+		return c.exportStudies(ctx, plan, parent)
 	case exportRelationshipUsers:
 		return c.exportUsers(ctx, plan, parent)
 	case exportRelationshipSampleCRAMs:
@@ -1099,8 +1099,8 @@ func (c *Client) exportLanes(ctx context.Context, plan exportPlan, parent export
 	return buildExportResult(plan, projectLanes(lanes, plan.columns), exportCountValue(total)), nil
 }
 
-func (c *Client) exportStudies(ctx context.Context, plan exportPlan, parentID string) (ExportResult, error) {
-	studies, err := c.studiesForExport(ctx, plan, parentID)
+func (c *Client) exportStudies(ctx context.Context, plan exportPlan, parent exportParent) (ExportResult, error) {
+	studies, err := c.studiesForExport(ctx, plan, parent)
 	if err != nil {
 		return ExportResult{}, err
 	}
@@ -1790,33 +1790,33 @@ type exportStudyRows struct {
 	total int
 }
 
-func (c *Client) studiesForExport(ctx context.Context, plan exportPlan, parentID string) (exportStudyRows, error) {
+func (c *Client) studiesForExport(ctx context.Context, plan exportPlan, parent exportParent) (exportStudyRows, error) {
 	switch plan.rel.ParentKind {
 	case "sample":
-		studies, total, err := c.sampleStudiesForExport(ctx, parentID, plan.limit, plan.offset)
+		studies, total, err := c.sampleStudiesForExport(ctx, parent.Canonical, plan.limit, plan.offset)
 		if err != nil {
 			return exportStudyRows{}, err
 		}
 
 		return exportStudyRows{rows: projectStudies(studies, "", plan.columns), total: total}, nil
 	case "faculty-sponsor":
-		rows, err := c.StudiesForFacultySponsor(ctx, parentID, plan.limit, plan.offset)
-		total, countErr := c.CountStudiesForFacultySponsor(ctx, parentID)
+		rows, err := c.StudiesForFacultySponsor(ctx, parent.Canonical, plan.limit, plan.offset)
+		total, countErr := c.CountStudiesForFacultySponsor(ctx, parent.Canonical)
 		if err = errors.Join(err, countErr); err != nil {
 			return exportStudyRows{}, err
 		}
 
 		return exportStudyRows{rows: projectPersonStudies(rows, plan.columns), total: exportCountValue(total)}, nil
 	case "user":
-		rows, err := c.StudiesForUser(ctx, parentID, plan.role, plan.limit, plan.offset)
-		total, countErr := c.CountStudiesForUser(ctx, parentID, plan.role)
+		rows, err := c.StudiesForUser(ctx, parent.Canonical, plan.role, plan.limit, plan.offset)
+		total, countErr := c.CountStudiesForUser(ctx, parent.Canonical, plan.role)
 		if err = errors.Join(err, countErr); err != nil {
 			return exportStudyRows{}, err
 		}
 
 		return exportStudyRows{rows: projectPersonStudies(rows, plan.columns), total: exportCountValue(total)}, nil
 	case "programme":
-		rows, total, err := c.programmeStudiesForExport(ctx, parentID, plan.limit, plan.offset)
+		rows, total, err := c.programmeStudiesForExport(ctx, parent.Canonical, plan.limit, plan.offset)
 		if err != nil {
 			return exportStudyRows{}, err
 		}

@@ -1064,13 +1064,24 @@ func TestExportSampleStudiesAppliesBoundedPageD1a(t *testing.T) {
 			Limit:   1,
 			Offset:  1,
 		})
+		aliasResult, aliasErr := client.Export(context.Background(), ExportRelationship{Children: "studies", ParentKind: "sample"}, "supplier-linked", ExportOptions{
+			Columns: []string{"id_study_lims", "name"},
+			Limit:   1,
+			Offset:  1,
+		})
 
-		convey.Convey("when the second bounded page is fetched, then only that page is returned while total remains unbounded", func() {
+		convey.Convey("when the second bounded page is fetched by canonical name or alias, then only that page is returned while total remains unbounded", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(result.Rows, convey.ShouldResemble, [][]string{{"6569", "Study 6569"}})
 			convey.So(result.Total, convey.ShouldEqual, 3)
 			convey.So(result.Complete, convey.ShouldBeFalse)
 			convey.So(result.NextCursor, convey.ShouldBeEmpty)
+
+			convey.So(aliasErr, convey.ShouldBeNil)
+			convey.So(aliasResult.Rows, convey.ShouldResemble, result.Rows)
+			convey.So(aliasResult.Total, convey.ShouldEqual, result.Total)
+			convey.So(aliasResult.Complete, convey.ShouldEqual, result.Complete)
+			convey.So(aliasResult.NextCursor, convey.ShouldEqual, result.NextCursor)
 		})
 	})
 }
