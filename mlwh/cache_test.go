@@ -560,6 +560,9 @@ func TestOpenCacheMySQLMigratesV1Cache(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		roDB, roMock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
 		convey.So(err, convey.ShouldBeNil)
+		// Keep sqlmock close expectations deterministic while still exercising
+		// every read-pool warmup ping.
+		roDB.SetMaxOpenConns(1)
 
 		rwMock.ExpectPing()
 		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*), COALESCE(MAX(version), 0) FROM schema_version`)).WillReturnRows(

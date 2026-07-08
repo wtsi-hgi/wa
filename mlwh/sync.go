@@ -381,15 +381,15 @@ var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
 // (the mirror is too large -- ~9M rows -- to rebuild every declared index inline).
 // It includes the upstream source-row index so warm incremental replacement can
 // remove stale cached paths by stable source identity without scanning the mirror.
-// It MUST include the (id_study_lims, id_iseq_product) index: the per-platform
-// status-breakdown query joins each platform's product id to spi.id_iseq_product
-// scoped by id_study_lims, and without this index that linkage full-scans the mirror
-// per study (the ~5s study page). It MUST also include the (id_iseq_product) index:
-// the D1 run-scoped iRODS join and the D2 manifest per-product iRODS LEFT JOIN match
-// on id_iseq_product alone, so without it those joins full-scan the mirror until the
-// full index set is rebuilt. Omitting either here would let the large-cold-load
-// schema-shape tolerance accept the missing index as expected drift, silently
-// recreating the slow path.
+// It MUST include the (id_study_lims, id_sample_tmp) index: the per-platform
+// status-breakdown query intersects each platform's study samples with study-scoped
+// iRODS rows by sample, and without this index that linkage full-scans the mirror
+// per study. It MUST also include the (id_iseq_product) and (id_study_lims,
+// id_iseq_product) indexes: the D1 run-scoped iRODS join and the D2 manifest
+// per-product iRODS LEFT JOIN match on product id, so without them those joins
+// full-scan the mirror until the full index set is rebuilt. Omitting these here
+// would let the large-cold-load schema-shape tolerance accept the missing indexes
+// as expected drift, silently recreating slow paths.
 var seqProductIRODSLocationsMirrorReadIndexes = []syncIndexSpec{
 	{Name: "spi_mirror_source_row_idx", Column: "id_seq_product_irods_locations_tmp"},
 	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},

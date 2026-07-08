@@ -156,7 +156,7 @@ var (
 			{Name: "collection", Supported: true},
 			{Name: "data_object", Supported: true},
 		},
-		Default: []string{"supplier_name", "study_accession_number", "sanger_sample_id", "manual_qc", "irods_path"},
+		Default: []string{"supplier_name", "sanger_sample_id", "manual_qc", "irods_path"},
 	}
 	sampleExportVocabulary = exportVocabulary{
 		Columns: []exportColumn{
@@ -243,14 +243,6 @@ func validateExportContinuationSupport(kind exportRelationshipKind, rel ExportRe
 	if strings.TrimSpace(opts.Cursor) != "" {
 		return fmt.Errorf(
 			"%w: cursor pagination is supported only for iRODS exports in D1a; use limit/offset for %s of %s",
-			ErrUnsupportedIdentifier,
-			rel.Children,
-			rel.ParentKind,
-		)
-	}
-	if opts.All {
-		return fmt.Errorf(
-			"%w: --all streaming is supported only for iRODS exports in D1a; use bounded limit/offset pages for %s of %s",
 			ErrUnsupportedIdentifier,
 			rel.Children,
 			rel.ParentKind,
@@ -699,26 +691,11 @@ func (c *Client) Export(ctx context.Context, rel ExportRelationship, parentID st
 		return ExportResult{}, err
 	}
 
-	switch plan.kind {
-	case exportRelationshipIRODS:
-		return c.exportIRODS(ctx, plan, parent)
-	case exportRelationshipSamples:
-		return c.exportSamples(ctx, plan, parent)
-	case exportRelationshipRuns:
-		return c.exportRuns(ctx, plan, parent)
-	case exportRelationshipLibraries:
-		return c.exportLibraries(ctx, plan, parent)
-	case exportRelationshipLanes:
-		return c.exportLanes(ctx, plan, parent)
-	case exportRelationshipStudies:
-		return c.exportStudies(ctx, plan, parent)
-	case exportRelationshipUsers:
-		return c.exportUsers(ctx, plan, parent)
-	case exportRelationshipSampleCRAMs:
-		return c.exportSampleCRAMs(ctx, plan, parent)
-	default:
-		return ExportResult{}, fmt.Errorf("%w: export relationship %s of %s is not backed yet", ErrUnsupportedIdentifier, plan.rel.Children, plan.rel.ParentKind)
+	if plan.all {
+		return c.exportAll(ctx, plan, parent)
 	}
+
+	return c.exportPage(ctx, plan, parent)
 }
 
 func newExportPlan(rel ExportRelationship, parentID string, opts ExportOptions) (exportPlan, error) {
@@ -739,7 +716,7 @@ func newExportPlan(rel ExportRelationship, parentID string, opts ExportOptions) 
 	if err != nil {
 		return exportPlan{}, err
 	}
-	if sortCreatedDesc && (opts.All || strings.TrimSpace(opts.Cursor) != "") {
+	if sortCreatedDesc && strings.TrimSpace(opts.Cursor) != "" {
 		return exportPlan{}, fmt.Errorf("%w: created-date sorted iRODS exports require bounded limit/offset pages", ErrUnsupportedIdentifier)
 	}
 	createdWindowArgs, err := normaliseExportCreatedWindow(kind, opts.Since, opts.Until)
@@ -912,8 +889,9 @@ type ExportColumnVocabulary struct {
 }
 
 // ExportOptions controls column selection, shared filters, paging, and rendering
-// format for Export. A nil DeliverablesOnly applies the relationship default:
-// CRAM file listings exclude known controls/sub-products.
+// format for Export. Limit/Offset/Cursor request a bounded page; All streams the
+// complete result using internal pages. A nil DeliverablesOnly applies the
+// relationship default: CRAM file listings exclude known controls/sub-products.
 type ExportOptions struct {
 	Columns          []string
 	FileType         string
@@ -931,7 +909,7 @@ type ExportOptions struct {
 }
 
 // ExportResult is the string-rendered projection returned by Export. Rows are in
-// the same order as Columns. Total is -1 for complete --all keyset streams.
+// the same order as Columns. Total is -1 for complete streaming exports.
 type ExportResult struct {
 	Columns    []string
 	Rows       [][]string
@@ -1077,6 +1055,46 @@ func (r ExportResult) renderJSONTo(ctx context.Context, writer io.Writer) (int, 
 	}
 
 	return count, nil
+}
+
+func (c *Client) exportAll(ctx context.Context, plan exportPlan, parent exportParent) (ExportResult, error) {
+	if plan.kind == exportRelationshipIRODS {
+		return c.exportIRODS(ctx, plan, parent)
+	}
+
+	return ExportResult{
+		Columns:  exportColumnNames(plan.columns),
+		Rows:     nil,
+		Total:    -1,
+		Complete: true,
+		Format:   plan.format,
+		streamRows: func(streamCtx context.Context, emit func([]string) error) (int, error) {
+			return c.streamExportPages(streamCtx, plan, parent, emit)
+		},
+	}, nil
+}
+
+func (c *Client) exportPage(ctx context.Context, plan exportPlan, parent exportParent) (ExportResult, error) {
+	switch plan.kind {
+	case exportRelationshipIRODS:
+		return c.exportIRODS(ctx, plan, parent)
+	case exportRelationshipSamples:
+		return c.exportSamples(ctx, plan, parent)
+	case exportRelationshipRuns:
+		return c.exportRuns(ctx, plan, parent)
+	case exportRelationshipLibraries:
+		return c.exportLibraries(ctx, plan, parent)
+	case exportRelationshipLanes:
+		return c.exportLanes(ctx, plan, parent)
+	case exportRelationshipStudies:
+		return c.exportStudies(ctx, plan, parent)
+	case exportRelationshipUsers:
+		return c.exportUsers(ctx, plan, parent)
+	case exportRelationshipSampleCRAMs:
+		return c.exportSampleCRAMs(ctx, plan, parent)
+	default:
+		return ExportResult{}, fmt.Errorf("%w: export relationship %s of %s is not backed yet", ErrUnsupportedIdentifier, plan.rel.Children, plan.rel.ParentKind)
+	}
 }
 
 func (c *Client) exportIRODS(ctx context.Context, plan exportPlan, parent exportParent) (ExportResult, error) {
@@ -1847,6 +1865,34 @@ func exportRunParentScope(plan exportPlan, parent exportParent) (string, any, er
 	}
 }
 
+func (c *Client) streamExportPages(ctx context.Context, plan exportPlan, parent exportParent, emit func([]string) error) (int, error) {
+	pagePlan := plan
+	pagePlan.all = false
+	pagePlan.cursor = exportCursor{}
+
+	count := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return count, err
+		}
+
+		page, err := c.exportPage(ctx, pagePlan, parent)
+		if err != nil {
+			return count, err
+		}
+		emitted, err := page.ForEachRow(ctx, emit)
+		count += emitted
+		if err != nil || page.Complete {
+			return count, err
+		}
+		if emitted == 0 {
+			return count, fmt.Errorf("%w: export did not advance while paging all rows", ErrUpstreamImpaired)
+		}
+
+		pagePlan.offset += emitted
+	}
+}
+
 type exportCursor struct {
 	IDRun                int64
 	Position             int64
@@ -1898,8 +1944,13 @@ func (c *Client) streamExportIRODSRows(ctx context.Context, db *sql.DB, plan exp
 			return count, nil
 		}
 
-		input.cursor = page[len(page)-1].cursor()
-		input.offset = 0
+		if plan.sortCreatedDesc {
+			input.cursor = exportCursor{}
+			input.offset += len(page)
+		} else {
+			input.cursor = page[len(page)-1].cursor()
+			input.offset = 0
+		}
 	}
 }
 

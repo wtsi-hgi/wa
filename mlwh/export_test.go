@@ -207,6 +207,20 @@ func TestExportIRODSCreatedSortAndWindowE1(t *testing.T) {
 			Until:   formatSyncTime(until),
 			Limit:   100,
 		})
+		allResult, allErr := client.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "E1", ExportOptions{
+			Columns: []string{"id_product", "created"},
+			Sort:    "created-desc",
+			Since:   formatSyncTime(since),
+			Until:   formatSyncTime(until),
+			All:     true,
+			Limit:   1,
+		})
+		var allRows [][]string
+		allCount, renderAllErr := allResult.ForEachRow(context.Background(), func(row []string) error {
+			allRows = append(allRows, append([]string(nil), row...))
+
+			return nil
+		})
 
 		convey.Convey("when created is selected with created-desc and a half-open window, then only in-window rows render newest-first", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -216,6 +230,19 @@ func TestExportIRODSCreatedSortAndWindowE1(t *testing.T) {
 				{"at-since", formatSyncTime(since)},
 			})
 			convey.So(result.Total, convey.ShouldEqual, 2)
+		})
+
+		convey.Convey("when the sorted date-window export requests all rows, then internal offset pages preserve newest-first order", func() {
+			convey.So(allErr, convey.ShouldBeNil)
+			convey.So(renderAllErr, convey.ShouldBeNil)
+			convey.So(allCount, convey.ShouldEqual, 2)
+			convey.So(allResult.Rows, convey.ShouldBeNil)
+			convey.So(allResult.Total, convey.ShouldEqual, -1)
+			convey.So(allResult.Complete, convey.ShouldBeTrue)
+			convey.So(allRows, convey.ShouldResemble, [][]string{
+				{"inside-window", formatSyncTime(inside)},
+				{"at-since", formatSyncTime(since)},
+			})
 		})
 	})
 }
@@ -555,6 +582,32 @@ func TestExportStudyIRODSCramColumnsAliasAndDeliverablesD1a(t *testing.T) {
 				}
 			}
 			convey.So(nonCramPaths, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestExportStudyIRODSDefaultColumnsExcludeStudyAccession(t *testing.T) {
+	convey.Convey("Given a study iRODS export with default columns", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedExport7556Scenario(t, client.cache.DB())
+
+		defaultResult, defaultErr := client.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "7556", ExportOptions{
+			Limit: 10,
+		})
+		explicitResult, explicitErr := client.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "7556", ExportOptions{
+			Columns: []string{"supplier_name", "study_accession_number", "irods_path"},
+			Limit:   10,
+		})
+
+		convey.Convey("when no projection is supplied, then study_accession_number is omitted while remaining explicitly selectable", func() {
+			convey.So(defaultErr, convey.ShouldBeNil)
+			convey.So(defaultResult.Columns, convey.ShouldResemble, []string{"supplier_name", "sanger_sample_id", "manual_qc", "irods_path"})
+			convey.So(defaultResult.Rows, convey.ShouldHaveLength, 3)
+
+			convey.So(explicitErr, convey.ShouldBeNil)
+			convey.So(explicitResult.Columns, convey.ShouldResemble, []string{"supplier_name", "study_accession_number", "irods_path"})
+			convey.So(explicitResult.Rows[0][1], convey.ShouldEqual, "EGAS00007556")
 		})
 	})
 }
@@ -1119,6 +1172,12 @@ func TestExportNonIRODSPaginationDoesNotAdvertiseInvalidCursorD1a(t *testing.T) 
 			All:     true,
 			Limit:   2,
 		})
+		var allRows [][]string
+		allCount, allRenderErr := allResult.ForEachRow(context.Background(), func(row []string) error {
+			allRows = append(allRows, append([]string(nil), row...))
+
+			return nil
+		})
 
 		convey.Convey("when the first page is fetched, then no keyset cursor is advertised for the non-iRODS relationship", func() {
 			convey.So(firstErr, convey.ShouldBeNil)
@@ -1128,14 +1187,25 @@ func TestExportNonIRODSPaginationDoesNotAdvertiseInvalidCursorD1a(t *testing.T) 
 			convey.So(first.NextCursor, convey.ShouldBeEmpty)
 		})
 
-		convey.Convey("when Cursor or All is requested, then Export rejects the unsupported continuation mode before emitting rows", func() {
+		convey.Convey("when Cursor is requested, then Export rejects the unsupported continuation mode before emitting rows", func() {
 			convey.So(errors.Is(cursorErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
 			convey.So(cursorErr.Error(), convey.ShouldContainSubstring, "cursor pagination is supported only for iRODS exports")
 			convey.So(cursorResult.Rows, convey.ShouldBeNil)
+		})
 
-			convey.So(errors.Is(allErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
-			convey.So(allErr.Error(), convey.ShouldContainSubstring, "--all streaming is supported only for iRODS exports")
+		convey.Convey("when All is requested, then Export streams every offset-backed row by internal pages", func() {
+			convey.So(allErr, convey.ShouldBeNil)
+			convey.So(allRenderErr, convey.ShouldBeNil)
+			convey.So(allCount, convey.ShouldEqual, 4)
 			convey.So(allResult.Rows, convey.ShouldBeNil)
+			convey.So(allResult.Total, convey.ShouldEqual, -1)
+			convey.So(allResult.Complete, convey.ShouldBeTrue)
+			convey.So(allRows, convey.ShouldResemble, [][]string{
+				{"filter-human-standard-pass"},
+				{"filter-mus-bespoke-pass"},
+				{"filter-mus-standard-fail"},
+				{"filter-mus-standard-pass"},
+			})
 		})
 	})
 }

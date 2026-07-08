@@ -707,9 +707,9 @@ func (rc *RemoteClient) Export(ctx context.Context, rel ExportRelationship, pare
 }
 
 func remoteExportCanPageAll(rel ExportRelationship) bool {
-	_, kind, err := normaliseExportRelationship(rel)
+	_, _, err := normaliseExportRelationship(rel)
 
-	return err == nil && kind == exportRelationshipIRODS
+	return err == nil
 }
 
 func remoteExportQuery(opts ExportOptions) url.Values {
@@ -744,6 +744,9 @@ func remoteExportQuery(opts ExportOptions) url.Values {
 func (rc *RemoteClient) exportAllByRemotePages(ctx context.Context, rel ExportRelationship, parentID string, opts ExportOptions) (ExportResult, error) {
 	firstOpts := opts
 	firstOpts.All = false
+	if firstOpts.Limit == 0 {
+		firstOpts.Limit = defaultExportAllLimit
+	}
 
 	first, err := rc.exportRemotePage(ctx, rel, parentID, firstOpts)
 	if err != nil {
@@ -819,7 +822,7 @@ func (rc *RemoteClient) streamRemoteExportPages(
 }
 
 func remoteExportNoProgressError() error {
-	return fmt.Errorf("%w: remote Export did not advance while paging --all", ErrUpstreamImpaired)
+	return fmt.Errorf("%w: remote Export did not advance while paging all rows", ErrUpstreamImpaired)
 }
 
 func (rc *RemoteClient) exportRemotePage(ctx context.Context, rel ExportRelationship, parentID string, opts ExportOptions) (ExportResult, error) {

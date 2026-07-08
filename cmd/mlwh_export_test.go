@@ -92,10 +92,31 @@ func TestMLWHExportHelpDocumentsGrammarVocabularyAndFilters(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "approximates iRODS target=1")
 		convey.So(output, convey.ShouldContainSubstring, "not is_spiked")
 		convey.So(output, convey.ShouldContainSubstring, "--sort created-desc is the only supported explicit sort")
-		convey.So(output, convey.ShouldContainSubstring, "canonical iRODS order is the stable run/lane/tag/file order")
-		convey.So(output, convey.ShouldContainSubstring, "used for cursor")
-		convey.So(output, convey.ShouldContainSubstring, "RFC3339 timestamp such as 2026-07-01T00:00:00Z")
+		convey.So(output, convey.ShouldContainSubstring, "Exports always emit the complete matching set")
+		convey.So(output, convey.ShouldContainSubstring, "RFC3339 timestamp such as")
+		convey.So(output, convey.ShouldContainSubstring, "2026-07-01T00:00:00Z")
+		convey.So(output, convey.ShouldNotContainSubstring, "--all")
+		convey.So(output, convey.ShouldNotContainSubstring, "--limit")
+		convey.So(output, convey.ShouldNotContainSubstring, "--cursor")
+		convey.So(output, convey.ShouldNotContainSubstring, "--offset")
 	})
+}
+
+func TestMLWHExportPagingFlagsAreNotUserFacing(t *testing.T) {
+	for _, flag := range []string{"--all", "--limit", "--cursor", "--offset"} {
+		flag := flag
+		convey.Convey("Given "+flag+" is supplied to wa mlwh export, then cobra rejects the removed paging flag", t, func() {
+			args := []string{"mlwh", "export", "irods", "study", "5901", flag}
+			if flag == "--limit" || flag == "--cursor" || flag == "--offset" {
+				args = append(args, "1")
+			}
+
+			output, err := executeRootCommandForTest(t, args)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(output, convey.ShouldContainSubstring, "unknown flag: "+flag)
+		})
+	}
 }
 
 type stubMLWHExportClient struct {
@@ -117,8 +138,8 @@ func (s *stubMLWHExportClient) Close() error {
 	return nil
 }
 
-func TestMLWHExportIRODSStudyPrintsCramTSVAndPageStatusD1b(t *testing.T) {
-	convey.Convey("D1b.1/D1b.3: Given an iRODS study export, when the command runs without --all, then it prints cram TSV and bounded-page status", t, func() {
+func TestMLWHExportIRODSStudyPrintsCompleteCramTSVOnlyD1b(t *testing.T) {
+	convey.Convey("D1b.1/D1b.3: Given an iRODS study export, when the command runs, then it prints complete cram TSV without status text", t, func() {
 		var capturedRel mlwh.ExportRelationship
 		var capturedParent string
 		var capturedOptions mlwh.ExportOptions
@@ -129,11 +150,11 @@ func TestMLWHExportIRODSStudyPrintsCramTSVAndPageStatusD1b(t *testing.T) {
 				capturedOptions = opts
 
 				return mlwh.ExportResult{
-					Columns:    []string{"supplier_name", "study_accession_number", "sanger_sample_id", "manual_qc", "irods_path"},
-					Rows:       [][]string{{"supplier-a", "ENA5901", "SANGER-1", "pass", "/seq/5901/5901_1#1.cram"}},
-					Total:      2,
-					NextCursor: "cursor-2",
-					Format:     "tsv",
+					Columns:  []string{"supplier_name", "sanger_sample_id", "manual_qc", "irods_path"},
+					Rows:     [][]string{{"supplier-a", "SANGER-1", "pass", "/seq/5901/5901_1#1.cram"}},
+					Total:    -1,
+					Complete: true,
+					Format:   "tsv",
 				}, nil
 			},
 		}
@@ -142,49 +163,15 @@ func TestMLWHExportIRODSStudyPrintsCramTSVAndPageStatusD1b(t *testing.T) {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "export", "irods", "study", "5901", "--file-type", "cram"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "supplier_name\tstudy_accession_number\tsanger_sample_id\tmanual_qc\tirods_path")
-		convey.So(output, convey.ShouldContainSubstring, "supplier-a\tENA5901\tSANGER-1\tpass\t/seq/5901/5901_1#1.cram")
-		convey.So(output, convey.ShouldContainSubstring, "bounded page")
-		convey.So(output, convey.ShouldContainSubstring, "total=2")
-		convey.So(output, convey.ShouldContainSubstring, "next_cursor=cursor-2")
+		convey.So(output, convey.ShouldEqual, "supplier_name\tsanger_sample_id\tmanual_qc\tirods_path\nsupplier-a\tSANGER-1\tpass\t/seq/5901/5901_1#1.cram")
 		convey.So(capturedRel, convey.ShouldResemble, mlwh.ExportRelationship{Children: "irods", ParentKind: "study"})
 		convey.So(capturedParent, convey.ShouldEqual, "5901")
 		convey.So(capturedOptions.FileType, convey.ShouldEqual, "cram")
 		convey.So(capturedOptions.Format, convey.ShouldEqual, "tsv")
-		convey.So(capturedOptions.Limit, convey.ShouldEqual, 50)
-		convey.So(capturedOptions.All, convey.ShouldBeFalse)
-		convey.So(stub.closed, convey.ShouldBeTrue)
-	})
-}
-
-func TestMLWHExportCursorFlagFeedsExportOptions(t *testing.T) {
-	convey.Convey("D1a reviewer: Given an export next_cursor from a bounded page", t, func() {
-		var capturedOptions mlwh.ExportOptions
-		stub := &stubMLWHExportClient{
-			export: func(_ context.Context, _ mlwh.ExportRelationship, _ string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
-				capturedOptions = opts
-
-				return mlwh.ExportResult{
-					Columns:  []string{"irods_path"},
-					Rows:     [][]string{{"/seq/second-page.cram"}},
-					Total:    2,
-					Complete: true,
-					Format:   "tsv",
-				}, nil
-			},
-		}
-		withStubMLWHExportClient(t, stub)
-
-		output, err := executeRootCommandForTest(t, []string{
-			"mlwh", "export", "irods", "study", "5901",
-			"--cursor", "cursor-2",
-			"--limit", "25",
-		})
-
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "/seq/second-page.cram")
-		convey.So(capturedOptions.Cursor, convey.ShouldEqual, "cursor-2")
-		convey.So(capturedOptions.Limit, convey.ShouldEqual, 25)
+		convey.So(capturedOptions.Limit, convey.ShouldEqual, 0)
+		convey.So(capturedOptions.Offset, convey.ShouldEqual, 0)
+		convey.So(capturedOptions.Cursor, convey.ShouldBeEmpty)
+		convey.So(capturedOptions.All, convey.ShouldBeTrue)
 		convey.So(stub.closed, convey.ShouldBeTrue)
 	})
 }
@@ -331,12 +318,13 @@ func TestMLWHExportSampleCramsStudy7568H3(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "name\tega_id\tirods_cram_path\tmerged")
 		convey.So(output, convey.ShouldContainSubstring, "7568STDYCONTROL\tERS7568CTRL\t/seq/illumina/runs/49/52554/lane1/plex1/52554_1#1.cram\tfalse")
 		convey.So(output, convey.ShouldContainSubstring, "7568STDY9419243\tERS7568001\t/seq/illumina/runs/49/49348/lane1-2/plex1/49348_1-2#1.cram\ttrue")
-		convey.So(output, convey.ShouldContainSubstring, "total=732")
+		convey.So(output, convey.ShouldNotContainSubstring, "total=732")
 		convey.So(capturedRel, convey.ShouldResemble, mlwh.ExportRelationship{Children: "sample-crams", ParentKind: "study"})
 		convey.So(capturedParent, convey.ShouldEqual, "7568")
 		convey.So(capturedOptions.FileType, convey.ShouldEqual, "cram")
 		convey.So(capturedOptions.DeliverablesOnly, convey.ShouldBeNil)
 		convey.So(capturedOptions.Format, convey.ShouldEqual, "tsv")
+		convey.So(capturedOptions.All, convey.ShouldBeTrue)
 		convey.So(stub.closed, convey.ShouldBeTrue)
 	})
 }
@@ -362,16 +350,16 @@ func TestMLWHExportSampleCramsIncludeControlsD1(t *testing.T) {
 	})
 }
 
-func TestMLWHExportAllStatesCompleteSetD1b(t *testing.T) {
-	convey.Convey("D1b.3: Given --all, when the export command runs, then it states the complete set was emitted", t, func() {
+func TestMLWHExportRunsSampleRequestsCompleteSetD1b(t *testing.T) {
+	convey.Convey("D1b.3: Given a non-iRODS export, when the command runs, then it requests the complete set without status text", t, func() {
 		var capturedOptions mlwh.ExportOptions
 		stub := &stubMLWHExportClient{
 			export: func(_ context.Context, _ mlwh.ExportRelationship, _ string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
 				capturedOptions = opts
 
 				return mlwh.ExportResult{
-					Columns:  []string{"irods_path"},
-					Rows:     [][]string{{"/seq/a.cram"}, {"/seq/b.cram"}},
+					Columns:  []string{"id_run"},
+					Rows:     [][]string{{"61010"}, {"61011"}},
 					Total:    -1,
 					Complete: true,
 					Format:   "tsv",
@@ -380,18 +368,17 @@ func TestMLWHExportAllStatesCompleteSetD1b(t *testing.T) {
 		}
 		withStubMLWHExportClient(t, stub)
 
-		output, err := executeRootCommandForTest(t, []string{"mlwh", "export", "irods", "study", "5901", "--all"})
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "export", "runs", "sample", "DN1234"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "irods_path")
-		convey.So(output, convey.ShouldContainSubstring, "complete set")
-		convey.So(output, convey.ShouldContainSubstring, "rows=2")
+		convey.So(output, convey.ShouldEqual, "id_run\n61010\n61011")
 		convey.So(capturedOptions.All, convey.ShouldBeTrue)
+		convey.So(capturedOptions.Limit, convey.ShouldEqual, 0)
 	})
 }
 
 func TestMLWHExportAllServerPagesBoundedRequestsP1(t *testing.T) {
-	convey.Convey("P1/server-export-all: Given server-mode --all over a multi-page iRODS export", t, func() {
+	convey.Convey("P1/server-export-all: Given server-mode export over a multi-page iRODS export", t, func() {
 		t.Setenv("WA_MLWH_DSN", "")
 		t.Setenv("WA_MLWH_SERVER_URL", "")
 		t.Setenv("WA_MLWH_BACKEND_URL", "")
@@ -430,7 +417,7 @@ func TestMLWHExportAllServerPagesBoundedRequestsP1(t *testing.T) {
 		defer server.Close()
 
 		output, err := executeRootCommandForTest(t, []string{
-			"mlwh", "export", "irods", "study", "5901", "--all", "--limit", "2", "--columns", "irods_path", "--server", server.URL,
+			"mlwh", "export", "irods", "study", "5901", "--columns", "irods_path", "--server", server.URL,
 		})
 
 		convey.So(err, convey.ShouldBeNil)
@@ -438,14 +425,14 @@ func TestMLWHExportAllServerPagesBoundedRequestsP1(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "/seq/a.cram")
 		convey.So(output, convey.ShouldContainSubstring, "/seq/b.cram")
 		convey.So(output, convey.ShouldContainSubstring, "/seq/c.cram")
-		convey.So(output, convey.ShouldContainSubstring, "complete set emitted: rows=3")
+		convey.So(output, convey.ShouldNotContainSubstring, "complete set emitted")
 
 		requests := drainMLWHExportRequestURIs(requestURIs)
 		convey.So(requests, convey.ShouldHaveLength, 2)
 		convey.So(mlwhExportRequestQueryValue(t, requests[0], "all"), convey.ShouldEqual, "")
 		convey.So(mlwhExportRequestQueryValue(t, requests[1], "all"), convey.ShouldEqual, "")
-		convey.So(mlwhExportRequestQueryValue(t, requests[0], "limit"), convey.ShouldEqual, "2")
-		convey.So(mlwhExportRequestQueryValue(t, requests[1], "limit"), convey.ShouldEqual, "2")
+		convey.So(mlwhExportRequestQueryValue(t, requests[0], "limit"), convey.ShouldEqual, "1000")
+		convey.So(mlwhExportRequestQueryValue(t, requests[1], "limit"), convey.ShouldEqual, "1000")
 		convey.So(mlwhExportRequestQueryValue(t, requests[0], "cursor"), convey.ShouldEqual, "")
 		convey.So(mlwhExportRequestQueryValue(t, requests[1], "cursor"), convey.ShouldEqual, "cursor-2")
 	})

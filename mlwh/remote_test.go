@@ -706,21 +706,66 @@ func TestRemoteClientExportRoundTripsThroughServerD1b(t *testing.T) {
 			convey.So(result.Complete, convey.ShouldBeFalse)
 		})
 
-		convey.Convey("when a created-desc iRODS export asks for --all, then the remote client rejects it like local export", func() {
+		convey.Convey("when a created-desc iRODS export asks for all rows, then the remote client pages the complete result like local export", func() {
+			older := time.Date(2026, time.June, 1, 9, 0, 0, 0, time.UTC)
+			newer := older.Add(time.Hour)
+			seedExportIRODSRow(t, local.cache.DB(), exportIRODSSeedRow{
+				IDSeqProductLocation: 610011,
+				IDProduct:            "remote-created-older",
+				FileName:             "older.cram",
+				Created:              older,
+				IDSampleTmp:          31,
+				StudyID:              "RUNS",
+				IDRun:                61010,
+				Position:             1,
+				TagIndex:             1,
+			})
+			seedExportIRODSRow(t, local.cache.DB(), exportIRODSSeedRow{
+				IDSeqProductLocation: 610012,
+				IDProduct:            "remote-created-newer",
+				FileName:             "newer.cram",
+				Created:              newer,
+				IDSampleTmp:          31,
+				StudyID:              "RUNS",
+				IDRun:                61011,
+				Position:             2,
+				TagIndex:             1,
+			})
 			opts := ExportOptions{
 				Columns: []string{"created", "irods_path"},
 				Sort:    "created-desc",
 				All:     true,
+				Limit:   1,
 			}
 
-			localResult, localErr := local.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "runs-study", opts)
-			remoteResult, remoteErr := remote.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "runs-study", opts)
+			localResult, localErr := local.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "RUNS", opts)
+			remoteResult, remoteErr := remote.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "RUNS", opts)
+			var localRows [][]string
+			localCount, localRenderErr := localResult.ForEachRow(context.Background(), func(row []string) error {
+				localRows = append(localRows, append([]string(nil), row...))
 
-			convey.So(errors.Is(localErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
-			convey.So(errors.Is(remoteErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
-			convey.So(remoteErr.Error(), convey.ShouldEqual, localErr.Error())
+				return nil
+			})
+			var remoteRows [][]string
+			remoteCount, remoteRenderErr := remoteResult.ForEachRow(context.Background(), func(row []string) error {
+				remoteRows = append(remoteRows, append([]string(nil), row...))
+
+				return nil
+			})
+
+			convey.So(localErr, convey.ShouldBeNil)
+			convey.So(remoteErr, convey.ShouldBeNil)
+			convey.So(localRenderErr, convey.ShouldBeNil)
+			convey.So(remoteRenderErr, convey.ShouldBeNil)
+			convey.So(localCount, convey.ShouldEqual, 2)
+			convey.So(remoteCount, convey.ShouldEqual, 2)
 			convey.So(localResult.Rows, convey.ShouldBeNil)
 			convey.So(remoteResult.Rows, convey.ShouldBeNil)
+			convey.So(remoteRows, convey.ShouldResemble, localRows)
+			convey.So(remoteRows, convey.ShouldResemble, [][]string{
+				{formatSyncTime(newer), "/seq/export/newer.cram"},
+				{formatSyncTime(older), "/seq/export/older.cram"},
+			})
 		})
 	})
 }

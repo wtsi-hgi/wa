@@ -235,12 +235,8 @@ func TestStatusBreakdownPopulatedStudyRunsIndependentReadsConcurrently(t *testin
 			WithArgs(driverValuesForTest(statusBreakdownDistinctArgs(studyID))...).
 			WillReturnRows(sqlmock.NewRows([]string{"total", "with_data", "sequenced_no_data", "registered"}).AddRow(5, 3, 1, 1))
 
-		perPlatformArgs := make([]any, len(statusBreakdownProductPlatformArms)+1)
-		for i := range perPlatformArgs {
-			perPlatformArgs[i] = studyID
-		}
 		mock.ExpectQuery(regexp.QuoteMeta(statusBreakdownPerPlatformSQL())).
-			WithArgs(driverValuesForTest(perPlatformArgs)...).
+			WithArgs(driverValuesForTest(statusBreakdownPerPlatformArgs(studyID))...).
 			WillDelayFor(delay).
 			WillReturnRows(sqlmock.NewRows([]string{"platform", "with_data", "sequenced_no_data", "registered"}).
 				AddRow(platformIllumina, 3, 1, 0).

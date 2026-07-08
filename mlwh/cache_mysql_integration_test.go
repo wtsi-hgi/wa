@@ -647,30 +647,23 @@ func seedF4StatusBreakdownScenarioMySQL(t *testing.T, db *sql.DB) {
 }
 
 // perPlatformBreakdownExplain holds the EXPLAIN analysis of the per-platform
-// status-breakdown query: the access-plan rows that touch the iRODS-locations mirror
-// (one per product arm, each proving the linkage is index-served) and whether any
-// row is a per-row DEPENDENT SUBQUERY (the slow correlated-subquery shape the fix
-// removes).
+// status-breakdown query: the access-plan rows that touch the iRODS-locations
+// mirror and whether any row is a per-row DEPENDENT SUBQUERY (the slow correlated
+// shape the query must avoid).
 type perPlatformBreakdownExplain struct {
 	irodsPlans           []mysqlExplainRow
 	hasDependentSubquery bool
 }
 
 // explainPerPlatformBreakdown runs EXPLAIN on the per-platform status-breakdown
-// query (the exact SQL the read path uses) and extracts every plan row that touches
-// the seq_product_irods_locations_mirror plus whether any row is a dependent
-// subquery, so the test can prove the per-platform delivered linkage is index-served
-// (no full scan of the ~7M-row mirror) and is no longer a per-row correlated
-// subquery.
+// query (the exact SQL the read path uses) and extracts every plan row that
+// touches the seq_product_irods_locations_mirror plus whether any row is a
+// dependent subquery, so the test can prove the per-platform delivered linkage is
+// index-served (no full scan of the ~7M-row mirror) and set-at-once.
 func explainPerPlatformBreakdown(t *testing.T, db *sql.DB, studyLimsID string) perPlatformBreakdownExplain {
 	t.Helper()
 
-	args := make([]any, len(statusBreakdownProductPlatformArms)+1)
-	for i := range args {
-		args[i] = studyLimsID
-	}
-
-	rows, err := db.QueryContext(context.Background(), "EXPLAIN "+statusBreakdownPerPlatformSQL(), args...)
+	rows, err := db.QueryContext(context.Background(), "EXPLAIN "+statusBreakdownPerPlatformSQL(), statusBreakdownPerPlatformArgs(studyLimsID)...)
 	if err != nil {
 		t.Fatalf("EXPLAIN per-platform breakdown: %v", err)
 	}
@@ -716,7 +709,7 @@ func explainPerPlatformBreakdown(t *testing.T, db *sql.DB, studyLimsID string) p
 			result.hasDependentSubquery = true
 		}
 		// EXPLAIN reports the iRODS mirror under its query alias "spi" (the table the
-		// per-platform delivered linkage LEFT JOINs to in every product arm).
+		// per-platform delivered linkage reads in every product arm).
 		if table == "spi" {
 			result.irodsPlans = append(result.irodsPlans, plan)
 		}
@@ -728,15 +721,15 @@ func explainPerPlatformBreakdown(t *testing.T, db *sql.DB, studyLimsID string) p
 // TestRealMySQLPerPlatformBreakdownIsIndexServed is a runtime-skipped (NOT
 // build-tagged) integration test against the REAL MySQL cache server configured in
 // .env.development.local. It is the durable guard that the per-platform status
-// breakdown (the ~5s study page) stays index-served on MySQL: it builds the cache
+// breakdown stays web-responsive on MySQL: it builds the cache
 // schema in a UNIQUE throwaway database, seeds the multi-platform + ONT status
 // breakdown fixture, asserts the query EXECUTES and yields the same per-platform
 // ladders the SQLite-backed hermetic tests pin, and asserts EXPLAIN shows the
-// seq_product_irods_locations_mirror linkage served by the
-// (id_study_lims, id_iseq_product) index with no full-table scan and no per-row
-// dependent subquery over that ~7M-row mirror. The throwaway db is dropped in
-// t.Cleanup on success AND failure and never touches the configured cache db; the
-// test SKIPS cleanly when the cache env vars are absent or the server unreachable.
+// seq_product_irods_locations_mirror linkage served by a study-scoped index with
+// no full-table scan and no per-row dependent subquery. The throwaway db is dropped
+// in t.Cleanup on success AND failure and never touches the configured cache db;
+// the test SKIPS cleanly when the cache env vars are absent or the server
+// unreachable.
 func TestRealMySQLPerPlatformBreakdownIsIndexServed(t *testing.T) {
 	baseDSN, password := realMySQLCacheDSNOrSkip(t)
 
@@ -776,21 +769,19 @@ func TestRealMySQLPerPlatformBreakdownIsIndexServed(t *testing.T) {
 		convey.Convey("the per-platform breakdown iRODS linkage is index-served, not a full scan or per-row dependent subquery", func() {
 			indexes, _, err := readMySQLTableIndexes(ctx, writeDB, "seq_product_irods_locations_mirror")
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(slices.Contains(indexes, "id_study_lims,id_iseq_product"), convey.ShouldBeTrue)
+			convey.So(slices.Contains(indexes, "id_study_lims,id_sample_tmp"), convey.ShouldBeTrue)
 
 			plan := explainPerPlatformBreakdown(t, writeDB, f4StudyLims)
 
-			// The fix replaces the per-row correlated subquery with a set-at-once LEFT
-			// JOIN: EXPLAIN must show NO dependent subquery, and every plan row that
-			// touches the iRODS mirror must be served by the (id_study_lims,
-			// id_iseq_product) index as a covering lookup (never a full "ALL" scan of the
-			// ~7M-row mirror). There is one such row per product arm.
+			// EXPLAIN must show NO dependent subquery, and every plan row that touches
+			// the iRODS mirror must be served by the study/sample index (never a full
+			// "ALL" scan of the large mirror). There is one such row per product arm.
 			convey.So(plan.hasDependentSubquery, convey.ShouldBeFalse)
 			convey.So(len(plan.irodsPlans), convey.ShouldEqual, len(statusBreakdownProductPlatformArms))
 			for _, irods := range plan.irodsPlans {
 				convey.So(strings.ToLower(irods.scanType), convey.ShouldNotEqual, "all")
-				convey.So(irods.key, convey.ShouldEqual, "spi_mirror_study_lims_iseq_product_idx")
-				convey.So(irods.possibleKeys, convey.ShouldContainSubstring, "spi_mirror_study_lims_iseq_product_idx")
+				convey.So(irods.key, convey.ShouldEqual, "spi_mirror_study_lims_sample_tmp_idx")
+				convey.So(irods.possibleKeys, convey.ShouldContainSubstring, "spi_mirror_study_lims_sample_tmp_idx")
 			}
 		})
 	})
@@ -925,10 +916,6 @@ type i2BigStudyExplainCase struct {
 
 func i2BigStudyExplainCases(cache *Client) []i2BigStudyExplainCase {
 	overviewArgs := studyOverviewCountsArgs(i2BigStudyLimsID, cache.studyOverviewWindowArgs())
-	perPlatformArgs := make([]any, len(statusBreakdownProductPlatformArms)+1)
-	for i := range perPlatformArgs {
-		perPlatformArgs[i] = i2BigStudyLimsID
-	}
 	qcArgs := make([]any, len(statusBreakdownProductPlatformArms))
 	for i := range qcArgs {
 		qcArgs[i] = i2BigStudyLimsID
@@ -937,7 +924,7 @@ func i2BigStudyExplainCases(cache *Client) []i2BigStudyExplainCase {
 	return []i2BigStudyExplainCase{
 		{query: studyOverviewCountsCacheSQL, args: overviewArgs},
 		{query: statusBreakdownDistinctCacheSQL, args: statusBreakdownDistinctArgs(i2BigStudyLimsID)},
-		{query: statusBreakdownPerPlatformSQL(), args: perPlatformArgs},
+		{query: statusBreakdownPerPlatformSQL(), args: statusBreakdownPerPlatformArgs(i2BigStudyLimsID)},
 		{query: statusBreakdownQCCacheSQL, args: qcArgs},
 		{query: countSamplesWithDetailedTimelineCacheSQL, args: []any{i2BigStudyLimsID}},
 	}

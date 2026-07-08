@@ -37,8 +37,6 @@ import (
 )
 
 const (
-	mlwhExportDefaultLimit = 50
-
 	mlwhExportFormatTSV  = "tsv"
 	mlwhExportFormatCSV  = "csv"
 	mlwhExportFormatJSON = "json"
@@ -53,7 +51,8 @@ Grammar:
 The first two words choose the relationship. The third word is the parent
 identifier or text value interpreted according to parent-kind. Output is TSV by
 default, or CSV/JSON with --format. Use --columns for an ordered comma-separated
-projection.`
+projection. Exports always emit the complete matching set, and successful output
+contains only the requested data so it can be redirected to a file.`
 
 const mlwhExportParentIDHelp = `Parent kinds and parent-id values:
   study: a study LIMS id, study UUID, accession number or study name
@@ -85,22 +84,21 @@ Filters:
 
 Sorting and date windows:
   --sort created-desc is the only supported explicit sort because the default
-  canonical iRODS order is the stable run/lane/tag/file order used for cursor
-  paging. Use created-desc only for bounded iRODS pages when you want newest data
-  first or a created-date window. --since is inclusive and --until is exclusive;
-  both use an RFC3339 timestamp such as 2026-07-01T00:00:00Z.
+  canonical iRODS order is the stable run/lane/tag/file order. Use created-desc
+  when you want newest data first or a created-date window. --since is inclusive
+  and --until is exclusive; both use an RFC3339 timestamp such as
+  2026-07-01T00:00:00Z.
 
-Paging:
-  Without --all the command emits one bounded page and prints total/next-cursor
-  status to stderr. With --all it streams the complete set and states that
-  explicitly, so truncation is never silent. --all streaming is currently for
-  canonical-order iRODS exports; other exports use bounded --limit/--offset pages.`
+Completeness:
+  Exports always emit the complete matching set. The command may use internal
+  pages when talking to a server or cache, but there are no user-facing paging
+  controls and no success status lines mixed into the export.`
 
 const mlwhExportExamplesHelp = `Examples:
   wa --env development mlwh export irods study 5901 --file-type cram
   wa mlwh export runs sample DN1234 --columns id_run,platform,run_date
   wa mlwh export irods study 5901 --sort created-desc --since 2026-07-01T00:00:00Z
-  wa mlwh export irods study 5901 --all --server http://host:8091 --json`
+  wa mlwh export irods study 5901 --server http://host:8091 --json`
 
 var openMLWHExportClient = func(ctx context.Context, cfg mlwh.Config) (mlwhExportClient, error) {
 	if strings.TrimSpace(cfg.DSN) == "" {
@@ -147,7 +145,7 @@ func openMLWHExportConfiguredClient(ctx context.Context, serverURL string) (mlwh
 }
 
 func newMLWHExportCommand() *cobra.Command {
-	flags := mlwhExportFlags{limit: mlwhExportDefaultLimit, format: mlwhExportFormatTSV}
+	flags := mlwhExportFlags{format: mlwhExportFormatTSV}
 
 	command := &cobra.Command{
 		Use:           "export <children> <parent-kind> <parent-id>",
@@ -195,13 +193,9 @@ func newMLWHExportCommand() *cobra.Command {
 	command.Flags().StringVar(&flags.qc, "qc", "", "restrict product-backed exports by QC: pass, fail or pending")
 	command.Flags().StringVar(&flags.libraryType, "library-type", "", "restrict sample-backed exports by library type")
 	command.Flags().StringVar(&flags.organism, "organism", "", "restrict sample-backed exports by organism/common name")
-	command.Flags().StringVar(&flags.sort, "sort", "", "explicit iRODS sort order; only created-desc is supported, for newest-created bounded pages")
+	command.Flags().StringVar(&flags.sort, "sort", "", "explicit iRODS sort order; only created-desc is supported, for newest-created exports")
 	command.Flags().StringVar(&flags.since, "since", "", "inclusive RFC3339 lower bound for created-date iRODS exports, e.g. 2026-07-01T00:00:00Z")
 	command.Flags().StringVar(&flags.until, "until", "", "exclusive RFC3339 upper bound for created-date iRODS exports, e.g. 2026-08-01T00:00:00Z")
-	command.Flags().StringVar(&flags.cursor, "cursor", "", "opaque next_cursor from a previous canonical-order iRODS export page")
-	command.Flags().IntVar(&flags.limit, "limit", mlwhExportDefaultLimit, "maximum rows to return for a bounded page, or stream chunk size with --all")
-	command.Flags().IntVar(&flags.offset, "offset", 0, "number of rows to skip for bounded limit/offset paging")
-	command.Flags().BoolVar(&flags.all, "all", false, "emit the complete matching set instead of a bounded page")
 
 	return command
 }
@@ -308,12 +302,10 @@ func runMLWHExport(
 		return fmt.Errorf("export %s of %s %q: %w", rel.Children, rel.ParentKind, parentID, err)
 	}
 
-	rows, err := result.RenderAsTo(ctx, dataOut, opts.Format)
+	_, err = result.RenderAsTo(ctx, dataOut, opts.Format)
 	if err != nil {
 		return fmt.Errorf("render export: %w", err)
 	}
-
-	writeMLWHExportStatus(statusOut, rows, result, opts.All)
 
 	return nil
 }
@@ -332,21 +324,6 @@ func writeMLWHExportCacheUnavailable(dataOut io.Writer, statusOut io.Writer, for
 
 func writeMLWHExportNotFound(out io.Writer, rel mlwh.ExportRelationship, parentID string) {
 	_, _ = fmt.Fprintf(out, "not found: %s %q for export %s\n", rel.ParentKind, parentID, rel.Children)
-}
-
-func writeMLWHExportStatus(out io.Writer, rows int, result mlwh.ExportResult, all bool) {
-	if all {
-		_, _ = fmt.Fprintf(out, "complete set emitted: rows=%d\n", rows)
-
-		return
-	}
-
-	next := result.NextCursor
-	if next == "" {
-		next = "<none>"
-	}
-
-	_, _ = fmt.Fprintf(out, "bounded page emitted: rows=%d total=%d next_cursor=%s\n", rows, result.Total, next)
 }
 
 type mlwhExportRemoteClient struct {
@@ -384,10 +361,6 @@ type mlwhExportFlags struct {
 	sort             string
 	since            string
 	until            string
-	cursor           string
-	limit            int
-	offset           int
-	all              bool
 }
 
 func (f mlwhExportFlags) options(rel mlwh.ExportRelationship, cmd *cobra.Command) (mlwh.ExportOptions, error) {
@@ -417,10 +390,7 @@ func (f mlwhExportFlags) options(rel mlwh.ExportRelationship, cmd *cobra.Command
 		Sort:             f.sort,
 		Since:            f.since,
 		Until:            f.until,
-		Limit:            f.limit,
-		Offset:           f.offset,
-		All:              f.all,
-		Cursor:           f.cursor,
+		All:              true,
 		Format:           format,
 	}, nil
 }
