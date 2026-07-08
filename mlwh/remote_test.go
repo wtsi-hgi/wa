@@ -725,6 +725,59 @@ func TestRemoteClientExportRoundTripsThroughServerD1b(t *testing.T) {
 	})
 }
 
+func TestRemoteClientExportRejectsInvalidPagingBeforeRequest(t *testing.T) {
+	convey.Convey("Given a RemoteClient with invalid bounded export pagination", t, func() {
+		cases := []struct {
+			name string
+			opts ExportOptions
+		}{
+			{
+				name: "negative limit",
+				opts: ExportOptions{Limit: -1},
+			},
+			{
+				name: "negative offset",
+				opts: ExportOptions{Limit: 1, Offset: -1},
+			},
+		}
+
+		for _, tc := range cases {
+			tc := tc
+			convey.Convey("when Export receives "+tc.name+", then it rejects the call before HTTP", func() {
+				requestURIs := make(chan string, 1)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requestURIs <- r.URL.RequestURI()
+					w.Header().Set("Content-Type", "application/json")
+					writeRemoteClientJSONForTest(w, ExportResult{
+						Columns:  []string{"id_run"},
+						Rows:     [][]string{{"61010"}},
+						Total:    1,
+						Complete: true,
+						Format:   "tsv",
+					})
+				}))
+				defer server.Close()
+
+				client := newRemoteClientForTest(t, server.URL, "")
+				defer closeRemoteClientForTest(t, client)
+
+				result, err := client.Export(
+					context.Background(),
+					ExportRelationship{Children: "runs", ParentKind: "sample"},
+					"runs-sample",
+					tc.opts,
+				)
+
+				convey.So(err, convey.ShouldNotBeNil)
+				convey.So(errors.Is(err, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+				convey.So(err.Error(), convey.ShouldContainSubstring, "export limit and offset must be non-negative")
+				convey.So(result, convey.ShouldResemble, ExportResult{})
+				convey.So(len(requestURIs), convey.ShouldEqual, 0)
+			})
+		}
+	})
+}
+
 func TestRemoteClientIRODSPathsForSampleByFileTypePageC2(t *testing.T) {
 	convey.Convey("C2.1: Given a stub server returning one sample-scoped IRODS path and sizing headers", t, func() {
 		requestURIs := make(chan string, 1)
