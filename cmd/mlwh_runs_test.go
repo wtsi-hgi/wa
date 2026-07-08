@@ -245,6 +245,78 @@ func TestMLWHRunsFlatListingPagesAllByCompositeIDF2(t *testing.T) {
 	})
 }
 
+func TestMLWHRunsFlatListingCursorStatusUsesRowsAfterPage(t *testing.T) {
+	convey.Convey("Given a cursor page whose total includes rows before the cursor", t, func() {
+		stub := &stubMLWHRunsClient{
+			list: func(_ context.Context, _ mlwh.RunAggregationOptions, limit int, cursor string) ([]mlwh.RunListingRow, error) {
+				if limit == 2 && cursor == "illumina:52553" {
+					return []mlwh.RunListingRow{
+						runListingTestRow("ont:ONTRUN-11", "ONT", "ONTRUN-11"),
+						runListingTestRow("pacbio:TRACTION-RUN-1000", "PacBio", "TRACTION-RUN-1000"),
+					}, nil
+				}
+
+				return []mlwh.RunListingRow{}, nil
+			},
+			count: func(_ context.Context, _ mlwh.RunAggregationOptions) (mlwh.Count, error) {
+				return mlwh.Count{Count: 3}, nil
+			},
+		}
+		withStubMLWHRunsClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{
+			"mlwh", "runs", "--limit", "2", "--cursor", "illumina:52553",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "bounded page emitted: rows=2 total=3 next_cursor=<none>")
+		convey.So(output, convey.ShouldNotContainSubstring, "next_cursor=pacbio:TRACTION-RUN-1000")
+	})
+
+	convey.Convey("Given a non-final bounded page", t, func() {
+		stub := &stubMLWHRunsClient{
+			list: func(_ context.Context, _ mlwh.RunAggregationOptions, limit int, cursor string) ([]mlwh.RunListingRow, error) {
+				if limit == 2 && cursor == "" {
+					return []mlwh.RunListingRow{
+						runListingTestRow("illumina:52553", "Illumina", "52553"),
+						runListingTestRow("ont:ONTRUN-11", "ONT", "ONTRUN-11"),
+					}, nil
+				}
+				if limit == 1 && cursor == "ont:ONTRUN-11" {
+					return []mlwh.RunListingRow{
+						runListingTestRow("pacbio:TRACTION-RUN-1000", "PacBio", "TRACTION-RUN-1000"),
+					}, nil
+				}
+
+				return []mlwh.RunListingRow{}, nil
+			},
+			count: func(_ context.Context, _ mlwh.RunAggregationOptions) (mlwh.Count, error) {
+				return mlwh.Count{Count: 3}, nil
+			},
+		}
+		withStubMLWHRunsClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{
+			"mlwh", "runs", "--limit", "2",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "bounded page emitted: rows=2 total=3 next_cursor=ont:ONTRUN-11")
+	})
+}
+
+func runListingTestRow(id, platform, nativeID string) mlwh.RunListingRow {
+	return mlwh.RunListingRow{
+		ID:            id,
+		Platform:      platform,
+		NativeID:      nativeID,
+		Manufacturer:  platform,
+		RunDate:       "2024-01-11",
+		DateBasis:     "run complete",
+		CacheSyncedAt: "2026-07-01T08:00:00Z",
+	}
+}
+
 func withStubMLWHRunsClient(t *testing.T, stub *stubMLWHRunsClient) {
 	t.Helper()
 	t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(localhost:3306)/mlwarehouse")

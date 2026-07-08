@@ -345,8 +345,12 @@ func runMLWHRunsListing(ctx context.Context, client mlwhRunsClient, out io.Write
 	if err != nil {
 		return fmt.Errorf("list runs: %w", err)
 	}
+	hasNext, err := runMLWHRunsListingHasNext(ctx, client, opts, rows, limit)
+	if err != nil {
+		return fmt.Errorf("list runs: %w", err)
+	}
 	writeRunListingRows(out, rows)
-	writeRunListingBoundedStatus(out, rows, total.Count)
+	writeRunListingBoundedStatus(out, rows, total.Count, hasNext)
 
 	return nil
 }
@@ -367,7 +371,7 @@ func writeRunListingRows(out io.Writer, rows []mlwh.RunListingRow) {
 	}
 }
 
-func writeRunListingBoundedStatus(out io.Writer, rows []mlwh.RunListingRow, total int) {
+func writeRunListingBoundedStatus(out io.Writer, rows []mlwh.RunListingRow, total int, hasNext bool) {
 	if len(rows) == 0 {
 		_, _ = fmt.Fprintf(out, "  %s\n", runsNoListingRowsMessage)
 		_, _ = fmt.Fprintf(out, "bounded page emitted: rows=0 total=%d next_cursor=<none>\n", total)
@@ -376,7 +380,7 @@ func writeRunListingBoundedStatus(out io.Writer, rows []mlwh.RunListingRow, tota
 	}
 
 	next := "<none>"
-	if len(rows) < total {
+	if hasNext {
 		next = rows[len(rows)-1].ID
 	}
 	_, _ = fmt.Fprintf(out, "bounded page emitted: rows=%d total=%d next_cursor=%s\n", len(rows), total, next)
@@ -408,4 +412,17 @@ func runMLWHRunsListingAll(ctx context.Context, client mlwhRunsClient, out io.Wr
 	_, _ = fmt.Fprintf(out, "complete set emitted: rows=%d total=%d\n", emitted, total)
 
 	return nil
+}
+
+func runMLWHRunsListingHasNext(ctx context.Context, client mlwhRunsClient, opts mlwh.RunAggregationOptions, rows []mlwh.RunListingRow, limit int) (bool, error) {
+	if len(rows) == 0 || len(rows) < limit {
+		return false, nil
+	}
+
+	nextRows, err := client.RunListing(ctx, opts, 1, rows[len(rows)-1].ID)
+	if err != nil {
+		return false, err
+	}
+
+	return len(nextRows) > 0, nil
 }
