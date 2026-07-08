@@ -56,6 +56,48 @@ func TestMLWHExportReplacesIRODSSurfaceD1b(t *testing.T) {
 	})
 }
 
+func TestMLWHExportHelpDocumentsGrammarVocabularyAndFilters(t *testing.T) {
+	convey.Convey("Given wa mlwh export -h, then the rendered help explains the grammar, vocabulary, and MLWH-specific filters", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "export", "-h"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "wa mlwh export <children> <parent-kind> <parent-id>")
+		convey.So(output, convey.ShouldNotContainSubstring, "Relationships include")
+		convey.So(output, convey.ShouldContainSubstring, "Children:")
+		convey.So(output, convey.ShouldContainSubstring, "  irods (alias: files)")
+		convey.So(output, convey.ShouldContainSubstring, "  samples")
+		convey.So(output, convey.ShouldContainSubstring, "  runs")
+		convey.So(output, convey.ShouldContainSubstring, "  libraries")
+		convey.So(output, convey.ShouldContainSubstring, "  lanes")
+		convey.So(output, convey.ShouldContainSubstring, "  studies")
+		convey.So(output, convey.ShouldContainSubstring, "  users")
+		convey.So(output, convey.ShouldContainSubstring, "  sample-crams")
+		convey.So(output, convey.ShouldContainSubstring, "Parent kinds and parent-id values:")
+		convey.So(output, convey.ShouldContainSubstring, "study: a study LIMS id, study UUID, accession number or study name")
+		convey.So(output, convey.ShouldContainSubstring, "sample: a sample UUID, LIMS id, Sanger sample name/id, supplier name, accession or donor id")
+		convey.So(output, convey.ShouldContainSubstring, "run: an Illumina NPG id_run")
+		convey.So(output, convey.ShouldContainSubstring, "library: a pipeline_id_lims, library_id, id_library_lims or library type")
+		convey.So(output, convey.ShouldContainSubstring, "faculty-sponsor: a case-insensitive faculty_sponsor substring")
+		convey.So(output, convey.ShouldContainSubstring, "user: a study_users name, login or email substring")
+		convey.So(output, convey.ShouldContainSubstring, "programme: an exact programme value")
+		convey.So(output, convey.ShouldContainSubstring, "Columns:")
+		convey.So(output, convey.ShouldContainSubstring, "irods/files")
+		convey.So(output, convey.ShouldContainSubstring, "supplier_name")
+		convey.So(output, convey.ShouldContainSubstring, "supplier_sample_name")
+		convey.So(output, convey.ShouldContainSubstring, "irods_path")
+		convey.So(output, convey.ShouldContainSubstring, "sample-crams")
+		convey.So(output, convey.ShouldContainSubstring, "irods_cram_path")
+		convey.So(output, convey.ShouldContainSubstring, "Deliverables:")
+		convey.So(output, convey.ShouldContainSubstring, "iseq_flowcell.entity_type IN ('library','library_indexed')")
+		convey.So(output, convey.ShouldContainSubstring, "approximates iRODS target=1")
+		convey.So(output, convey.ShouldContainSubstring, "not is_spiked")
+		convey.So(output, convey.ShouldContainSubstring, "--sort created-desc is the only supported explicit sort")
+		convey.So(output, convey.ShouldContainSubstring, "canonical iRODS order is the stable run/lane/tag/file order")
+		convey.So(output, convey.ShouldContainSubstring, "used for cursor")
+		convey.So(output, convey.ShouldContainSubstring, "RFC3339 timestamp such as 2026-07-01T00:00:00Z")
+	})
+}
+
 type stubMLWHExportClient struct {
 	export func(context.Context, mlwh.ExportRelationship, string, mlwh.ExportOptions) (mlwh.ExportResult, error)
 	closed bool

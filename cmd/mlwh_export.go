@@ -44,6 +44,64 @@ const (
 	mlwhExportFormatJSON = "json"
 )
 
+const mlwhExportIntroHelp = `Export one kind of MLWH child row for one MLWH parent through a local
+cache or wa mlwh serve API.
+
+Grammar:
+  wa mlwh export <children> <parent-kind> <parent-id>
+
+The first two words choose the relationship. The third word is the parent
+identifier or text value interpreted according to parent-kind. Output is TSV by
+default, or CSV/JSON with --format. Use --columns for an ordered comma-separated
+projection.`
+
+const mlwhExportParentIDHelp = `Parent kinds and parent-id values:
+  study: a study LIMS id, study UUID, accession number or study name
+  sample: a sample UUID, LIMS id, Sanger sample name/id, supplier name, accession or donor id
+  run: an Illumina NPG id_run
+  library: a pipeline_id_lims, library_id, id_library_lims or library type
+  faculty-sponsor: a case-insensitive faculty_sponsor substring
+  user: a study_users name, login or email substring
+  programme: an exact programme value`
+
+const mlwhExportOptionsHelp = `File exports:
+  iRODS/files and sample-crams use --file-type as a filename suffix filter. A
+  single leading dot is stripped, so cram, .cram and CRAM are equivalent. If no
+  --file-type is supplied, file exports default to cram.
+
+Deliverables:
+  CRAM file exports default to deliverables-only. In MLWH terms, deliverable uses
+  iseq_flowcell.entity_type IN ('library','library_indexed') for Illumina and
+  Element/Ultima control flags where available, approximates iRODS target=1, and
+  is not is_spiked. PacBio/ONT rows without that discriminator pass through.
+  Use --include-controls to disable the default, or --deliverables-only to make
+  the filter explicit. sample-crams still selects one merged-aware CRAM per
+  sample.
+
+Filters:
+  --qc pass|fail|pending, --library-type and --organism apply to sample-backed
+  iRODS/files, samples and sample-crams exports. --role narrows study_users-backed
+  studies/users exports.
+
+Sorting and date windows:
+  --sort created-desc is the only supported explicit sort because the default
+  canonical iRODS order is the stable run/lane/tag/file order used for cursor
+  paging. Use created-desc only for bounded iRODS pages when you want newest data
+  first or a created-date window. --since is inclusive and --until is exclusive;
+  both use an RFC3339 timestamp such as 2026-07-01T00:00:00Z.
+
+Paging:
+  Without --all the command emits one bounded page and prints total/next-cursor
+  status to stderr. With --all it streams the complete set and states that
+  explicitly, so truncation is never silent. --all streaming is currently for
+  canonical-order iRODS exports; other exports use bounded --limit/--offset pages.`
+
+const mlwhExportExamplesHelp = `Examples:
+  wa --env development mlwh export irods study 5901 --file-type cram
+  wa mlwh export runs sample DN1234 --columns id_run,platform,run_date
+  wa mlwh export irods study 5901 --sort created-desc --since 2026-07-01T00:00:00Z
+  wa mlwh export irods study 5901 --all --server http://host:8091 --json`
+
 var openMLWHExportClient = func(ctx context.Context, cfg mlwh.Config) (mlwhExportClient, error) {
 	if strings.TrimSpace(cfg.DSN) == "" {
 		return mlwh.OpenCacheOnly(ctx, cfg.Cache)
@@ -97,51 +155,14 @@ func newMLWHExportCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		Long: strings.Join([]string{
-			"Export children of an MLWH parent through a local cache or wa mlwh",
-			"serve API. The grammar is 'wa mlwh export <children> <parent-kind>",
-			"<parent-id>'. Relationships include files of a study, sample or run;",
-			"samples of a study, run or library; runs of a study or sample;",
-			"libraries of a study; lanes of a sample; studies of a sample,",
-			"faculty-sponsor, user or programme; users of a study; and",
-			"sample-crams of a study.",
-			"",
-			"Use --columns for an ordered comma-separated projection and --format",
-			"tsv, csv or json. --json is shorthand for --format json. CRAM",
-			"exports (irods/files/sample-crams) default to deliverables-only;",
-			"--include-controls disables that default. sample-crams still selects",
-			"one merged-aware CRAM per sample. Without --all the command emits one",
-			"bounded page and prints",
-			"total/next-cursor status to stderr. With --all it streams the complete",
-			"set and states that explicitly, so truncation is never silent.",
-			"",
-			"Normal CLI users should point this command at the MLWH query server",
-			"with --server or WA_MLWH_SERVER_URL; database and cache credentials",
-			"stay with the server process. When WA_ENV selects a scenario and no",
-			"server URL is set, the command defaults to the active local MLWH API",
-			"port from WA_*_SEQMETA_PORT. Operators can still run against a local",
-			"cache with WA_MLWH_CACHE_PATH, or use WA_MLWH_DSN for direct local",
-			"operator mode.",
-			"",
-			"Configuration is read from the environment. Use the persistent --env",
-			"flag (or WA_ENV=development|test|production) to load matching",
-			".env.<name> / .env.<name>.local files from the working directory",
-			"before resolving:",
-			"",
-			"  WA_MLWH_SERVER_URL      Preferred. Base URL for wa mlwh serve.",
-			"  WA_MLWH_BACKEND_URL     Lower-precedence compatibility default.",
-			"  WA_*_SEQMETA_PORT       Scenario-local default API port.",
-			"  WA_MLWH_DSN             Optional direct operator mode only.",
-			"  WA_MLWH_PASSWORD        Optional. Password used with WA_MLWH_DSN.",
-			"  WA_MLWH_CACHE_PATH      Optional local operator cache path or",
-			"                          MySQL cache DSN without a password.",
-			"  WA_MLWH_CACHE_PASSWORD  Optional. SQLCipher key used to encrypt",
-			"                          the local cache when set.",
-			"",
-			"Examples:",
-			"  wa --env development mlwh export irods study 5901 --file-type cram",
-			"  wa mlwh export runs sample DN1234 --columns id_run,platform,run_date",
-			"  wa mlwh export irods study 5901 --all --server http://host:8091 --json",
-		}, "\n"),
+			mlwhExportIntroHelp,
+			mlwhExportChildrenHelp(),
+			mlwhExportParentIDHelp,
+			mlwhExportColumnsHelp(),
+			mlwhExportOptionsHelp,
+			mlwhQueryCommandConfigurationHelp,
+			mlwhExportExamplesHelp,
+		}, "\n\n"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rel, parentID, err := parseMLWHExportArgs(args)
 			if err != nil {
@@ -174,15 +195,75 @@ func newMLWHExportCommand() *cobra.Command {
 	command.Flags().StringVar(&flags.qc, "qc", "", "restrict product-backed exports by QC: pass, fail or pending")
 	command.Flags().StringVar(&flags.libraryType, "library-type", "", "restrict sample-backed exports by library type")
 	command.Flags().StringVar(&flags.organism, "organism", "", "restrict sample-backed exports by organism/common name")
-	command.Flags().StringVar(&flags.sort, "sort", "", "export sort order (supported value: created-desc)")
-	command.Flags().StringVar(&flags.since, "since", "", "inclusive RFC3339 lower bound for created-date exports")
-	command.Flags().StringVar(&flags.until, "until", "", "exclusive RFC3339 upper bound for created-date exports")
+	command.Flags().StringVar(&flags.sort, "sort", "", "explicit iRODS sort order; only created-desc is supported, for newest-created bounded pages")
+	command.Flags().StringVar(&flags.since, "since", "", "inclusive RFC3339 lower bound for created-date iRODS exports, e.g. 2026-07-01T00:00:00Z")
+	command.Flags().StringVar(&flags.until, "until", "", "exclusive RFC3339 upper bound for created-date iRODS exports, e.g. 2026-08-01T00:00:00Z")
 	command.Flags().StringVar(&flags.cursor, "cursor", "", "opaque next_cursor from a previous canonical-order iRODS export page")
 	command.Flags().IntVar(&flags.limit, "limit", mlwhExportDefaultLimit, "maximum rows to return for a bounded page, or stream chunk size with --all")
 	command.Flags().IntVar(&flags.offset, "offset", 0, "number of rows to skip for bounded limit/offset paging")
 	command.Flags().BoolVar(&flags.all, "all", false, "emit the complete matching set instead of a bounded page")
 
 	return command
+}
+
+func mlwhExportChildrenHelp() string {
+	var builder strings.Builder
+	builder.WriteString("Children:\n")
+	for _, desc := range mlwh.ExportRelationshipDescriptions() {
+		builder.WriteString("  ")
+		builder.WriteString(mlwhExportChildrenLabel(desc.Children, desc.Aliases))
+		builder.WriteString(": ")
+		builder.WriteString(desc.Description)
+		builder.WriteString("; parent-kind: ")
+		builder.WriteString(strings.Join(desc.ParentKinds, ", "))
+		builder.WriteByte('\n')
+	}
+
+	return strings.TrimRight(builder.String(), "\n")
+}
+
+func mlwhExportChildrenLabel(children string, aliases []string) string {
+	if len(aliases) == 0 {
+		return children
+	}
+
+	return fmt.Sprintf("%s (alias: %s)", children, strings.Join(aliases, ", "))
+}
+
+func mlwhExportColumnsHelp() string {
+	var builder strings.Builder
+	builder.WriteString("Columns:\n")
+	for _, vocab := range mlwh.ExportColumnVocabularies() {
+		builder.WriteString("  ")
+		builder.WriteString(mlwhExportColumnLabel(vocab.Children, vocab.Aliases))
+		builder.WriteString(":\n    default: ")
+		builder.WriteString(strings.Join(vocab.Default, ", "))
+		builder.WriteString("\n    available: ")
+		builder.WriteString(strings.Join(mlwhExportColumnNames(vocab.Columns), ", "))
+		builder.WriteByte('\n')
+	}
+
+	return strings.TrimRight(builder.String(), "\n")
+}
+
+func mlwhExportColumnLabel(children string, aliases []string) string {
+	if len(aliases) == 0 {
+		return children
+	}
+
+	return children + "/" + strings.Join(aliases, "/")
+}
+
+func mlwhExportColumnNames(columns []mlwh.ExportColumnDescription) []string {
+	names := make([]string, len(columns))
+	for index, column := range columns {
+		names[index] = column.Name
+		if len(column.Aliases) > 0 {
+			names[index] += " (alias: " + strings.Join(column.Aliases, ", ") + ")"
+		}
+	}
+
+	return names
 }
 
 func parseMLWHExportArgs(args []string) (mlwh.ExportRelationship, string, error) {

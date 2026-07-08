@@ -60,6 +60,66 @@ const (
 	exportRelationshipSampleCRAMs exportRelationshipKind = "sample-crams"
 )
 
+type exportRelationshipSpec struct {
+	Children    string
+	Aliases     []string
+	ParentKinds []string
+	Description string
+	Kind        exportRelationshipKind
+}
+
+var exportRelationshipSpecs = []exportRelationshipSpec{
+	{
+		Children:    "irods",
+		Aliases:     []string{"files"},
+		ParentKinds: []string{"study", "sample", "run"},
+		Description: "iRODS data-object rows, usually file paths",
+		Kind:        exportRelationshipIRODS,
+	},
+	{
+		Children:    "samples",
+		ParentKinds: []string{"study", "run", "library"},
+		Description: "sample identity rows",
+		Kind:        exportRelationshipSamples,
+	},
+	{
+		Children:    "runs",
+		ParentKinds: []string{"study", "sample"},
+		Description: "sequencing run rows",
+		Kind:        exportRelationshipRuns,
+	},
+	{
+		Children:    "libraries",
+		ParentKinds: []string{"study"},
+		Description: "library rows",
+		Kind:        exportRelationshipLibraries,
+	},
+	{
+		Children:    "lanes",
+		ParentKinds: []string{"sample"},
+		Description: "run/lane/tag rows for a sample",
+		Kind:        exportRelationshipLanes,
+	},
+	{
+		Children:    "studies",
+		ParentKinds: []string{"sample", "faculty-sponsor", "user", "programme"},
+		Description: "study rows",
+		Kind:        exportRelationshipStudies,
+	},
+	{
+		Children:    "users",
+		ParentKinds: []string{"study"},
+		Description: "study_users rows for a study",
+		Kind:        exportRelationshipUsers,
+	},
+	{
+		Children:    "sample-crams",
+		ParentKinds: []string{"study"},
+		Description: "one merged-aware CRAM row per sample",
+		Kind:        exportRelationshipSampleCRAMs,
+	},
+}
+
 type exportColumn struct {
 	Name          string
 	Aliases       []string
@@ -263,6 +323,19 @@ func validateExportFilterSupport(kind exportRelationshipKind, rel ExportRelation
 
 func exportUsesSharedSampleFilters(filters exportFilters, deliverablesOnly bool) bool {
 	return filters.QC != "" || filters.LibraryType != "" || filters.Organism != "" || deliverablesOnly
+}
+
+func exportRelationshipSpecMatchesChildren(spec exportRelationshipSpec, children string) bool {
+	if children == spec.Children {
+		return true
+	}
+	for _, alias := range spec.Aliases {
+		if children == alias {
+			return true
+		}
+	}
+
+	return false
 }
 
 func resolveExportColumns(rel ExportRelationship, vocab exportVocabulary, requested []string) ([]exportColumn, error) {
@@ -566,6 +639,31 @@ func vocabularyForExportKind(kind exportRelationshipKind) exportVocabulary {
 	}
 }
 
+// ExportColumnVocabularies returns every selectable export column grouped by
+// export child, using the same vocabularies as Export column validation.
+func ExportColumnVocabularies() []ExportColumnVocabulary {
+	vocabularies := make([]ExportColumnVocabulary, 0, len(exportRelationshipSpecs))
+	for _, spec := range exportRelationshipSpecs {
+		vocab := vocabularyForExportKind(spec.Kind)
+		columns := make([]ExportColumnDescription, len(vocab.Columns))
+		for index, column := range vocab.Columns {
+			columns[index] = ExportColumnDescription{
+				Name:    column.Name,
+				Aliases: append([]string(nil), column.Aliases...),
+			}
+		}
+
+		vocabularies = append(vocabularies, ExportColumnVocabulary{
+			Children: spec.Children,
+			Aliases:  append([]string(nil), spec.Aliases...),
+			Default:  append([]string(nil), vocab.Default...),
+			Columns:  columns,
+		})
+	}
+
+	return vocabularies
+}
+
 // ExportRelationship identifies the children to project and their parent kind,
 // for example ExportRelationship{Children: "irods", ParentKind: "study"}.
 type ExportRelationship struct{ Children, ParentKind string }
@@ -573,43 +671,15 @@ type ExportRelationship struct{ Children, ParentKind string }
 func normaliseExportRelationship(rel ExportRelationship) (ExportRelationship, exportRelationshipKind, error) {
 	children := strings.ToLower(strings.TrimSpace(rel.Children))
 	parentKind := strings.ToLower(strings.TrimSpace(rel.ParentKind))
-	if children == "files" {
-		children = "irods"
-	}
 
-	normalised := ExportRelationship{Children: children, ParentKind: parentKind}
-	switch children {
-	case "irods":
-		if parentKind == "study" || parentKind == "sample" || parentKind == "run" {
-			return normalised, exportRelationshipIRODS, nil
+	for _, spec := range exportRelationshipSpecs {
+		if !exportRelationshipSpecMatchesChildren(spec, children) {
+			continue
 		}
-	case "samples":
-		if parentKind == "study" || parentKind == "run" || parentKind == "library" {
-			return normalised, exportRelationshipSamples, nil
-		}
-	case "runs":
-		if parentKind == "study" || parentKind == "sample" {
-			return normalised, exportRelationshipRuns, nil
-		}
-	case "libraries":
-		if parentKind == "study" {
-			return normalised, exportRelationshipLibraries, nil
-		}
-	case "lanes":
-		if parentKind == "sample" {
-			return normalised, exportRelationshipLanes, nil
-		}
-	case "studies":
-		if parentKind == "sample" || parentKind == "faculty-sponsor" || parentKind == "user" || parentKind == "programme" {
-			return normalised, exportRelationshipStudies, nil
-		}
-	case "users":
-		if parentKind == "study" {
-			return normalised, exportRelationshipUsers, nil
-		}
-	case "sample-crams":
-		if parentKind == "study" {
-			return normalised, exportRelationshipSampleCRAMs, nil
+		for _, allowedParentKind := range spec.ParentKinds {
+			if parentKind == allowedParentKind {
+				return ExportRelationship{Children: spec.Children, ParentKind: parentKind}, spec.Kind, nil
+			}
 		}
 	}
 
@@ -800,6 +870,45 @@ func decodeExportCursor(raw string) (exportCursor, error) {
 		IDSeqProductLocation: values[3],
 		set:                  true,
 	}, nil
+}
+
+// ExportRelationshipDescription describes one supported export child vocabulary
+// entry for CLI/help consumers.
+type ExportRelationshipDescription struct {
+	Children    string
+	Aliases     []string
+	ParentKinds []string
+	Description string
+}
+
+// ExportRelationshipDescriptions returns the supported export child/parent
+// vocabulary in the same order used by export relationship validation.
+func ExportRelationshipDescriptions() []ExportRelationshipDescription {
+	descriptions := make([]ExportRelationshipDescription, len(exportRelationshipSpecs))
+	for index, spec := range exportRelationshipSpecs {
+		descriptions[index] = ExportRelationshipDescription{
+			Children:    spec.Children,
+			Aliases:     append([]string(nil), spec.Aliases...),
+			ParentKinds: append([]string(nil), spec.ParentKinds...),
+			Description: spec.Description,
+		}
+	}
+
+	return descriptions
+}
+
+// ExportColumnDescription describes one selectable export column.
+type ExportColumnDescription struct {
+	Name    string
+	Aliases []string
+}
+
+// ExportColumnVocabulary describes the selectable columns for one export child.
+type ExportColumnVocabulary struct {
+	Children string
+	Aliases  []string
+	Default  []string
+	Columns  []ExportColumnDescription
 }
 
 // ExportOptions controls column selection, shared filters, paging, and rendering
