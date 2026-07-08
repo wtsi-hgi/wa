@@ -15,8 +15,10 @@ Seven additions, all preserving the Registry-driven, 1:1, cache-only,
 indexed, web-responsive discipline of `.docs/mlwh-overhaul/spec.md` and
 `.docs/mlwh-sync/spec.md`:
 
-1. **Substring search** endpoints for studies and samples
-   (`GET /search/study/:term`, `GET /search/sample/:term`).
+1. **Search** endpoints for studies and samples (`GET /search/study/:term`,
+   `GET /search/sample/:term`): study search is substring search; sample search
+   is literal whole-value prefix by default with `words=true` for opt-in
+   word-prefix mode.
 2. **OpenAPI 3.1.0** document at `GET /openapi.json`, generated from enriched
    `Registry` metadata plus reflection over result types.
 3. **Health and freshness**: `GET /health` (plain route) and `GET /freshness`
@@ -29,10 +31,10 @@ indexed, web-responsive discipline of `.docs/mlwh-overhaul/spec.md` and
    domain glossary + data-exposure/security posture), placed in `.docs/mcp/`.
 7. **Unauthenticated HTTP posture** preserved and documented.
 
-> Round-4 update: the former startup backend refusal is removed. Sample search
-> now uses a word-token prefix index with no full-text dependency, so
-> `wa mlwh serve` runs on any supported cache backend (including MariaDB and
-> MySQL < 8) with no flavor or version check.
+> Round-4 update: the former startup backend refusal is removed. The opt-in
+> sample word-prefix mode uses a word-token prefix index with no full-text
+> dependency, so `wa mlwh serve` runs on any supported cache backend (including
+> MariaDB and MySQL < 8) with no flavor or version check.
 
 The work is additive except for the single coordinated casing break (Goal 4).
 Existing endpoints keep their paths, bodies, and the `mlwhServerFetchAllLimit
@@ -40,33 +42,32 @@ Existing endpoints keep their paths, bodies, and the `mlwhServerFetchAllLimit
 
 ## Architecture
 
-### Search matching (Goal 1, authoritative per prompt round 3)
+### Search matching (Goal 1, current behavior)
 
-Match semantics are **true substring ("contains"), case-insensitive,
-minimum effective term length 3, index-backed**. No relevance score; results
-ordered by id for stable pagination.
+Search has deterministic, index-backed semantics. Study search is
+case-insensitive substring (`contains`) over the small study table. Sample
+search is case-insensitive literal whole-value prefix by default, with
+separator-agnostic word-prefix matching available only when callers pass
+`words=true` (or use `SampleSearchOptions.Words` in Go). No relevance score;
+results are ordered by id for stable pagination.
 
 - **Searchable fields (fixed):**
     - Study: `name`, `study_title`, `programme`, `faculty_sponsor`.
     - Sample: `name`, `supplier_name`, `common_name`, `donor_id`.
 - **Study search** (small table, ~8k rows): plain `LIKE '%term%'` scan OR'd
   across the four study fields. No FTS index.
-- **Sample search** (large table, ~10M rows): an index narrows candidates,
-  then a case-insensitive `LIKE '%term%'` post-filter over the four sample
-  fields guarantees exact substring semantics.
-    - SQLite: an FTS5 external-content virtual table over the four fields using
-      the `trigram` tokenizer; `MATCH` narrows, `LIKE` confirms.
-    - MySQL: a single `FULLTEXT (...) WITH PARSER ngram` index over the four
-      fields; `MATCH ... AGAINST` (boolean mode) narrows, `LIKE` confirms.
-    - No MySQL server reconfiguration; rely on default `ngram_token_size = 2`
-      plus the post-filter. Do NOT build a portable trigram-table fallback.
-- **Parity is exact set-equality across dialects** because every backend
-  applies the same `LIKE '%term%'` post-filter. The only permitted divergence
-  is **accent handling** (MySQL `utf8mb4_0900_ai_ci` is accent-insensitive;
-  SQLite trigram is accent-sensitive); cross-dialect set-equality tests use
-  ASCII fixtures, and accent-folding is documented as backend-dependent.
-- **Short terms:** term length < 3 returns HTTP 200 `[]` (and count 0) on both
-  backends without touching the index. Empty terms are unreachable
+- **Sample search** (large table, ~10M rows): default search uses
+  `col LIKE 'term%' ESCAPE '!'` over `name`, `supplier_name`, `common_name`,
+  and `donor_id`, with SQL wildcards escaped and `id_lims = 'SQSCP'`.
+  `words=true` switches to the word-token prefix index over the same fields.
+  Exact filters such as `organism`, `library_type`, `qc`, and
+  `deliverables_only` AND-combine with the term.
+- **Parity is exact set-equality across dialects** because both backends use the
+  same literal-prefix and word-token semantics. Cross-dialect set-equality tests
+  use ASCII fixtures.
+- **Short terms:** free-text term length < 3 returns HTTP 200 `[]` (and count
+  0) on both backends without touching the search index. Empty terms are
+  unreachable
   (`/search/{study,sample}/:term` 404s on an empty path segment).
 - **Pagination:** the search endpoints use the existing `?limit`/`?offset`
   with **default page size 100, maximum 1000**. `limit` > 1000 is rejected
@@ -268,30 +269,26 @@ func (c *Client) SearchStudies(ctx context.Context, term string, limit, offset i
    then it returns an empty slice and an error satisfying both
    `errors.Is(err, ErrCacheNeverSynced)` and `errors.Is(err, ErrNotFound)`.
 
-### A2: sample word-prefix search (word-token prefix index)
+### A2: sample literal-prefix search with opt-in word-prefix mode
 
-> Superseded the round-3 FTS5/`LIKE`-post-filter design: see "Clarifications -
-> round 4" in `prompt.md`. Sample search is now a **word-prefix** match served
-> by the `sample_search_token` prefix index, identical across dialects (no FTS5
-> trigram / MySQL ngram FULLTEXT, no `LIKE` post-filter on the sample hot path).
+> Superseded the round-3 FTS5/`LIKE`-post-filter design and the round-4
+> word-prefix default. Default sample search is now a **literal whole-value
+> prefix** match over the four sample fields. `words=true` selects the
+> separator-agnostic word-prefix mode served by the `sample_search_token` index.
 
 As the MCP server, I want `GET /search/sample/:term` to return samples having a
-word in `name`, `supplier_name`, `common_name`, or `donor_id` that starts with
-`term`, served by a word-token prefix index so it is fast on the ~10M-row table.
+`name`, `supplier_name`, `common_name`, or `donor_id` starting with `term` by
+default, and to return word-prefix matches over the same fields only when
+`words=true` is supplied.
 
 `SearchSamples` lowercases `term`, escapes its `LIKE` wildcards (`%`, `_`, and
-the escape char), and pages the `sample_search_token` index in index order:
-`WHERE token LIKE 'prefix%' ESCAPE '!' ORDER BY token, id_sample_tmp
-LIMIT ? OFFSET ?`. Because the index covers `(token, id_sample_tmp)`, the page
-streams from the index with no global sort (measured 48-62ms at any
-cardinality, vs 4-21s for `SELECT DISTINCT ... ORDER BY id_sample_tmp`). A
-sample can own several prefix-matching tokens, so ids are de-duplicated app-side
-over the index-ordered stream (bounded over-fetch), then the matching
-`sample_mirror` rows are fetched by id (`id_lims = 'SQSCP'`) and the fan-out is
-populated as in `Find*`. Term length < 3 returns `[]Sample{}` without querying.
-Matching is start-of-word: `musculus` and `mus` both match "Mus Musculus", but a
-mid-word substring (`usculus`) does not - an accepted trade-off (the exact
-`Find*` finders cover precise lookups). Returns `[]Sample` (full rows).
+the escape char), and the default path pages `sample_mirror` by
+`id_sample_tmp` using `LIKE 'prefix%' ESCAPE '!'` over the four fields. With
+`words=true`, the request pages the `sample_search_token` index in index order:
+`WHERE token LIKE 'prefix%' ESCAPE '!' ORDER BY token, id_sample_tmp LIMIT ?
+OFFSET ?`; duplicate ids from several matching tokens are de-duplicated
+app-side. Term length < 3 returns `[]Sample{}` without querying unless an exact
+filter is supplied. Returns `[]Sample` (full rows).
 
 **Package:** `mlwh/`
 **File:** `mlwh/search.go`
@@ -299,6 +296,7 @@ mid-word substring (`usculus`) does not - an accepted trade-off (the exact
 
 ```go
 func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error)
+func (c *Client) SearchSamplesWithOptions(ctx context.Context, term string, opts SampleSearchOptions, limit, offset int) ([]Sample, error)
 ```
 
 **Acceptance tests:**
@@ -308,12 +306,13 @@ func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset i
    `SearchSamples(ctx, "acme", 100, 0)` runs, then exactly the two ACME samples
    are returned, ordered by `id_sample_tmp`.
 2. Given a sample whose only match is in `common_name = "Homo sapiens"`, when
-   `SearchSamples(ctx, "sapien", 100, 0)` runs, then that sample is returned
-   (search covers all four sample fields, matching the `sapiens` word prefix).
+   `SearchSamples(ctx, "homo", 100, 0)` runs, then that sample is returned; when
+   `SearchSamples(ctx, "sapiens", 100, 0)` runs without options, it is not
+   returned because the default is whole-value prefix.
 3. Given a sample whose `common_name` is "Mus Musculus", when
-   `SearchSamples(ctx, "musculus", ...)` and `SearchSamples(ctx, "mus", ...)`
-   run, then the sample matches both; when `SearchSamples(ctx, "usculus", ...)`
-   runs (a mid-word substring), then it does not match.
+   `SearchSamplesWithOptions(ctx, "musculus", SampleSearchOptions{Words:true},
+   ...)` runs, then the sample matches; when `SearchSamples(ctx, "usculus",
+   ...)` runs (a mid-word substring), then it does not match.
 4. Given term `"ac"` (length 2), when `SearchSamples(ctx, "ac", 100, 0)` runs,
    then it returns `[]Sample{}` and issues no query.
 5. Given >3 matching samples, when `SearchSamples(ctx, "acme", 2, 1)` runs,
@@ -332,14 +331,14 @@ func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset i
 
 As a maintainer, I want the `SearchSamples` page query and the
 `CountSampleSearch` query to be built correctly, so a sqlmock MySQL `Client`
-(which cannot evaluate a real index) proves the SQL shape. The page query scans
+(which cannot evaluate a real index) proves the SQL shape. The default page
+query scans `sample_mirror` by literal full-value prefix predicates over the
+four fields and orders by `id_sample_tmp`. The `words=true` query scans
 `sample_search_token` by `token LIKE 'prefix%' ESCAPE '!' ORDER BY token,
-id_sample_tmp LIMIT ? OFFSET ?` then fetches `sample_mirror` rows by id; it is
-**not** a `SELECT DISTINCT ... ORDER BY id_sample_tmp`. `CountSampleSearch` is a
-`SELECT COUNT(*) FROM (SELECT DISTINCT id_sample_tmp FROM sample_search_token
-WHERE token LIKE ? ESCAPE '!' LIMIT ?)` bounded by a cap, so a mega-term counts
-to the cap quickly and reports it as a floor. Real index matching is exercised
-under a writable MySQL cache (see B3).
+id_sample_tmp LIMIT ? OFFSET ?` then fetches `sample_mirror` rows by id.
+`CountSampleSearch` uses the same selected mode and is bounded by a cap, so a
+mega-term counts to the cap quickly and reports it as a floor. Real index
+matching is exercised under a writable MySQL cache (see B3).
 
 **Package:** `mlwh/`
 **File:** `mlwh/search.go`
@@ -348,16 +347,15 @@ under a writable MySQL cache (see B3).
 **Acceptance tests:**
 
 1. Given a `sqlmock` MySQL `Client`, when `SearchSamples(ctx, "acme", 100, 0)`
-   runs, then the captured page SQL scans `sample_search_token` with
-   `token LIKE ? ESCAPE '!' ORDER BY token, id_sample_tmp LIMIT ? OFFSET ?`
-   (prefix `"acme%"`) and the by-id fetch selects `sample_mirror` rows
-   `WHERE id_lims = 'SQSCP' AND id_sample_tmp IN (...)`.
+   runs, then the captured page SQL scans `sample_mirror` with literal prefix
+   predicates over `name`, `supplier_name`, `common_name`, and `donor_id`, with
+   prefix `"acme%"`.
 2. Given a `sqlmock` MySQL `Client`, when `SearchSamples(ctx, "ab", 100, 0)`
    runs (term length 2), then no query is sent to the mock and the result is
    `[]Sample{}`.
 3. Given a token page that repeats an id across prefix-matching tokens (e.g.
-   `mus`, `musculus` for the same sample), when `SearchSamples` runs, then the
-   id is de-duplicated and the sample fetched once.
+   `mus`, `musculus` for the same sample), when `SearchSamplesWithOptions` runs
+   with `Words:true`, then the id is de-duplicated and the sample fetched once.
 4. Given a `sqlmock` MySQL `Client`, when `CountSampleSearch(ctx, "acme")` runs,
    then the captured SQL is the bounded `COUNT(*)` over a `SELECT DISTINCT
 id_sample_tmp ... LIMIT ?` (cap), with the prefix and cap bound.

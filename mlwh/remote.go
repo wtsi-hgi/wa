@@ -981,7 +981,8 @@ func (rc *RemoteClient) SearchStudiesPage(ctx context.Context, term string, limi
 	return remoteCallPage[Study](rc, ctx, "SearchStudies", []string{term}, remotePagination(limit, offset))
 }
 
-// SearchSamples runs a sample substring search through the remote server.
+// SearchSamples runs the default sample literal-prefix search through the remote
+// server.
 func (rc *RemoteClient) SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
 	return rc.SearchSamplesWithOptions(ctx, term, SampleSearchOptions{}, limit, offset)
 }
