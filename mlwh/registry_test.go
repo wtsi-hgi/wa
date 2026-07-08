@@ -406,7 +406,13 @@ func TestRegistryPhase10DefinitionsJ(t *testing.T) {
 			},
 			"IRODSPathsForRun": {
 				"manual_qc", "qc.go", "deliverable", "entity_type", "NOT is_spiked", "pass-through for PacBio/ONT",
-				"iRODS created", "data added", "never last_changed", "filename-suffix", "deliverables_only", "merged", "cache", "/freshness",
+				"iRODS created", "data added", "never last_changed", "product-metrics recovery",
+				"single-run merged composites", "public merged rows report id_run=0", "filename-suffix",
+				"deliverables_only", "merged", "cache", "/freshness",
+			},
+			"CountIRODSPathsForRun": {
+				"same run scope as the list", "denormalized id_run", "product-metrics recovery",
+				"single-run merged composites", "Public merged rows on the list report id_run=0",
 			},
 			"StudyManifest": {
 				"manual_qc", "qc.go", "filename-suffix", "merged multi-lane CRAM", "products_without_irods",

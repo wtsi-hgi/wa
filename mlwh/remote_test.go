@@ -705,6 +705,23 @@ func TestRemoteClientExportRoundTripsThroughServerD1b(t *testing.T) {
 			convey.So(result.Total, convey.ShouldEqual, 2)
 			convey.So(result.Complete, convey.ShouldBeFalse)
 		})
+
+		convey.Convey("when a created-desc iRODS export asks for --all, then the remote client rejects it like local export", func() {
+			opts := ExportOptions{
+				Columns: []string{"created", "irods_path"},
+				Sort:    "created-desc",
+				All:     true,
+			}
+
+			localResult, localErr := local.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "runs-study", opts)
+			remoteResult, remoteErr := remote.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "runs-study", opts)
+
+			convey.So(errors.Is(localErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+			convey.So(errors.Is(remoteErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+			convey.So(remoteErr.Error(), convey.ShouldEqual, localErr.Error())
+			convey.So(localResult.Rows, convey.ShouldBeNil)
+			convey.So(remoteResult.Rows, convey.ShouldBeNil)
+		})
 	})
 }
 

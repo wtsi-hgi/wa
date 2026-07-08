@@ -696,6 +696,10 @@ func (rc *RemoteClient) CountSampleCRAMsForStudy(ctx context.Context, studyLimsI
 // Export projects a supported parent-child relationship through the remote server.
 func (rc *RemoteClient) Export(ctx context.Context, rel ExportRelationship, parentID string, opts ExportOptions) (ExportResult, error) {
 	if opts.All && remoteExportCanPageAll(rel) {
+		if _, err := newExportPlan(rel, parentID, opts); err != nil {
+			return ExportResult{}, err
+		}
+
 		return rc.exportAllByRemotePages(ctx, rel, parentID, opts)
 	}
 
