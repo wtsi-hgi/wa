@@ -983,11 +983,7 @@ func TestOpenCacheInjectsMySQLPasswordIntoResolvedDSN(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 
 		expectSchemaBootstrap(rwMock, "mysql")
-		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
-			WithArgs(syncTableSample).
-			WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
-		expectNoDroppedMirrorRepairRows(rwMock, syncTableIseqProductMetrics)
-		expectNoDroppedMirrorRepairRows(rwMock, syncTableSeqProductIRODSLocations)
+		expectNoDroppedMirrorRepairSweep(rwMock)
 		roMock.ExpectPing()
 
 		var opened []string
@@ -1044,11 +1040,7 @@ func TestOpenCacheTrimsTrailingEnvSemicolonFromMySQLDSN(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 
 		expectSchemaBootstrap(rwMock, "mysql")
-		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
-			WithArgs(syncTableSample).
-			WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
-		expectNoDroppedMirrorRepairRows(rwMock, syncTableIseqProductMetrics)
-		expectNoDroppedMirrorRepairRows(rwMock, syncTableSeqProductIRODSLocations)
+		expectNoDroppedMirrorRepairSweep(rwMock)
 		roMock.ExpectPing()
 
 		var opened []string
@@ -1145,6 +1137,12 @@ func expectSchemaBootstrap(mock sqlmock.Sqlmock, dialect string) {
 
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM schema_version`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)`)).WithArgs(CacheSchemaVersion).WillReturnResult(sqlmock.NewResult(1, 1))
+}
+
+func expectNoDroppedMirrorRepairSweep(mock sqlmock.Sqlmock) {
+	for _, indexSet := range syncMirrorIndexSets {
+		expectNoDroppedMirrorRepairRows(mock, indexSet.SyncTable)
+	}
 }
 
 func TestSampleSyncPopulatesSQLiteSampleSearchTokenIndex(t *testing.T) {

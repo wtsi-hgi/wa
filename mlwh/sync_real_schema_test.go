@@ -494,14 +494,24 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 			paths, pathErr := client.IRODSPathsForSample(context.Background(), "sample-a", 100, 0)
 			convey.So(pathErr, convey.ShouldBeNil)
 			convey.So(paths, convey.ShouldResemble, []IRODSPath{{
-				IDProduct:  "product-1001",
-				Collection: "/seq/run",
-				DataObject: "1",
-				IRODSPath:  "/seq/run/1",
-				Created:    "2026-05-07T09:20:00Z",
-				IDRun:      9001,
-				Platform:   "Illumina",
-				ManualQC:   "pass",
+				IDProduct:            "product-1001",
+				Collection:           "/seq/run",
+				DataObject:           "1",
+				IRODSPath:            "/seq/run/1",
+				IDSampleTmp:          1,
+				Name:                 "sample-a",
+				SupplierName:         "supplier-a",
+				SangerSampleID:       "ssid-a",
+				AccessionNumber:      "acc-sa",
+				IDStudyLims:          "5001",
+				StudyAccessionNumber: "acc-st-1",
+				Created:              "2026-05-07T09:20:00Z",
+				IDRun:                9001,
+				Position:             1,
+				TagIndex:             1,
+				Platform:             "Illumina",
+				ManualQC:             "pass",
+				Deliverable:          boolPtr(true),
 			}})
 
 			var studyLimsForSample1 string
