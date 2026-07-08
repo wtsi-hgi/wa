@@ -115,6 +115,48 @@ func TestMLWHExportIRODSStudyPrintsCramTSVAndPageStatusD1b(t *testing.T) {
 	})
 }
 
+func TestMLWHExportIRODSRunPrintsMergedCompositeH2(t *testing.T) {
+	convey.Convey("H2: Given an iRODS run export includes a merged composite, when the command runs, then it prints the run-scoped rows", t, func() {
+		var capturedRel mlwh.ExportRelationship
+		var capturedParent string
+		var capturedOptions mlwh.ExportOptions
+		stub := &stubMLWHExportClient{
+			export: func(_ context.Context, rel mlwh.ExportRelationship, parentID string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
+				capturedRel = rel
+				capturedParent = parentID
+				capturedOptions = opts
+
+				return mlwh.ExportResult{
+					Columns: []string{"name", "id_run", "merged", "irods_path"},
+					Rows: [][]string{
+						{"sample-49348", "0", "true", "/seq/illumina/runs/49/49348/lane1-2/plex1/49348_1-2#1.cram"},
+						{"sample-49348", "49348", "false", "/seq/illumina/runs/49/49348/lane1/plex1/49348_1#1.cram"},
+					},
+					Total:    2,
+					Complete: true,
+					Format:   "tsv",
+				}, nil
+			},
+		}
+		withStubMLWHExportClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{
+			"mlwh", "export", "irods", "run", "49348",
+			"--columns", "name,id_run,merged,irods_path",
+			"--file-type", "cram",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "name\tid_run\tmerged\tirods_path")
+		convey.So(output, convey.ShouldContainSubstring, "sample-49348\t0\ttrue\t/seq/illumina/runs/49/49348/lane1-2/plex1/49348_1-2#1.cram")
+		convey.So(output, convey.ShouldContainSubstring, "sample-49348\t49348\tfalse\t/seq/illumina/runs/49/49348/lane1/plex1/49348_1#1.cram")
+		convey.So(capturedRel, convey.ShouldResemble, mlwh.ExportRelationship{Children: "irods", ParentKind: "run"})
+		convey.So(capturedParent, convey.ShouldEqual, "49348")
+		convey.So(capturedOptions.Columns, convey.ShouldResemble, []string{"name", "id_run", "merged", "irods_path"})
+		convey.So(capturedOptions.FileType, convey.ShouldEqual, "cram")
+	})
+}
+
 func TestMLWHExportRunsSampleHonoursSelectedColumnsD1b(t *testing.T) {
 	convey.Convey("D1b.2: Given a runs-of-sample export with selected columns, when the command runs, then it prints exactly those columns", t, func() {
 		var capturedOptions mlwh.ExportOptions

@@ -2003,6 +2003,9 @@ func exportIRODSPageQuery(input exportIRODSQueryInput) (string, []any, error) {
 
 func exportIRODSFromWhere(input exportIRODSQueryInput, count bool) (string, []any, error) {
 	query := ` FROM seq_product_irods_locations_mirror spi`
+	if input.parentKind == "run" {
+		query += ` LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product`
+	}
 	if exportNeedsSample(input) {
 		query += ` LEFT JOIN sample_mirror sm ON sm.id_sample_tmp = spi.id_sample_tmp`
 	}
@@ -2086,7 +2089,7 @@ func exportIRODSParentWhere(parentKind string, parentValue any) (string, []any, 
 	case "sample":
 		return ` WHERE spi.id_sample_tmp = ?`, []any{parentValue}, nil
 	case "run":
-		return ` WHERE spi.id_run = ?`, []any{parentValue}, nil
+		return ` WHERE ` + irodsRunScopePredicate, []any{parentValue}, nil
 	default:
 		return "", nil, fmt.Errorf("%w: unsupported iRODS export parent %q", ErrUnsupportedIdentifier, parentKind)
 	}

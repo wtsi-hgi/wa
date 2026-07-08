@@ -393,6 +393,29 @@ func seedExportSampleCRAMScenario(t *testing.T, db *sql.DB) {
 	}
 }
 
+func seedExportRun49348MergedCompositeScenario(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedHierarchyStudy(t, db, 7568, "7568")
+	seedManifestSampleRow(t, db, 4934800, "sample-49348", "supplier-49348", "EGAN-49348", "sanger-49348")
+	seedLibrarySample(t, db, "Standard", 4934800, "7568")
+	seedExportSyncState(t, db)
+
+	seedIseqProductMetricsMirrorRow(t, db, 4934801, 4934800, 49348, 1, 1, "7568")
+	seedIseqProductMetricsMirrorRow(t, db, 4934802, 4934800, 49348, 2, 1, "7568")
+	seedIseqProductMetricsMirrorRow(t, db, 4934812, 4934800, 49348, 0, 0, "7568")
+	seedIseqProductMetricsMirrorRow(t, db, 4934899, 4934800, 0, 0, 0, "7568")
+
+	for _, row := range []exportIRODSSeedRow{
+		{IDSeqProductLocation: 1, IDProduct: "4934801", Collection: "/seq/illumina/runs/49/49348/lane1/plex1", FileName: "49348_1#1.cram", IDSampleTmp: 4934800, StudyID: "7568", IDRun: 49348, Position: 1, TagIndex: 1, IsDeliverable: sql.NullInt64{Int64: 1, Valid: true}},
+		{IDSeqProductLocation: 2, IDProduct: "4934802", Collection: "/seq/illumina/runs/49/49348/lane2/plex1", FileName: "49348_2#1.cram", IDSampleTmp: 4934800, StudyID: "7568", IDRun: 49348, Position: 2, TagIndex: 1, IsDeliverable: sql.NullInt64{Int64: 1, Valid: true}},
+		{IDSeqProductLocation: 3, IDProduct: "4934812", Collection: "/seq/illumina/runs/49/49348/lane1-2/plex1", FileName: "49348_1-2#1.cram", IDSampleTmp: 4934800, StudyID: "7568", IDRun: 0, Position: 0, TagIndex: 0, IsDeliverable: sql.NullInt64{Int64: 1, Valid: true}, Merged: true},
+		{IDSeqProductLocation: 4, IDProduct: "4934899", Collection: "/seq/illumina/runs/composite/multi-run", FileName: "multi-run#1.cram", IDSampleTmp: 4934800, StudyID: "7568", IDRun: 0, Position: 0, TagIndex: 0, IsDeliverable: sql.NullInt64{Int64: 1, Valid: true}, Merged: true},
+	} {
+		seedExportIRODSRow(t, db, row)
+	}
+}
+
 func seedExportIRODSRow(t *testing.T, db *sql.DB, row exportIRODSSeedRow) {
 	t.Helper()
 
@@ -496,6 +519,54 @@ func TestExportStudyIRODSReportsMergedCompositeHonestRunH1(t *testing.T) {
 			single := exportRowContainingPath(t, result.Rows, 5, "/lane1/plex1/52553_1#1.cram")
 			convey.So(single[3], convey.ShouldEqual, "52553")
 			convey.So(single[4], convey.ShouldEqual, "false")
+		})
+	})
+}
+
+func TestExportRunIRODSIncludesSingleRunMergedCompositeH2(t *testing.T) {
+	convey.Convey("H2: Given run 49348 has single-lane rows and a single-run merged composite", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedExportRun49348MergedCompositeScenario(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "run"}, "49348", ExportOptions{
+			Columns:  []string{"name", "supplier_name", "id_sample_tmp", "id_product", "id_run", "lane", "tag_index", "merged", "irods_path"},
+			FileType: "cram",
+			Limit:    100,
+		})
+
+		convey.Convey("when run iRODS is exported, then the merged composite is included with sample attribution and public id_run=0 beside single-lane objects", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldHaveLength, 3)
+			convey.So(result.Total, convey.ShouldEqual, 3)
+
+			merged := exportRowContainingPath(t, result.Rows, 8, "/lane1-2/plex1/49348_1-2#1.cram")
+			convey.So(merged, convey.ShouldResemble, []string{
+				"sample-49348",
+				"supplier-49348",
+				"4934800",
+				"4934812",
+				"0",
+				"0",
+				"0",
+				"true",
+				"/seq/illumina/runs/49/49348/lane1-2/plex1/49348_1-2#1.cram",
+			})
+
+			firstLane := exportRowContainingPath(t, result.Rows, 8, "/lane1/plex1/49348_1#1.cram")
+			convey.So(firstLane[0], convey.ShouldEqual, "sample-49348")
+			convey.So(firstLane[3], convey.ShouldEqual, "4934801")
+			convey.So(firstLane[4], convey.ShouldEqual, "49348")
+			convey.So(firstLane[5], convey.ShouldEqual, "1")
+			convey.So(firstLane[6], convey.ShouldEqual, "1")
+			convey.So(firstLane[7], convey.ShouldEqual, "false")
+
+			secondLane := exportRowContainingPath(t, result.Rows, 8, "/lane2/plex1/49348_2#1.cram")
+			convey.So(secondLane[3], convey.ShouldEqual, "4934802")
+			convey.So(secondLane[4], convey.ShouldEqual, "49348")
+			convey.So(secondLane[5], convey.ShouldEqual, "2")
+			convey.So(secondLane[6], convey.ShouldEqual, "1")
+			convey.So(secondLane[7], convey.ShouldEqual, "false")
 		})
 	})
 }
