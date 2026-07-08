@@ -1793,12 +1793,12 @@ type exportStudyRows struct {
 func (c *Client) studiesForExport(ctx context.Context, plan exportPlan, parentID string) (exportStudyRows, error) {
 	switch plan.rel.ParentKind {
 	case "sample":
-		studies, err := c.StudiesForSample(ctx, parentID)
+		studies, total, err := c.sampleStudiesForExport(ctx, parentID, plan.limit, plan.offset)
 		if err != nil {
 			return exportStudyRows{}, err
 		}
 
-		return exportStudyRows{rows: projectStudies(studies, "", plan.columns), total: len(studies)}, nil
+		return exportStudyRows{rows: projectStudies(studies, "", plan.columns), total: total}, nil
 	case "faculty-sponsor":
 		rows, err := c.StudiesForFacultySponsor(ctx, parentID, plan.limit, plan.offset)
 		total, countErr := c.CountStudiesForFacultySponsor(ctx, parentID)
@@ -2187,6 +2187,21 @@ func (row exportIRODSRow) cursor() exportCursor {
 		IDSeqProductLocation: row.IDSeqProductLocation,
 		set:                  true,
 	}
+}
+
+func (c *Client) sampleStudiesForExport(ctx context.Context, sangerName string, limit, offset int) ([]Study, int, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, 0, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	rows, err := c.queryStudySearch(ctx, db, studiesForSampleCacheSQL+" LIMIT ? OFFSET ?", sangerName, limit, offset)
+	total, countErr := c.CountStudiesForSample(ctx, sangerName)
+	if err = errors.Join(err, countErr); err != nil {
+		return nil, 0, err
+	}
+
+	return rows, exportCountValue(total), nil
 }
 
 func (c *Client) resolveExportStudy(ctx context.Context, parentID string) (Match, error) {

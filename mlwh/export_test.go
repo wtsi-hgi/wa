@@ -1046,6 +1046,35 @@ func TestExportNonIRODSPaginationDoesNotAdvertiseInvalidCursorD1a(t *testing.T) 
 	})
 }
 
+func TestExportSampleStudiesAppliesBoundedPageD1a(t *testing.T) {
+	convey.Convey("D1a reviewer: Given a sample linked to multiple studies", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+
+		seedManifestSampleRow(t, client.cache.DB(), 91, "sample-linked-studies", "supplier-linked", "EGAN-linked", "sanger-linked")
+		seedHierarchyStudy(t, client.cache.DB(), 652, "6570")
+		seedHierarchyStudy(t, client.cache.DB(), 651, "6569")
+		seedHierarchyStudy(t, client.cache.DB(), 650, "6568")
+		seedLibrarySample(t, client.cache.DB(), "Standard", 91, "6568")
+		seedLibrarySample(t, client.cache.DB(), "Chromium", 91, "6569")
+		seedLibrarySample(t, client.cache.DB(), "Bespoke", 91, "6570")
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "studies", ParentKind: "sample"}, "sample-linked-studies", ExportOptions{
+			Columns: []string{"id_study_lims", "name"},
+			Limit:   1,
+			Offset:  1,
+		})
+
+		convey.Convey("when the second bounded page is fetched, then only that page is returned while total remains unbounded", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{{"6569", "Study 6569"}})
+			convey.So(result.Total, convey.ShouldEqual, 3)
+			convey.So(result.Complete, convey.ShouldBeFalse)
+			convey.So(result.NextCursor, convey.ShouldBeEmpty)
+		})
+	})
+}
+
 func TestExportSamplesAppliesSharedFilterFamilyD1aC4(t *testing.T) {
 	convey.Convey("C4/D1a reviewer: Given study samples spanning organism, library type, raw QC, and deliverable states", t, func() {
 		client, cleanup := newExportTestClient(t)
