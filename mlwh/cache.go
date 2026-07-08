@@ -48,6 +48,7 @@ import (
 
 const (
 	defaultMySQLLockTimeoutSeconds = 30
+	mysqlReadPoolWarmConns         = 6
 	mysqlSyncLockNamePrefix        = "wa_mlwh_sync_"
 
 	// CacheSchemaVersion is the embedded cache schema version supported by OpenCache.
@@ -172,8 +173,9 @@ func openMySQLCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 
 		return nil, fmt.Errorf("mlwh: open mysql read-only cache: %w", err)
 	}
+	roDB.SetMaxIdleConns(mysqlReadPoolWarmConns)
 
-	if err = roDB.PingContext(ctx); err != nil {
+	if err = warmMySQLReadPool(ctx, roDB); err != nil {
 		_ = roDB.Close()
 		_ = rwDB.Close()
 
@@ -491,6 +493,29 @@ func mysqlSyncLockName(dsn string) string {
 	sum := sha1.Sum([]byte(trimmed))
 
 	return mysqlSyncLockNamePrefix + hex.EncodeToString(sum[:])[:16]
+}
+
+func warmMySQLReadPool(ctx context.Context, db *sql.DB) error {
+	var wg sync.WaitGroup
+	errCh := make(chan error, mysqlReadPoolWarmConns)
+	for range mysqlReadPoolWarmConns {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := db.PingContext(ctx); err != nil {
+				errCh <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
 }
 
 func normalizedMySQLLockScope(parsed *mysql.Config) string {
@@ -820,6 +845,14 @@ func allowLargeSQLiteColdLoadIndexShape(ctx context.Context, db *sql.DB, expecte
 
 		actual.Index[indexSet.Table] = append([]string(nil), expected.Index[indexSet.Table]...)
 	}
+}
+
+func analyzeMirrorTable(ctx context.Context, db *sql.DB, table string) error {
+	if _, err := db.ExecContext(ctx, `ANALYZE TABLE `+table); err != nil {
+		return fmt.Errorf("mlwh: analyze %s after index recovery: %w", table, err)
+	}
+
+	return nil
 }
 
 func sqliteLargeCacheReadIndexShape(indexSet syncMirrorIndexSet, actual []string) bool {
@@ -1445,10 +1478,13 @@ func repairDroppedMirrorIndexSet(ctx context.Context, db *sql.DB, dialect string
 			return fmt.Errorf("mlwh: configure sqlite dropped-index recovery: %w", err)
 		}
 	}
-	var repaired bool
+	var (
+		createdIndexes bool
+		repaired       bool
+	)
 	if indexSet.Table == "sample_mirror" {
 		if repairSampleLookupIndexes {
-			if err = createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
+			if _, err = createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
 				return err
 			}
 			repaired = true
@@ -1459,7 +1495,7 @@ func repairDroppedMirrorIndexSet(ctx context.Context, db *sql.DB, dialect string
 			}
 		}
 	} else {
-		repaired, err = createMirrorDroppedIndexes(ctx, tx, dialect, indexSet)
+		repaired, createdIndexes, err = createMirrorDroppedIndexes(ctx, tx, dialect, indexSet)
 		if err != nil {
 			return err
 		}
@@ -1474,6 +1510,12 @@ func repairDroppedMirrorIndexSet(ctx context.Context, db *sql.DB, dialect string
 	}
 
 	committed = true
+
+	if dialect == "mysql" && createdIndexes {
+		if err = analyzeMirrorTable(ctx, db, indexSet.Table); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }

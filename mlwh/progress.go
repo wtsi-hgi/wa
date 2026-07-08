@@ -33,6 +33,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -360,13 +361,13 @@ func studyScopedSampleQCUnion() string {
 // pm.id_study_lims) rolled up to the sample with GROUP BY pm.id_sample_tmp, so the
 // linkage is evaluated set-at-once and index-served instead of as a correlated
 // subquery re-run per product-metrics row (the per-row EXISTS was the ~5s study
-// page). A sample is with_data when MAX(spi matched) is true for any of its products
-// on the platform, else sequenced_no_data -- identical (sample, platform) semantics
-// to the previous per-row EXISTS, including a sample with both a delivered and an
-// undelivered product landing in with_data.
+// page). A sample is with_data when COUNT(spi.id_iseq_product) is positive for
+// any of its products on the platform, else sequenced_no_data -- identical
+// (sample, platform) semantics to the previous per-row EXISTS, including a sample
+// with both a delivered and an undelivered product landing in with_data.
 func statusBreakdownPerPlatformSQL() string {
 	productArm := func(arm statusBreakdownPlatformArm) string {
-		delivered := `MAX(CASE WHEN spi.id_iseq_product IS NOT NULL THEN 1 ELSE 0 END) = 1`
+		delivered := `COUNT(spi.id_iseq_product) > 0`
 
 		return `SELECT pm.id_sample_tmp, '` + arm.platform + `' AS platform, ` +
 			`CASE WHEN ` + delivered + ` THEN 'with_data' ELSE 'sequenced_no_data' END AS bucket ` +
@@ -1306,39 +1307,74 @@ func (c *Client) sampleUseqRunTimelines(ctx context.Context, idSampleTmp int64) 
 // synced study with no samples returns all-zero ladders with cache_synced_at
 // populated.
 func (c *Client) StatusBreakdown(ctx context.Context, studyLimsID string) (StatusBreakdown, error) {
-	total, distinct, err := c.statusBreakdownDistinct(ctx, studyLimsID)
-	if err != nil {
+	var (
+		distinct     PhaseLadder
+		perPlatform  []PlatformPhaseLadder
+		qc           StudyQCBreakdown
+		syncedAt     string
+		total        int
+		withTimeline int
+		wg           sync.WaitGroup
+	)
+	errCh := make(chan orderedAsyncError, 5)
+	run := func(order int, fill func() error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := fill(); err != nil {
+				errCh <- orderedAsyncError{order: order, err: err}
+			}
+		}()
+	}
+
+	run(0, func() error {
+		var err error
+		total, distinct, err = c.statusBreakdownDistinct(ctx, studyLimsID)
+
+		return err
+	})
+	run(1, func() error {
+		var err error
+		perPlatform, err = c.statusBreakdownPerPlatform(ctx, studyLimsID)
+
+		return err
+	})
+	run(2, func() error {
+		var err error
+		qc, err = c.statusBreakdownQC(ctx, studyLimsID)
+
+		return err
+	})
+	run(3, func() error {
+		var err error
+		withTimeline, err = c.queryCount(ctx, countSamplesWithDetailedTimelineCacheSQL, "count study samples with detailed timeline", studyLimsID)
+
+		return err
+	})
+	run(4, func() error {
+		var err error
+		syncedAt, err = c.oldestFeedingLastRun(ctx, statusBreakdownFeedingTables)
+
+		return err
+	})
+
+	wg.Wait()
+	close(errCh)
+	if err := firstOrderedAsyncError(errCh); err != nil {
 		return StatusBreakdown{}, err
 	}
 	if total == 0 {
 		return c.statusBreakdownForEmptyStudy(ctx, studyLimsID)
 	}
 
-	breakdown := StatusBreakdown{IDStudyLims: studyLimsID, Distinct: distinct}
-
-	perPlatform, err := c.statusBreakdownPerPlatform(ctx, studyLimsID)
-	if err != nil {
-		return StatusBreakdown{}, err
+	breakdown := StatusBreakdown{
+		IDStudyLims:          studyLimsID,
+		Distinct:             distinct,
+		PerPlatform:          perPlatform,
+		QC:                   qc,
+		WithDetailedTimeline: withTimeline,
+		CacheSyncedAt:        syncedAt,
 	}
-	breakdown.PerPlatform = perPlatform
-
-	qc, err := c.statusBreakdownQC(ctx, studyLimsID)
-	if err != nil {
-		return StatusBreakdown{}, err
-	}
-	breakdown.QC = qc
-
-	withTimeline, err := c.queryCount(ctx, countSamplesWithDetailedTimelineCacheSQL, "count study samples with detailed timeline", studyLimsID)
-	if err != nil {
-		return StatusBreakdown{}, err
-	}
-	breakdown.WithDetailedTimeline = withTimeline
-
-	syncedAt, err := c.oldestFeedingLastRun(ctx, statusBreakdownFeedingTables)
-	if err != nil {
-		return StatusBreakdown{}, err
-	}
-	breakdown.CacheSyncedAt = syncedAt
 
 	return breakdown, nil
 }

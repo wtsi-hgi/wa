@@ -31,10 +31,12 @@ import (
 	"database/sql/driver"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/smartystreets/goconvey/convey"
 )
 
@@ -351,6 +353,79 @@ func TestSamplesWithDataSinceUntilWithoutSinceReturnsError(t *testing.T) {
 			convey.So(list, convey.ShouldBeNil)
 		})
 	})
+}
+
+func TestStudyOverviewPopulatedStudyRunsIndependentReadsConcurrently(t *testing.T) {
+	convey.Convey("Given a populated study overview whose independent reads are individually slow", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+		mock.MatchExpectationsInOrder(false)
+
+		const studyID = "SLOW"
+		delay := 120 * time.Millisecond
+		countArgs := studyOverviewCountsArgs(studyID, []any{
+			formatSyncTime(b1NowFixed.AddDate(0, 0, -7)),
+			formatSyncTime(b1NowFixed),
+		})
+		mock.ExpectQuery(regexp.QuoteMeta(studyOverviewCountsCacheSQL)).
+			WithArgs(driverValuesForTest(countArgs)...).
+			WillReturnRows(sqlmock.NewRows([]string{"total", "with_data", "sequenced_no_data", "added_last_7_days"}).AddRow(3, 2, 1, 1))
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`)).
+			WithArgs(studyID).
+			WillDelayFor(delay).
+			WillReturnRows(sqlmock.NewRows(studyResolverColumns()).AddRow(studyResolverRow(101, studyID, "study-uuid-"+studyID, "Study "+studyID, "EGAS0000"+studyID)...))
+		mock.ExpectQuery(regexp.QuoteMeta(studyOverviewIRODSAggregateSQL)).
+			WithArgs(studyID).
+			WillDelayFor(delay).
+			WillReturnRows(sqlmock.NewRows([]string{"count", "min_created", "max_created"}).AddRow(7, formatSyncTime(b1CreatedOld), formatSyncTime(b1CreatedNewest)))
+		mock.ExpectQuery(regexp.QuoteMeta(studyOverviewRunsCacheSQL)).
+			WithArgs(studyID).
+			WillDelayFor(delay).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+		mock.ExpectQuery(regexp.QuoteMeta(studyOverviewLibrariesCacheSQL)).
+			WithArgs(studyID).
+			WillDelayFor(delay).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+		mock.ExpectQuery(regexp.QuoteMeta(studyOverviewLibraryTypesCacheSQL)).
+			WithArgs(studyID).
+			WillDelayFor(delay).
+			WillReturnRows(sqlmock.NewRows([]string{"pipeline_id_lims"}).AddRow("Standard").AddRow("Chromium"))
+		expectOldestFeedingLastRun(mock, studyOverviewFeedingTables, b1OldestLastRun, delay)
+
+		client := &Client{cacheReader: db, now: func() time.Time { return b1NowFixed }}
+		start := time.Now()
+		overview, err := client.StudyOverview(context.Background(), studyID)
+		elapsed := time.Since(start)
+
+		convey.Convey("when StudyOverview runs, then the populated independent reads overlap while preserving the response fields", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(elapsed, convey.ShouldBeLessThan, delay*4)
+			convey.So(overview.Name, convey.ShouldEqual, "Study "+studyID)
+			convey.So(overview.DataObjects, convey.ShouldEqual, 7)
+			convey.So(overview.Runs, convey.ShouldEqual, 2)
+			convey.So(overview.Libraries, convey.ShouldEqual, 2)
+			convey.So(overview.LibraryTypes, convey.ShouldResemble, []string{"Chromium", "Standard"})
+			convey.So(overview.CacheSyncedAt, convey.ShouldEqual, b1OldestLastRun.Format(utcRFC3339Layout))
+			convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+	})
+}
+
+func expectOldestFeedingLastRun(mock sqlmock.Sqlmock, tables []string, oldest time.Time, delay time.Duration) {
+	args := make([]any, 0, len(tables))
+	rows := sqlmock.NewRows([]string{"table_name", "last_run"})
+	for index, table := range tables {
+		args = append(args, table)
+		rows.AddRow(table, formatSyncTime(oldest.Add(time.Duration(index)*time.Minute)))
+	}
+
+	expectation := mock.ExpectQuery(regexp.QuoteMeta(`SELECT table_name, last_run FROM sync_state WHERE table_name IN (` + placeholders(len(tables)) + `)`)).
+		WithArgs(driverValuesForTest(args)...)
+	if delay > 0 {
+		expectation.WillDelayFor(delay)
+	}
+	expectation.WillReturnRows(rows)
 }
 
 // B3 acceptance test 1: the with-data and without-data lists partition S1's

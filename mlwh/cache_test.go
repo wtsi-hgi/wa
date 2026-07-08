@@ -118,12 +118,12 @@ func TestAllowLargeMySQLColdLoadIndexShapeAllowsLegacySampleNameOnlyIndex(t *tes
 		defer func() { _ = db.Close() }()
 
 		expected := schemaShape{Index: map[string][]string{
-			"iseq_product_metrics_mirror":        {"id_sample_tmp,id_run,position,tag_index", "id_study_lims,id_sample_tmp,id_iseq_product,qc"},
+			"iseq_product_metrics_mirror":        {"id_iseq_product", "id_sample_tmp,id_run,position,tag_index", "id_study_lims,id_sample_tmp,id_iseq_product,qc"},
 			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_run,position,tag_index,id_seq_product_irods_locations_tmp", "id_study_lims,id_sample_tmp"},
 			"sample_mirror":                      {"accession_number", "donor_id", "id_sample_lims", "last_updated", "name", "sanger_sample_id", "supplier_name", "uuid_sample_lims"},
 		}}
 		actual := schemaShape{Index: map[string][]string{
-			"iseq_product_metrics_mirror":        {"id_sample_tmp,id_run,position,tag_index", "id_study_lims,id_sample_tmp,id_iseq_product,qc"},
+			"iseq_product_metrics_mirror":        {"id_iseq_product", "id_sample_tmp,id_run,position,tag_index", "id_study_lims,id_sample_tmp,id_iseq_product,qc"},
 			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_run,position,tag_index,id_seq_product_irods_locations_tmp", "id_study_lims,id_sample_tmp"},
 			"sample_mirror":                      {"name"},
 		}}
@@ -568,7 +568,7 @@ func TestOpenCacheMySQLMigratesV1Cache(t *testing.T) {
 		expectMySQLSchemaMigration(rwMock, 1, CacheSchemaVersion)
 		rwMock.ExpectClose()
 
-		roMock.ExpectPing()
+		expectMySQLReadPoolWarmup(roMock)
 		roMock.ExpectClose()
 
 		openCount := 0
@@ -608,7 +608,7 @@ func TestAllowLargeMySQLColdLoadIndexShapeUsesDroppedSyncState(t *testing.T) {
 
 		highWater := time.Date(2026, time.May, 13, 9, 0, 0, 0, time.UTC)
 		expected := schemaShape{Index: map[string][]string{
-			"iseq_product_metrics_mirror":        {"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_iseq_flowcell_tmp", "id_study_lims,id_run,position", "id_study_lims,id_sample_tmp,id_iseq_product,qc"},
+			"iseq_product_metrics_mirror":        {"id_iseq_product", "id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_iseq_flowcell_tmp", "id_study_lims,id_run,position", "id_study_lims,id_sample_tmp,id_iseq_product,qc"},
 			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_run,position,tag_index,id_seq_product_irods_locations_tmp", "id_study_lims,id_sample_tmp"},
 			"sample_mirror":                      {"name"},
 		}}
@@ -636,7 +636,7 @@ func TestAllowLargeMySQLColdLoadIndexShapeUsesMetadataEstimateWithoutCountingRow
 		defer func() { _ = db.Close() }()
 
 		expected := schemaShape{Index: map[string][]string{
-			"iseq_product_metrics_mirror":        {"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_iseq_flowcell_tmp", "id_study_lims,id_run,position", "id_study_lims,id_sample_tmp,id_iseq_product,qc"},
+			"iseq_product_metrics_mirror":        {"id_iseq_product", "id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_iseq_flowcell_tmp", "id_study_lims,id_run,position", "id_study_lims,id_sample_tmp,id_iseq_product,qc"},
 			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_run,position,tag_index,id_seq_product_irods_locations_tmp", "id_study_lims,id_sample_tmp"},
 		}}
 		actual := schemaShape{Index: map[string][]string{
@@ -984,7 +984,7 @@ func TestOpenCacheInjectsMySQLPasswordIntoResolvedDSN(t *testing.T) {
 
 		expectSchemaBootstrap(rwMock, "mysql")
 		expectNoDroppedMirrorRepairSweep(rwMock)
-		roMock.ExpectPing()
+		expectMySQLReadPoolWarmup(roMock)
 
 		var opened []string
 		openCount := 0
@@ -1041,7 +1041,7 @@ func TestOpenCacheTrimsTrailingEnvSemicolonFromMySQLDSN(t *testing.T) {
 
 		expectSchemaBootstrap(rwMock, "mysql")
 		expectNoDroppedMirrorRepairSweep(rwMock)
-		roMock.ExpectPing()
+		expectMySQLReadPoolWarmup(roMock)
 
 		var opened []string
 		openCount := 0
@@ -1142,6 +1142,12 @@ func expectSchemaBootstrap(mock sqlmock.Sqlmock, dialect string) {
 func expectNoDroppedMirrorRepairSweep(mock sqlmock.Sqlmock) {
 	for _, indexSet := range syncMirrorIndexSets {
 		expectNoDroppedMirrorRepairRows(mock, indexSet.SyncTable)
+	}
+}
+
+func expectMySQLReadPoolWarmup(mock sqlmock.Sqlmock) {
+	for range mysqlReadPoolWarmConns {
+		mock.ExpectPing()
 	}
 }
 

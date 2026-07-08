@@ -362,8 +362,13 @@ var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
 // overview, the availability joins) full-scan the ~9M-row mirror (~52s) instead of
 // being index-served (~1s). Omitting it here was the root cause of the slow study
 // pages, because the large-cold-load schema-shape tolerance then accepted the
-// missing index as expected drift.
+// missing index as expected drift. It MUST also include the (id_iseq_product)
+// index: during the same cold load, seq_product_irods_locations enriches each
+// iRODS batch from this mirror by product id before the deferred primary key is
+// rebuilt, so without a sparse product-id index every iRODS batch full-scans the
+// ~9M-row product mirror.
 var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
+	{Name: "ipm_mirror_iseq_product_idx", Column: "id_iseq_product"},
 	{Name: "iseq_product_metrics_mirror_id_run_position_tag_index_idx", Column: "id_run, position, tag_index"},
 	{Name: "ipm_mirror_sample_run_position_tag_idx", Column: "id_sample_tmp, id_run, position, tag_index"},
 	{Name: "ipm_mirror_sample_qc_idx", Column: "id_sample_tmp, qc"},
@@ -1794,9 +1799,13 @@ func (c *Client) syncTables(ctx context.Context) (reports []SyncReport, err erro
 	reports, errs = collectSyncResults(preIRODSResults, len(tables))
 
 	if syncIRODS && !syncResultsContainDependencyError(preIRODSResults, seqProductIRODSLocationsSyncDependencies) {
-		irodsReports, irodsErrs := collectSyncResults(c.syncTablesInParallel(ctx, []string{syncTableSeqProductIRODSLocations}), 1)
-		reports = append(reports, irodsReports...)
-		errs = append(errs, irodsErrs...)
+		if repairErr := c.repairSeqProductIRODSLocationsDependencyIndexes(ctx); repairErr != nil {
+			errs = append(errs, repairErr)
+		} else {
+			irodsReports, irodsErrs := collectSyncResults(c.syncTablesInParallel(ctx, []string{syncTableSeqProductIRODSLocations}), 1)
+			reports = append(reports, irodsReports...)
+			errs = append(errs, irodsErrs...)
+		}
 	}
 	if len(errs) == 0 {
 		if repairErr := repairDroppedMirrorIndexes(ctx, c.cache.DB(), c.cache.Dialect()); repairErr != nil {
@@ -2024,6 +2033,14 @@ func formatSyncDate(value time.Time) string {
 	}
 
 	return value.UTC().Format(time.DateOnly)
+}
+
+func (c *Client) repairSeqProductIRODSLocationsDependencyIndexes(ctx context.Context) error {
+	if c.cache.Dialect() != "mysql" {
+		return nil
+	}
+
+	return repairDroppedMirrorIndexSet(ctx, c.cache.DB(), c.cache.Dialect(), iseqProductMetricsMirrorIndexSet)
 }
 
 func (c *Client) emitSyncRetry(table string, attempt int, retryErr error, backoff time.Duration) {
@@ -2411,7 +2428,7 @@ func finalizeMirrorSyncState(ctx context.Context, cache Cache, indexSet syncMirr
 			if shouldDeferMirrorIndexRebuild(cache) {
 				deferredIndexesDropped = true
 			} else {
-				repaired, err := createMirrorDroppedIndexes(ctx, tx, cache.Dialect(), indexSet)
+				repaired, _, err := createMirrorDroppedIndexes(ctx, tx, cache.Dialect(), indexSet)
 				if err != nil {
 					return err
 				}
@@ -2458,7 +2475,7 @@ func rebuildSampleMirrorColdLoadIndexes(ctx context.Context, tx *sql.Tx, dialect
 	if err := rebuildSampleSearchTokenIndex(ctx, tx, dialect); err != nil {
 		return false, err
 	}
-	if err := createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
+	if _, err := createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
 		return false, err
 	}
 	if err := rebuildCommonNameWordMirror(ctx, tx); err != nil {
@@ -2605,91 +2622,93 @@ func dropMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string,
 	return nil
 }
 
-func createSampleMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string) error {
+func createSampleMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string) (bool, error) {
 	return createMirrorSecondaryIndexes(ctx, tx, dialect, sampleMirrorIndexSet)
 }
 
-func createMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) error {
+func createMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (bool, error) {
 	existing, err := mirrorExistingIndexes(ctx, tx, dialect, indexSet)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	missing := missingMirrorSecondaryIndexes(existing, indexSet.Indexes)
 	if len(missing) == 0 {
-		return nil
+		return false, nil
 	}
 	if dialect == "mysql" {
 		if _, err = tx.ExecContext(ctx, buildMySQLCreateMirrorSecondaryIndexesStatement(indexSet.Table, missing)); err != nil {
-			return fmt.Errorf("mlwh: create %s indexes: %w", indexSet.Table, err)
+			return false, fmt.Errorf("mlwh: create %s indexes: %w", indexSet.Table, err)
 		}
 
-		return nil
+		return true, nil
 	}
 
 	for _, index := range missing {
 		stmt := fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s(%s)`, index.Name, indexSet.Table, index.Column)
 
 		if _, err = tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("mlwh: create %s index %s: %w", indexSet.Table, index.Name, err)
+			return false, fmt.Errorf("mlwh: create %s index %s: %w", indexSet.Table, index.Name, err)
 		}
 	}
 
-	return nil
+	return true, nil
 }
 
-func createMirrorDroppedIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (bool, error) {
+func createMirrorDroppedIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (bool, bool, error) {
 	if dialect == "mysql" {
-		repaired, err := createMySQLSparseMirrorReadIndexes(ctx, tx, dialect, indexSet)
+		repaired, createdIndexes, err := createMySQLSparseMirrorReadIndexes(ctx, tx, dialect, indexSet)
 		if repaired || err != nil {
-			return false, err
+			return false, createdIndexes, err
 		}
 	}
 	if dialect == "sqlite" {
 		rebuildInline, err := shouldRebuildSQLiteMirrorSecondaryIndexesInline(ctx, tx, indexSet)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if !rebuildInline {
 			if err := createSQLiteSparseMirrorReadIndexes(ctx, tx, dialect, indexSet); err != nil {
-				return false, err
+				return false, false, err
 			}
 
-			return false, nil
+			return false, false, nil
 		}
 	}
 
 	if dialect == "mysql" && indexSet.PrimaryKeyColumn != "" {
 		rebuildInline, err := shouldRebuildMySQLMirrorSecondaryIndexesInline(ctx, tx, indexSet)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if !rebuildInline {
-			return false, nil
+			return false, false, nil
 		}
 	}
 
 	if err := createMirrorPrimaryKey(ctx, tx, dialect, indexSet); err != nil {
-		return false, err
+		return false, false, err
 	}
-	if err := createMirrorSecondaryIndexes(ctx, tx, dialect, indexSet); err != nil {
-		return false, err
+	createdIndexes, err := createMirrorSecondaryIndexes(ctx, tx, dialect, indexSet)
+	if err != nil {
+		return false, false, err
 	}
 
-	return true, nil
+	return true, createdIndexes, nil
 }
 
-func createMySQLSparseMirrorReadIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (bool, error) {
+func createMySQLSparseMirrorReadIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (bool, bool, error) {
 	readIndexSet, ok := mySQLSparseMirrorReadIndexSet(indexSet)
 	if !ok {
-		return false, nil
+		return false, false, nil
 	}
 
-	if err := createMirrorSecondaryIndexes(ctx, tx, dialect, readIndexSet); err != nil {
-		return false, err
+	createdIndexes, err := createMirrorSecondaryIndexes(ctx, tx, dialect, readIndexSet)
+	if err != nil {
+		return false, false, err
 	}
 
-	return true, nil
+	return true, createdIndexes, nil
 }
 
 func createSQLiteSparseMirrorReadIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) error {
@@ -2698,7 +2717,9 @@ func createSQLiteSparseMirrorReadIndexes(ctx context.Context, tx *sql.Tx, dialec
 		return nil
 	}
 
-	return createMirrorSecondaryIndexes(ctx, tx, dialect, readIndexSet)
+	_, err := createMirrorSecondaryIndexes(ctx, tx, dialect, readIndexSet)
+
+	return err
 }
 
 func shouldRebuildSQLiteMirrorSecondaryIndexesInline(ctx context.Context, tx *sql.Tx, indexSet syncMirrorIndexSet) (bool, error) {

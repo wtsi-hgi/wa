@@ -31,10 +31,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/smartystreets/goconvey/convey"
 )
 
@@ -219,6 +221,65 @@ const (
 	d1qRegistered = int64(414) // registered-only: library link, NO products, NO iRODS -> distinct.registered, excluded from QC
 	d1qONT        = int64(415) // ONT: oseq_flowcell only, NO products, NO iRODS -> distinct.registered, excluded from QC
 )
+
+func TestStatusBreakdownPopulatedStudyRunsIndependentReadsConcurrently(t *testing.T) {
+	convey.Convey("Given a populated status breakdown whose independent reads are individually slow", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+		mock.MatchExpectationsInOrder(false)
+
+		const studyID = "SLOW"
+		delay := 120 * time.Millisecond
+		mock.ExpectQuery(regexp.QuoteMeta(statusBreakdownDistinctCacheSQL)).
+			WithArgs(driverValuesForTest(statusBreakdownDistinctArgs(studyID))...).
+			WillReturnRows(sqlmock.NewRows([]string{"total", "with_data", "sequenced_no_data", "registered"}).AddRow(5, 3, 1, 1))
+
+		perPlatformArgs := make([]any, len(statusBreakdownProductPlatformArms)+1)
+		for i := range perPlatformArgs {
+			perPlatformArgs[i] = studyID
+		}
+		mock.ExpectQuery(regexp.QuoteMeta(statusBreakdownPerPlatformSQL())).
+			WithArgs(driverValuesForTest(perPlatformArgs)...).
+			WillDelayFor(delay).
+			WillReturnRows(sqlmock.NewRows([]string{"platform", "with_data", "sequenced_no_data", "registered"}).
+				AddRow(platformIllumina, 3, 1, 0).
+				AddRow(platformONT, 0, 0, 1))
+
+		qcArgs := make([]any, len(statusBreakdownProductPlatformArms))
+		for i := range qcArgs {
+			qcArgs[i] = studyID
+		}
+		mock.ExpectQuery(regexp.QuoteMeta(statusBreakdownQCCacheSQL)).
+			WithArgs(driverValuesForTest(qcArgs)...).
+			WillDelayFor(delay).
+			WillReturnRows(sqlmock.NewRows([]string{"pass", "fail", "pending"}).AddRow(2, 1, 1))
+		mock.ExpectQuery(regexp.QuoteMeta(countSamplesWithDetailedTimelineCacheSQL)).
+			WithArgs(studyID).
+			WillDelayFor(delay).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+		expectOldestFeedingLastRun(mock, statusBreakdownFeedingTables, b1OldestLastRun, delay)
+
+		client := &Client{cacheReader: db}
+		start := time.Now()
+		breakdown, err := client.StatusBreakdown(context.Background(), studyID)
+		elapsed := time.Since(start)
+
+		convey.Convey("when StatusBreakdown runs, then the populated independent reads overlap while preserving the response fields", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(elapsed, convey.ShouldBeLessThan, delay*4)
+			convey.So(breakdown.Distinct, convey.ShouldResemble, PhaseLadder{WithData: 3, SequencedNoData: 1, Registered: 1})
+			convey.So(breakdown.PerPlatform, convey.ShouldResemble, []PlatformPhaseLadder{
+				{Platform: platformIllumina, Ladder: PhaseLadder{WithData: 3, SequencedNoData: 1}},
+				{Platform: platformONT, Ladder: PhaseLadder{Registered: 1}},
+			})
+			convey.So(breakdown.QC, convey.ShouldResemble, StudyQCBreakdown{QCPass: 2, QCFail: 1, QCPending: 1})
+			convey.So(breakdown.WithDetailedTimeline, convey.ShouldEqual, 2)
+			convey.So(breakdown.CacheSyncedAt, convey.ShouldEqual, b1OldestLastRun.Format(utcRFC3339Layout))
+			convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+	})
+}
 
 // F1 acceptance test 1: a sample with a library link but NO products is
 // registered, its QC is NOT pending (no products => not tracked, not pending),

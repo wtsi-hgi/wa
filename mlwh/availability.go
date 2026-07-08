@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -236,6 +237,96 @@ func studyScopedIRODSExists(window string) string {
 	return predicate
 }
 
+type orderedAsyncError struct {
+	err   error
+	order int
+}
+
+func (c *Client) fillPopulatedStudyOverviewIndependentFields(ctx context.Context, studyLimsID string, overview *StudyOverview) error {
+	var (
+		irods        StudyOverview
+		libraries    int
+		libraryTypes []string
+		metadata     StudyOverview
+		runs         int
+		syncedAt     string
+		wg           sync.WaitGroup
+	)
+	errCh := make(chan orderedAsyncError, 6)
+	run := func(order int, fill func() error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := fill(); err != nil {
+				errCh <- orderedAsyncError{order: order, err: err}
+			}
+		}()
+	}
+
+	run(0, func() error {
+		return c.fillStudyOverviewMetadata(ctx, studyLimsID, &metadata)
+	})
+	run(1, func() error {
+		return c.fillStudyOverviewIRODS(ctx, studyLimsID, &irods)
+	})
+	run(2, func() error {
+		var err error
+		runs, err = c.queryCount(ctx, studyOverviewRunsCacheSQL, "count study runs for overview", studyLimsID)
+
+		return err
+	})
+	run(3, func() error {
+		var err error
+		libraries, err = c.queryCount(ctx, studyOverviewLibrariesCacheSQL, "count study libraries for overview", studyLimsID)
+
+		return err
+	})
+	run(4, func() error {
+		var err error
+		libraryTypes, err = c.studyOverviewLibraryTypes(ctx, studyLimsID)
+
+		return err
+	})
+	run(5, func() error {
+		var err error
+		syncedAt, err = c.oldestFeedingLastRun(ctx, studyOverviewFeedingTables)
+
+		return err
+	})
+
+	wg.Wait()
+	close(errCh)
+	if err := firstOrderedAsyncError(errCh); err != nil {
+		return err
+	}
+
+	overview.Name = metadata.Name
+	overview.AccessionNumber = metadata.AccessionNumber
+	overview.FacultySponsor = metadata.FacultySponsor
+	overview.Programme = metadata.Programme
+	overview.DataAccessGroup = metadata.DataAccessGroup
+	overview.DataObjects = irods.DataObjects
+	overview.NewestDataAdded = irods.NewestDataAdded
+	overview.SequencingDateRange = irods.SequencingDateRange
+	overview.Runs = runs
+	overview.Libraries = libraries
+	overview.LibraryTypes = libraryTypes
+	overview.CacheSyncedAt = syncedAt
+
+	return nil
+}
+
+func firstOrderedAsyncError(errCh <-chan orderedAsyncError) error {
+	var first orderedAsyncError
+	for asyncErr := range errCh {
+		if first.err == nil || asyncErr.order < first.order {
+			first = asyncErr
+		}
+	}
+
+	return first.err
+}
+
 func studyPhaseCountsSQL(includeRecent bool) string {
 	selects := []string{
 		`COUNT(linked.id_sample_tmp)`,
@@ -326,23 +417,29 @@ func orderPlatformsBySample(platformSet map[int64]map[string]struct{}) map[int64
 	return platformsBySample
 }
 
-// readTableLastRun reads one table's sync_state last_run as a time, returning the
-// zero time when the row is absent or its last_run is empty.
-func readTableLastRun(ctx context.Context, db *sql.DB, table string) (time.Time, error) {
-	freshness, err := readTableFreshness(ctx, db, table)
-	if err != nil {
-		return time.Time{}, err
-	}
-	if !freshness.EverSynced || freshness.LastRun == "" {
+func parseLastRunValue(table string, raw any) (time.Time, error) {
+	switch value := raw.(type) {
+	case nil:
 		return time.Time{}, nil
+	case string:
+		if strings.TrimSpace(value) == "" {
+			return time.Time{}, nil
+		}
+	case []byte:
+		if strings.TrimSpace(string(value)) == "" {
+			return time.Time{}, nil
+		}
 	}
 
-	parsed, err := parseSyncTimeString(freshness.LastRun)
+	parsed, err := parseSyncTimeValue(raw)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("mlwh: parse last_run for %s: %w", table, err)
 	}
+	if parsed.IsZero() {
+		return time.Time{}, nil
+	}
 
-	return parsed, nil
+	return parsed.UTC(), nil
 }
 
 // normalizeAddedWindowArgs converts the RFC3339 since/until bounds into the
@@ -731,21 +828,9 @@ func (c *Client) StudyOverview(ctx context.Context, studyLimsID string) (StudyOv
 		return c.studyOverviewForEmptyStudy(ctx, studyLimsID)
 	}
 
-	if err = c.fillStudyOverviewMetadata(ctx, studyLimsID, &overview); err != nil {
+	if err = c.fillPopulatedStudyOverviewIndependentFields(ctx, studyLimsID, &overview); err != nil {
 		return StudyOverview{}, err
 	}
-	if err = c.fillStudyOverviewIRODS(ctx, studyLimsID, &overview); err != nil {
-		return StudyOverview{}, err
-	}
-	if err = c.fillStudyOverviewLibraries(ctx, studyLimsID, &overview); err != nil {
-		return StudyOverview{}, err
-	}
-
-	syncedAt, err := c.oldestFeedingLastRun(ctx, studyOverviewFeedingTables)
-	if err != nil {
-		return StudyOverview{}, err
-	}
-	overview.CacheSyncedAt = syncedAt
 
 	return overview, nil
 }
@@ -858,30 +943,6 @@ func (c *Client) fillStudyOverviewIRODS(ctx context.Context, studyLimsID string,
 	return nil
 }
 
-// fillStudyOverviewLibraries fills runs, libraries and the sorted library types.
-func (c *Client) fillStudyOverviewLibraries(ctx context.Context, studyLimsID string, overview *StudyOverview) error {
-	runs, err := c.queryCount(ctx, studyOverviewRunsCacheSQL, "count study runs for overview", studyLimsID)
-	if err != nil {
-		return err
-	}
-
-	libraries, err := c.queryCount(ctx, studyOverviewLibrariesCacheSQL, "count study libraries for overview", studyLimsID)
-	if err != nil {
-		return err
-	}
-
-	libraryTypes, err := c.studyOverviewLibraryTypes(ctx, studyLimsID)
-	if err != nil {
-		return err
-	}
-
-	overview.Runs = runs
-	overview.Libraries = libraries
-	overview.LibraryTypes = libraryTypes
-
-	return nil
-}
-
 // studyOverviewLibraryTypes lists the distinct library types present in the study,
 // sorted, as a non-nil slice (empty rather than null when the study has none).
 func (c *Client) studyOverviewLibraryTypes(ctx context.Context, studyLimsID string) ([]string, error) {
@@ -921,10 +982,35 @@ func (c *Client) oldestFeedingLastRun(ctx context.Context, tables []string) (str
 	if db == nil {
 		return "", fmt.Errorf("mlwh: cache reader not configured")
 	}
+	if len(tables) == 0 {
+		return "", nil
+	}
+
+	args := make([]any, 0, len(tables))
+	for _, table := range tables {
+		args = append(args, table)
+	}
+
+	rows, err := db.QueryContext(ctx,
+		`SELECT table_name, last_run FROM sync_state WHERE table_name IN (`+placeholders(len(tables))+`)`,
+		args...,
+	)
+	if err != nil {
+		return "", fmt.Errorf("%w: query feeding sync state last_run: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
 
 	var oldest time.Time
-	for _, table := range tables {
-		lastRun, err := readTableLastRun(ctx, db, table)
+	for rows.Next() {
+		var (
+			table   string
+			lastRaw any
+		)
+		if err = rows.Scan(&table, &lastRaw); err != nil {
+			return "", fmt.Errorf("%w: scan feeding sync state last_run: %w", ErrUpstreamImpaired, err)
+		}
+
+		lastRun, err := parseLastRunValue(table, lastRaw)
 		if err != nil {
 			return "", err
 		}
@@ -934,6 +1020,9 @@ func (c *Client) oldestFeedingLastRun(ctx context.Context, tables []string) (str
 		if oldest.IsZero() || lastRun.Before(oldest) {
 			oldest = lastRun
 		}
+	}
+	if err = rows.Err(); err != nil {
+		return "", fmt.Errorf("%w: query feeding sync state last_run: %w", ErrUpstreamImpaired, err)
 	}
 
 	if oldest.IsZero() {
