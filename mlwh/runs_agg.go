@@ -531,7 +531,7 @@ func sequencingAggregateDataPlatformFilterSQL(specs []runAggregationPlatformSpec
 }
 
 func (c *Client) monthlyRunCountsForPlatform(ctx context.Context, db *sql.DB, opts RunAggregationOptions, spec runAggregationPlatformSpec, syncedAt string) ([]MonthlyRunCount, error) {
-	query, args := monthlyRunCountQuery(spec, opts)
+	query, args := monthlyRunCountQuery(spec, opts, c.cache.Dialect())
 	sqlRows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: query monthly %s run counts: %w", ErrUpstreamImpaired, spec.platform, err)
@@ -557,8 +557,11 @@ func (c *Client) monthlyRunCountsForPlatform(ctx context.Context, db *sql.DB, op
 	return rows, nil
 }
 
-func monthlyRunCountQuery(spec runAggregationPlatformSpec, opts RunAggregationOptions) (string, []any) {
+func monthlyRunCountQuery(spec runAggregationPlatformSpec, opts RunAggregationOptions, dialect string) (string, []any) {
 	query := spec.queryPrefix
+	if dialect == "mysql" && spec.platform == platformIllumina {
+		query = strings.Replace(query, "FROM iseq_run_status_mirror AS s ", "FROM iseq_run_status_mirror AS s FORCE INDEX (iseq_run_status_mirror_normalised_date_idx) ", 1)
+	}
 	args := make([]any, 0, 2)
 	if opts.Since != "" {
 		query += " AND " + spec.alias + ".normalised_date >= ?"

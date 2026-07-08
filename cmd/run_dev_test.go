@@ -464,7 +464,7 @@ func TestRunDevAutoManagedMLWHBackendCanServeProdConfiguredCacheWithoutDSN(t *te
 		convey.So(invocations, convey.ShouldContainSubstring, fmt.Sprintf("--url 127.0.0.1:%d", seqmetaPort))
 		convey.So(invocations, convey.ShouldContainSubstring, fmt.Sprintf("--mlwh-cache %s", cachePath))
 		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh sync")
-		convey.So(process.stdout.String(), convey.ShouldContainSubstring, "MLWH: "+fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
+		convey.So(waitForRunDevStdoutForTest(t, process, "MLWH: "+fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort)), convey.ShouldBeTrue)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -533,7 +533,7 @@ func TestRunDevAutoManagedMLWHBackendCanServeTestModeEphemeralCacheWithoutDSN(t 
 		convey.So(invocations, convey.ShouldContainSubstring, fmt.Sprintf("--url 127.0.0.1:%d", seqmetaPort))
 		convey.So(invocations, convey.ShouldContainSubstring, fmt.Sprintf("--mlwh-cache %s", snapshot.MLWHCachePath))
 		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh sync")
-		convey.So(process.stdout.String(), convey.ShouldContainSubstring, "MLWH: "+fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
+		convey.So(waitForRunDevStdoutForTest(t, process, "MLWH: "+fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort)), convey.ShouldBeTrue)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)

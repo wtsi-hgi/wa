@@ -2363,6 +2363,7 @@ func TestIRODSPathsForRunIncludesSingleRunMergedCompositeH2(t *testing.T) {
 
 		seedIseqProductMetricsMirrorRow(t, db, 4934812, 9419243, 49348, 0, 0, "7568")
 		seedIRODSLocationMirrorRow(t, db, "4934812", "/seq/illumina/runs/49/49348/lane1-2/plex1", "49348_1-2#1.cram", 9419243, "7568")
+		setIRODSLocationMirrorRunFields(t, db, 49348, 0, 0, "4934812")
 		setIRODSLocationMirrorQCAndDeliverableFields(t, db, "4934812", sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{Int64: 1, Valid: true}, true)
 
 		seedIseqProductMetricsMirrorRow(t, db, 4934899, 9419243, 0, 0, 0, "7568")

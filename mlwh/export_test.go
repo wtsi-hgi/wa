@@ -478,7 +478,7 @@ func seedExportRun49348MergedCompositeScenario(t *testing.T, db *sql.DB) {
 	for _, row := range []exportIRODSSeedRow{
 		{IDSeqProductLocation: 1, IDProduct: "4934801", Collection: "/seq/illumina/runs/49/49348/lane1/plex1", FileName: "49348_1#1.cram", IDSampleTmp: 4934800, StudyID: "7568", IDRun: 49348, Position: 1, TagIndex: 1, IsDeliverable: sql.NullInt64{Int64: 1, Valid: true}},
 		{IDSeqProductLocation: 2, IDProduct: "4934802", Collection: "/seq/illumina/runs/49/49348/lane2/plex1", FileName: "49348_2#1.cram", IDSampleTmp: 4934800, StudyID: "7568", IDRun: 49348, Position: 2, TagIndex: 1, IsDeliverable: sql.NullInt64{Int64: 1, Valid: true}},
-		{IDSeqProductLocation: 3, IDProduct: "4934812", Collection: "/seq/illumina/runs/49/49348/lane1-2/plex1", FileName: "49348_1-2#1.cram", IDSampleTmp: 4934800, StudyID: "7568", IDRun: 0, Position: 0, TagIndex: 0, IsDeliverable: sql.NullInt64{Int64: 1, Valid: true}, Merged: true},
+		{IDSeqProductLocation: 3, IDProduct: "4934812", Collection: "/seq/illumina/runs/49/49348/lane1-2/plex1", FileName: "49348_1-2#1.cram", IDSampleTmp: 4934800, StudyID: "7568", IDRun: 49348, Position: 0, TagIndex: 0, IsDeliverable: sql.NullInt64{Int64: 1, Valid: true}, Merged: true},
 		{IDSeqProductLocation: 4, IDProduct: "4934899", Collection: "/seq/illumina/runs/composite/multi-run", FileName: "multi-run#1.cram", IDSampleTmp: 4934800, StudyID: "7568", IDRun: 0, Position: 0, TagIndex: 0, IsDeliverable: sql.NullInt64{Int64: 1, Valid: true}, Merged: true},
 	} {
 		seedExportIRODSRow(t, db, row)
@@ -742,6 +742,31 @@ func TestExportStudyIRODSAppliesSharedFilterFamilyD1aC4(t *testing.T) {
 				"filter-mus-standard-pass",
 				"pass",
 				"/seq/filter/50001_1#1.cram",
+			}})
+			convey.So(result.Total, convey.ShouldEqual, 1)
+		})
+	})
+}
+
+func TestExportStudySampleCRAMsAppliesSharedFilterFamilyD1aC4(t *testing.T) {
+	convey.Convey("C4/D1a: Given sample CRAM rows spanning organism, library type, and QC states", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedExportFilterScenario(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "FILTER", ExportOptions{
+			Organism:    "musculus",
+			LibraryType: "Standard",
+			QC:          "pass",
+		})
+
+		convey.Convey("when the shared filter family is applied to sample-crams, then only the intersecting sample CRAM remains", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{{
+				"filter-mus-standard-pass",
+				"accession-1",
+				"/seq/filter/50001_1#1.cram",
+				"false",
 			}})
 			convey.So(result.Total, convey.ShouldEqual, 1)
 		})

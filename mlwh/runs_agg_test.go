@@ -620,6 +620,11 @@ func seedG2PacBioSequencingAggregateScenario(t *testing.T, db *sql.DB) {
 	seedG2PacBioProduct(t, db, "pb-g2-malaria-1", 91003, 8002, "7002")
 	seedG2PacBioProduct(t, db, "pb-g2-cancer-b-outside-data", 91004, 8003, "7003")
 	seedG2PacBioProduct(t, db, "pb-g2-cancer-outside-run", 91005, 8004, "7001")
+	for offset := range 1000 {
+		wellID := int64(93000 + offset)
+		seedG2PacBioRunWell(t, db, wellID, "TRACTION-G2-FILLER-"+formatInt(wellID), "A01", "2026-04-15")
+		seedG2PacBioProduct(t, db, "pb-g2-filler-"+formatInt(wellID), wellID, 83000+wellID, "7001")
+	}
 	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "pb-g2-cancer-a-1", "/seq/pacbio", "pb-g2-cancer-a-1.bam", 8001, "7001", time.Date(2026, time.February, 12, 9, 0, 0, 0, time.UTC), "pacbio")
 	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "pb-g2-cancer-a-1", "/seq/pacbio", "pb-g2-cancer-a-1.pbi", 8001, "7001", time.Date(2026, time.February, 12, 9, 1, 0, 0, time.UTC), "pacbio")
 	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "pb-g2-cancer-a-2", "/seq/pacbio", "pb-g2-cancer-a-2.bam", 8001, "7001", time.Date(2026, time.February, 13, 9, 0, 0, 0, time.UTC), "pacbio")
@@ -665,7 +670,9 @@ func seedG2PacBioRunWell(t *testing.T, db *sql.DB, id int64, runName, well, norm
 		normalisedDate+"T10:00:00Z",
 		normalisedDate,
 	)
-	convey.So(err, convey.ShouldBeNil)
+	if err != nil {
+		t.Fatalf("seedG2PacBioRunWell(): %v", err)
+	}
 }
 
 func seedG2PacBioProduct(t *testing.T, db *sql.DB, idProduct string, wellID, sampleID int64, studyID string) {
@@ -680,7 +687,9 @@ func seedG2PacBioProduct(t *testing.T, db *sql.DB, idProduct string, wellID, sam
 		1,
 		"2026-02-15T09:00:00Z",
 	)
-	convey.So(err, convey.ShouldBeNil)
+	if err != nil {
+		t.Fatalf("seedG2PacBioProduct(): %v", err)
+	}
 }
 
 func sequencingAggregateByGroup(rows []SequencingAggregateRow, key string) map[string]SequencingAggregateRow {

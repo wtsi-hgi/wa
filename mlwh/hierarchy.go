@@ -51,7 +51,7 @@ const (
 const (
 	irodsManualQCAggregateSelect = `, CASE WHEN LOWER(spi.platform) = 'ont' THEN 0 WHEN MAX(CASE WHEN spi.qc IS NOT NULL OR spi.id_run <> 0 OR spi.position <> 0 OR spi.tag_index <> 0 OR spi.merged <> 0 OR LOWER(spi.platform) IN ('elembio', 'ultimagen', 'pacbio') THEN 1 ELSE 0 END) = 1 THEN COUNT(*) ELSE 0 END, SUM(CASE WHEN spi.qc IS NULL THEN 1 ELSE 0 END), MIN(spi.qc)`
 	irodsManualQCDirectSelect    = `, CASE WHEN LOWER(spi.platform) = 'ont' THEN 0 WHEN spi.qc IS NOT NULL OR spi.id_run <> 0 OR spi.position <> 0 OR spi.tag_index <> 0 OR spi.merged <> 0 OR LOWER(spi.platform) IN ('elembio', 'ultimagen', 'pacbio') THEN 1 ELSE 0 END, CASE WHEN spi.qc IS NULL THEN 1 ELSE 0 END, spi.qc`
-	irodsRunScopePredicate       = `COALESCE(NULLIF(spi.id_run, 0), ipm.id_run, 0) = ?`
+	irodsRunScopePredicate       = `spi.id_run = ?`
 
 	irodsIdentityJoins           = ` LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp LEFT JOIN study_mirror ON study_mirror.id_study_lims = spi.id_study_lims AND study_mirror.id_lims = 'SQSCP'`
 	irodsIdentityAggregateSelect = `, MIN(spi.id_sample_tmp), COALESCE(MIN(sample_mirror.name), ''), COALESCE(MIN(sample_mirror.supplier_name), ''), COALESCE(MIN(sample_mirror.sanger_sample_id), ''), COALESCE(MIN(sample_mirror.accession_number), ''), COALESCE(MIN(spi.id_study_lims), ''), COALESCE(MIN(study_mirror.accession_number), '')`
@@ -70,11 +70,15 @@ const (
 	irodsPathsForSampleRecencySQL     = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name` + irodsIdentityDirectSelect + `, COALESCE(spi.created, '')` + irodsRunDirectSelect + irodsPositionDirectSelect + irodsTagIndexDirectSelect + `, spi.platform, spi.merged` + irodsManualQCDirectSelect + `, spi.is_deliverable FROM seq_product_irods_locations_mirror spi` + irodsIdentityJoins + ` LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE spi.id_sample_tmp = ?`
 	irodsPathsForStudyRecencySQL      = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name` + irodsIdentityDirectSelect + `, COALESCE(spi.created, '')` + irodsRunDirectSelect + irodsPositionDirectSelect + irodsTagIndexDirectSelect + `, spi.platform, spi.merged` + irodsManualQCDirectSelect + `, spi.is_deliverable FROM seq_product_irods_locations_mirror spi` + irodsIdentityJoins + ` LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE spi.id_study_lims = ?`
 	irodsPathsForRunRecencySQL        = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name` + irodsIdentityDirectSelect + `, COALESCE(spi.created, '')` + irodsRunDirectSelect + irodsPositionDirectSelect + irodsTagIndexDirectSelect + `, spi.platform, spi.merged` + irodsManualQCDirectSelect + `, spi.is_deliverable FROM seq_product_irods_locations_mirror spi` + irodsIdentityJoins + ` LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE ` + irodsRunScopePredicate
+	irodsPathsForRunRecencyPageSelect = `SELECT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name` + irodsIdentityDirectSelect + `, COALESCE(spi.created, '')` + irodsRunDirectSelect + irodsPositionDirectSelect + irodsTagIndexDirectSelect + `, spi.platform, spi.merged` + irodsManualQCDirectSelect + `, spi.is_deliverable FROM (`
+	irodsPathsForRunRecencyPageSuffix = `) spi` + irodsIdentityJoins + ` LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product ORDER BY spi.created DESC`
+	irodsPathsForRunRecencyPageInner  = `SELECT * FROM seq_product_irods_locations_mirror spi WHERE ` + irodsRunScopePredicate
 
 	// irodsPathsForRunCacheSQLPrefix/Suffix list the iRODS data objects on a run
-	// (B3/H2): the default and file-type paths scope by the iRODS mirror id_run when
-	// present, with an A3 product-metrics fallback for single-run merged composites
-	// whose public iRODS id_run remains 0. GROUP BY the same iRODS data-object
+	// (B3/H2): the default and file-type paths scope by the iRODS mirror's
+	// denormalised id_run. Public merged-composite rows still render id_run=0 via
+	// the SELECT expression, but their searchable run lives in the mirror column so
+	// the run predicate stays index-served. GROUP BY the same iRODS data-object
 	// columns + platform as the /count DISTINCT projection preserves count ==
 	// len(list), while MIN(created) carries a stable created value for duplicate
 	// mirror rows at that object grain. The B2 file-type filter
@@ -238,12 +242,15 @@ func irodsListQueryForRun(opts IRODSPathOptions, runID, limit, offset int) (stri
 		return "", nil, err
 	}
 	if queryOpts.orderByCreatedDesc || len(queryOpts.createdWindowArgs) > 0 {
-		query, args := appendIRODSPathQueryFilters(irodsPathsForRunRecencySQL, []any{runID}, queryOpts)
 		if queryOpts.orderByCreatedDesc {
-			query += ` ORDER BY spi.created DESC`
-		} else {
-			query += ` ORDER BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name`
+			query, args := appendIRODSPathQueryFilters(irodsPathsForRunRecencyPageInner, []any{runID}, queryOpts)
+			query += ` ORDER BY spi.created DESC LIMIT ? OFFSET ?`
+
+			return irodsPathsForRunRecencyPageSelect + query + irodsPathsForRunRecencyPageSuffix, append(args, limit, offset), nil
 		}
+
+		query, args := appendIRODSPathQueryFilters(irodsPathsForRunRecencySQL, []any{runID}, queryOpts)
+		query += ` ORDER BY spi.id_iseq_product, spi.irods_collection, spi.irods_file_name`
 
 		return query + ` LIMIT ? OFFSET ?`, append(args, limit, offset), nil
 	}

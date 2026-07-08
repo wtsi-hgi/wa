@@ -110,12 +110,11 @@ const (
 
 	// countIRODSPathsForRunCacheSQLPrefix/Suffix size IRODSPathsForRun: the
 	// run-scoped iRODS rows are read through the denormalized id_run on the iRODS
-	// mirror, with the same A3 product-metrics fallback as the list for single-run
-	// merged composites. COUNT(*) over the SELECT DISTINCT of the iRODS data-object
-	// columns preserves count == len(list) for the run scope. The file-type filter
-	// (B2) splices into the inner WHERE between the run predicate and the closing
-	// paren.
-	countIRODSPathsForRunCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.platform FROM seq_product_irods_locations_mirror spi LEFT JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE ` + irodsRunScopePredicate
+	// mirror, matching IRODSPathsForRun's index-served predicate. COUNT(*) over the
+	// SELECT DISTINCT of the iRODS data-object columns preserves count == len(list)
+	// for the run scope. The file-type filter (B2) splices into the inner WHERE
+	// between the run predicate and the closing paren.
+	countIRODSPathsForRunCacheSQLPrefix = `SELECT COUNT(*) FROM (SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.platform FROM seq_product_irods_locations_mirror spi WHERE ` + irodsRunScopePredicate
 	countIRODSPathsForRunCacheSQLSuffix = `) AS distinct_run_irods`
 
 	// countLatestDataForStudySQLPrefix/Suffix size the latest-data study list at

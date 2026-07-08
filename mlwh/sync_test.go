@@ -223,6 +223,8 @@ func TestIseqProductMetricsMirrorIndexSetsOmitRedundantProductIDIndex(t *testing
 		})
 
 		convey.Convey("and required non-redundant product lookup indexes remain available", func() {
+			convey.So(iseqProductMetricsMirrorSecondaryIndexes, convey.ShouldContain, syncIndexSpec{Name: "ipm_mirror_sample_qc_idx", Column: "id_sample_tmp, qc"})
+			convey.So(iseqProductMetricsMirrorReadIndexes, convey.ShouldContain, syncIndexSpec{Name: "ipm_mirror_sample_qc_idx", Column: "id_sample_tmp, qc"})
 			convey.So(iseqProductMetricsMirrorSecondaryIndexes, convey.ShouldContain, syncIndexSpec{Name: "ipm_mirror_study_sample_product_qc_idx", Column: "id_study_lims, id_sample_tmp, id_iseq_product, qc"})
 			convey.So(iseqProductMetricsMirrorReadIndexes, convey.ShouldContain, syncIndexSpec{Name: "ipm_mirror_study_sample_product_qc_idx", Column: "id_study_lims, id_sample_tmp, id_iseq_product, qc"})
 		})
@@ -509,13 +511,13 @@ func TestClientSyncSeqProductIRODSLocationsA4MergedExportFields(t *testing.T) {
 
 		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
 
-		convey.Convey("when the iRODS row syncs, then the persisted export fields mark it as merged with honest zero coordinates and the sample attribution intact", func() {
+		convey.Convey("when the iRODS row syncs, then the persisted export fields mark it as merged and keep a searchable run with zero lane/tag coordinates", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(reports, convey.ShouldHaveLength, 1)
 
 			row := readA4IRODSExportFieldsForTest(t, cache.DB(), "merged-product-a4")
 			convey.So(row.idSampleTmp, convey.ShouldEqual, int64(9419243))
-			convey.So(row.idRun, convey.ShouldEqual, int64(0))
+			convey.So(row.idRun, convey.ShouldEqual, int64(49348))
 			convey.So(row.position, convey.ShouldEqual, int64(0))
 			convey.So(row.tagIndex, convey.ShouldEqual, int64(0))
 			convey.So(row.merged, convey.ShouldEqual, int64(1))
@@ -2895,7 +2897,7 @@ func TestRepairDroppedProductMirrorIndexesCreatesRunLookupIndexWithoutPrimaryKey
 		mock.ExpectBegin()
 		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", iseqProductMetricsMirrorIndexSet.Table))).
 			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME"}).AddRow("ipm_mirror_sample_run_position_tag_idx"))
-		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE iseq_product_metrics_mirror ADD INDEX iseq_product_metrics_mirror_id_run_position_tag_index_idx(id_run, position, tag_index), ADD INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx(id_study_lims, id_run, position), ADD INDEX ipm_mirror_study_sample_product_qc_idx(id_study_lims, id_sample_tmp, id_iseq_product, qc)`)).
+		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE iseq_product_metrics_mirror ADD INDEX iseq_product_metrics_mirror_id_run_position_tag_index_idx(id_run, position, tag_index), ADD INDEX ipm_mirror_sample_qc_idx(id_sample_tmp, qc), ADD INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx(id_study_lims, id_run, position), ADD INDEX ipm_mirror_study_sample_product_qc_idx(id_study_lims, id_sample_tmp, id_iseq_product, qc)`)).
 			WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectCommit()
 
@@ -2919,7 +2921,7 @@ func TestRepairDroppedProductMirrorIndexesCreatesRunAndSampleLookupIndexes(t *te
 		mock.ExpectBegin()
 		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", iseqProductMetricsMirrorIndexSet.Table))).
 			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME"}))
-		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE iseq_product_metrics_mirror ADD INDEX iseq_product_metrics_mirror_id_run_position_tag_index_idx(id_run, position, tag_index), ADD INDEX ipm_mirror_sample_run_position_tag_idx(id_sample_tmp, id_run, position, tag_index), ADD INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx(id_study_lims, id_run, position), ADD INDEX ipm_mirror_study_sample_product_qc_idx(id_study_lims, id_sample_tmp, id_iseq_product, qc)`)).
+		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE iseq_product_metrics_mirror ADD INDEX iseq_product_metrics_mirror_id_run_position_tag_index_idx(id_run, position, tag_index), ADD INDEX ipm_mirror_sample_run_position_tag_idx(id_sample_tmp, id_run, position, tag_index), ADD INDEX ipm_mirror_sample_qc_idx(id_sample_tmp, qc), ADD INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx(id_study_lims, id_run, position), ADD INDEX ipm_mirror_study_sample_product_qc_idx(id_study_lims, id_sample_tmp, id_iseq_product, qc)`)).
 			WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectCommit()
 
@@ -2946,6 +2948,7 @@ func TestRepairDroppedProductMirrorIndexesDefersLargeSQLiteSecondaryRebuild(t *t
 		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("sqlite", iseqProductMetricsMirrorIndexSet.Table))).WillReturnRows(sqlmock.NewRows([]string{"name"}))
 		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS iseq_product_metrics_mirror_id_run_position_tag_index_idx ON iseq_product_metrics_mirror(id_run, position, tag_index)`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS ipm_mirror_sample_run_position_tag_idx ON iseq_product_metrics_mirror(id_sample_tmp, id_run, position, tag_index)`)).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS ipm_mirror_sample_qc_idx ON iseq_product_metrics_mirror(id_sample_tmp, qc)`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS iseq_product_metrics_mirror_id_study_lims_id_run_position_idx ON iseq_product_metrics_mirror(id_study_lims, id_run, position)`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS ipm_mirror_study_sample_product_qc_idx ON iseq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_iseq_product, qc)`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectCommit()
@@ -4018,6 +4021,7 @@ func sampleMirrorSecondaryIndexNames() []string {
 
 func iseqProductMetricsMirrorSecondaryIndexNames() []string {
 	return []string{
+		"ipm_mirror_sample_qc_idx",
 		"ipm_mirror_sample_run_position_tag_idx",
 		"ipm_mirror_study_sample_product_qc_idx",
 		"iseq_product_metrics_mirror_id_iseq_flowcell_tmp_idx",

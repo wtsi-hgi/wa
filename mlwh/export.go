@@ -1286,8 +1286,12 @@ func (c *Client) exportSampleCRAMTotal(ctx context.Context, db *sql.DB, input ex
 
 func exportSampleCRAMCountQuery(input exportSampleCRAMQueryInput) (string, []any) {
 	ranked, args := exportSampleCRAMRankedQuery(input)
+	query := `SELECT COUNT(*) FROM (` + ranked + `) ranked ` +
+		`INNER JOIN sample_mirror sm ON sm.id_sample_tmp = ranked.id_sample_tmp AND sm.id_lims = 'SQSCP' ` +
+		`WHERE ranked.rn = 1`
+	query, args = appendExportSampleCRAMSampleFilters(query, args, input)
 
-	return `SELECT COUNT(*) FROM (` + ranked + `) ranked WHERE rn = 1`, args
+	return query, args
 }
 
 func (c *Client) queryExportSampleCRAMRows(ctx context.Context, db *sql.DB, input exportSampleCRAMQueryInput) ([]exportSampleCRAMRow, error) {
@@ -1329,8 +1333,10 @@ func (c *Client) queryExportSampleCRAMRows(ctx context.Context, db *sql.DB, inpu
 
 func exportSampleCRAMPageQuery(input exportSampleCRAMQueryInput) (string, []any) {
 	ranked, args := exportSampleCRAMRankedQuery(input)
-	query := `SELECT name, ega_id, irods_collection, irods_file_name, merged FROM (` + ranked +
-		`) ranked WHERE rn = 1 ORDER BY name, id_sample_tmp LIMIT ? OFFSET ?`
+	query := `SELECT sm.name, COALESCE(sm.accession_number, '') AS ega_id, ranked.irods_collection, ranked.irods_file_name, ranked.merged FROM (` + ranked +
+		`) ranked INNER JOIN sample_mirror sm ON sm.id_sample_tmp = ranked.id_sample_tmp AND sm.id_lims = 'SQSCP' WHERE ranked.rn = 1`
+	query, args = appendExportSampleCRAMSampleFilters(query, args, input)
+	query += ` ORDER BY sm.name, ranked.id_sample_tmp LIMIT ? OFFSET ?`
 	args = append(args, input.limit, input.offset)
 
 	return query, args
@@ -1338,14 +1344,11 @@ func exportSampleCRAMPageQuery(input exportSampleCRAMQueryInput) (string, []any)
 
 func exportSampleCRAMRankedQuery(input exportSampleCRAMQueryInput) (string, []any) {
 	where, args := exportSampleCRAMWhere(input)
-	query := `SELECT sm.id_sample_tmp, sm.name, COALESCE(sm.accession_number, '') AS ega_id, ` +
-		`spi.irods_collection, spi.irods_file_name, spi.merged, ` +
+	query := `SELECT spi.id_sample_tmp, spi.irods_collection, spi.irods_file_name, spi.merged, ` +
 		`ROW_NUMBER() OVER (PARTITION BY spi.id_sample_tmp ORDER BY ` +
 		`CASE WHEN spi.merged <> 0 THEN 0 ELSE 1 END, ` +
 		`spi.id_run, spi.position, spi.tag_index, spi.id_seq_product_irods_locations_tmp) AS rn ` +
-		`FROM seq_product_irods_locations_mirror spi ` +
-		`INNER JOIN sample_mirror sm ON sm.id_sample_tmp = spi.id_sample_tmp AND sm.id_lims = 'SQSCP'` +
-		where
+		`FROM seq_product_irods_locations_mirror spi` + where
 
 	return query, args
 }
@@ -1365,13 +1368,6 @@ func exportSampleCRAMWhere(input exportSampleCRAMQueryInput) (string, []any) {
 		query += ` AND EXISTS (SELECT 1 FROM library_samples ls WHERE ls.id_sample_tmp = spi.id_sample_tmp AND ls.pipeline_id_lims = ? AND ls.id_study_lims = spi.id_study_lims)`
 		args = append(args, input.filters.LibraryType)
 	}
-	if len(input.organismCommonNames) > 0 {
-		query += ` AND sm.common_name IN (` + placeholders(len(input.organismCommonNames)) + `)`
-		for _, commonName := range input.organismCommonNames {
-			args = append(args, commonName)
-		}
-	}
-
 	return query, args
 }
 
@@ -1386,6 +1382,19 @@ func appendExportIRODSQCWhere(query string, args []any, qc string) (string, []an
 	default:
 		return query, args
 	}
+}
+
+func appendExportSampleCRAMSampleFilters(query string, args []any, input exportSampleCRAMQueryInput) (string, []any) {
+	if len(input.organismCommonNames) == 0 {
+		return query, args
+	}
+
+	query += ` AND sm.common_name IN (` + placeholders(len(input.organismCommonNames)) + `)`
+	for _, commonName := range input.organismCommonNames {
+		args = append(args, commonName)
+	}
+
+	return query, args
 }
 
 func placeholders(count int) string {
@@ -2249,10 +2258,22 @@ func (row exportIRODSRow) cell(column string) string {
 
 		return qcString(row.QC)
 	case "id_run":
+		if row.Merged {
+			return "0"
+		}
+
 		return strconv.FormatInt(row.IDRun, 10)
 	case "lane":
+		if row.Merged {
+			return "0"
+		}
+
 		return strconv.FormatInt(row.Position, 10)
 	case "tag_index":
+		if row.Merged {
+			return "0"
+		}
+
 		return strconv.FormatInt(row.TagIndex, 10)
 	case "platform":
 		return row.Platform

@@ -329,6 +329,7 @@ var iseqFlowcellMirrorIndexSet = syncMirrorIndexSet{
 var iseqProductMetricsMirrorSecondaryIndexes = []syncIndexSpec{
 	{Name: "iseq_product_metrics_mirror_id_run_position_tag_index_idx", Column: "id_run, position, tag_index"},
 	{Name: "ipm_mirror_sample_run_position_tag_idx", Column: "id_sample_tmp, id_run, position, tag_index"},
+	{Name: "ipm_mirror_sample_qc_idx", Column: "id_sample_tmp, qc"},
 	{Name: "iseq_product_metrics_mirror_id_iseq_flowcell_tmp_idx", Column: "id_iseq_flowcell_tmp"},
 	{Name: "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx", Column: "id_study_lims, id_run, position"},
 	{Name: "ipm_mirror_study_sample_product_qc_idx", Column: "id_study_lims, id_sample_tmp, id_iseq_product, qc"},
@@ -365,6 +366,7 @@ var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
 var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
 	{Name: "iseq_product_metrics_mirror_id_run_position_tag_index_idx", Column: "id_run, position, tag_index"},
 	{Name: "ipm_mirror_sample_run_position_tag_idx", Column: "id_sample_tmp, id_run, position, tag_index"},
+	{Name: "ipm_mirror_sample_qc_idx", Column: "id_sample_tmp, qc"},
 	{Name: "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx", Column: "id_study_lims, id_run, position"},
 	{Name: "ipm_mirror_study_sample_product_qc_idx", Column: "id_study_lims, id_sample_tmp, id_iseq_product, qc"},
 }
@@ -1105,7 +1107,7 @@ func loadSeqProductIRODSLocationsExportFields(ctx context.Context, db *sql.DB, r
 	fieldsByProduct := make(map[string]seqProductIRODSLocationsExportFields, len(rows))
 
 	queries := map[string]string{
-		"illumina":  `SELECT ipm.id_iseq_product, CASE WHEN ipm.position = 0 AND ipm.tag_index = 0 THEN 0 ELSE ipm.id_run END, ipm.position, ipm.tag_index, ipm.qc, CASE WHEN ifc.entity_type IN ('library', 'library_indexed') THEN 1 ELSE 0 END, CASE WHEN ipm.position = 0 AND ipm.tag_index = 0 THEN 1 ELSE 0 END FROM iseq_product_metrics_mirror ipm LEFT JOIN iseq_flowcell_mirror ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp WHERE ipm.id_iseq_product IN (%s)`,
+		"illumina":  `SELECT ipm.id_iseq_product, ipm.id_run, ipm.position, ipm.tag_index, ipm.qc, CASE WHEN ifc.entity_type IN ('library', 'library_indexed') THEN 1 ELSE 0 END, CASE WHEN ipm.position = 0 AND ipm.tag_index = 0 THEN 1 ELSE 0 END FROM iseq_product_metrics_mirror ipm LEFT JOIN iseq_flowcell_mirror ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp WHERE ipm.id_iseq_product IN (%s)`,
 		"elembio":   `SELECT id_eseq_product, id_run, 0, 0, qc, CASE WHEN is_sequencing_control = 0 THEN 1 ELSE 0 END, 0 FROM eseq_product_metrics_mirror WHERE id_eseq_product IN (%s)`,
 		"ultimagen": `SELECT id_useq_product, id_run, 0, 0, qc, CASE WHEN is_sequencing_control = 0 THEN 1 ELSE 0 END, 0 FROM useq_product_metrics_mirror WHERE id_useq_product IN (%s)`,
 		"pacbio":    `SELECT id_pac_bio_product, 0, 0, 0, qc, NULL, 0 FROM pac_bio_product_metrics_mirror WHERE id_pac_bio_product IN (%s)`,

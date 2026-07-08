@@ -46,6 +46,28 @@ const (
 	mlwhPasswordEnv     = "WA_MLWH_PASSWORD"
 )
 
+type liveMLWHPerfCacheDBCreator func(t *testing.T, baseDSN, password string) string
+
+func loadLiveMLWHPerfCacheConfigForTest(t *testing.T, createThrowaway liveMLWHPerfCacheDBCreator) CacheConfig {
+	t.Helper()
+
+	cachePath := strings.TrimSpace(os.Getenv(cacheMySQLPathEnv))
+	normalizedCachePath := normalizeMySQLDSNInput(cachePath)
+	if looksLikeMySQLDSN(normalizedCachePath) {
+		cachePassword := strings.TrimSpace(os.Getenv(cacheMySQLPasswordEnv))
+		throwawayPath := createThrowaway(t, normalizedCachePath, cachePassword)
+		if throwawayPath == normalizedCachePath {
+			t.Fatalf("throwaway MySQL cache DSN equals configured cache DSN; refusing to sync into %s", cacheMySQLPathEnv)
+		}
+
+		t.Logf("using throwaway MySQL cache database for MLWH cold-sync perf test")
+
+		return CacheConfig{Path: throwawayPath, Password: cachePassword}
+	}
+
+	return CacheConfig{Path: filepath.Join(t.TempDir(), "mlwh-sync-perf.sqlite")}
+}
+
 func TestLiveMLWHSyncQueriesMatchDevelopmentSchema(t *testing.T) {
 	ctx := context.Background()
 	config, skipReason := loadLiveMLWHConfigForTest(t)
@@ -331,7 +353,7 @@ func loadLiveMLWHPerfConfigForTest(t *testing.T) (Config, string) {
 	return Config{
 		DSN:      dsn,
 		Password: password,
-		Cache:    CacheConfig{Path: filepath.Join(t.TempDir(), "mlwh-sync-perf.sqlite")},
+		Cache:    loadLiveMLWHPerfCacheConfigForTest(t, createThrowawayMySQLCacheDBOrSkip),
 	}, ""
 }
 
@@ -427,4 +449,47 @@ func findRepoRootForTest() (string, error) {
 
 		current = parent
 	}
+}
+
+func TestLiveMLWHPerfCacheConfigUsesThrowawayMySQLWhenConfigured(t *testing.T) {
+	convey.Convey("Given a configured MySQL cache DSN, when loading the perf cache config, then it targets a throwaway DB on that server", t, func() {
+		configuredDSN := "cache_user@tcp(127.0.0.1:3306)/workflow_automation_mlwh_dev;?parseTime=true"
+		throwawayDSN := "cache_user@tcp(127.0.0.1:3306)/workflow_automation_mlwh_dev_it12345678?parseTime=true"
+		t.Setenv(cacheMySQLPathEnv, configuredDSN)
+		t.Setenv(cacheMySQLPasswordEnv, "secret")
+
+		var gotBaseDSN string
+		var gotPassword string
+		cache := loadLiveMLWHPerfCacheConfigForTest(t, func(_ *testing.T, baseDSN, password string) string {
+			gotBaseDSN = baseDSN
+			gotPassword = password
+
+			return throwawayDSN
+		})
+
+		convey.So(gotBaseDSN, convey.ShouldEqual, "cache_user@tcp(127.0.0.1:3306)/workflow_automation_mlwh_dev?parseTime=true")
+		convey.So(gotPassword, convey.ShouldEqual, "secret")
+		convey.So(cache.Path, convey.ShouldEqual, throwawayDSN)
+		convey.So(cache.Path, convey.ShouldNotEqual, gotBaseDSN)
+		convey.So(cache.Password, convey.ShouldEqual, "secret")
+	})
+}
+
+func TestLiveMLWHPerfCacheConfigFallsBackToTempSQLiteWithoutMySQLCacheDSN(t *testing.T) {
+	convey.Convey("Given no MySQL cache DSN, when loading the perf cache config, then it keeps the isolated temp SQLite fallback", t, func() {
+		t.Setenv(cacheMySQLPathEnv, filepath.Join(t.TempDir(), "configured-cache.sqlite"))
+		t.Setenv(cacheMySQLPasswordEnv, "secret")
+		called := false
+
+		cache := loadLiveMLWHPerfCacheConfigForTest(t, func(_ *testing.T, _, _ string) string {
+			called = true
+
+			return "cache_user@tcp(127.0.0.1:3306)/workflow_automation_mlwh_dev_it12345678"
+		})
+
+		convey.So(called, convey.ShouldBeFalse)
+		convey.So(filepath.Base(cache.Path), convey.ShouldEqual, "mlwh-sync-perf.sqlite")
+		convey.So(cache.Path, convey.ShouldNotEqual, os.Getenv(cacheMySQLPathEnv))
+		convey.So(cache.Password, convey.ShouldEqual, "")
+	})
 }
