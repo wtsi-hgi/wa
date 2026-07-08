@@ -1489,10 +1489,47 @@ func TestSearchSamplesShortTermReturnsEmptyWithoutMatching(t *testing.T) {
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
 		samples, err := client.SearchSamples(context.Background(), "ac", 100, 0)
+		count, countErr := client.CountSampleSearch(context.Background(), "ac")
+		wordSamples, wordErr := client.SearchSamplesWithOptions(context.Background(), "ac", SampleSearchOptions{Words: true}, 100, 0)
+		wordCount, wordCountErr := client.CountSampleSearchWithOptions(context.Background(), "ac", SampleSearchOptions{Words: true})
 
-		convey.Convey("when SearchSamples runs with a length-2 term, then it returns an empty slice and no match", func() {
+		convey.Convey("when sample free-text search runs with a length-2 term, then it returns empty rows and counts for both text modes", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(samples, convey.ShouldResemble, []Sample{})
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{})
+			convey.So(wordErr, convey.ShouldBeNil)
+			convey.So(wordSamples, convey.ShouldResemble, []Sample{})
+			convey.So(wordCountErr, convey.ShouldBeNil)
+			convey.So(wordCount, convey.ShouldResemble, Count{})
+		})
+	})
+}
+
+func TestSearchSamplesShortTermWithExactFilterUsesFilterOnly(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache with library-type-filtered samples and a 2-char term", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "ab-standard", "supplier-1", "Homo sapiens", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "zz-standard", "supplier-2", "Homo sapiens", "donor-2")
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "ab-bespoke", "supplier-3", "Homo sapiens", "donor-3")
+		seedLibrarySample(t, cache.DB(), "Standard", 1, "S1")
+		seedLibrarySample(t, cache.DB(), "Standard", 2, "S1")
+		seedLibrarySample(t, cache.DB(), "Bespoke", 3, "S1")
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		opts := SampleSearchOptions{LibraryType: "Standard"}
+
+		samples, err := client.SearchSamplesWithOptions(context.Background(), "ab", opts, 100, 0)
+		count, countErr := client.CountSampleSearchWithOptions(context.Background(), "ab", opts)
+
+		convey.Convey("when optioned search runs, then the short free-text term is ignored and the exact filter is applied", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 2})
 		})
 	})
 }

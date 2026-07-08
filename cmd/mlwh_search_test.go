@@ -305,6 +305,49 @@ func TestMLWHSearchCommandPassesD3SampleFilters(t *testing.T) {
 	})
 }
 
+func TestMLWHSearchCommandAllowsShortSampleTermWithExactFilter(t *testing.T) {
+	convey.Convey("Given --type sample and an exact sample filter, when the term is shorter than three characters, then the CLI dispatches the search", t, func() {
+		stub := &stubMLWHSearchClient{
+			searchStudies: func(_ context.Context, _ string, _, _ int) ([]mlwh.Study, error) {
+				t.Fatalf("SearchStudies must not be called for --type sample")
+
+				return nil, nil
+			},
+			countStudySearch: func(_ context.Context, _ string) (mlwh.Count, error) {
+				t.Fatalf("CountStudySearch must not be called for --type sample")
+
+				return mlwh.Count{}, nil
+			},
+			searchSamplesWithOptions: func(_ context.Context, term string, opts mlwh.SampleSearchOptions, limit, offset int) ([]mlwh.Sample, error) {
+				convey.So(term, convey.ShouldEqual, "ab")
+				convey.So(limit, convey.ShouldEqual, 50)
+				convey.So(offset, convey.ShouldEqual, 0)
+				convey.So(opts.LibraryType, convey.ShouldEqual, "Standard")
+
+				return []mlwh.Sample{{Name: "FILTERED-1", SupplierName: "supplier-1"}}, nil
+			},
+			countSampleSearchWithOptions: func(_ context.Context, term string, opts mlwh.SampleSearchOptions) (mlwh.Count, error) {
+				convey.So(term, convey.ShouldEqual, "ab")
+				convey.So(opts.LibraryType, convey.ShouldEqual, "Standard")
+
+				return mlwh.Count{Count: 1}, nil
+			},
+		}
+
+		withStubMLWHSearchClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{
+			"mlwh", "search", "ab",
+			"--type", "sample",
+			"--library-type", "Standard",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "FILTERED-1")
+		convey.So(output, convey.ShouldNotContainSubstring, "at least 3 characters")
+	})
+}
+
 func TestMLWHSearchCommandJSONOutput(t *testing.T) {
 	convey.Convey("Given --json, when wa mlwh search runs, then stdout is a single JSON object with term, studies and samples", t, func() {
 		stub := &stubMLWHSearchClient{
@@ -445,6 +488,10 @@ func TestMLWHSearchCommandShortTerm(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(output, convey.ShouldContainSubstring, "at least 3 characters")
+
+		wordsOutput, wordsErr := executeRootCommandForTest(t, []string{"mlwh", "search", "ab", "--type", "sample", "--words"})
+		convey.So(wordsErr, convey.ShouldBeNil)
+		convey.So(wordsOutput, convey.ShouldContainSubstring, "at least 3 characters")
 	})
 }
 

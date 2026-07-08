@@ -138,8 +138,9 @@ func newMLWHSearchCommand() *cobra.Command {
 			"is a case-insensitive substring over study name, title, programme and",
 			"faculty sponsor; sample search defaults to a literal whole-value prefix",
 			"over sample name, supplier name, common name and donor id. Add --words",
-			"for the legacy separator-agnostic word-prefix search. The term must be",
-			"at least 3 characters. This is a read-only query tool.",
+			"for the legacy separator-agnostic word-prefix search. Free-text terms",
+			"must be at least 3 characters unless an exact sample filter is supplied",
+			"for a sample search. This is a read-only query tool.",
 			"",
 			"Use this when you have a partial study title, programme, organism or",
 			"supplier name and want to discover the matching studies or samples.",
@@ -232,15 +233,15 @@ func newMLWHSearchCommand() *cobra.Command {
 }
 
 func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, term, typeFlag string, sampleOpts mlwh.SampleSearchOptions, limit, offset int, jsonOut bool) error {
-	if len(strings.TrimSpace(term)) < searchMinTermLength {
-		_, _ = fmt.Fprintf(out, "search term must be at least %d characters\n", searchMinTermLength)
-
-		return nil
-	}
-
 	wantStudies, wantSamples, err := searchTypeSelection(typeFlag)
 	if err != nil {
 		return err
+	}
+
+	if len(strings.TrimSpace(term)) < searchMinTermLength && (!wantSamples || !sampleSearchHasExactFilter(sampleOpts)) {
+		_, _ = fmt.Fprintf(out, "search term must be at least %d characters\n", searchMinTermLength)
+
+		return nil
 	}
 
 	report := searchReport{Term: term}
@@ -281,6 +282,13 @@ func searchTypeSelection(typeFlag string) (wantStudies, wantSamples bool, err er
 	default:
 		return false, false, fmt.Errorf("unknown --type %q (expected study or sample)", typeFlag)
 	}
+}
+
+func sampleSearchHasExactFilter(opts mlwh.SampleSearchOptions) bool {
+	return strings.TrimSpace(opts.Organism) != "" ||
+		strings.TrimSpace(opts.LibraryType) != "" ||
+		strings.TrimSpace(opts.QC) != "" ||
+		opts.DeliverablesOnly
 }
 
 // addStudySearchSection runs the study search and folds the result into report.

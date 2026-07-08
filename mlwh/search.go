@@ -546,7 +546,7 @@ func sampleSearchShouldShortCircuit(term string, filters sampleFilterFamily) boo
 		return filters.empty()
 	}
 
-	return len(term) < searchTermMinLength
+	return filters.empty() && len(term) < searchTermMinLength
 }
 
 func (c *Client) sampleFilterFamilyIDs(ctx context.Context, db *sql.DB, filters sampleFilterFamily, limit, offset int) ([]int64, error) {
@@ -1167,17 +1167,18 @@ func (c *Client) SearchStudies(ctx context.Context, term string, limit, offset i
 // methods do. With no mode selected, a sample matches only when any of name,
 // supplier_name, common_name, or donor_id has term as a literal case-insensitive
 // prefix (so "hek_r" matches supplier_name "Hek_R1" and "homo sapiens" matches
-// common_name "Homo sapiens"). A term shorter than searchTermMinLength returns an
-// empty slice without querying. A never-synced cache returns an empty slice joined
-// with ErrCacheNeverSynced and ErrNotFound.
+// common_name "Homo sapiens"). A bare term shorter than searchTermMinLength
+// returns an empty slice without querying. A never-synced cache returns an empty
+// slice joined with ErrCacheNeverSynced and ErrNotFound.
 func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
 	return c.SearchSamplesWithOptions(ctx, term, SampleSearchOptions{}, limit, offset)
 }
 
 // SearchSamplesWithOptions returns samples matching term and optional sample
 // filters. Words selects the separator-agnostic word-prefix path; with no mode,
-// the C1 literal whole-value prefix remains the default. Phase 2 implements
-// DeliverablesOnly; other filters are reserved for the later shared-filter phase.
+// the C1 literal whole-value prefix remains the default. When exact filters are
+// present, a non-empty term shorter than searchTermMinLength is ignored so the
+// filter-only result is returned.
 func (c *Client) SearchSamplesWithOptions(ctx context.Context, term string, opts SampleSearchOptions, limit, offset int) ([]Sample, error) {
 	filters, err := sampleFilterFamilyFromOptions(opts)
 	if err != nil {
@@ -1221,7 +1222,7 @@ func (c *Client) sampleSearchIDs(ctx context.Context, db *sql.DB, term string, o
 	if filters.empty() {
 		return c.textSampleSearchIDs(ctx, db, term, opts, limit, offset)
 	}
-	if term == "" {
+	if term == "" || len(term) < searchTermMinLength {
 		return c.sampleFilterFamilyIDs(ctx, db, filters, limit, offset)
 	}
 
@@ -1572,10 +1573,10 @@ func (c *Client) CountStudySearch(ctx context.Context, term string) (Count, erro
 // bounded by sampleSearchCountCap. For normal result sets the count is exact and
 // equals len(SearchSamples(term, all)); for a very common match set the scan stops at
 // the cap and reports the cap as a floor. The no-mode count uses the same literal
-// whole-value prefix as SearchSamples. A term shorter than searchTermMinLength
-// returns Count{Count: 0} without querying. A never-synced cache returns Count{}
-// with an error satisfying both ErrCacheNeverSynced and ErrNotFound, mirroring
-// SearchSamples.
+// whole-value prefix as SearchSamples. A bare term shorter than
+// searchTermMinLength returns Count{Count: 0} without querying. A never-synced
+// cache returns Count{} with an error satisfying both ErrCacheNeverSynced and
+// ErrNotFound, mirroring SearchSamples.
 func (c *Client) CountSampleSearch(ctx context.Context, term string) (Count, error) {
 	return c.CountSampleSearchWithOptions(ctx, term, SampleSearchOptions{})
 }
