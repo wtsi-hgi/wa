@@ -1676,36 +1676,41 @@ func exportRunArmQuery(spec runAggregationPlatformSpec, plan exportPlan, parent 
 
 		return query, args, nil
 	case platformPacBio:
+		runDate := `MIN(NULLIF(pb.normalised_date, ''))`
 		query := `SELECT 'pacbio' AS platform_key, '` + platformPacBio + `' AS platform, pb.pac_bio_run_name AS native_id, ` +
-			`'' AS id_run, '` + platformPacBio + `' AS manufacturer, MIN(pb.normalised_date) AS run_date, '` + runDateBasisPacBioComplete + `' AS date_basis ` +
+			`'' AS id_run, '` + platformPacBio + `' AS manufacturer, ` + runDate + ` AS run_date, ` +
+			`CASE WHEN ` + runDate + ` IS NULL THEN '' ELSE '` + runDateBasisPacBioComplete + `' END AS date_basis ` +
 			`FROM pac_bio_product_metrics_mirror AS pm ` +
 			`INNER JOIN pac_bio_run_well_metrics_mirror AS pb ON pb.id_pac_bio_rw_metrics_tmp = pm.id_pac_bio_rw_metrics_tmp ` +
-			`WHERE pm.` + where + ` AND pb.normalised_date <> '' GROUP BY pb.pac_bio_run_name`
+			`WHERE pm.` + where + ` GROUP BY pb.pac_bio_run_name`
 
 		return query, args, nil
 	case platformElembio:
+		runDate := `MIN(NULLIF(er.normalised_date, ''))`
 		query := `SELECT 'elembio' AS platform_key, '` + platformElembio + `' AS platform, ` + numericID("er.id_run") + ` AS native_id, ` +
-			numericID("er.id_run") + ` AS id_run, '` + runManufacturerElembio + `' AS manufacturer, MIN(er.normalised_date) AS run_date, '` +
-			runDateBasisRunComplete + `' AS date_basis ` +
+			numericID("er.id_run") + ` AS id_run, '` + runManufacturerElembio + `' AS manufacturer, ` + runDate + ` AS run_date, ` +
+			`CASE WHEN ` + runDate + ` IS NULL THEN '' ELSE '` + runDateBasisRunComplete + `' END AS date_basis ` +
 			`FROM eseq_product_metrics_mirror AS pm ` +
 			`INNER JOIN eseq_run_lane_metrics_mirror AS er ON er.id_run = pm.id_run ` +
-			`WHERE pm.` + where + ` AND er.normalised_date <> '' GROUP BY er.id_run`
+			`WHERE pm.` + where + ` GROUP BY er.id_run`
 
 		return query, args, nil
 	case platformUltimagen:
+		runDate := `MIN(NULLIF(ur.normalised_date, ''))`
 		query := `SELECT 'ultimagen' AS platform_key, '` + platformUltimagen + `' AS platform, ` + numericID("ur.id_run") + ` AS native_id, ` +
-			numericID("ur.id_run") + ` AS id_run, '` + runManufacturerUltimagen + `' AS manufacturer, MIN(ur.normalised_date) AS run_date, '` +
-			runDateBasisRunArchived + `' AS date_basis ` +
+			numericID("ur.id_run") + ` AS id_run, '` + runManufacturerUltimagen + `' AS manufacturer, ` + runDate + ` AS run_date, ` +
+			`CASE WHEN ` + runDate + ` IS NULL THEN '' ELSE '` + runDateBasisRunArchived + `' END AS date_basis ` +
 			`FROM useq_product_metrics_mirror AS pm ` +
 			`INNER JOIN useq_run_metrics_mirror AS ur ON ur.id_run = pm.id_run ` +
-			`WHERE pm.` + where + ` AND ur.normalised_date <> '' GROUP BY ur.id_run`
+			`WHERE pm.` + where + ` GROUP BY ur.id_run`
 
 		return query, args, nil
 	case platformONT:
+		runDate := `MIN(NULLIF(ont.normalised_date, ''))`
 		query := `SELECT 'ont' AS platform_key, '` + platformONT + `' AS platform, ont.experiment_name AS native_id, ` +
-			`'' AS id_run, '` + runManufacturerONT + `' AS manufacturer, MIN(ont.normalised_date) AS run_date, '` +
-			runDateBasisONTLoadTime + `' AS date_basis FROM oseq_flowcell_mirror AS ont ` +
-			`WHERE ont.` + where + ` AND ont.normalised_date <> '' GROUP BY ont.experiment_name`
+			`'' AS id_run, '` + runManufacturerONT + `' AS manufacturer, ` + runDate + ` AS run_date, ` +
+			`CASE WHEN ` + runDate + ` IS NULL THEN '' ELSE '` + runDateBasisONTLoadTime + `' END AS date_basis FROM oseq_flowcell_mirror AS ont ` +
+			`WHERE ont.` + where + ` GROUP BY ont.experiment_name`
 
 		return query, args, nil
 	default:

@@ -170,3 +170,40 @@ func TestMLWHLatestInvalidFileTypeBeatsLocalNeverSyncedCacheK(t *testing.T) {
 		convey.So(output, convey.ShouldNotContainSubstring, mlwhCacheUnavailableMessage)
 	})
 }
+
+func TestMLWHLatestRejectsNegativePaginationBeforeOpeningLocalClient(t *testing.T) {
+	convey.Convey("Given local cache-only mode", t, func() {
+		t.Setenv("WA_MLWH_DSN", "")
+		t.Setenv("WA_MLWH_PASSWORD", "")
+		t.Setenv("WA_MLWH_CACHE_PATH", filepath.Join(t.TempDir(), "mlwh-cache.sqlite"))
+		t.Setenv("WA_MLWH_CACHE_PASSWORD", "")
+		t.Setenv("WA_MLWH_SERVER_URL", "")
+		t.Setenv("WA_MLWH_BACKEND_URL", "")
+		t.Setenv("WA_ENV", "")
+		t.Setenv("WA_TEST_SEQMETA_PORT", "")
+		t.Setenv("WA_DEV_SEQMETA_PORT", "")
+		t.Setenv("WA_PROD_SEQMETA_PORT", "")
+
+		opened := false
+		original := openMLWHLatestClient
+		t.Cleanup(func() { openMLWHLatestClient = original })
+		openMLWHLatestClient = func(context.Context, mlwh.Config) (mlwhLatestClient, error) {
+			opened = true
+
+			return &stubMLWHLatestClient{}, nil
+		}
+
+		for _, args := range [][]string{
+			{"mlwh", "latest", "5901", "--limit=-1"},
+			{"mlwh", "latest", "5901", "--offset=-1"},
+		} {
+			opened = false
+
+			output, err := executeRootCommandForTest(t, args)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(opened, convey.ShouldBeFalse)
+			convey.So(output, convey.ShouldContainSubstring, "limit and offset must be non-negative")
+		}
+	})
+}

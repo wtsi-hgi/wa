@@ -138,6 +138,9 @@ func newMLWHLatestCommand() *cobra.Command {
 			if err := validateLatestFileTypeFlag(fileType); err != nil {
 				return err
 			}
+			if err := validateLatestPagination(limit, offset); err != nil {
+				return err
+			}
 
 			client, err := openMLWHLatestConfiguredClient(cmd.Context(), serverURL)
 			if err != nil {
@@ -187,6 +190,14 @@ func validateLatestFileTypeFlag(fileType string) error {
 
 func latestInvalidFileTypeError(fileType string) error {
 	return fmt.Errorf("invalid --file-type %q: a filename suffix may not be empty or contain '%%', '_' or '/'", fileType)
+}
+
+func validateLatestPagination(limit, offset int) error {
+	if limit < 0 || offset < 0 {
+		return errors.New("limit and offset must be non-negative")
+	}
+
+	return nil
 }
 
 func runMLWHLatest(ctx context.Context, client mlwhLatestClient, out io.Writer, selector latestSelector, fileType string, limit, offset int) error {

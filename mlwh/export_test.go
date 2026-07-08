@@ -776,6 +776,51 @@ func TestExportRunsIncludesPlatformNativeParentScopedRunsP1(t *testing.T) {
 	})
 }
 
+func TestExportRunsRetainsNonIlluminaIdentityRowsWithoutDatesP1(t *testing.T) {
+	convey.Convey("P1/export-runs regression: Given a study with non-Illumina run identities but empty normalised dates", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedExportMultiPlatformRunScenario(t, client.cache.DB())
+		clearExportNonIlluminaRunDates(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "runs", ParentKind: "study"}, "RUNX", ExportOptions{
+			Columns: []string{"id", "native_id", "platform"},
+			Limit:   20,
+		})
+
+		convey.Convey("when only identity columns are requested, then undated platform-native runs are still exported", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"elembio:77010", "77010", "Elembio"},
+				{"illumina:61010", "61010", "Illumina"},
+				{"ont:ONTRUN-71005", "ONTRUN-71005", "ONT"},
+				{"pacbio:pb-export-run-1", "pb-export-run-1", "PacBio"},
+				{"ultimagen:88010", "88010", "Ultimagen"},
+			})
+			convey.So(result.Total, convey.ShouldEqual, 5)
+		})
+	})
+
+	convey.Convey("P1/export-runs regression: Given undated non-Illumina runs and a date export request", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedExportMultiPlatformRunScenario(t, client.cache.DB())
+		clearExportNonIlluminaRunDates(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "runs", ParentKind: "study"}, "RUNX", ExportOptions{
+			Columns: []string{"id", "native_id", "platform", "run_date", "date_basis"},
+			Limit:   20,
+		})
+
+		convey.Convey("when run date columns are requested, then the missing authoritative date is reported instead of silently dropping the run", func() {
+			convey.So(errors.Is(err, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+			convey.So(err.Error(), convey.ShouldContainSubstring, `export run column "run_date" is unavailable`)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "elembio:77010")
+			convey.So(result.Rows, convey.ShouldBeNil)
+		})
+	})
+}
+
 func seedExportMultiPlatformRunScenario(t *testing.T, db *sql.DB) {
 	t.Helper()
 
@@ -802,6 +847,36 @@ func seedExportMultiPlatformRunScenario(t *testing.T, db *sql.DB) {
 	})
 	seedExportONTRun(t, db)
 	seedExportRunAggregationSyncState(t, db)
+}
+
+func clearExportNonIlluminaRunDates(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	updates := []struct {
+		query string
+		args  []any
+	}{
+		{
+			query: `UPDATE pac_bio_run_well_metrics_mirror SET normalised_date = '' WHERE pac_bio_run_name = ?`,
+			args:  []any{"pb-export-run-1"},
+		},
+		{
+			query: `UPDATE eseq_run_lane_metrics_mirror SET normalised_date = '' WHERE id_run = ?`,
+			args:  []any{int64(77010)},
+		},
+		{
+			query: `UPDATE useq_run_metrics_mirror SET normalised_date = '' WHERE id_run = ?`,
+			args:  []any{int64(88010)},
+		},
+		{
+			query: `UPDATE oseq_flowcell_mirror SET normalised_date = '' WHERE experiment_name = ?`,
+			args:  []any{"ONTRUN-71005"},
+		},
+	}
+	for _, update := range updates {
+		_, err := db.Exec(update.query, update.args...)
+		convey.So(err, convey.ShouldBeNil)
+	}
 }
 
 func TestExportNonSampleRelationshipsRejectSharedFiltersD1aC4(t *testing.T) {
