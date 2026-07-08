@@ -177,6 +177,7 @@ func newMLWHExportCommand() *cobra.Command {
 	command.Flags().StringVar(&flags.sort, "sort", "", "export sort order (supported value: created-desc)")
 	command.Flags().StringVar(&flags.since, "since", "", "inclusive RFC3339 lower bound for created-date exports")
 	command.Flags().StringVar(&flags.until, "until", "", "exclusive RFC3339 upper bound for created-date exports")
+	command.Flags().StringVar(&flags.cursor, "cursor", "", "opaque next_cursor from a previous canonical-order iRODS export page")
 	command.Flags().IntVar(&flags.limit, "limit", mlwhExportDefaultLimit, "maximum rows to return for a bounded page, or stream chunk size with --all")
 	command.Flags().IntVar(&flags.offset, "offset", 0, "number of rows to skip for bounded limit/offset paging")
 	command.Flags().BoolVar(&flags.all, "all", false, "emit the complete matching set instead of a bounded page")
@@ -302,6 +303,7 @@ type mlwhExportFlags struct {
 	sort             string
 	since            string
 	until            string
+	cursor           string
 	limit            int
 	offset           int
 	all              bool
@@ -337,6 +339,7 @@ func (f mlwhExportFlags) options(rel mlwh.ExportRelationship, cmd *cobra.Command
 		Limit:            f.limit,
 		Offset:           f.offset,
 		All:              f.all,
+		Cursor:           f.cursor,
 		Format:           format,
 	}, nil
 }

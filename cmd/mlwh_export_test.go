@@ -115,6 +115,38 @@ func TestMLWHExportIRODSStudyPrintsCramTSVAndPageStatusD1b(t *testing.T) {
 	})
 }
 
+func TestMLWHExportCursorFlagFeedsExportOptions(t *testing.T) {
+	convey.Convey("D1a reviewer: Given an export next_cursor from a bounded page", t, func() {
+		var capturedOptions mlwh.ExportOptions
+		stub := &stubMLWHExportClient{
+			export: func(_ context.Context, _ mlwh.ExportRelationship, _ string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
+				capturedOptions = opts
+
+				return mlwh.ExportResult{
+					Columns:  []string{"irods_path"},
+					Rows:     [][]string{{"/seq/second-page.cram"}},
+					Total:    2,
+					Complete: true,
+					Format:   "tsv",
+				}, nil
+			},
+		}
+		withStubMLWHExportClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{
+			"mlwh", "export", "irods", "study", "5901",
+			"--cursor", "cursor-2",
+			"--limit", "25",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "/seq/second-page.cram")
+		convey.So(capturedOptions.Cursor, convey.ShouldEqual, "cursor-2")
+		convey.So(capturedOptions.Limit, convey.ShouldEqual, 25)
+		convey.So(stub.closed, convey.ShouldBeTrue)
+	})
+}
+
 func TestMLWHExportIRODSRunPrintsMergedCompositeH2(t *testing.T) {
 	convey.Convey("H2: Given an iRODS run export includes a merged composite, when the command runs, then it prints the run-scoped rows", t, func() {
 		var capturedRel mlwh.ExportRelationship

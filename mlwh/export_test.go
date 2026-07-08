@@ -220,6 +220,75 @@ func TestExportIRODSCreatedSortAndWindowE1(t *testing.T) {
 	})
 }
 
+func TestExportIRODSCreatedSortUsesDeterministicOffsetPages(t *testing.T) {
+	convey.Convey("D1a reviewer: Given a created-desc iRODS export with equal created timestamps", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+
+		tieCreated := time.Date(2026, time.July, 5, 8, 0, 0, 0, time.UTC)
+		newerCreated := tieCreated.Add(time.Hour)
+		seedHierarchyStudy(t, client.cache.DB(), 902, "E1TIE")
+		seedManifestSampleRow(t, client.cache.DB(), 22, "sample-e1-tie", "supplier-e1-tie", "EGAN-e1-tie", "sanger-e1-tie")
+		seedLibrarySample(t, client.cache.DB(), "Standard", 22, "E1TIE")
+		seedExportSyncState(t, client.cache.DB())
+		for _, row := range []exportIRODSSeedRow{
+			{IDSeqProductLocation: 30, IDProduct: "tie-run-2", FileName: "tie-run-2.cram", Created: tieCreated, IDSampleTmp: 22, StudyID: "E1TIE", IDRun: 52554, Position: 1, TagIndex: 1},
+			{IDSeqProductLocation: 20, IDProduct: "newer", FileName: "newer.cram", Created: newerCreated, IDSampleTmp: 22, StudyID: "E1TIE", IDRun: 60000, Position: 1, TagIndex: 1},
+			{IDSeqProductLocation: 10, IDProduct: "tie-lane-2", FileName: "tie-lane-2.cram", Created: tieCreated, IDSampleTmp: 22, StudyID: "E1TIE", IDRun: 52553, Position: 2, TagIndex: 1},
+			{IDSeqProductLocation: 40, IDProduct: "tie-tag-2", FileName: "tie-tag-2.cram", Created: tieCreated, IDSampleTmp: 22, StudyID: "E1TIE", IDRun: 52553, Position: 1, TagIndex: 2},
+			{IDSeqProductLocation: 50, IDProduct: "tie-id-50", FileName: "tie-id-50.cram", Created: tieCreated, IDSampleTmp: 22, StudyID: "E1TIE", IDRun: 52553, Position: 1, TagIndex: 1},
+			{IDSeqProductLocation: 5, IDProduct: "tie-id-5", FileName: "tie-id-5.cram", Created: tieCreated, IDSampleTmp: 22, StudyID: "E1TIE", IDRun: 52553, Position: 1, TagIndex: 1},
+		} {
+			seedExportIRODSRow(t, client.cache.DB(), row)
+		}
+
+		first, firstErr := client.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "E1TIE", ExportOptions{
+			Columns: []string{"id_product", "created"},
+			Sort:    "created-desc",
+			Limit:   3,
+		})
+		second, secondErr := client.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "E1TIE", ExportOptions{
+			Columns: []string{"id_product", "created"},
+			Sort:    "created-desc",
+			Limit:   3,
+			Offset:  3,
+		})
+		cursorResult, cursorErr := client.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "E1TIE", ExportOptions{
+			Columns: []string{"id_product", "created"},
+			Sort:    "created-desc",
+			Cursor:  "cursor-2",
+			Limit:   3,
+		})
+
+		convey.Convey("when pages are fetched, then equal-created ties use the canonical tuple order and no unusable cursor is advertised", func() {
+			convey.So(firstErr, convey.ShouldBeNil)
+			convey.So(secondErr, convey.ShouldBeNil)
+			convey.So(first.Rows, convey.ShouldResemble, [][]string{
+				{"newer", formatSyncTime(newerCreated)},
+				{"tie-id-5", formatSyncTime(tieCreated)},
+				{"tie-id-50", formatSyncTime(tieCreated)},
+			})
+			convey.So(second.Rows, convey.ShouldResemble, [][]string{
+				{"tie-tag-2", formatSyncTime(tieCreated)},
+				{"tie-lane-2", formatSyncTime(tieCreated)},
+				{"tie-run-2", formatSyncTime(tieCreated)},
+			})
+			convey.So(first.Total, convey.ShouldEqual, 6)
+			convey.So(second.Total, convey.ShouldEqual, 6)
+			convey.So(first.Complete, convey.ShouldBeFalse)
+			convey.So(second.Complete, convey.ShouldBeTrue)
+			convey.So(first.NextCursor, convey.ShouldBeEmpty)
+			convey.So(second.NextCursor, convey.ShouldBeEmpty)
+		})
+
+		convey.Convey("when a cursor is supplied with created-desc, then Export rejects the incompatible continuation mode", func() {
+			convey.So(errors.Is(cursorErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+			convey.So(cursorErr.Error(), convey.ShouldContainSubstring, "created-date sorted iRODS exports require bounded limit/offset pages")
+			convey.So(cursorResult.Rows, convey.ShouldBeNil)
+		})
+	})
+}
+
 func seedExport7556Scenario(t *testing.T, db *sql.DB) {
 	t.Helper()
 

@@ -1026,7 +1026,7 @@ func (c *Client) exportIRODS(ctx context.Context, plan exportPlan, parent export
 		Complete: !more,
 		Format:   plan.format,
 	}
-	if more {
+	if more && !plan.sortCreatedDesc {
 		result.NextCursor = encodeExportCursor(rows[len(rows)-1].cursor())
 	}
 
@@ -1993,7 +1993,7 @@ func exportIRODSPageQuery(input exportIRODSQueryInput) (string, []any, error) {
 		args = append(args, input.cursor.IDRun, input.cursor.Position, input.cursor.TagIndex, input.cursor.IDSeqProductLocation)
 	}
 	if input.sortCreatedDesc {
-		query += ` ORDER BY spi.created DESC LIMIT ?`
+		query += ` ORDER BY spi.created DESC, spi.id_run, spi.position, spi.tag_index, spi.id_seq_product_irods_locations_tmp LIMIT ?`
 	} else {
 		query += ` ORDER BY spi.id_run, spi.position, spi.tag_index, spi.id_seq_product_irods_locations_tmp LIMIT ?`
 	}
