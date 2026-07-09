@@ -330,3 +330,254 @@ The eventual spec should include acceptance tests for at least:
 - No `products_without_irods` summary field.
 - No path duplication from merged CRAMs onto single-lane product rows.
 - No caller-side SQL workaround as the official answer.
+
+## Notes
+
+These notes resolve decisions raised during clarification. They are binding
+requirements for the spec.
+
+### Pagination: keyset cursor (not limit/offset)
+
+`products of study` must use **keyset cursor pagination**, the same model the
+`irods` export already uses via `validateExportContinuationSupport` — NOT the
+limit/offset model used by `sample-crams` and the other bounded relationships.
+
+Rationale (confirmed against the real MLWH mirror): products is a large-scale
+relationship, not a small per-parent list. Per-study product-row counts reach
+~3.03M (study 6187), 875 studies exceed 1k products, 83 exceed 10k, and study
+7699 has ~153k product rows — more than its ~52k iRODS objects, because
+objectless products inflate the count. Limit/offset `--all` streaming
+(`streamExportPages`) loops with a growing `OFFSET` and recomputes the `total`
+COUNT per page, so a complete export of a large study would be O(n^2)
+scan-and-discard with thousands of COUNTs — the exact pathology keyset was
+designed to avoid (realworld3 "no silent truncation", memory-bounded HARD REQ).
+
+Requirements:
+
+- Row grain is the manifest's grain: one row per distinct
+  `(id_run, position, tag_index)` triple, produced by reusing the manifest's
+  `GROUP BY ipm.id_run, ipm.position, ipm.tag_index` (which collapses the
+  sample/iRODS fan-out, and — as today — collapses composite/merged products
+  that share a triple). Preserve this grain; do NOT switch to a per-
+  `id_iseq_product` grain: it would change `total` and break the reused
+  `manifest_test.go` fixture counts (e.g. study 7568 is ~780 distinct triples,
+  not its ~828 raw product-metrics rows).
+- Because the `GROUP BY` makes the triple unique per output row, the keyset IS
+  the triple: `ORDER BY id_run, position, tag_index` with a row-value keyset
+  `(id_run, position, tag_index) > (?, ?, ?)` (the same dialect-portable
+  row-value comparison the iRODS keyset already uses). No extra tiebreaker is
+  needed — do NOT add an `id_iseq_product` tiebreaker; it is not in the grain
+  and is unnecessary for monotonicity. `MIN(sm.name)` stays only as the cosmetic
+  final `ORDER BY` term the manifest already uses; it does not affect row
+  identity or the cursor.
+- Reuse the existing `exportCursor` int64 machinery: the triple maps onto its
+  integer fields (the iRODS-only 4th component is unused/zero for products), so
+  NO new TEXT-capable cursor encoding is required.
+- `total` is the full count of distinct `(id_run, position, tag_index)` product
+  rows for the relationship (acceptance test 4), matching the manifest's
+  product-grained count; `file_type` never changes it.
+- Extend `validateExportContinuationSupport` so `cursor` is accepted for
+  `products` (currently iRODS-only).
+- A bounded page returns `Total`, `NextCursor`, and `Complete`; `--all` /
+  `all=true` streams the complete set memory-bounded via keyset (no deep
+  OFFSET), mirroring the iRODS `--all` path. The CLI must state whether it
+  emitted a bounded page or the complete set (CLI currently always sends
+  `All: true`).
+
+### Bounded pages for MCP / small-data clients
+
+`GET /export/products/study/:id` must serve small bounded pages so MCP-style
+clients that cannot handle large results can page through:
+
+- Default (no paging params) returns a bounded page — `limit` defaults to 0 and
+  becomes the internal `defaultExportAllLimit` (1000) — with `total`,
+  `next_cursor`, and `complete:false`. It must NOT dump the full result set by
+  default.
+- A client sets `limit` for a smaller page (e.g. `?limit=50`) and passes
+  `cursor=<next_cursor>` to fetch the next page; `complete:true` with an empty
+  `next_cursor` marks the last page.
+- `all=true` is the opt-in complete stream (used by the CLI); MCP clients simply
+  omit it. `limit`, `offset`, `all`, and `cursor` are already advertised via
+  `exportQueryParams()`.
+- `Export` is a SINGLE generic registry entry
+  (`/export/:children/:parent_kind/:parent_id`); OpenAPI/MCP/api-reference derive
+  from that entry's `Description` plus the shared `exportQueryParams()` param
+  descriptions. There is NO per-relationship OpenAPI channel
+  (`exportRelationshipSpec.Description` feeds only CLI help). Therefore:
+    - State products' paging semantics in the single Export endpoint
+      `Description`: products is product-grained (one row per distinct
+      `(id_run, position, tag_index)`, including products with no iRODS object),
+      keyset-cursor paginated; the default response is a bounded page (≤ the
+      internal 1000 default) carrying `total`, `next_cursor`, and `complete`;
+      pass `cursor` to continue; `all=true` returns the complete set; `file_type`
+      only restricts the attached `irods_path`. This mirrors how the
+      per-relationship `columns` vocabulary already lives inside the shared
+      endpoint metadata.
+    - Generalise the Export `cursor` query-param description (currently
+      "opaque keyset cursor returned by a previous iRODS export page") to cover
+      "a previous iRODS or products export page".
+    - Do NOT rewrite the shared `fetchAllPaginationParams()` `limit` wording
+      ("defaults to a fetch-all page that returns every matching row"): it is
+      used by ~20 unrelated endpoints and is out of scope. The Export
+      `Description` clause above is what makes products' documented behaviour
+      accurate.
+    - Regenerate the `.docs/mcp/api-reference.md` no-drift fixture; the diff is
+      scoped to the Export endpoint section.
+
+### `irods_unmatched` / `reason`: merged-multilane only
+
+Selecting `irods_path`, `irods_unmatched`, or `reason` triggers the set-at-once
+product→iRODS join. `irods_unmatched=true` (with `reason=merged_multilane`) is
+emitted ONLY for the classified merged multi-lane CRAM gap — the current
+`manifest.go` behavior (`detectMergedCRAMGap` /
+`manifestListIRODSUnmatchedExpression`: a single-lane product with no direct
+object whose sample has a merged composite object). A product that is merely
+objectless (never sequenced/delivered) leaves `irods_path` empty and
+`irods_unmatched`/`reason` blank/false. Merged-gap detection stays gated to
+`file_type` unset-or-`cram`; other file types never flag unmatched.
+
+### Columns: dedicated products vocabulary, 11 required + product-safe extras
+
+products gets its own export vocabulary (a new `exportVocabulary`), NOT
+`fileExportColumns()`, so `irods_unmatched`/`reason` and product grain never
+leak into the `irods`/`sample-crams` file exports (protects acceptance test 10).
+
+- Required selectable columns (all 11): `name`, `supplier_name` (alias
+  `supplier_sample_name`), `accession_number`, `sanger_sample_id`, `id_run`,
+  `lane` (alias `position`), `tag_index`, `manual_qc`, `irods_path`,
+  `irods_unmatched`, `reason`.
+- Default projection = the first 8:
+  `name,supplier_name,accession_number,sanger_sample_id,id_run,lane,tag_index,manual_qc`.
+- Also expose product-safe extras: `id_study_lims` and `study_accession_number`
+  (both cleanly product/study-grained). Include `platform` only if it is
+  cleanly derivable at product grain; otherwise omit it rather than invent it.
+- Do NOT add iRODS-object-grained columns (`created`, `merged`, `collection`,
+  `data_object`, `id_product`, ...) to products.
+
+### Filters: qc, library_type, organism, and product-grain deliverables_only
+
+Extend `validateExportFilterSupport` so `products` supports `qc`,
+`library_type`, `organism`, and `deliverables_only`, all as product-row filters.
+
+- `deliverables_only` for products MUST use the product's own deliverable
+  discriminator (Illumina `iseq_flowcell.entity_type IN ('library',
+  'library_indexed')`, Element/Ultima `is_sequencing_control=0`, pass-through
+  for PacBio/ONT — the same per-product `deliverable` definition already
+  documented for `/study/:id/irods`), NOT the iRODS `is_deliverable` flag. It
+  must never drop a product that has no iRODS object.
+- `qc` filters against the product's rolled-up `manual_qc` (the `qc.go`
+  roll-up), not a raw per-object qc.
+- `total` reflects the filtered product-row count (acceptance test 4).
+  `file_type` NEVER changes `total` (product grain); `qc`, `library_type`,
+  `organism`, and `deliverables_only` do.
+
+### `file_type` on products is path-attachment only
+
+products must be `file_type`-aware WITHOUT the file-export defaults. Current
+`exportFileFilters` / `exportRelationshipUsesFileType` force `file_type` to
+`cram` and `deliverables_only` to true for file exports; products must do
+NEITHER. `file_type` only restricts which iRODS object is eligible for the
+`irods_path` attachment (and merged-gap detection); it must not default to
+`cram`, must not force `deliverables_only`, and must not drop product rows.
+
+### Internal placement, removals, and cascade
+
+- Reuse the proven `manifest.go` query logic (the product grain, the
+  set-at-once ranked iRODS derived-table join on shared `id_iseq_product` +
+  `id_study_lims`, and merged-gap detection) by refactoring it into the export
+  product implementation rather than rewriting it. Rename `ManifestRow` into an
+  export-internal product row type (or fold it into the export projection).
+- Remove the `StudyManifest` envelope, `products_without_irods`,
+  `cmd/mlwh_manifest.go`, the `StudyManifest`/`CountStudyManifest` registry
+  entries, their `Queryer`/remote methods, and `manifestQueryParams` /
+  `with_irods`, per the prompt's removal list.
+- The never-synced / unknown-study / synced-empty cascade should reuse the
+  export framework's existing cache-never-synced signaling and the manifest's
+  product-metrics sync gating: unknown study → not_found; never-synced →
+  not_found + cache-never-synced signal; synced study with no products → empty
+  rows with `total` 0 and `complete:true`.
+
+### Test data
+
+Reuse the existing merged-multilane and products-without-iRODS fixtures from
+`manifest_test.go` for the new acceptance tests, and regenerate the
+`.docs/mcp/api-reference.md` (or equivalent) no-drift fixture after the registry
+changes.
+
+### `wa mlwh info` must be rewired (collateral consumer) + heading bug fix
+
+`wa mlwh info` is the ONLY non-manifest consumer of the removed surface and must
+be rewired, not left broken. Today `cmd/mlwh_info.go` declares
+`StudyManifest(...)` in its client interface (line 81), calls it (line 1357) to
+fill a study "Products" section, renders rows via `writeManifestRow` (which
+lives only in the deleted `cmd/mlwh_manifest.go`), and serialises the
+`study_manifest` envelope in `wa mlwh info --json` (line 1452).
+
+Required changes:
+
+- Rewire the Products section to the new product-grained export (the existing
+  `Export` path / the refactored product query), replacing the
+  `StudyManifest(...)` client-interface method. Fetch a bounded page of
+  `infoMaxRelated` (50) rows with the default product columns
+  (`name,supplier_name,accession_number,sanger_sample_id,id_run,lane,tag_index,manual_qc`);
+  do NOT request `irods_path` (info uses the non-iRODS view, matching today's
+  `withIRODS=false` call).
+- Move the per-row rendering into info (or a shared helper); `writeManifestRow`
+  disappears with `cmd/mlwh_manifest.go`.
+- In `wa mlwh info --json`, remove the `study_manifest` envelope field and
+  replace it with a `products` array of typed product-row objects carrying the
+  eight default fields, consistent with the typed-array shape of the sibling
+  `samples` / `runs` / `lanes` / `irods_paths` sections. This is a deliberate,
+  user-visible breaking change to `info --json`.
+- **Heading bug fix:** the Products heading currently passes `total = 0` to
+  `infoListHeading(label, shown, total)` (line 801), so it always renders
+  "Products (N)" even when the study has more products than the shown 50 (the
+  `StudyManifest` envelope carried no total count). Use the products export's
+  `ExportResult.Total` (the full distinct-`(id_run, position, tag_index)` count)
+  as `total` so the heading renders "Products (50 of 780)" via the existing
+  "shown of total" path the Runs/Samples/Libraries sections already use. Add an
+  acceptance test: a study with more than `infoMaxRelated` products shows
+  "Products (<shown> of <total>)" in text output. (The "iRODS paths" section at
+  line 954 has the same latent `total = 0` issue but is out of scope for this
+  feature.)
+- Update `cmd/mlwh_info_test.go`: the stub currently returns
+  `mlwh.StudyManifest`; retype it to the products export, update
+  `TestMLWHInfoStudyShowsProgrammeAndManualQCProducts`, and assert the new
+  "of total" heading.
+
+### Complete manifest-surface removal / rewire map
+
+Remove (production):
+
+- `cmd/mlwh.go` line 378 — the `newMLWHManifestCommand()` registration.
+- `cmd/mlwh_manifest.go` — the entire file (command, `runMLWHManifest`,
+  `writeManifestJSON` / `writeManifestText` / `writeManifestHeader` /
+  `writeManifestRow`, `mlwhManifestClient`, the open-client helpers).
+- `mlwh/types.go` — delete `StudyManifest` and `PagedStudyManifest`; rename
+  `ManifestRow` into the export-internal product row type (or fold it into the
+  export projection). Delete `ProductsWithoutIRODS`.
+- `mlwh/registry.go` — the `StudyManifest` and `CountStudyManifest` entries and
+  `manifestQueryParams()` (with its `with_irods` param).
+- `mlwh/remote.go` — `StudyManifest`, `StudyManifestPage`, `CountStudyManifest`
+  and `remoteManifestQuery`.
+- `mlwh/server.go` — the `StudyManifest` and `CountStudyManifest` handler cases,
+  `writeMLWHStudyManifest`, and the manifest count helper.
+- `mlwh/queryer.go` — the `StudyManifest` and `CountStudyManifest` interface
+  methods.
+- `mlwh/count.go` — `CountStudyManifest` and `countStudyManifestForEmptyStudy`.
+
+Reuse (do NOT delete):
+
+- `mlwh/count.go`'s `countStudyManifestProducts` helper (distinct
+  `(id_run, position, tag_index)` count) is exactly the products export `total`
+  source — reuse/rename it rather than deleting it.
+
+Update / replace tests:
+
+- Delete `cmd/mlwh_manifest_test.go`.
+- Repurpose `mlwh/manifest_test.go` fixtures for the products export tests.
+- Update `mlwh/count_test.go`, `mlwh/registry_test.go`, `mlwh/server_test.go`,
+  `mlwh/types_test.go`, `mlwh/cache_mysql_integration_test.go`, and
+  `cmd/mlwh_info_test.go`.
+- `mlwh/parity_test.go` — replace the manifest local/remote parity coverage with
+  products-export parity.
