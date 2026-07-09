@@ -1165,6 +1165,23 @@ func TestServerIRODSFileTypeBadRequestGuardB2(t *testing.T) {
 	}
 }
 
+func TestServerExportFileTypeBadRequestGuard(t *testing.T) {
+	endpoints := []string{
+		"/export/products/study/7568?file_type=",
+		"/export/irods/study/7568?file_type=%20",
+	}
+
+	for _, endpoint := range endpoints {
+		convey.Convey("Given GET "+endpoint+", then status is 400 bad_request and Export is not reached", t, func() {
+			queryer := &serverFakeQueryer{}
+
+			response := performMLWHRequestForTest(t, queryer, http.MethodGet, endpoint)
+
+			assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		})
+	}
+}
+
 func TestServerFetchAllPaginationGuard(t *testing.T) {
 	convey.Convey("Given GET /study/SZ/detail?offset=-1, then status is 400 with code bad_request (not a 500/panic)", t, func() {
 		client := newListSizingClientForTest(t, "SZ", 5)

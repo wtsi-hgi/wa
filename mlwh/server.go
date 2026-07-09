@@ -1688,15 +1688,15 @@ func countSamplesWithoutData(ctx context.Context, queryer Queryer, studyLimsID s
 	return total - withData, nil
 }
 
-// mlwhFileTypeFromQuery reads the optional file_type query param of the iRODS
-// list and count endpoints. It mirrors mlwhQueryRFC3339's contract: an ABSENT
-// param is returned as ("", true) (the all-file-types case, the same as the bare
-// endpoint); a PRESENT param is normalised (strip one leading '.', lowercase) and
-// validated, and an empty/whitespace value or one containing a LIKE wildcard
-// ('%'/'_') or path separator ('/') aborts with the bad_request 400 envelope
-// BEFORE the queryer is reached, reporting false. A present-and-valid value is
-// returned normalised. The present-but-empty case is a 400 (not silently treated
-// as no filter), so `?file_type=` is rejected while an omitted param is allowed.
+// mlwhFileTypeFromQuery reads the optional file_type query param for file-aware
+// endpoints. It mirrors mlwhQueryRFC3339's contract: an ABSENT param is returned
+// as ("", true) (the all-file-types case, the same as the bare endpoint); a
+// PRESENT param is normalised (strip one leading '.', lowercase) and validated,
+// and an empty/whitespace value or one containing a LIKE wildcard ('%'/'_') or
+// path separator ('/') aborts with the bad_request 400 envelope BEFORE the
+// queryer is reached, reporting false. A present-and-valid value is returned
+// normalised. The present-but-empty case is a 400 (not silently treated as no
+// filter), so `?file_type=` is rejected while an omitted param is allowed.
 func mlwhFileTypeFromQuery(c *gin.Context) (string, bool) {
 	raw, present := c.GetQuery("file_type")
 	if !present {
@@ -1755,6 +1755,10 @@ func mlwhExportOptionsFromQuery(c *gin.Context) (ExportOptions, bool) {
 	if !ok {
 		return ExportOptions{}, false
 	}
+	fileType, ok := mlwhFileTypeFromQuery(c)
+	if !ok {
+		return ExportOptions{}, false
+	}
 	sort := c.Query("sort")
 	if sort == "" {
 		sort = c.Query("order_by")
@@ -1762,7 +1766,7 @@ func mlwhExportOptionsFromQuery(c *gin.Context) (ExportOptions, bool) {
 
 	return ExportOptions{
 		Columns:          columns,
-		FileType:         c.Query("file_type"),
+		FileType:         fileType,
 		DeliverablesOnly: deliverablesOnly,
 		Role:             c.Query("role"),
 		QC:               c.Query("qc"),
