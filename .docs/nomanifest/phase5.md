@@ -40,5 +40,5 @@ tests H1.1-H1.3 (stub called with the products relationship, 8 columns,
 of 780)"; `--json` has a typed `products` array and no `study_manifest`
 field). Test file: `cmd/mlwh_info_test.go`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,17 @@ const (
 	infoMaxRelated     = 50
 	infoNotFoundExitFn = "mlwh: no matches"
 )
+
+var infoProductColumns = []string{
+	"name",
+	"supplier_name",
+	"accession_number",
+	"sanger_sample_id",
+	"id_run",
+	"lane",
+	"tag_index",
+	"manual_qc",
+}
 
 var openMLWHInfoClient = func(ctx context.Context, cfg mlwh.Config) (mlwhInfoClient, error) {
 	if strings.TrimSpace(cfg.DSN) == "" {
@@ -78,7 +90,7 @@ type mlwhInfoClient interface {
 	SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
 
 	StudyOverview(ctx context.Context, studyLimsID string) (mlwh.StudyOverview, error)
-	StudyManifest(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (mlwh.StudyManifest, error)
+	Export(ctx context.Context, rel mlwh.ExportRelationship, parentID string, opts mlwh.ExportOptions) (mlwh.ExportResult, error)
 	StatusBreakdown(ctx context.Context, studyLimsID string) (mlwh.StatusBreakdown, error)
 	CountSamplesWithData(ctx context.Context, studyLimsID string) (mlwh.Count, error)
 	CountSamplesWithDataSince(ctx context.Context, studyLimsID, since, until string) (mlwh.Count, error)
@@ -110,6 +122,58 @@ func openMLWHInfoConfiguredClient(ctx context.Context, serverURL string) (mlwhIn
 	}
 
 	return client, nil
+}
+
+func infoProductsExportOptions() mlwh.ExportOptions {
+	return mlwh.ExportOptions{
+		Columns: append([]string(nil), infoProductColumns...),
+		Limit:   infoMaxRelated,
+	}
+}
+
+func infoProductRows(result mlwh.ExportResult) []infoProductRow {
+	columnIndexes := make(map[string]int, len(result.Columns))
+	for index, column := range result.Columns {
+		columnIndexes[column] = index
+	}
+
+	rows := make([]infoProductRow, 0, len(result.Rows))
+	for _, cells := range result.Rows {
+		rows = append(rows, infoProductRowFromCells(cells, columnIndexes))
+	}
+
+	return rows
+}
+
+func infoProductRowFromCells(cells []string, columnIndexes map[string]int) infoProductRow {
+	return infoProductRow{
+		Name:            infoProductCell(cells, columnIndexes, "name"),
+		SupplierName:    infoProductCell(cells, columnIndexes, "supplier_name"),
+		AccessionNumber: infoProductCell(cells, columnIndexes, "accession_number"),
+		SangerSampleID:  infoProductCell(cells, columnIndexes, "sanger_sample_id"),
+		IDRun:           infoProductIntCell(cells, columnIndexes, "id_run"),
+		Lane:            infoProductIntCell(cells, columnIndexes, "lane"),
+		TagIndex:        infoProductIntCell(cells, columnIndexes, "tag_index"),
+		ManualQC:        infoProductCell(cells, columnIndexes, "manual_qc"),
+	}
+}
+
+func infoProductCell(cells []string, columnIndexes map[string]int, column string) string {
+	index, ok := columnIndexes[column]
+	if !ok || index >= len(cells) {
+		return ""
+	}
+
+	return cells[index]
+}
+
+func infoProductIntCell(cells []string, columnIndexes map[string]int, column string) int {
+	value, err := strconv.Atoi(strings.TrimSpace(infoProductCell(cells, columnIndexes, column)))
+	if err != nil {
+		return 0
+	}
+
+	return value
 }
 
 func defaultMLWHInfoServerURL() string {
@@ -794,14 +858,24 @@ func infoDateRange(rng *mlwh.DateRange) string {
 }
 
 func writeStudyProductsBlock(out io.Writer, report infoReport, style infoStyle) {
-	if report.StudyManifest == nil || len(report.StudyManifest.Rows) == 0 {
+	if len(report.Products) == 0 {
 		return
 	}
 
-	_, _ = fmt.Fprintf(out, "\n  %s\n", style.section(infoListHeading("Products", len(report.StudyManifest.Rows), 0)))
-	for _, row := range report.StudyManifest.Rows {
-		writeManifestRow(out, row, false)
+	_, _ = fmt.Fprintf(out, "\n  %s\n", style.section(infoListHeading("Products", len(report.Products), report.productsTotal)))
+	for _, row := range report.Products {
+		writeInfoProductRow(out, row)
 	}
+}
+
+func writeInfoProductRow(out io.Writer, row infoProductRow) {
+	_, _ = fmt.Fprintf(out, "  name=%s supplier_name=%s accession_number=%s sanger_sample_id=%s id_run=%d lane=%d tag_index=%d",
+		row.Name, row.SupplierName, row.AccessionNumber, row.SangerSampleID, row.IDRun, row.Lane, row.TagIndex)
+	if strings.TrimSpace(row.ManualQC) != "" {
+		_, _ = fmt.Fprintf(out, " manual_qc=%s", row.ManualQC)
+	}
+
+	_, _ = fmt.Fprintln(out)
 }
 
 // writeStudyListColumns lists the study's libraries, runs and samples, each with
@@ -1354,10 +1428,11 @@ func populateStudyFeatures(ctx context.Context, client mlwhInfoClient, report *i
 		report.Warnings = append(report.Warnings, fmt.Sprintf("status breakdown: %v", err))
 	}
 
-	if manifest, err := client.StudyManifest(ctx, studyLimsID, "", false, infoMaxRelated, 0); err == nil {
-		report.StudyManifest = &manifest
+	if products, err := client.Export(ctx, mlwh.ExportRelationship{Children: "products", ParentKind: "study"}, studyLimsID, infoProductsExportOptions()); err == nil {
+		report.Products = infoProductRows(products)
+		report.productsTotal = products.Total
 	} else if !errors.Is(err, mlwh.ErrNotFound) && !errors.Is(err, mlwh.ErrCacheNeverSynced) {
-		report.Warnings = append(report.Warnings, fmt.Sprintf("study manifest: %v", err))
+		report.Warnings = append(report.Warnings, fmt.Sprintf("products export: %v", err))
 	}
 
 	report.SamplesWithDataCount = studySamplesWithDataCount(ctx, client, report, studyLimsID, since)
@@ -1432,6 +1507,17 @@ func populateRunFeatures(ctx context.Context, client mlwhInfoClient, report *inf
 	}
 }
 
+type infoProductRow struct {
+	Name            string `json:"name"`
+	SupplierName    string `json:"supplier_name"`
+	AccessionNumber string `json:"accession_number"`
+	SangerSampleID  string `json:"sanger_sample_id"`
+	IDRun           int    `json:"id_run"`
+	Lane            int    `json:"lane"`
+	TagIndex        int    `json:"tag_index"`
+	ManualQC        string `json:"manual_qc"`
+}
+
 // infoReport is the JSON-friendly shape of `wa mlwh info` results.
 type infoReport struct {
 	Identifier string           `json:"identifier"`
@@ -1449,7 +1535,7 @@ type infoReport struct {
 	IRODSPaths []mlwh.IRODSPath `json:"irods_paths,omitempty"`
 
 	StudyOverview           *mlwh.StudyOverview       `json:"study_overview,omitempty"`
-	StudyManifest           *mlwh.StudyManifest       `json:"study_manifest,omitempty"`
+	Products                []infoProductRow          `json:"products,omitempty"`
 	StatusBreakdown         *mlwh.StatusBreakdown     `json:"status_breakdown,omitempty"`
 	SamplesWithDataCount    *infoSamplesWithDataCount `json:"samples_with_data_count,omitempty"`
 	SamplesWithoutDataCount *infoCount                `json:"samples_without_data_count,omitempty"`
@@ -1459,6 +1545,8 @@ type infoReport struct {
 	RunIRODSPaths           []mlwh.IRODSPath          `json:"run_irods_paths,omitempty"`
 
 	Warnings []string `json:"warnings,omitempty"`
+
+	productsTotal int
 }
 
 // infoSamplesWithDataCount carries a study's all-time samples-with-data count
