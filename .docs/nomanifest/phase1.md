@@ -52,8 +52,8 @@ objectless rows; alias resolution to canonical names; unknown-column
 `ErrUnsupportedIdentifier` with "unknown export column" and "valid
 columns:"; qc roll-up pass/fail/pending). Reuse `seedManifestS1Scenario`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.2: A2 - Product-safe extras
 
@@ -67,8 +67,8 @@ A2.1 (`id_study_lims` cell is the study id and `study_accession_number`
 equals the resolved study's accession number on every row). Reuse
 `seedManifestS1Scenario`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.3: B1 - irods_path attaches per product; file_type is attachment-only
 
@@ -91,8 +91,8 @@ acceptance tests B1.1-B1.3 (97 rows with one attached path under
 attaches nothing and `Total` stays 97). Reuse
 `seedManifestStudy7568MergedCRAMScenario`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.4: B2 - irods_unmatched / reason are merged-multilane only
 
@@ -111,8 +111,8 @@ source of truth). Covers all 4 acceptance tests B2.1-B2.4 (96 unmatched
 flags nothing with `Total` 97; no envelope gap field). Reuse
 `seedManifestS1Scenario` and `seedManifestStudy7568MergedCRAMScenario`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.5: E1 - Products signal unknown, never-synced, synced-empty studies
 
@@ -132,8 +132,8 @@ only; product-metrics never synced -> joined never-synced sentinel;
 cache-never-synced before attaching, matching `sample-crams`). Reuse
 `seedManifestS1Scenario`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.6: J1 - irods and sample-crams behaviour is preserved (regression)
 
@@ -148,5 +148,5 @@ irods tests pass; existing sample-crams tests pass; requesting
 `irods_unmatched` or `reason` on `irods`/`sample-crams` returns an
 "unknown export column" `ErrUnsupportedIdentifier`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

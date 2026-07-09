@@ -27,9 +27,7 @@ package mlwh
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"strings"
 )
 
 const manifestUnmatchedReasonMergedMultilane = "merged_multilane"
@@ -116,18 +114,18 @@ const (
 	// optional file-type restriction (manifestListIRODSFileTypeClause) slots into
 	// the derived table's WHERE before manifestListIRODSJoinSuffix closes it.
 	manifestListIRODSJoinPrefix = ` LEFT JOIN (` +
-		`SELECT id_iseq_product, irods_collection, irods_file_name FROM (` +
-		`SELECT id_iseq_product, irods_collection, irods_file_name,` +
+		`SELECT id_iseq_product, id_study_lims, irods_collection, irods_file_name FROM (` +
+		`SELECT id_iseq_product, id_study_lims, irods_collection, irods_file_name,` +
 		` ROW_NUMBER() OVER (PARTITION BY id_iseq_product` +
 		` ORDER BY irods_collection, irods_file_name) AS rn` +
 		` FROM seq_product_irods_locations_mirror WHERE id_study_lims = ?`
 
 	// manifestListIRODSJoinSuffix closes the derived table (keeping only the
 	// top-ranked row per product, rn = 1) and joins it to the product-metrics rows
-	// on the shared id_iseq_product. It follows manifestListIRODSJoinPrefix and the
-	// optional file-type clause.
+	// on the shared id_iseq_product and id_study_lims. It follows
+	// manifestListIRODSJoinPrefix and the optional file-type clause.
 	manifestListIRODSJoinSuffix = `) ranked WHERE rn = 1) spi` +
-		` ON spi.id_iseq_product = ipm.id_iseq_product`
+		` ON spi.id_iseq_product = ipm.id_iseq_product AND spi.id_study_lims = ipm.id_study_lims`
 
 	// manifestListMergedCRAMJoin marks samples that have a study-scoped merged
 	// CRAM object. The manifest still joins iRODS paths by id_iseq_product; this
@@ -242,53 +240,24 @@ func manifestIRODSJoin(studyLimsID, normalised string) (string, []any, bool) {
 // collection or file name (a product with no matching iRODS object) leaves
 // irods_path empty.
 func scanManifestRow(scan func(dest ...any) error, withIRODS bool) (ManifestRow, error) {
-	var (
-		row             ManifestRow
-		name            sql.NullString
-		supplierName    sql.NullString
-		accessionNumber sql.NullString
-		sangerSampleID  sql.NullString
-		productCount    int
-		pendingQC       sql.NullInt64
-		minQC           sql.NullInt64
-		collection      sql.NullString
-		fileName        sql.NullString
-		unmatched       int
-	)
-
-	dest := []any{
-		&row.IDRun,
-		&row.Position,
-		&row.TagIndex,
-		&name,
-		&supplierName,
-		&accessionNumber,
-		&sangerSampleID,
-		&productCount,
-		&pendingQC,
-		&minQC,
-	}
-	if withIRODS {
-		dest = append(dest, &collection, &fileName, &unmatched)
-	}
-	if err := scan(dest...); err != nil {
+	product, err := scanExportProductRow(scan, withIRODS)
+	if err != nil {
 		return ManifestRow{}, err
 	}
 
-	row.Name = nullStringValue(name)
-	row.SupplierName = nullStringValue(supplierName)
-	row.AccessionNumber = nullStringValue(accessionNumber)
-	row.SangerSampleID = nullStringValue(sangerSampleID)
-	row.ManualQC = qcRollupString(productCount, pendingQC, minQC)
-	if withIRODS && collection.Valid && fileName.Valid {
-		row.IRODSPath = strings.TrimRight(collection.String, "/") + "/" + fileName.String
-	}
-	if withIRODS && unmatched != 0 {
-		row.IRODSUnmatched = true
-		row.Reason = manifestUnmatchedReasonMergedMultilane
-	}
-
-	return row, nil
+	return ManifestRow{
+		Name:            product.Name,
+		SupplierName:    product.SupplierName,
+		AccessionNumber: product.AccessionNumber,
+		SangerSampleID:  product.SangerSampleID,
+		IDRun:           product.IDRun,
+		Position:        product.Position,
+		TagIndex:        product.TagIndex,
+		ManualQC:        product.ManualQC,
+		IRODSPath:       product.IRODSPath,
+		IRODSUnmatched:  product.IRODSUnmatched,
+		Reason:          product.Reason,
+	}, nil
 }
 
 // StudyManifest returns one bounded, pageable manifest of a study's sequencing
