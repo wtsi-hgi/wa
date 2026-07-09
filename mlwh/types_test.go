@@ -123,33 +123,6 @@ func TestPageJSONCasingE1(t *testing.T) {
 	})
 }
 
-func TestPagedStudyManifestJSONCasingD1(t *testing.T) {
-	convey.Convey("D1.6: Given a populated PagedStudyManifest, when marshalled, then the JSON keys are study_manifest, total and next_offset", t, func() {
-		data, err := json.Marshal(PagedStudyManifest{
-			StudyManifest: StudyManifest{
-				IDStudyLims: "S1",
-				Rows:        []ManifestRow{{Name: "sample-a"}},
-			},
-			Total:      3,
-			NextOffset: 2,
-		})
-		convey.So(err, convey.ShouldBeNil)
-
-		var decoded map[string]json.RawMessage
-		convey.So(json.Unmarshal(data, &decoded), convey.ShouldBeNil)
-
-		convey.So(decoded, convey.ShouldContainKey, "study_manifest")
-		convey.So(decoded, convey.ShouldContainKey, "total")
-		convey.So(decoded, convey.ShouldContainKey, "next_offset")
-		convey.So(decoded, convey.ShouldNotContainKey, "StudyManifest")
-		convey.So(decoded, convey.ShouldNotContainKey, "Total")
-		convey.So(decoded, convey.ShouldNotContainKey, "NextOffset")
-
-		convey.So(string(decoded["total"]), convey.ShouldEqual, "3")
-		convey.So(string(decoded["next_offset"]), convey.ShouldEqual, "2")
-	})
-}
-
 func TestPagedStudyDetailJSONCasingD2(t *testing.T) {
 	convey.Convey("D2.7: Given a populated PagedStudyDetail, when marshalled, then the JSON keys are study_detail, total and next_offset", t, func() {
 		data, err := json.Marshal(PagedStudyDetail{

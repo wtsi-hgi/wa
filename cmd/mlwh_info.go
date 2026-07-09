@@ -536,14 +536,6 @@ func writeListField(out io.Writer, style infoStyle, label, value string, index, 
 	_, _ = fmt.Fprintf(out, "  %s\n", infoField(style, shown, value, labelWidth))
 }
 
-func writeKV(out io.Writer, key, value string) {
-	if strings.TrimSpace(value) == "" {
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "%s: %s\n", key, value)
-}
-
 func writeCacheSyncedLine(out io.Writer, style infoStyle, synced string) {
 	date := infoCompactDate(synced)
 	if date == "" {

@@ -431,28 +431,6 @@ var Registry = []Endpoint{
 		QueryParams: fetchAllPaginationWithFileTypeParams("run-scoped iRODS data objects added to iRODS"),
 	},
 	{
-		Method:      "StudyManifest",
-		Verb:        registryVerbGet,
-		Path:        "/study/:id/manifest",
-		PathParams:  []string{"id"},
-		Query:       []string{"with_irods", "file_type"},
-		Paginated:   true,
-		NewResult:   newResult[StudyManifest],
-		Summary:     "Get a study's product manifest",
-		Description: "Returns one bounded, pageable manifest of the given study's sequencing products, so a study's samples-and-data table is one server-side join rather than N per-sample calls. The row grain is ONE row per sequencing product: a distinct (id_run, position, tag_index) from iseq_product_metrics_mirror scoped by the product-metrics id_study_lims, joined to its sample's identity in sample_mirror, so each row carries name, supplier_name, accession_number, sanger_sample_id, id_run, lane (= position), tag_index and manual_qc. manual_qc is the per-product qc.go roll-up string (pass|fail|pending; fail>pending>pass). Rows are ordered by (id_run, position, tag_index, name) for determinism. The study-level metadata (id_study_lims, name, accession_number, faculty_sponsor, data_access_group) is carried ONCE in the envelope (read from study_mirror), NOT repeated per row. Set with_irods=true to also carry irods_path on each row: the product's iRODS data object via a set-at-once LEFT JOIN to the iRODS locations mirror on the shared id_iseq_product (and id_study_lims) with GROUP BY product, so the row count stays product-grained (3 products give 3 rows) however many iRODS objects a product has, and a product with no matching iRODS object has irods_path empty. A common cause of empty irods_path for CRAM manifests is a merged multi-lane CRAM: the product rows stay empty rather than copying one composite path onto each single-lane product, each known gap has irods_unmatched=true with reason=merged_multilane, and products_without_irods counts those rows over the full unpaginated manifest for the requested with_irods/file_type scope, not just the returned page; use sample-crams or export irods for the merged-aware path view. Set file_type to restrict that joined object to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix leaves irods_path empty (not an error). with_irods WITHOUT a file_type returns any one object for the product (it does NOT default to cram). An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. Defaults to returning all products; use limit/offset to page, and it sets the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /study/:id/manifest/count and the two cannot drift; the count is product-grained, unaffected by with_irods / file_type). The never-synced / unknown-study / synced-empty cascade matches /study/:id/samples: an unknown study yields not_found, a never-synced cache yields not_found together with a cache-never-synced signal, and a synced study with no products yields an envelope with the study metadata, an empty rows and a populated cache_synced_at. cache_synced_at is the oldest last_run across the feeding tables (study, sample, the Illumina product-metrics mirror and the iRODS locations mirror), distinct from any data timestamp; every value is read from the cache mirrors, so the manifest is complete only up to that sync (see /freshness).",
-		QueryParams: manifestQueryParams(),
-	},
-	{
-		Method:      "CountStudyManifest",
-		Verb:        registryVerbGet,
-		Path:        "/study/:id/manifest/count",
-		PathParams:  []string{"id"},
-		Query:       []string{},
-		NewResult:   newResult[Count],
-		Summary:     "Count a study's product manifest rows",
-		Description: "Returns the number of distinct sequencing products in the given study, the count counterpart of /study/:id/manifest used to size the manifest before transfer (count == the length of that list's rows when all are fetched, so X-Total-Count on /study/:id/manifest equals this count and the two cannot drift). It counts the DISTINCT (id_run, position, tag_index) products in iseq_product_metrics_mirror scoped by the product-metrics id_study_lims -- exactly the manifest's row grain (one row per product) -- via COUNT(*) over that same SELECT DISTINCT with no LIMIT. The count is product-grained, so it is unaffected by the manifest's with_irods / file_type options (which this endpoint does not take): a product with no matching iRODS object is still one row, so adding with_irods or a file_type never changes this figure. The never-synced / unknown-study / synced-empty cascade matches /study/:id/samples/count: an unknown study yields not_found, a never-synced cache yields not_found together with a cache-never-synced signal, and a synced study with no products yields 0 (not an error). The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).",
-	},
-	{
 		Method:      "StudiesForSample",
 		Verb:        registryVerbGet,
 		Path:        "/sample/:id/studies",
@@ -1178,23 +1156,6 @@ func irodsCountQueryParams(scope string) []QueryParam {
 	params = append(params, addedWindowQueryParams(scope)...)
 
 	return params
-}
-
-// manifestQueryParams are the QueryParams for the study manifest list endpoint:
-// the fetch-all limit/offset pagination controls plus the optional with_irods
-// boolean (which adds the per-product iRODS-path column) and the optional
-// file_type filter (which, only meaningful with with_irods, narrows that column
-// to a filename suffix). Both non-pagination params are also listed in the
-// endpoint's Query so the structured params and the Query list agree.
-func manifestQueryParams() []QueryParam {
-	params := append(fetchAllPaginationParams(), QueryParam{
-		Name:        "with_irods",
-		Type:        "boolean",
-		Required:    false,
-		Description: "when true, adds irods_path to each product row via a set-at-once LEFT JOIN to the iRODS locations mirror on the shared id_iseq_product (GROUP BY product, so the row count stays product-grained); a product with no matching iRODS object has irods_path empty, with merged multi-lane CRAM gaps flagged by irods_unmatched/reason and counted in products_without_irods over the full unpaginated manifest scope; with_irods without a file_type returns any one object for the product (it does NOT default to cram); defaults to false",
-	})
-
-	return append(params, fileTypeQueryParam())
 }
 
 func runListingQueryParams() []QueryParam {

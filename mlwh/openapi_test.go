@@ -196,6 +196,16 @@ func TestOpenAPIDocumentCoversRegistryPathsC2(t *testing.T) {
 	})
 }
 
+func TestOpenAPIDocumentOmitsManifestPathsG1(t *testing.T) {
+	convey.Convey("G1.4: Given the generated OpenAPI document, when paths are inspected, then manifest paths are absent", t, func() {
+		doc := decodedOpenAPIDocForTest(t)
+		paths := openAPIPathsForTest(t, doc)
+
+		convey.So(paths, convey.ShouldNotContainKey, "/study/{id}/manifest")
+		convey.So(paths, convey.ShouldNotContainKey, "/study/{id}/manifest/count")
+	})
+}
+
 func TestOpenAPIDocumentCoversQueryerC2(t *testing.T) {
 	// C2 acceptance test 3 plus the anti-drift coverage requirement: every
 	// Queryer method name maps to exactly one documented path (1:1), and every

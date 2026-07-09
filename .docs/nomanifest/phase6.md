@@ -65,5 +65,5 @@ and the shared `cursor` param and regenerates `api-reference.md` again.
 Regenerating in both phases is expected: each registry-mutating phase
 regenerates its own fixture so every phase boundary stays GREEN.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

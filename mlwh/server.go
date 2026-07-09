@@ -947,26 +947,6 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 				return countValue(queryer.CountIRODSPathsForRun(ctx, id, opts.FileType))
 			})
 		}
-	case "StudyManifest":
-		return func(c *gin.Context) {
-			id, pagination, ok := mlwhIDAndPagination(c)
-			if !ok {
-				return
-			}
-			fileType, ok := mlwhFileTypeFromQuery(c)
-			if !ok {
-				return
-			}
-			withIRODS, ok := mlwhQueryBool(c, "with_irods")
-			if !ok {
-				return
-			}
-			ctx := c.Request.Context()
-			result, err := queryer.StudyManifest(ctx, id, fileType, withIRODS, pagination.limit, pagination.offset)
-			writeMLWHStudyManifest(c, result, err, pagination.offset, func() (int, error) {
-				return studyManifestTotal(ctx, queryer, id)
-			})
-		}
 	case "StudiesForSample":
 		return func(c *gin.Context) {
 			id, ok := mlwhPathParam(c, "id")
@@ -1435,15 +1415,6 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			result, err := queryer.CountRunListing(c.Request.Context(), opts)
 			writeMLWHResult(c, result, err)
 		}
-	case "CountStudyManifest":
-		return func(c *gin.Context) {
-			id, ok := mlwhPathParam(c, "id")
-			if !ok {
-				return
-			}
-			result, err := queryer.CountStudyManifest(c.Request.Context(), id)
-			writeMLWHResult(c, result, err)
-		}
 	case "CountLibrariesForStudy":
 		return func(c *gin.Context) {
 			id, ok := mlwhPathParam(c, "id")
@@ -1740,37 +1711,6 @@ func mlwhFileTypeFromQuery(c *gin.Context) (string, bool) {
 	}
 
 	return normalised, true
-}
-
-// writeMLWHStudyManifest writes the study manifest envelope: on error it writes
-// the error envelope and sets no headers, and on success it sets the
-// X-Total-Count / X-Next-Offset list-sizing headers (sizing the paginated Rows
-// collection by the study's product count, the C2 count grain) before writing the
-// envelope body. The body stays the full StudyManifest object (not a bare array),
-// so unlike the bare-slice lists it cannot reuse writeMLWHPaginatedResult; the
-// header path is the same writeListSizingHeaders, so the manifest's sizing matches
-// every other paginated endpoint. A total error leaves the headers unset rather
-// than reporting a wrong total.
-func writeMLWHStudyManifest(c *gin.Context, manifest StudyManifest, err error, offset int, total func() (int, error)) {
-	if err != nil {
-		writeMLWHError(c, err)
-
-		return
-	}
-
-	if totalRows, totalErr := total(); totalErr == nil {
-		writeListSizingHeaders(c, totalRows, offset, len(manifest.Rows))
-	}
-
-	c.JSON(http.StatusOK, manifest)
-}
-
-// studyManifestTotal resolves the total product count sizing the manifest's Rows
-// collection by reusing Queryer.CountStudyManifest, the same public method backing
-// /study/:id/manifest/count, so X-Total-Count equals the count endpoint for local,
-// remote, and external Queryer implementations.
-func studyManifestTotal(ctx context.Context, queryer Queryer, studyLimsID string) (int, error) {
-	return countValue(queryer.CountStudyManifest(ctx, studyLimsID))
 }
 
 func mlwhExportRequest(c *gin.Context) (ExportRelationship, string, ExportOptions, bool) {

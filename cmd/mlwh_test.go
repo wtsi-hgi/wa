@@ -136,6 +136,16 @@ func TestMLWHHelpExposesKCommandsWithoutIrods(t *testing.T) {
 	})
 }
 
+func TestMLWHManifestCommandRemovedG1(t *testing.T) {
+	convey.Convey("G1.1: Given the built CLI, when wa mlwh manifest runs, then Cobra reports an unknown command", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "manifest", "7568"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "unknown command")
+		convey.So(output, convey.ShouldContainSubstring, "manifest")
+	})
+}
+
 type stubMLWHSyncClient struct {
 	reports []mlwh.SyncReport
 	err     error
@@ -888,7 +898,6 @@ func TestMLWHKCommandsDegradeGracefullyOnNeverSyncedCache(t *testing.T) {
 		},
 		{name: "studies by programme", args: []string{"mlwh", "studies", "--programme", "Human Genetics"}},
 		{name: "programmes", args: []string{"mlwh", "programmes"}},
-		{name: "manifest products", args: []string{"mlwh", "manifest", "5901", "--with-irods", "--file-type", "cram"}},
 		{name: "info study", args: []string{"mlwh", "info", "5901", "--type", "study"}},
 	}
 

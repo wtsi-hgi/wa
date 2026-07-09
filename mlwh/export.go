@@ -1308,7 +1308,7 @@ func (c *Client) exportProducts(ctx context.Context, plan exportPlan, parent exp
 		return ExportResult{}, err
 	}
 	if total == 0 && len(rows) == 0 {
-		if _, err = c.studyManifestForEmptyStudy(ctx, parent.Canonical, plan.needsIRODS); err != nil {
+		if err = c.requireStudyProductExportEmpty(ctx, parent.Canonical, plan.needsIRODS); err != nil {
 			return ExportResult{}, err
 		}
 
@@ -1659,7 +1659,7 @@ func (c *Client) streamExportProductsRows(
 		}
 		if len(page) == 0 {
 			if count == 0 {
-				if _, err = c.studyManifestForEmptyStudy(ctx, parent.Canonical, plan.needsIRODS); err != nil {
+				if err = c.requireStudyProductExportEmpty(ctx, parent.Canonical, plan.needsIRODS); err != nil {
 					return count, err
 				}
 			}
@@ -2287,6 +2287,10 @@ type exportProductQueryInput struct {
 }
 
 func (c *Client) exportProductTotal(ctx context.Context, input exportProductQueryInput) (int, error) {
+	if input.filters == (exportFilters{}) && !input.deliverablesOnly && len(input.organismCommonNames) == 0 {
+		return c.countStudyManifestProducts(ctx, input.studyID)
+	}
+
 	query, args := exportProductCountQuery(input)
 
 	return c.queryCount(ctx, query, "count export products", args...)

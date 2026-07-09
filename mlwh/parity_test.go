@@ -171,9 +171,6 @@ func parityQueryCases() []parityQueryCase {
 		{name: "IRODSPathsForRun", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.IRODSPathsForRun(ctx, parityRunID, "", 100, 0)
 		}},
-		{name: "StudyManifest", call: func(ctx context.Context, q Queryer) (any, error) {
-			return q.StudyManifest(ctx, parityStudyID, "", false, 100, 0)
-		}},
 		{name: "StudiesForSample", call: func(ctx context.Context, q Queryer) (any, error) { return q.StudiesForSample(ctx, paritySampleName) }},
 		{name: "CountStudiesForSample", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountStudiesForSample(ctx, paritySampleName)
@@ -304,9 +301,6 @@ func parityQueryCases() []parityQueryCase {
 		}},
 		{name: "CountRunListing", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountRunListing(ctx, RunAggregationOptions{Platforms: []string{platformIllumina}})
-		}},
-		{name: "CountStudyManifest", call: func(ctx context.Context, q Queryer) (any, error) {
-			return q.CountStudyManifest(ctx, parityStudyID)
 		}},
 		{name: "CountLibrariesForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountLibrariesForStudy(ctx, parityStudyID)
