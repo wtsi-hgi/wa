@@ -1078,6 +1078,15 @@ func studyUsersRoleQueryParam() QueryParam {
 	}
 }
 
+func exportFileTypeQueryParam() QueryParam {
+	return QueryParam{
+		Name:        "file_type",
+		Type:        "string",
+		Required:    false,
+		Description: "when set, for file exports, restricts exported file rows by filename suffix on data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); a valid but unmatched suffix yields no file export rows; for products, only restricts the attached `irods_path` value and does not filter product rows or change `Total`; it is a filename-suffix match, not a real file-type column; an empty/whitespace value or one containing '%', '_' or '/' is rejected with a 400 bad_request; omit to return all file types or attach any file type",
+	}
+}
+
 // searchPaginationWithRoleParams are the QueryParams for the /studies/user list
 // endpoint: the search-style limit/offset pagination controls (default 100,
 // maximum 1000) plus the optional role override filter. The list shares its single
@@ -1190,7 +1199,7 @@ func exportQueryParams() []QueryParam {
 	params := fetchAllPaginationParams()
 	params = append(params,
 		QueryParam{Name: "columns", Type: "string", Description: exportColumnsQueryParamDescription()},
-		fileTypeQueryParam(),
+		exportFileTypeQueryParam(),
 		QueryParam{Name: "deliverables_only", Type: "boolean", Description: "when true, restricts supported file exports to deliverable rows; when false, includes controls/sub-products; omit to use the relationship default, which is true for CRAM irods/files/sample-crams exports"},
 		QueryParam{Name: "role", Type: "string", Description: "optional comma-separated study_users role filter for study_users-backed exports; users-of-study omits to return all roles present, studies-of-user omits to use owner, manager and data_access_contact"},
 		QueryParam{Name: "qc", Type: "string", Description: "optional QC filter for product-backed exports: pass, fail, or pending"},

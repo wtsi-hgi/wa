@@ -184,6 +184,13 @@ func TestEndpointReferenceIncludesParamsDescriptionAndResponseG1(t *testing.T) {
 			convey.So(section, convey.ShouldContainSubstring, "cursor for iRODS/products keyset pagination")
 			convey.So(section, convey.ShouldContainSubstring, "previous iRODS or products export page")
 		})
+
+		convey.Convey("the export endpoint documents products file_type as attachment-only", func() {
+			section := registryEntrySectionForTest(t, reference, "/export/:children/:parent_kind/:parent_id")
+			convey.So(section, convey.ShouldContainSubstring, "for products, only restricts the attached `irods_path` value and does not filter product rows or change `Total`")
+			convey.So(section, convey.ShouldContainSubstring, "for file exports, restricts exported file rows by filename suffix")
+			convey.So(section, convey.ShouldNotContainSubstring, "matching /count honours the same filter")
+		})
 	})
 }
 
