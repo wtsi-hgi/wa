@@ -222,6 +222,40 @@ func TestEndpointReferenceEscapesMarkdownControlCharactersG1(t *testing.T) {
 	})
 }
 
+func TestEndpointReferenceLatestDataUsesDataObjectVocabulary(t *testing.T) {
+	// Latest-data endpoints expose raw iRODS data-object membership. Guard their
+	// public Registry descriptions and rendered reference sections against stale
+	// manifest-surface wording while leaving tracking milestone names elsewhere
+	// alone.
+	convey.Convey("Given latest-data public docs, when inspected, then they use data-object vocabulary", t, func() {
+		reference := EndpointReference()
+		staleTerms := []string{"study manifest/product grain", "manifest/product count", "data manifest"}
+
+		for _, method := range []string{"LatestDataForStudy", "CountLatestDataForStudy"} {
+			entry, ok := registryEntryByMethod(method)
+			convey.So(ok, convey.ShouldBeTrue)
+
+			for _, stale := range staleTerms {
+				convey.So(entry.Description, convey.ShouldNotContainSubstring, stale)
+			}
+
+			convey.So(entry.Description, convey.ShouldContainSubstring, "raw")
+			convey.So(entry.Description, convey.ShouldContainSubstring, "data-object")
+			convey.So(entry.Description, convey.ShouldContainSubstring, "not a product-export")
+		}
+
+		for _, path := range []string{"/study/:id/latest-data", "/study/:id/latest-data/count"} {
+			section := registryEntrySectionForTest(t, reference, path)
+			for _, stale := range staleTerms {
+				convey.So(section, convey.ShouldNotContainSubstring, stale)
+			}
+
+			convey.So(section, convey.ShouldContainSubstring, "data-object")
+			convey.So(section, convey.ShouldContainSubstring, "not a product-export")
+		}
+	})
+}
+
 // registryEntrySectionForTest returns the slice of the reference between the
 // heading that introduces the given path and the next entry heading, so an
 // assertion about one entry cannot accidentally match text from another.

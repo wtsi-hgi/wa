@@ -367,7 +367,7 @@ var Registry = []Endpoint{
 		Paginated:   true,
 		NewResult:   newSliceResult[RecentDataRow],
 		Summary:     "List newest data objects for a study",
-		Description: "Returns a bounded, pageable newest-first page of raw iRODS data-object rows for the given study. Rows are ordered by iRODS created DESC (created is data added, never last_changed), with ties by (id_run, id_product); this is a page, NOT an unbounded MAX(created) tie set. Membership is a raw seq_product_irods_locations_mirror scan scoped by (id_study_lims, created), not the study manifest/product grain, so the first row's created timestamp reconciles with StudyOverview.newest_data_added. Each row carries the full irods_path, study id/name, sample name and supplier_name, id_run, lane, tag_index, platform, and merged flag. Set file_type to restrict rows to data objects whose iRODS file name ends in `.<file_type>` using the filename-suffix rule, matched case-insensitively with one leading dot stripped. Defaults to 10 rows, maximum 1000; use limit/offset to page. The rows are read from cache mirrors; freshness is reported by cache_synced_at on related aggregates and by /freshness.",
+		Description: "Returns a bounded, pageable newest-first page of raw iRODS data-object rows for the given study. Rows are ordered by iRODS created DESC (created is data added, never last_changed), with ties by (id_run, id_product); this is a page, NOT an unbounded MAX(created) tie set. Membership is the raw seq_product_irods_locations_mirror data-object row set scoped by (id_study_lims, created), not a product-export row set, so the first row's created timestamp reconciles with StudyOverview.newest_data_added. Each row carries the full irods_path, study id/name, sample name and supplier_name, id_run, lane, tag_index, platform, and merged flag. Set file_type to restrict rows to data objects whose iRODS file name ends in `.<file_type>` using the filename-suffix rule, matched case-insensitively with one leading dot stripped. Defaults to 10 rows, maximum 1000; use limit/offset to page. The rows are read from cache mirrors; freshness is reported by cache_synced_at on related aggregates and by /freshness.",
 		QueryParams: latestDataPaginationParams(),
 	},
 	{
@@ -820,7 +820,7 @@ var Registry = []Endpoint{
 		Query:       []string{"file_type"},
 		NewResult:   newResult[Count],
 		Summary:     "Count newest data rows for a study",
-		Description: "Returns the number of raw seq_product_irods_locations_mirror rows for the given study, optionally restricted by file_type using the filename-suffix rule, so X-Total-Count on /study/:id/latest-data sizes the same raw iRODS-location membership used by the list. This is a raw data-object count over iRODS created (created is data added, never last_changed), not a manifest/product count. The count is read from cache mirrors; freshness is reported by cache_synced_at on related aggregates and by /freshness.",
+		Description: "Returns the number of raw seq_product_irods_locations_mirror rows for the given study, optionally restricted by file_type using the filename-suffix rule, so X-Total-Count on /study/:id/latest-data sizes the same raw iRODS-location membership used by the list. This is a raw data-object count over iRODS created (created is data added, never last_changed), not a product-export count. The count is read from cache mirrors; freshness is reported by cache_synced_at on related aggregates and by /freshness.",
 		QueryParams: []QueryParam{fileTypeQueryParam()},
 	},
 	{
