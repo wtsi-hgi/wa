@@ -122,7 +122,7 @@ in the batch together in a single review pass).
   LIMIT/OFFSET (HARD REQ 2); the CLI always states bounded-page vs
   complete-set.
 - The `runs` export relationship is strictly parent-scoped (`runs of
-  study | sample`); the parentless global all-runs listing is F2 (Phase
+study | sample`); the parentless global all-runs listing is F2 (Phase
   6), NOT an `export runs` form.
 - Registry entries and full Description text are consolidated in Phase 10
   (J); D1c wires the count handlers/remote methods here.

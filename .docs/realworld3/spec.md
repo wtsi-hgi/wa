@@ -29,29 +29,29 @@ against the code (see "Code-authority corrections"). Bump `APIVersion` 1.7.0 ->
 ### Packages and files
 
 - **`mlwh/`** - all query logic, types, schema, sync, registry, server, remote.
-  - New: `mlwh/export.go` (+`_test.go`) - the generic export projection layer
-    (relationship registry, column vocabularies, TSV/CSV/JSON rendering, keyset
-    paging over the typed backing methods).
-  - New: `mlwh/runs_agg.go` (+`_test.go`) - D5/D7 monthly grouped counts, global
-    run listing, grouped sequencing aggregate.
-  - Changed: `hierarchy.go` (iRODS list SQL: `created`, `merged`, per-product
-    `qc`/deliverable, recency order/window, run-scoped composite visibility,
-    export columns); `availability.go` (latest-data endpoints, overview
-    `programme`, overview/status-breakdown perf); `progress.go` +
-    `types.go`/`registry.go` (StatusBreakdown `per_platform` `[]`); `manifest.go`
-    (`products_without_irods` counter, per-row `irods_unmatched`); `search.go`
-    (literal-prefix default, `--words` opt-in, organism + shared filter family);
-    `people.go` (study->users inverse, programme routes); `count.go` (new
-    `/count` siblings); `sync.go`/`sync_platform_coverage.go` (new source
-    selection, composite product rows, denormalised export columns, ONT run
-    identity, run-date normalisation, organism vocabulary); `cache.go`
-    (`CacheSchemaVersion=13`, sparse cold-load read-index set); `openapi.go`
-    (`APIVersion="1.8.0"`); `registry.go`, `server.go`, `remote.go`, `docs.go`.
-  - Schema: `mlwh/cache_schema/{sqlite,mysql}/*.sql` (new
-    `iseq_flowcell_mirror.sql`, `common_name_word_mirror.sql`; changed
-    `iseq_product_metrics_mirror.sql`, `seq_product_irods_locations_mirror.sql`,
-    `oseq_flowcell_mirror.sql`, `iseq_run_status_mirror.sql`, `study_mirror.sql`),
-    kept in dialect parity.
+    - New: `mlwh/export.go` (+`_test.go`) - the generic export projection layer
+      (relationship registry, column vocabularies, TSV/CSV/JSON rendering, keyset
+      paging over the typed backing methods).
+    - New: `mlwh/runs_agg.go` (+`_test.go`) - D5/D7 monthly grouped counts, global
+      run listing, grouped sequencing aggregate.
+    - Changed: `hierarchy.go` (iRODS list SQL: `created`, `merged`, per-product
+      `qc`/deliverable, recency order/window, run-scoped composite visibility,
+      export columns); `availability.go` (latest-data endpoints, overview
+      `programme`, overview/status-breakdown perf); `progress.go` +
+      `types.go`/`registry.go` (StatusBreakdown `per_platform` `[]`); `manifest.go`
+      (`products_without_irods` counter, per-row `irods_unmatched`); `search.go`
+      (literal-prefix default, `--words` opt-in, organism + shared filter family);
+      `people.go` (study->users inverse, programme routes); `count.go` (new
+      `/count` siblings); `sync.go`/`sync_platform_coverage.go` (new source
+      selection, composite product rows, denormalised export columns, ONT run
+      identity, run-date normalisation, organism vocabulary); `cache.go`
+      (`CacheSchemaVersion=13`, sparse cold-load read-index set); `openapi.go`
+      (`APIVersion="1.8.0"`); `registry.go`, `server.go`, `remote.go`, `docs.go`.
+    - Schema: `mlwh/cache_schema/{sqlite,mysql}/*.sql` (new
+      `iseq_flowcell_mirror.sql`, `common_name_word_mirror.sql`; changed
+      `iseq_product_metrics_mirror.sql`, `seq_product_irods_locations_mirror.sql`,
+      `oseq_flowcell_mirror.sql`, `iseq_run_status_mirror.sql`, `study_mirror.sql`),
+      kept in dialect parity.
 - **`cmd/`** - CLI. New: `cmd/mlwh_export.go` (+`_test.go`) replacing
   `cmd/mlwh_irods.go`; `cmd/mlwh_runs.go` (+`_test.go`); `cmd/mlwh_latest.go`
   (+`_test.go`). Changed: `cmd/mlwh.go` (wiring: drop `irods`, add `export`,
@@ -86,7 +86,7 @@ background and scope the work to reality:
    merged CRAMs.** `hierarchy.go` `irodsPathsForStudyCacheSQLPrefix` (scanned by
    `queryIRODSPathsWithSample`) selects `spi.id_sample_tmp` and
    `COALESCE(sample_mirror.name, '')` via `LEFT JOIN sample_mirror ON
-   sample_mirror.id_sample_tmp = spi.id_sample_tmp` - i.e. from the iRODS
+sample_mirror.id_sample_tmp = spi.id_sample_tmp` - i.e. from the iRODS
    mirror's own denormalised `id_sample_tmp`, NOT the product-metrics join. So a
    merged/composite CRAM in a STUDY listing ALREADY has the correct
    `id_sample_tmp` and a non-empty `name`. The ONLY mis-sourced field is
@@ -150,7 +150,7 @@ background and scope the work to reality:
   ~102,763 product x iRODS rows) = 3.04s via the HTTP endpoint (raw mirror join
   15.8s vs source-direct 1.7s); `/overview` and `/status-breakdown` ~3s. The
   denormalised iRODS aggregate (COUNT + MIN/MAX(created) on `(id_study_lims,
-  created)`) is already 0.085s - the slowness is the varchar-collated
+created)`) is already 0.085s - the slowness is the varchar-collated
   `id_iseq_product` join and the sample-membership/per-platform/qc arms.
 
 ### New / changed result types (additive to `mlwh/types.go`)
@@ -409,6 +409,7 @@ per row; at sync, resolve each iRODS row's product-metrics row by matching its
 `id_iseq_product` (= source `id_product`) against the platform-appropriate
 product mirror by that mirror's PK, and populate `qc`, `id_run`/`position`/
 `tag_index` and `is_deliverable` from it:
+
 - **Illumina (+ merged composite):** join `iseq_product_metrics_mirror`
   (`id_iseq_product`) for `qc`, `id_run`, `position`, `tag_index`; then
   `iseq_flowcell_mirror` (via `id_iseq_flowcell_tmp`) for `entity_type` ->
@@ -475,7 +476,7 @@ by tokenising the distinct `common_name` values (same tokeniser as
 **Acceptance tests:**
 
 1. Given `common_name` values `{"Mus Musculus", "Mus musculus castaneus", "Homo
-   sapiens"}`, when the vocabulary is built, then word `musculus` maps to both
+sapiens"}`, when the vocabulary is built, then word `musculus` maps to both
    `Mus Musculus` and `Mus musculus castaneus` (not `Homo sapiens`), and no row
    has word `usculus`.
 
@@ -743,7 +744,7 @@ scan.
 3. Given `--library-type <val> --organism musculus` combined, then results are
    the intersection; `EXPLAIN` shows indexed intersection (no full scan).
 4. Given the SAME family applied on the EXPORT surface - e.g. `export irods
-   study <id> --organism <val>` (a sample-joining relationship) - then only the
+study <id> --organism <val>` (a sample-joining relationship) - then only the
    rows whose sample matches the organism are returned (a strict subset of the
    unfiltered export, matching the sample set `--organism <val>` selects), and
    `EXPLAIN` shows the filter is index-served (no full scan) - locking that the
@@ -806,8 +807,9 @@ full scans of the 9M/7.3M mirrors.
 **Correctness:** `manual_qc` via `qc.go` (composite-aware, B1); `irods_path`
 verified against real paths (`.../lane6/plex45/51945_6#45.cram` and merged
 `.../lane1-2/plex1/49348_1-2#1.cram`); merged CRAMs included and attributed (D8)
+
 - study 7568 flagship cram export returns 732 attributed rows (no `name:""` /
-`id_sample_tmp:0`).
+  `id_sample_tmp:0`).
 
 **Package:** `mlwh/`
 **File:** `mlwh/export.go`
@@ -844,10 +846,10 @@ type ExportResult struct {
 **Acceptance tests:**
 
 1. Given study 7556 synced, when `Export({irods,study}, "7556", {Columns:
-   ["supplier_sample_name","study_accession_number","sanger_sample_id",
-   "manual_qc","irods_path"], FileType:"cram"})` runs (deliverables-only default
+["supplier_sample_name","study_accession_number","sanger_sample_id",
+"manual_qc","irods_path"], FileType:"cram"})` runs (deliverables-only default
    on), then columns are `[supplier_name, study_accession_number,
-   sanger_sample_id, manual_qc, irods_path]` (alias resolved), every
+sanger_sample_id, manual_qc, irods_path]` (alias resolved), every
    `irods_path` ends `.cram`, and the row count equals the deliverable cram count
    (~886; assert actual).
 2. Given an unknown column, then the error lists the valid vocabulary and no rows
@@ -938,11 +940,11 @@ product-metrics INNER JOIN).
    `order_by=created_desc` and a `[since, until)` window, then only rows in the
    window are returned, newest-first.
 4. Given `since`/`until` on any scope, then only rows with `since <= created <
-   until` are returned; `until` without `since` errors (existing
+until` are returned; `until` without `since` errors (existing
    `errUntilRequiresSince`).
 5. Given `EXPLAIN` on MySQL for the sample-scoped and the run-scoped
    `created_desc` paths, then each uses its recency index (`(id_sample_tmp,
-   created)` / `(id_run, created)`) - an index range scan, no full scan, no
+created)` / `(id_run, created)`) - an index range scan, no full scan, no
    filesort.
 
 ### E2: "latest data" endpoints (study + faculty-sponsor)
@@ -1045,7 +1047,7 @@ grouped counts instead).
   date/platform narrowing where useful; backs `export studies programme "X"`.
 - `GET /programmes` -> `[]Programme` (distinct programme + study counts) so a
   caller discovers the controlled vocabulary. CLI: `wa mlwh studies --programme
-  "Human Genetics"`, `wa mlwh programmes`.
+"Human Genetics"`, `wa mlwh programmes`.
 
 **Package:** `mlwh/`, `cmd/`
 **Files:** `availability.go`, `people.go`, `count.go`, `cmd/mlwh_studies.go`
@@ -1306,27 +1308,27 @@ All reachable from `wa mlwh` in local-cache and `--server` modes, graceful
 degradation exit 0:
 
 - **D1:** `wa mlwh export <children> <parent-kind> <parent-id> [--columns]
-  [--format tsv|csv|json] [--file-type cram] [--deliverables-only] [--qc]
-  [--library-type] [--organism] [--sort created-desc] [--since/--until]
-  [--limit/--offset|--all] [--server] [--json]` (replaces `wa mlwh irods`).
+[--format tsv|csv|json] [--file-type cram] [--deliverables-only] [--qc]
+[--library-type] [--organism] [--sort created-desc] [--since/--until]
+[--limit/--offset|--all] [--server] [--json]` (replaces `wa mlwh irods`).
 - **D2:** `wa mlwh export irods <scope> <id> --sort created-desc [--since/--until]`
   and `wa mlwh latest <study | --faculty-sponsor NAME> [--file-type cram]`.
 - **D3:** `wa mlwh search <term> [--words] [--library-type] [--organism] [--qc
-  pass|fail|pending] [--deliverables-only] [--type study|sample]` (term required;
+pass|fail|pending] [--deliverables-only] [--type study|sample]` (term required;
   default literal-prefix; exact single-identifier lookups stay `wa mlwh info`).
 - **D5:** `wa mlwh runs --monthly [--since/--until] [--platform ...]` (grouped
   counts); `wa mlwh runs [--platform] [--since/--until]` (the flat global
   all-runs listing, F2); and the parent-scoped `wa mlwh export runs <study|sample>
-  <id>` (the D1a relationship - NOT a parentless form).
+<id>` (the D1a relationship - NOT a parentless form).
 - **D7:** `wa mlwh studies --programme "Human Genetics"`; `wa mlwh programmes`;
   `wa mlwh runs --monthly --group-by programme --platform PacBio --since --until`;
   `programme` shown in `info <study>`/overview; `wa mlwh export users study 7568
-  --role owner,manager,follower`.
+--role owner,manager,follower`.
 - **D8:** `wa mlwh export sample-crams study 7568`; `products_without_irods`
   surfaced in `wa mlwh manifest`; merged CRAMs attributed in `wa mlwh export
-  irods study <id>`.
+irods study <id>`.
 - **D4:** `manual_qc` column/section wherever product rows render (`info
-  <study>`, `manifest`, `export`); `--deliverables-only` where iRODS/product rows
+<study>`, `manifest`, `export`); `--deliverables-only` where iRODS/product rows
   list.
 
 **Package:** `cmd/`

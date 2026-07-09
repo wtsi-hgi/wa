@@ -58,15 +58,16 @@ spec.md section: H2
 
 With A3 (composite product rows now mirrored carrying the run's `id_run`
 for a single-run multi-lane composite), make the run-scoped iRODS listing
+
 - which currently INNER-JOINs product-metrics on `id_iseq_product` and
-cannot see composites - see and attribute the composite, representing it
-with `merged=true`. Where the composite genuinely spans runs (no single
-run), it is surfaced via the study/sample listings and `sample-crams`,
-not fabricated onto a run. File: `hierarchy.go`. Covering the single
-acceptance test from H2 (`IRODSPathsForRun(49348)` returns the single-run
-multi-lane composite object, attributed and `merged=true`, alongside the
-single-lane objects - no longer invisible). Depends on 8.1 (shared
-`hierarchy.go`, the `merged` representation) and Phase 1 (A3).
+  cannot see composites - see and attribute the composite, representing it
+  with `merged=true`. Where the composite genuinely spans runs (no single
+  run), it is surfaced via the study/sample listings and `sample-crams`,
+  not fabricated onto a run. File: `hierarchy.go`. Covering the single
+  acceptance test from H2 (`IRODSPathsForRun(49348)` returns the single-run
+  multi-lane composite object, attributed and `merged=true`, alongside the
+  single-lane objects - no longer invisible). Depends on 8.1 (shared
+  `hierarchy.go`, the `merged` representation) and Phase 1 (A3).
 
 - [x] implemented
 - [x] reviewed

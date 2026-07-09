@@ -470,7 +470,7 @@ unchanged** (plain `LIKE '%term%'` scan on the ~8k-row `study_mirror`; measured
   prefix over `name`, `supplier_name`, `common_name`, and `donor_id`;
   `words=true` opts into matching the lowercased query as a **prefix against
   tokens**. The word mode pages via index-order — `WHERE token LIKE 'prefix%'
-  ORDER BY token, id_sample_tmp LIMIT ? OFFSET ?` — then fetches the sample rows
+ORDER BY token, id_sample_tmp LIMIT ? OFFSET ?` — then fetches the sample rows
   (small over-fetch - dedupe ids). This streams the page from the index with no global sort:
   measured **48-62ms at any cardinality** (`homo`/1.9M matches = 62ms). All
   sample rows are `id_lims='SQSCP'` (the sync invariant), so no scoping join is

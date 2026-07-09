@@ -65,8 +65,7 @@ results are ordered by id for stable pagination.
 - **Parity is exact set-equality across dialects** because both backends use the
   same literal-prefix and word-token semantics. Cross-dialect set-equality tests
   use ASCII fixtures.
-- **Short terms:** free-text term length < 3 returns HTTP 200 `[]` (and count
-  0) on both backends without touching the search index. Empty terms are
+- **Short terms:** free-text term length < 3 returns HTTP 200 `[]` (and count 0) on both backends without touching the search index. Empty terms are
   unreachable
   (`/search/{study,sample}/:term` 404s on an empty path segment).
 - **Pagination:** the search endpoints use the existing `?limit`/`?offset`
@@ -311,8 +310,8 @@ func (c *Client) SearchSamplesWithOptions(ctx context.Context, term string, opts
    returned because the default is whole-value prefix.
 3. Given a sample whose `common_name` is "Mus Musculus", when
    `SearchSamplesWithOptions(ctx, "musculus", SampleSearchOptions{Words:true},
-   ...)` runs, then the sample matches; when `SearchSamples(ctx, "usculus",
-   ...)` runs (a mid-word substring), then it does not match.
+...)` runs, then the sample matches; when `SearchSamples(ctx, "usculus",
+...)` runs (a mid-word substring), then it does not match.
 4. Given term `"ac"` (length 2), when `SearchSamples(ctx, "ac", 100, 0)` runs,
    then it returns `[]Sample{}` and issues no query.
 5. Given >3 matching samples, when `SearchSamples(ctx, "acme", 2, 1)` runs,

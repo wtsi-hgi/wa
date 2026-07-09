@@ -43,16 +43,17 @@ spec.md section: G1
 
 Add `Programme` to `StudyOverview` (additive) so a per-study pass groups
 by programme in one call; add `GET /studies/programme/:name` (+ `/count`)
+
 - exact, indexed (A7) "studies in programme X" (NOT the substring
-`search/study`), backing `export studies programme "X"`; add `GET
+  `search/study`), backing `export studies programme "X"`; add `GET
 /programmes` -> `[]Programme` (distinct programme + study counts). CLI:
-`wa mlwh studies --programme "Human Genetics"`, `wa mlwh programmes`.
-Files: `availability.go`, `people.go`, `count.go`, `cmd/mlwh_studies.go`.
-Covering all 3 acceptance tests from G1 (`StudyOverview.programme` ==
-`study_mirror.programme`; `/studies/programme/"Human Genetics"` returns
-exactly those studies agreeing with `/count`, index-served via EXPLAIN;
-`/programmes` lists distinct values with study counts). Depends on Phase
-1 (A7).
+  `wa mlwh studies --programme "Human Genetics"`, `wa mlwh programmes`.
+  Files: `availability.go`, `people.go`, `count.go`, `cmd/mlwh_studies.go`.
+  Covering all 3 acceptance tests from G1 (`StudyOverview.programme` ==
+  `study_mirror.programme`; `/studies/programme/"Human Genetics"` returns
+  exactly those studies agreeing with `/count`, index-served via EXPLAIN;
+  `/programmes` lists distinct values with study counts). Depends on Phase
+  1 (A7).
 
 - [x] implemented
 - [x] reviewed

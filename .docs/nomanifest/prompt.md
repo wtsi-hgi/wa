@@ -44,18 +44,18 @@ GET /study/7568/manifest/count
 Current code has both:
 
 - Generic export:
-  - HTTP: `GET /export/:children/:parent_kind/:parent_id`
-  - CLI: `wa mlwh export <children> <parent-kind> <parent-id>`
-  - Result type: `ExportResult` with selectable `columns`, rectangular `rows`,
-    `total`, `next_cursor`, `complete`, and `format`
-  - Current relationships include `irods`, `samples`, `runs`, `libraries`,
-    `lanes`, `studies`, `users`, and `sample-crams`
+    - HTTP: `GET /export/:children/:parent_kind/:parent_id`
+    - CLI: `wa mlwh export <children> <parent-kind> <parent-id>`
+    - Result type: `ExportResult` with selectable `columns`, rectangular `rows`,
+      `total`, `next_cursor`, `complete`, and `format`
+    - Current relationships include `irods`, `samples`, `runs`, `libraries`,
+      `lanes`, `studies`, `users`, and `sample-crams`
 - Manifest:
-  - HTTP: `GET /study/:id/manifest`
-  - HTTP: `GET /study/:id/manifest/count`
-  - CLI: `wa mlwh manifest <study>`
-  - Result type: `StudyManifest` envelope containing study metadata once,
-    fixed `ManifestRow` fields, and `products_without_irods`
+    - HTTP: `GET /study/:id/manifest`
+    - HTTP: `GET /study/:id/manifest/count`
+    - CLI: `wa mlwh manifest <study>`
+    - Result type: `StudyManifest` envelope containing study metadata once,
+      fixed `ManifestRow` fields, and `products_without_irods`
 
 The manifest's one useful non-export behavior is its row grain: it starts from
 study products, so products without a matching iRODS object still appear. That
@@ -243,24 +243,34 @@ HTTP `GET /export/products/study/:id` returns the existing `ExportResult` shape:
 
 ```json
 {
-  "columns": [
-    "name",
-    "supplier_name",
-    "id_run",
-    "lane",
-    "tag_index",
-    "manual_qc",
-    "irods_path",
-    "irods_unmatched",
-    "reason"
-  ],
-  "rows": [
-    ["DN1", "supplier-1", "49348", "1", "7", "pass", "", "true", "merged_multilane"]
-  ],
-  "total": 780,
-  "next_cursor": "",
-  "complete": true,
-  "format": "json"
+    "columns": [
+        "name",
+        "supplier_name",
+        "id_run",
+        "lane",
+        "tag_index",
+        "manual_qc",
+        "irods_path",
+        "irods_unmatched",
+        "reason"
+    ],
+    "rows": [
+        [
+            "DN1",
+            "supplier-1",
+            "49348",
+            "1",
+            "7",
+            "pass",
+            "",
+            "true",
+            "merged_multilane"
+        ]
+    ],
+    "total": 780,
+    "next_cursor": "",
+    "complete": true,
+    "format": "json"
 }
 ```
 
@@ -320,4 +330,3 @@ The eventual spec should include acceptance tests for at least:
 - No `products_without_irods` summary field.
 - No path duplication from merged CRAMs onto single-lane product rows.
 - No caller-side SQL workaround as the official answer.
-

@@ -85,7 +85,7 @@ rather than the product-metrics join.
 ## Ordering and dependency notes
 
 - Depends on Phase 1 (A4 `(id_sample_tmp, created)` and `(id_run,
-  created)` recency indexes; the study-scoped `(id_study_lims, created)`
+created)` recency indexes; the study-scoped `(id_study_lims, created)`
   aggregate). A6 normalised dates are unrelated here (they back Phase 6).
 - Items are sequential because both edit `mlwh/availability.go`: E1 adds
   `created` + order/window to the three scopes, E2 adds the latest-data
