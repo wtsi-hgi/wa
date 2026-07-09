@@ -298,24 +298,21 @@ func runMLWHExport(
 ) error {
 	result, err := client.Export(ctx, rel, parentID, opts)
 	if err != nil {
-		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
-			return writeMLWHExportCacheUnavailable(dataOut, statusOut, opts.Format)
-		}
-		if errors.Is(err, mlwh.ErrNotFound) {
-			if mlwhClientNeverSynced(ctx, client) {
-				return writeMLWHExportCacheUnavailable(dataOut, statusOut, opts.Format)
-			}
-
-			writeMLWHExportNotFound(statusOut, rel, parentID)
-
-			return nil
+		if handled, handleErr := handleMLWHExportCleanError(ctx, client, dataOut, statusOut, rel, parentID, opts.Format, err); handled {
+			return handleErr
 		}
 
 		return fmt.Errorf("export %s of %s %q: %w", rel.Children, rel.ParentKind, parentID, err)
 	}
 
-	_, err = result.RenderAsTo(ctx, dataOut, opts.Format)
+	emitted, err := result.RenderAsTo(ctx, dataOut, opts.Format)
 	if err != nil {
+		if emitted == 0 {
+			if handled, handleErr := handleMLWHExportCleanError(ctx, client, dataOut, statusOut, rel, parentID, opts.Format, err); handled {
+				return handleErr
+			}
+		}
+
 		return fmt.Errorf("render export: %w", err)
 	}
 	if opts.Limit > 0 {
@@ -325,6 +322,32 @@ func runMLWHExport(
 	}
 
 	return nil
+}
+
+func handleMLWHExportCleanError(
+	ctx context.Context,
+	client mlwhExportClient,
+	dataOut io.Writer,
+	statusOut io.Writer,
+	rel mlwh.ExportRelationship,
+	parentID string,
+	format string,
+	err error,
+) (bool, error) {
+	if errors.Is(err, mlwh.ErrCacheNeverSynced) {
+		return true, writeMLWHExportCacheUnavailable(dataOut, statusOut, format)
+	}
+	if errors.Is(err, mlwh.ErrNotFound) {
+		if mlwhClientNeverSynced(ctx, client) {
+			return true, writeMLWHExportCacheUnavailable(dataOut, statusOut, format)
+		}
+
+		writeMLWHExportNotFound(statusOut, rel, parentID)
+
+		return true, nil
+	}
+
+	return false, nil
 }
 
 func writeMLWHExportCacheUnavailable(dataOut io.Writer, statusOut io.Writer, format string) error {

@@ -36,6 +36,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/wa/mlwh"
 )
@@ -793,6 +794,29 @@ func TestMLWHExportServerFlagUsesRemoteClientD1b(t *testing.T) {
 	})
 }
 
+func startMLWHExportServerForCachePathForTest(t *testing.T, cachePath string) string {
+	t.Helper()
+
+	client, err := mlwh.OpenCacheOnly(context.Background(), mlwh.CacheConfig{Path: cachePath})
+	if err != nil {
+		t.Fatalf("open MLWH export test cache: %v", err)
+	}
+	t.Cleanup(func() {
+		if err = client.Close(); err != nil {
+			t.Fatalf("close MLWH export test cache: %v", err)
+		}
+	})
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	configureMLWHServeRouter(router)
+	mlwh.NewServer(client).RegisterRoutes(router, nil)
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+
+	return server.URL
+}
+
 func withFailingOpenMLWHExportClient(t *testing.T) *bool {
 	t.Helper()
 	t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(localhost:3306)/mlwarehouse")
@@ -817,6 +841,49 @@ func withFailingOpenMLWHExportClient(t *testing.T) *bool {
 	}
 
 	return &opened
+}
+
+func TestMLWHExportProductsAllRenderTimeNeverSyncedIsClean(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		args func(string) []string
+	}{
+		{
+			name: "cache-only mode",
+			args: func(cachePath string) []string {
+				configureMLWHNeverSyncedCommandEnvForTest(t, cachePath)
+
+				return []string{"mlwh", "export", "products", "study", "6568"}
+			},
+		},
+		{
+			name: "server mode",
+			args: func(cachePath string) []string {
+				configureMLWHNeverSyncedCommandEnvForTest(t, "")
+
+				return []string{
+					"mlwh", "export", "products", "study", "6568",
+					"--server", startMLWHExportServerForCachePathForTest(t, cachePath),
+				}
+			},
+		},
+	} {
+		testCase := testCase
+		convey.Convey("Given a default products export reaches never-synced state while rendering in "+testCase.name, t, func() {
+			cachePath := prepareMLWHServeCacheForTest(t, true)
+
+			stdout, stderr, err := executeRootCommandStreamsForTest(t, testCase.args(cachePath))
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(stdout, convey.ShouldBeEmpty)
+			convey.So(stderr, convey.ShouldContainSubstring, mlwhCacheUnavailableMessage)
+			convey.So(stderr, convey.ShouldNotContainSubstring, "render export")
+			convey.So(stderr, convey.ShouldNotContainSubstring, mlwh.ErrCacheNeverSynced.Error())
+			convey.So(stderr, convey.ShouldNotContainSubstring, mlwh.ErrNotFound.Error())
+			convey.So(stderr, convey.ShouldNotContainSubstring, "wa mlwh sync")
+			convey.So(stderr, convey.ShouldNotContainSubstring, "name\tsupplier_name")
+		})
+	}
 }
 
 func TestMLWHExportRejectsInvalidBoundedFlagsBeforeOpeningClient(t *testing.T) {

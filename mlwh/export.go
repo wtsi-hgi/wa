@@ -1077,13 +1077,26 @@ func (r ExportResult) RenderAsTo(ctx context.Context, writer io.Writer, format s
 func (r ExportResult) renderDelimitedTo(ctx context.Context, writer io.Writer, comma rune) (int, error) {
 	csvWriter := csv.NewWriter(writer)
 	csvWriter.Comma = comma
-	if err := csvWriter.Write(r.Columns); err != nil {
-		return 0, err
-	}
+	wroteHeader := false
 
 	count, err := r.ForEachRow(ctx, func(row []string) error {
+		if !wroteHeader {
+			if writeErr := csvWriter.Write(r.Columns); writeErr != nil {
+				return writeErr
+			}
+			wroteHeader = true
+		}
+
 		return csvWriter.Write(row)
 	})
+	if err != nil && !wroteHeader {
+		return count, err
+	}
+	if !wroteHeader {
+		if writeErr := csvWriter.Write(r.Columns); writeErr != nil {
+			return count, writeErr
+		}
+	}
 	csvWriter.Flush()
 	if writerErr := csvWriter.Error(); writerErr != nil {
 		return count, writerErr
@@ -1093,18 +1106,18 @@ func (r ExportResult) renderDelimitedTo(ctx context.Context, writer io.Writer, c
 }
 
 func (r ExportResult) renderJSONTo(ctx context.Context, writer io.Writer) (int, error) {
-	if _, err := io.WriteString(writer, "["); err != nil {
-		return 0, err
-	}
-
-	first := true
+	wroteStart := false
 	count, err := r.ForEachRow(ctx, func(row []string) error {
-		if !first {
+		if !wroteStart {
+			if _, writeErr := io.WriteString(writer, "["); writeErr != nil {
+				return writeErr
+			}
+			wroteStart = true
+		} else {
 			if _, writeErr := io.WriteString(writer, ","); writeErr != nil {
 				return writeErr
 			}
 		}
-		first = false
 
 		object := make(map[string]string, len(r.Columns))
 		for columnIndex, column := range r.Columns {
@@ -1122,6 +1135,13 @@ func (r ExportResult) renderJSONTo(ctx context.Context, writer io.Writer) (int, 
 	})
 	if err != nil {
 		return count, err
+	}
+	if !wroteStart {
+		if _, err = io.WriteString(writer, "[]\n"); err != nil {
+			return count, err
+		}
+
+		return count, nil
 	}
 	if _, err = io.WriteString(writer, "]\n"); err != nil {
 		return count, err
