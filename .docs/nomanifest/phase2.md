@@ -36,8 +36,8 @@ study-scoped `library_samples` EXISTS on `pipeline_id_lims` (`WHERE`);
 each reduce to 1 and sum to the unfiltered 3; organism WHERE reduces
 `Total`; library_type reduces `Total`). Reuse `seedManifestS1Scenario`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.2: C2 - deliverables_only uses the product entity_type discriminator
 
@@ -56,5 +56,5 @@ control). Covers both acceptance tests C2.1-C2.2 (`DeliverablesOnly` nil
 `file_type=cram` with the filter still yields `Total` 2 because
 `file_type` never changes `Total`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

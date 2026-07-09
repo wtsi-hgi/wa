@@ -315,12 +315,13 @@ func validateExportFilterSupport(kind exportRelationshipKind, rel ExportRelation
 	if !exportUsesSharedSampleFilters(filters, deliverablesOnly) {
 		return nil
 	}
-	if kind == exportRelationshipIRODS || kind == exportRelationshipSamples || kind == exportRelationshipSampleCRAMs {
+	switch kind {
+	case exportRelationshipIRODS, exportRelationshipSamples, exportRelationshipSampleCRAMs, exportRelationshipProducts:
 		return nil
 	}
 
 	return fmt.Errorf(
-		"%w: shared sample export filters are backed for iRODS/files, samples, and sample-crams exports in D1a; %s of %s is not filter-backed yet",
+		"%w: shared sample export filters are backed for iRODS/files, samples, sample-crams, and products exports; %s of %s is not filter-backed yet",
 		ErrUnsupportedIdentifier,
 		rel.Children,
 		rel.ParentKind,
@@ -1253,12 +1254,30 @@ func (c *Client) exportProducts(ctx context.Context, plan exportPlan, parent exp
 		return ExportResult{}, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	total, err := c.countStudyManifestProducts(ctx, parent.Canonical)
+	commonNames, err := c.exportOrganismCommonNames(ctx, db, plan.filters.Organism)
+	if err != nil {
+		return ExportResult{}, err
+	}
+	if plan.filters.Organism != "" && len(commonNames) == 0 {
+		return emptyExportResult(plan, 0), nil
+	}
+
+	input := exportProductQueryInput{
+		studyID:             parent.Canonical,
+		needsIRODS:          plan.needsIRODS,
+		normalisedFile:      plan.normalisedFile,
+		deliverablesOnly:    plan.deliverablesOnly,
+		filters:             plan.filters,
+		organismCommonNames: commonNames,
+		limit:               plan.limit,
+		offset:              plan.offset,
+	}
+	total, err := c.exportProductTotal(ctx, input)
 	if err != nil {
 		return ExportResult{}, err
 	}
 
-	rows, err := c.queryExportProductRows(ctx, db, plan, parent)
+	rows, err := c.queryExportProductRows(ctx, db, input, plan, parent)
 	if err != nil {
 		return ExportResult{}, err
 	}
@@ -1569,8 +1588,14 @@ func (c *Client) resolveExportParent(ctx context.Context, plan exportPlan, paren
 	}
 }
 
-func (c *Client) queryExportProductRows(ctx context.Context, db *sql.DB, plan exportPlan, parent exportParent) ([]exportProductRow, error) {
-	query, args := exportProductListQuery(parent.Canonical, plan.needsIRODS, plan.normalisedFile, plan.limit, plan.offset)
+func (c *Client) queryExportProductRows(
+	ctx context.Context,
+	db *sql.DB,
+	input exportProductQueryInput,
+	plan exportPlan,
+	parent exportParent,
+) ([]exportProductRow, error) {
+	query, args := exportProductListQuery(input)
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: query export products: %w", ErrUpstreamImpaired, err)
@@ -1597,8 +1622,78 @@ func (c *Client) queryExportProductRows(ctx context.Context, db *sql.DB, plan ex
 	return products, nil
 }
 
-func exportProductListQuery(studyLimsID string, needsIRODS bool, normalised string, limit, offset int) (string, []any) {
-	return manifestListQuery(studyLimsID, needsIRODS, normalised, limit, offset)
+func exportProductListQuery(input exportProductQueryInput) (string, []any) {
+	where, whereArgs := exportProductWhere(input)
+	selectClause := manifestListSelectPrefix
+	join := ""
+	args := make([]any, 0)
+
+	if input.needsIRODS {
+		irodsJoin, joinArgs, detectMergedCRAMGap := manifestIRODSJoin(input.studyID, input.normalisedFile)
+		join = irodsJoin
+		args = append(args, joinArgs...)
+		selectClause += manifestListIRODSSelect
+		if detectMergedCRAMGap {
+			selectClause += manifestListIRODSUnmatchedSelect
+		} else {
+			selectClause += manifestListIRODSNoUnmatchedSelect
+		}
+	}
+	args = append(args, whereArgs...)
+	query := selectClause + manifestListBaseFrom + join + where +
+		` GROUP BY ipm.id_run, ipm.position, ipm.tag_index`
+	if having := exportProductQCHaving(input.filters.QC); having != "" {
+		query += ` HAVING ` + having
+	}
+	query += ` ORDER BY ipm.id_run, ipm.position, ipm.tag_index, MIN(sm.name) LIMIT ? OFFSET ?`
+	args = append(args, input.limit, input.offset)
+
+	return query, args
+}
+
+func exportProductWhere(input exportProductQueryInput) (string, []any) {
+	query := ` WHERE ipm.id_study_lims = ?`
+	args := []any{input.studyID}
+
+	if input.filters.LibraryType != "" {
+		query += ` AND EXISTS (` +
+			`SELECT 1 FROM library_samples ls ` +
+			`WHERE ls.id_sample_tmp = ipm.id_sample_tmp ` +
+			`AND ls.id_study_lims = ipm.id_study_lims ` +
+			`AND ls.pipeline_id_lims = ?` +
+			`)`
+		args = append(args, input.filters.LibraryType)
+	}
+	if len(input.organismCommonNames) > 0 {
+		query += ` AND sm.common_name IN (` + placeholders(len(input.organismCommonNames)) + `)`
+		for _, commonName := range input.organismCommonNames {
+			args = append(args, commonName)
+		}
+	}
+	if input.deliverablesOnly {
+		query += ` AND EXISTS (` +
+			`SELECT 1 FROM iseq_flowcell_mirror ifc ` +
+			`WHERE ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp ` +
+			`AND ifc.entity_type IN ('library', 'library_indexed')` +
+			`)`
+	}
+
+	return query, args
+}
+
+func exportProductQCHaving(qc string) string {
+	pendingCount := `SUM(CASE WHEN ipm.qc IS NULL THEN 1 ELSE 0 END)`
+
+	switch qc {
+	case qcFail:
+		return `MIN(ipm.qc) = 0`
+	case qcPending:
+		return `(MIN(ipm.qc) IS NULL OR MIN(ipm.qc) <> 0) AND ` + pendingCount + ` > 0`
+	case qcPass:
+		return `MIN(ipm.qc) = 1 AND ` + pendingCount + ` = 0`
+	default:
+		return ""
+	}
 }
 
 func scanExportProductRow(scan func(dest ...any) error, withIRODS bool) (exportProductRow, error) {
@@ -2075,6 +2170,44 @@ type exportCursor struct {
 	TagIndex             int64
 	IDSeqProductLocation int64
 	set                  bool
+}
+
+type exportProductQueryInput struct {
+	studyID             string
+	needsIRODS          bool
+	normalisedFile      string
+	deliverablesOnly    bool
+	filters             exportFilters
+	organismCommonNames []string
+	limit               int
+	offset              int
+}
+
+func (c *Client) exportProductTotal(ctx context.Context, input exportProductQueryInput) (int, error) {
+	query, args := exportProductCountQuery(input)
+
+	return c.queryCount(ctx, query, "count export products", args...)
+}
+
+func exportProductCountQuery(input exportProductQueryInput) (string, []any) {
+	where, args := exportProductWhere(input)
+	groupBy := ` GROUP BY ipm.id_run, ipm.position, ipm.tag_index`
+
+	if having := exportProductQCHaving(input.filters.QC); having != "" {
+		query := `SELECT COUNT(*) FROM (` +
+			`SELECT ipm.id_run, ipm.position, ipm.tag_index` +
+			manifestListBaseFrom + where + groupBy + ` HAVING ` + having +
+			`) AS export_products`
+
+		return query, args
+	}
+
+	query := `SELECT COUNT(*) FROM (` +
+		`SELECT DISTINCT ipm.id_run, ipm.position, ipm.tag_index` +
+		manifestListBaseFrom + where +
+		`) AS export_products`
+
+	return query, args
 }
 
 type exportPlan struct {
