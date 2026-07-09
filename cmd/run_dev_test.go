@@ -208,6 +208,19 @@ exit 2
 	convey.So(os.WriteFile(filepath.Join(binDir, "go"), []byte(fakeGo), 0o755), convey.ShouldBeNil)
 }
 
+func removeRunDevTestServerTokenForTest(t *testing.T, repoRoot string) {
+	t.Helper()
+
+	tokenPath := runDevTestServerTokenPathForTest(repoRoot)
+	if err := os.Remove(tokenPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("remove stale run-dev server token %s: %v", tokenPath, err)
+	}
+}
+
+func runDevTestServerTokenPathForTest(repoRoot string) string {
+	return filepath.Join(repoRoot, ".tmp", "state-test", ".wa-results-server.token")
+}
+
 func runDevUnsetSeqmetaEnvForTest() []string {
 	return []string{"WA_RUN_DEV_SEQMETA_CMD", "WA_RUN_DEV_SEQMETA_HEALTH_URL", "WA_RUN_DEV_SEQMETA_FRESHNESS_URL"}
 }
@@ -624,6 +637,52 @@ func runDevSeedFixtureCountForTest(t *testing.T, repoRoot string) int {
 	return len(fixtures)
 }
 
+func runDevOwnerJWTWithTokenForTest(t *testing.T, resultsPort int, token []byte) (string, bool) {
+	t.Helper()
+
+	currentUser, err := osuser.Current()
+	if err != nil {
+		t.Fatalf("get current user: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("username", currentUser.Username)
+	form.Set("password", strings.TrimSpace(string(token)))
+
+	endpoint := fmt.Sprintf("https://127.0.0.1:%d/rest/v1/jwt", resultsPort)
+	request, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("build JWT request for %s: %v", endpoint, err)
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	response, err := runDevHTTPSClientForTest(t).Do(request)
+	if err != nil {
+		t.Fatalf("login to run-dev results server at %s: %v", endpoint, err)
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	if response.StatusCode != http.StatusOK {
+		body, readErr := io.ReadAll(response.Body)
+		if readErr != nil {
+			t.Fatalf("JWT request returned %d and unreadable body: %v", response.StatusCode, readErr)
+		}
+
+		if response.StatusCode == http.StatusUnauthorized {
+			return "", false
+		}
+
+		t.Fatalf("JWT request returned %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var jwt string
+	if err := json.NewDecoder(response.Body).Decode(&jwt); err != nil {
+		t.Fatalf("decode JWT response: %v", err)
+	}
+
+	return jwt, true
+}
+
 func runDevBuiltBinaryPathForTest(t *testing.T, repoRoot string, process *runDevProcess) string {
 	t.Helper()
 
@@ -640,6 +699,52 @@ func runDevBuiltBinaryPathForTest(t *testing.T, repoRoot string, process *runDev
 	t.Fatalf("did not find run-dev build path in stdout:\n%s", process.stdout.String())
 
 	return ""
+}
+
+func runDevStableBinaryPathForTest(repoRoot string) string {
+	return filepath.Join(repoRoot, ".tmp", "wa")
+}
+
+func runDevStableBinarySymlinkTargetForTest(t *testing.T, stableBinaryPath string) string {
+	t.Helper()
+
+	info, err := os.Lstat(stableBinaryPath)
+	if err != nil {
+		t.Fatalf("stat stable run-dev binary symlink %s: %v", stableBinaryPath, err)
+	}
+
+	convey.So(info.Mode()&os.ModeSymlink, convey.ShouldNotEqual, 0)
+
+	target, err := filepath.EvalSymlinks(stableBinaryPath)
+	if err != nil {
+		t.Fatalf("resolve stable run-dev binary symlink %s: %v", stableBinaryPath, err)
+	}
+
+	return target
+}
+
+func runDevLstatPathExistsForTest(path string) bool {
+	_, err := os.Lstat(path)
+
+	return err == nil || !errors.Is(err, fs.ErrNotExist)
+}
+
+func (process *runDevProcess) Terminate() {
+	if process == nil || process.Command == nil || process.Command.Process == nil {
+		return
+	}
+
+	if process.ExitedWithin(0) {
+		return
+	}
+
+	signalRunDevProcessGroupForTest(process.Command, syscall.SIGTERM)
+	if process.ExitedWithin(5 * time.Second) {
+		return
+	}
+
+	signalRunDevProcessGroupForTest(process.Command, syscall.SIGKILL)
+	_ = process.ExitedWithin(5 * time.Second)
 }
 
 func TestRunDevAutoManagedMLWHBackendFailsFastOnColdCacheWithoutDSN(t *testing.T) {
@@ -1016,49 +1121,27 @@ func runDevOwnerJWTForTest(t *testing.T, resultsPort int) string {
 	t.Helper()
 
 	repoRoot := runDevRepoRootForTest(t)
-	tokenPath := filepath.Join(repoRoot, ".tmp", "state-test", ".wa-results-server.token")
-	token, err := os.ReadFile(tokenPath)
-	if err != nil {
-		t.Fatalf("read run-dev server token %s: %v", tokenPath, err)
-	}
-
-	currentUser, err := osuser.Current()
-	if err != nil {
-		t.Fatalf("get current user: %v", err)
-	}
-
-	form := url.Values{}
-	form.Set("username", currentUser.Username)
-	form.Set("password", strings.TrimSpace(string(token)))
-
-	endpoint := fmt.Sprintf("https://127.0.0.1:%d/rest/v1/jwt", resultsPort)
-	request, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		t.Fatalf("build JWT request for %s: %v", endpoint, err)
-	}
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	response, err := runDevHTTPSClientForTest(t).Do(request)
-	if err != nil {
-		t.Fatalf("login to run-dev results server at %s: %v", endpoint, err)
-	}
-	defer func() { _ = response.Body.Close() }()
-
-	if response.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(response.Body)
-		if readErr != nil {
-			t.Fatalf("JWT request returned %d and unreadable body: %v", response.StatusCode, readErr)
+	tokenPath := runDevTestServerTokenPathForTest(repoRoot)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		token, err := os.ReadFile(tokenPath)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("read run-dev server token %s: %v", tokenPath, err)
 		}
 
-		t.Fatalf("JWT request returned %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+		if err == nil && len(token) > 0 {
+			jwt, ok := runDevOwnerJWTWithTokenForTest(t, resultsPort, token)
+			if ok {
+				return jwt
+			}
+		}
+
+		time.Sleep(50 * time.Millisecond)
 	}
 
-	var jwt string
-	if err := json.NewDecoder(response.Body).Decode(&jwt); err != nil {
-		t.Fatalf("decode JWT response: %v", err)
-	}
+	t.Fatalf("timed out waiting for run-dev server token %s", tokenPath)
 
-	return jwt
+	return ""
 }
 
 type runDevCertificateOptionsForTest struct {
@@ -1865,7 +1948,9 @@ func TestRunDevScript(t *testing.T) {
 		fixtureSummary := summarizeRunDevFixturesForTest(t, repoRoot, resultsPort, resultsList)
 
 		binaryPath := runDevBuiltBinaryPathForTest(t, repoRoot, process)
+		stableBinaryPath := runDevStableBinaryPathForTest(repoRoot)
 		convey.So(runDevPathExistsForTest(binaryPath), convey.ShouldBeTrue)
+		convey.So(runDevStableBinarySymlinkTargetForTest(t, stableBinaryPath), convey.ShouldEqual, binaryPath)
 		convey.So(resultsList, convey.ShouldHaveLength, expectedFixtureCount)
 		convey.So(fixtureSummary.nestedDirectoryCount, convey.ShouldBeGreaterThanOrEqualTo, 3)
 		convey.So(fixtureSummary.hasSiblingDirectories, convey.ShouldBeTrue)
@@ -1890,6 +1975,53 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(process.Wait(), convey.ShouldBeNil)
 		convey.So(runDevPathExistsForTest(snapshot.ResultsDBPath), convey.ShouldBeFalse)
 		convey.So(runDevPathExistsForTest(binaryPath), convey.ShouldBeFalse)
+		convey.So(runDevLstatPathExistsForTest(stableBinaryPath), convey.ShouldBeFalse)
+	})
+
+	convey.Convey("run-dev.sh cleanup leaves .tmp/wa alone after a newer run repoints it", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			seqmetaPort:  seqmetaPort,
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
+			env: map[string]string{
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		_ = waitForRunDevSnapshotForTest(t, process, snapshotPath)
+
+		binaryPath := runDevBuiltBinaryPathForTest(t, repoRoot, process)
+		stableBinaryPath := runDevStableBinaryPathForTest(repoRoot)
+		repointedBinaryPath := filepath.Join(repoRoot, ".tmp", fmt.Sprintf("wa-run-dev-repointed-%d", frontendPort))
+		convey.So(os.WriteFile(repointedBinaryPath, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755), convey.ShouldBeNil)
+		defer func() {
+			if target, err := os.Readlink(stableBinaryPath); err == nil && target == repointedBinaryPath {
+				_ = os.Remove(stableBinaryPath)
+			}
+			_ = os.Remove(repointedBinaryPath)
+		}()
+
+		convey.So(runDevStableBinarySymlinkTargetForTest(t, stableBinaryPath), convey.ShouldEqual, binaryPath)
+		convey.So(os.Remove(stableBinaryPath), convey.ShouldBeNil)
+		convey.So(os.Symlink(repointedBinaryPath, stableBinaryPath), convey.ShouldBeNil)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+		convey.So(runDevPathExistsForTest(binaryPath), convey.ShouldBeFalse)
+		convey.So(runDevStableBinarySymlinkTargetForTest(t, stableBinaryPath), convey.ShouldEqual, repointedBinaryPath)
 	})
 
 	convey.Convey("R1.4: run-dev.sh starts MLWH and exports WA_MLWH_BACKEND_URL when an explicit MLWH command is set", t, func() {
@@ -1978,6 +2110,7 @@ func TestRunDevScript(t *testing.T) {
 			"WA_MLWH_CACHE_PATH":                    filepath.Join(t.TempDir(), "mlwh-cache.sqlite"),
 			"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
 			"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
+			"WA_RUN_DEV_LOG_DIR":                    filepath.Join(t.TempDir(), "logs"),
 			"WA_RUN_DEV_SEQMETA_CMD":                `node -e "console.error('mlwh boot failed: source db unavailable'); process.exit(23)"`,
 			"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
 			"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
@@ -2463,33 +2596,6 @@ func runDevEnvForTest(unsetKeys []string) []string {
 	return filtered
 }
 
-func terminateRunDevCommandForTest(command *exec.Cmd) {
-	if command == nil || command.Process == nil {
-		return
-	}
-
-	done := make(chan struct{})
-	go func() {
-		_ = command.Wait()
-		close(done)
-	}()
-
-	signalRunDevProcessGroupForTest(command, syscall.SIGTERM)
-
-	select {
-	case <-done:
-		return
-	case <-time.After(5 * time.Second):
-	}
-
-	signalRunDevProcessGroupForTest(command, syscall.SIGKILL)
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-	}
-}
-
 func signalRunDevProcessGroupForTest(command *exec.Cmd, signal syscall.Signal) {
 	if command == nil || command.Process == nil || command.Process.Pid <= 0 {
 		return
@@ -2888,6 +2994,22 @@ func (process *runDevProcess) ExitedWithin(timeout time.Duration) bool {
 	waitCh := process.waitCh
 	process.waitMu.Unlock()
 
+	if timeout <= 0 {
+		select {
+		case err := <-waitCh:
+			process.waitMu.Lock()
+			process.waitErr = err
+			process.waitDone = true
+			process.waitMu.Unlock()
+			return true
+		default:
+			return false
+		}
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	select {
 	case err := <-waitCh:
 		process.waitMu.Lock()
@@ -2895,7 +3017,7 @@ func (process *runDevProcess) ExitedWithin(timeout time.Duration) bool {
 		process.waitDone = true
 		process.waitMu.Unlock()
 		return true
-	case <-time.After(timeout):
+	case <-timer.C:
 		return false
 	}
 }
@@ -2914,6 +3036,10 @@ type runDevStartOptions struct {
 
 func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOptions) *runDevProcess {
 	t.Helper()
+
+	if options.mode == "" || options.mode == "test" {
+		removeRunDevTestServerTokenForTest(t, repoRoot)
+	}
 
 	args := []string{
 		filepath.Join(repoRoot, "run-dev.sh"),
@@ -2967,18 +3093,16 @@ func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOption
 		waitCh <- command.Wait()
 	}()
 
-	t.Cleanup(func() {
-		if !(&runDevProcess{Command: command, waitCh: waitCh}).ExitedWithin(0) {
-			terminateRunDevCommandForTest(command)
-		}
-	})
-
-	return &runDevProcess{
+	process := &runDevProcess{
 		Command: command,
 		stdout:  stdout,
 		stderr:  stderr,
 		waitCh:  waitCh,
 	}
+
+	t.Cleanup(process.Terminate)
+
+	return process
 }
 
 func runDevRepoRootForTest(t *testing.T) string {

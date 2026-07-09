@@ -2417,13 +2417,12 @@ func (c *Client) programmeStudiesForExport(ctx context.Context, programme string
 		return nil, 0, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	query := `SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE id_lims = 'SQSCP' AND programme = ? ORDER BY id_study_lims LIMIT ? OFFSET ?`
-	studies, err := c.queryStudySearch(ctx, db, query, programme, limit, offset)
+	studies, err := c.queryStudySearch(ctx, db, studiesForProgrammeD1cSQL(c.cacheDialect()), programme, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	total, err := c.queryCount(ctx, `SELECT COUNT(*) FROM study_mirror WHERE id_lims = 'SQSCP' AND programme = ?`, "count programme studies", programme)
+	total, err := c.queryCount(ctx, countStudiesForProgrammeD1cSQL(c.cacheDialect()), "count programme studies", programme)
 	if err != nil {
 		return nil, 0, err
 	}

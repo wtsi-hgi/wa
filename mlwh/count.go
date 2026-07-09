@@ -138,9 +138,11 @@ const (
 	// sample.
 	countStudiesForSampleD1cSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT study_mirror.id_study_tmp FROM sample_mirror INNER JOIN library_samples ON library_samples.id_sample_tmp = sample_mirror.id_sample_tmp INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims WHERE sample_mirror.name = ? AND sample_mirror.id_lims = 'SQSCP' AND study_mirror.id_lims = 'SQSCP') AS distinct_sample_studies`
 
-	// studiesForProgrammeD1cSQL lists/counts the D1 export "studies of programme"
-	// relationship using the exact programme value.
-	countStudiesForProgrammeD1cSQL = `SELECT COUNT(*) FROM study_mirror WHERE id_lims = 'SQSCP' AND programme = ?`
+	// studyMirrorProgrammeIndexName backs the exact-programme study list/count
+	// queries. MySQL needs the hint because ORDER BY id_study_lims can otherwise
+	// make the optimizer prefer the id_study_lims index over the selective
+	// programme predicate.
+	studyMirrorProgrammeIndexName = "study_mirror_programme_idx"
 
 	// studyUsersForStudyD1cSQL lists/counts the D1 export "users of study"
 	// relationship: one study_users_mirror row linked to the study per returned
@@ -156,8 +158,6 @@ var (
 	countLatestDataForFacultySponsorSQLPrefix = `SELECT COUNT(*) FROM seq_product_irods_locations_mirror spi INNER JOIN study_mirror ON study_mirror.id_study_lims = spi.id_study_lims AND study_mirror.id_lims = 'SQSCP' WHERE ` + likeContainsClause([]string{"study_mirror.faculty_sponsor"})
 	countLatestDataForFacultySponsorSQLSuffix = ``
 )
-
-var studiesForProgrammeD1cSQL = `SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE id_lims = 'SQSCP' AND programme = ? ORDER BY id_study_lims LIMIT ? OFFSET ?`
 
 // countFindSamplesBySangerIDSQL and its siblings size the find/sample/* lists:
 // each counts the SQSCP sample_mirror rows matching the exact field the
@@ -364,6 +364,26 @@ func sampleCRAMRows(rows []exportSampleCRAMRow) []SampleCRAM {
 	}
 
 	return sampleCRAMs
+}
+
+// studiesForProgrammeD1cSQL lists the D1 export "studies of programme"
+// relationship using the exact programme value.
+func studiesForProgrammeD1cSQL(dialect string) string {
+	return `SELECT ` + studyMirrorSelectColumns + ` FROM ` + studyMirrorProgrammeTable(dialect) + ` WHERE id_lims = 'SQSCP' AND programme = ? ORDER BY id_study_lims LIMIT ? OFFSET ?`
+}
+
+// countStudiesForProgrammeD1cSQL counts the D1 export "studies of programme"
+// relationship using the exact programme value.
+func countStudiesForProgrammeD1cSQL(dialect string) string {
+	return `SELECT COUNT(*) FROM ` + studyMirrorProgrammeTable(dialect) + ` WHERE id_lims = 'SQSCP' AND programme = ?`
+}
+
+func studyMirrorProgrammeTable(dialect string) string {
+	if dialect == "mysql" {
+		return `study_mirror FORCE INDEX (` + studyMirrorProgrammeIndexName + `)`
+	}
+
+	return "study_mirror"
 }
 
 func countStudyUsersForStudySQL(roles []string, studyLimsID string) (string, []any) {
@@ -806,7 +826,7 @@ func (c *Client) StudiesForProgramme(ctx context.Context, programme string, limi
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	studies, err := c.queryStudySearch(ctx, db, studiesForProgrammeD1cSQL, programme, limit, offset)
+	studies, err := c.queryStudySearch(ctx, db, studiesForProgrammeD1cSQL(c.cacheDialect()), programme, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -830,7 +850,7 @@ func (c *Client) CountStudiesForProgramme(ctx context.Context, programme string)
 		return Count{}, fmt.Errorf("%w: programme is required", ErrUnsupportedIdentifier)
 	}
 
-	count, err := c.queryCount(ctx, countStudiesForProgrammeD1cSQL, "count programme studies", programme)
+	count, err := c.queryCount(ctx, countStudiesForProgrammeD1cSQL(c.cacheDialect()), "count programme studies", programme)
 	if err != nil {
 		return Count{}, err
 	}
@@ -1287,4 +1307,12 @@ func (c *Client) queryCount(ctx context.Context, query, action string, args ...a
 	}
 
 	return count, nil
+}
+
+func (c *Client) cacheDialect() string {
+	if c != nil && c.cache != nil {
+		return c.cache.Dialect()
+	}
+
+	return "sqlite"
 }
