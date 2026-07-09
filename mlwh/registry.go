@@ -535,7 +535,7 @@ var Registry = []Endpoint{
 		Query:       []string{"columns", "file_type", "deliverables_only", "role", "qc", "library_type", "organism", "sort", "order_by", "since", "until", "all", "cursor", "format"},
 		NewResult:   newResult[ExportResult],
 		Summary:     "Export relationship rows",
-		Description: "Projects one supported MLWH export relationship into ordered string rows for the selected columns, matching the relationship grammar used by `wa mlwh export <children> <parent-kind> <parent-id>`. The response body carries Columns, Rows, Total, NextCursor, Complete and Format. HTTP query parameters support columns as an ordered comma-separated projection; file_type to restrict file exports by filename suffix; deliverables_only for CRAM irods/files/sample-crams exports, whose default excludes controls/sub-products; qc, library_type and organism for shared export filters where supported; limit/offset for bounded pages; all for the complete matching set; cursor for iRODS keyset pagination; and format as tsv, csv or json metadata for callers that render the result. A never-synced cache returns cache_never_synced so CLIs can degrade cleanly.",
+		Description: "Projects one supported MLWH export relationship into ordered string rows for the selected columns, matching the relationship grammar used by `wa mlwh export <children> <parent-kind> <parent-id>`. The response body carries Columns, Rows, Total, NextCursor, Complete and Format. HTTP query parameters support columns as an ordered comma-separated projection; file_type to restrict file exports by filename suffix; deliverables_only for CRAM irods/files/sample-crams exports, whose default excludes controls/sub-products; qc, library_type and organism for shared export filters where supported; limit/offset for bounded pages; all for the complete matching set; cursor for iRODS/products keyset pagination; and format as tsv, csv or json metadata for callers that render the result. For products, products are product-grained, one row per distinct `(id_run, position, tag_index)`, including products with no iRODS object; products are keyset-cursor paginated; the default products response is a bounded page up to the internal 1000 default carrying Total, NextCursor and Complete; use cursor to continue products; use all=true for the complete products set; file_type only restricts the attached irods_path for products and does not drop product rows. A never-synced cache returns cache_never_synced so CLIs can degrade cleanly.",
 		QueryParams: exportQueryParams(),
 	},
 	{
@@ -1201,7 +1201,7 @@ func exportQueryParams() []QueryParam {
 		QueryParam{Name: "since", Type: "string", Description: "RFC3339 lower bound for iRODS created-date exports (created >= since); supported for iRODS exports"},
 		QueryParam{Name: "until", Type: "string", Description: "RFC3339 upper bound for iRODS created-date exports (created < until); requires since"},
 		QueryParam{Name: "all", Type: "boolean", Description: "when true, emits the complete matching set rather than a bounded page"},
-		QueryParam{Name: "cursor", Type: "string", Description: "opaque keyset cursor returned by a previous iRODS export page"},
+		QueryParam{Name: "cursor", Type: "string", Description: "opaque keyset cursor returned by a previous iRODS or products export page"},
 		QueryParam{Name: "format", Type: "string", Description: "output rendering format metadata: tsv, csv or json; defaults to tsv"},
 	)
 

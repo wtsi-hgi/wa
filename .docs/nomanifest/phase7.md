@@ -52,8 +52,8 @@ Covers acceptance test G1.5 (the committed reference is byte-equal to
 section documents the products relationship's keyset/bounded-page
 semantics). Test file: `mlwh/docs_test.go`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 7.2: K1 - README and glossary present products, not manifest
 
@@ -82,5 +82,5 @@ tests K1.1-K1.3. K1.1 and K1.2 are verified by reading/grep over
 `README.md` and `.docs/mcp/glossary.md`; K1.3 by the glossary-concept
 test in `mlwh/docs_test.go`. Test file: `mlwh/docs_test.go`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

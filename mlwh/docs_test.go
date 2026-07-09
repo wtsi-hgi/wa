@@ -172,6 +172,18 @@ func TestEndpointReferenceIncludesParamsDescriptionAndResponseG1(t *testing.T) {
 			convey.So(section, convey.ShouldNotContainSubstring, "ega_id")
 			convey.So(section, convey.ShouldNotContainSubstring, "irods_cram_path")
 		})
+
+		convey.Convey("the export endpoint documents products paging semantics", func() {
+			section := registryEntrySectionForTest(t, reference, "/export/:children/:parent_kind/:parent_id")
+			convey.So(section, convey.ShouldContainSubstring, "products are product-grained, one row per distinct `(id_run, position, tag_index)`, including products with no iRODS object")
+			convey.So(section, convey.ShouldContainSubstring, "products are keyset-cursor paginated")
+			convey.So(section, convey.ShouldContainSubstring, "default products response is a bounded page up to the internal 1000 default carrying Total, NextCursor and Complete")
+			convey.So(section, convey.ShouldContainSubstring, "use cursor to continue products")
+			convey.So(section, convey.ShouldContainSubstring, "use all=true for the complete products set")
+			convey.So(section, convey.ShouldContainSubstring, "file_type only restricts the attached irods_path for products and does not drop product rows")
+			convey.So(section, convey.ShouldContainSubstring, "cursor for iRODS/products keyset pagination")
+			convey.So(section, convey.ShouldContainSubstring, "previous iRODS or products export page")
+		})
 	})
 }
 
@@ -290,19 +302,19 @@ func TestGlossaryDefinesAvailabilityConceptsG2(t *testing.T) {
 	})
 }
 
-func TestGlossaryDefinesPeopleAndManifestConceptsG2(t *testing.T) {
-	// G2 acceptance test 3: the glossary defines the study-metadata, manifest,
-	// file-type, QC and people concepts introduced by this feature - "data
-	// manifest" and "file-type filter" are called out by the spec, plus "faculty
-	// sponsor", "study_users / role membership", "manual QC", and "data access
-	// group". Each must be a genuine glossary term (a heading), not a passing
-	// mention, so the document truly defines them.
-	convey.Convey("Given the glossary document, when read, then it defines the manifest, file-type, QC and people concepts", t, func() {
+func TestGlossaryDefinesPeopleAndProductExportConceptsG2(t *testing.T) {
+	// G2 acceptance test 3: the glossary defines the study-metadata,
+	// product-export, file-type, QC and people concepts introduced by this feature
+	// - "product export" and "file-type filter" are called out by the spec, plus
+	// "faculty sponsor", "study_users / role membership", "manual QC", and "data
+	// access group". Each must be a genuine glossary term (a heading), not a
+	// passing mention, so the document truly defines them.
+	convey.Convey("Given the glossary document, when read, then it defines the product-export, file-type, QC and people concepts", t, func() {
 		glossary := readGlossaryForTest(t)
 		terms := glossaryTermsForTest(glossary)
 
-		convey.Convey("it defines data manifest and file-type filter (the spec's named terms)", func() {
-			convey.So(terms, convey.ShouldContainKey, "data manifest")
+		convey.Convey("it defines product export and file-type filter (the spec's named terms)", func() {
+			convey.So(terms, convey.ShouldContainKey, "product export")
 			convey.So(terms, convey.ShouldContainKey, "file-type filter (filename suffix)")
 		})
 
