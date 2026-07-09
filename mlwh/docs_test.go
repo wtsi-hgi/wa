@@ -192,7 +192,10 @@ func TestEndpointReferenceIncludesParamsDescriptionAndResponseG1(t *testing.T) {
 			section := registryEntrySectionForTest(t, reference, "/export/:children/:parent_kind/:parent_id")
 			convey.So(section, convey.ShouldContainSubstring, "for products, only restricts the attached `irods_path` value and does not filter product rows or change `Total`")
 			convey.So(section, convey.ShouldContainSubstring, "for file exports, restricts exported file rows by filename suffix")
+			convey.So(section, convey.ShouldContainSubstring, "when omitted, file exports use the relationship default, currently CRAM for irods/files/sample-crams exports")
+			convey.So(section, convey.ShouldContainSubstring, "when omitted for products, any file type can attach when an iRODS path column is requested")
 			convey.So(section, convey.ShouldNotContainSubstring, "matching /count honours the same filter")
+			convey.So(section, convey.ShouldNotContainSubstring, "omit to return all file types or attach any file type")
 		})
 
 		convey.Convey("the export endpoint documents products deliverables_only as a product-row filter", func() {

@@ -1083,7 +1083,7 @@ func exportFileTypeQueryParam() QueryParam {
 		Name:        "file_type",
 		Type:        "string",
 		Required:    false,
-		Description: "when set, for file exports, restricts exported file rows by filename suffix on data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); a valid but unmatched suffix yields no file export rows; for products, only restricts the attached `irods_path` value and does not filter product rows or change `Total`; it is a filename-suffix match, not a real file-type column; an empty/whitespace value or one containing '%', '_' or '/' is rejected with a 400 bad_request; omit to return all file types or attach any file type",
+		Description: "when set, for file exports, restricts exported file rows by filename suffix on data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); a valid but unmatched suffix yields no file export rows; when set for products, only restricts the attached `irods_path` value and does not filter product rows or change `Total`; it is a filename-suffix match, not a real file-type column; an empty/whitespace value or one containing '%', '_' or '/' is rejected with a 400 bad_request; when omitted, file exports use the relationship default, currently CRAM for irods/files/sample-crams exports; when omitted for products, any file type can attach when an iRODS path column is requested",
 	}
 }
 
