@@ -1196,7 +1196,7 @@ func sequencingAggregateQueryParams() []QueryParam {
 }
 
 func exportQueryParams() []QueryParam {
-	params := fetchAllPaginationParams()
+	params := exportPaginationParams()
 	params = append(params,
 		QueryParam{Name: "columns", Type: "string", Description: exportColumnsQueryParamDescription()},
 		exportFileTypeQueryParam(),
@@ -1270,6 +1270,26 @@ func fetchAllPaginationParams() []QueryParam {
 			Type:        "integer",
 			Required:    false,
 			Description: "number of leading rows to skip before returning results; defaults to 0",
+		},
+	}
+}
+
+// exportPaginationParams are the limit/offset QueryParams for the generic export
+// endpoint, whose default response is a bounded internal page rather than the
+// fetch-all behaviour used by many list endpoints.
+func exportPaginationParams() []QueryParam {
+	return []QueryParam{
+		{
+			Name:        "limit",
+			Type:        "integer",
+			Required:    false,
+			Description: "maximum rows for a bounded export page; defaults to the internal 1000-row bounded page; use all=true for the complete matching set",
+		},
+		{
+			Name:        "offset",
+			Type:        "integer",
+			Required:    false,
+			Description: "number of leading rows to skip for offset-backed export relationships; defaults to 0; use cursor to continue keyset-backed iRODS/products pages",
 		},
 	}
 }

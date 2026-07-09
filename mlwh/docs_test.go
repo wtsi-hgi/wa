@@ -181,8 +181,11 @@ func TestEndpointReferenceIncludesParamsDescriptionAndResponseG1(t *testing.T) {
 			convey.So(section, convey.ShouldContainSubstring, "use cursor to continue products")
 			convey.So(section, convey.ShouldContainSubstring, "use all=true for the complete products set")
 			convey.So(section, convey.ShouldContainSubstring, "file_type only restricts the attached irods_path for products and does not drop product rows")
+			convey.So(section, convey.ShouldContainSubstring, "maximum rows for a bounded export page; defaults to the internal 1000-row bounded page; use all=true for the complete matching set")
+			convey.So(section, convey.ShouldContainSubstring, "number of leading rows to skip for offset-backed export relationships; defaults to 0")
 			convey.So(section, convey.ShouldContainSubstring, "cursor for iRODS/products keyset pagination")
 			convey.So(section, convey.ShouldContainSubstring, "previous iRODS or products export page")
+			convey.So(section, convey.ShouldNotContainSubstring, "defaults to a fetch-all page that returns every matching row")
 		})
 
 		convey.Convey("the export endpoint documents products file_type as attachment-only", func() {
