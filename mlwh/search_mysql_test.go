@@ -175,146 +175,27 @@ func TestSearchSamplesMySQLShortTermIssuesNoQuery(t *testing.T) {
 	})
 }
 
-func TestCountSampleSearchMySQLMultiTokenUnionBoundedAndCount(t *testing.T) {
+func TestCountSampleSearchMySQLMultiTokenLiteralPrefixBoundedAndCount(t *testing.T) {
 	convey.Convey("Given a sqlmock MySQL Client and a two-word term", t, func() {
 		roDB, roMock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 		convey.So(err, convey.ShouldBeNil)
-		roMock.MatchExpectationsInOrder(false)
 		defer func() {
 			roMock.ExpectClose()
 			convey.So(roDB.Close(), convey.ShouldBeNil)
 			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		}()
 
-		// "Hek_R1" tokenises to "hek","r1"; only "hek" is searchable (>= 3 chars), so
-		// it is the anchor. The multi-token count is len(union of the full-value
-		// prefix ids and the word-token AND ids), each gathered bottom-cap.
-
-		// Part A: full-value prefix page, anchored prefix "Hek!_R1%" on all four
-		// fields, ordered by id, bounded by the cap. Returns id 1.
-		roMock.ExpectQuery(`SELECT id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' AND .*LIKE \? ESCAPE '!'.*ORDER BY id_sample_tmp LIMIT \?`).
+		roMock.ExpectQuery(`SELECT COUNT\(\*\) FROM \(SELECT id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' AND .*LIKE \? ESCAPE '!'.*LIMIT \?\)`).
 			WithArgs(`Hek!_R1%`, `Hek!_R1%`, `Hek!_R1%`, `Hek!_R1%`, sampleSearchCountCap).
-			WillReturnRows(sqlmock.NewRows([]string{"id_sample_tmp"}).AddRow(int64(1)))
-
-		// Part C anchor selection: the bounded distinct count for the anchor token
-		// "hek" over its half-open range [hek, hel), capped. Below the cap, so "hek"
-		// is the anchor.
-		roMock.ExpectQuery(`SELECT COUNT\(\*\) FROM \(SELECT DISTINCT id_sample_tmp FROM sample_search_token WHERE token >= \? AND token < \? LIMIT \?\)`).
-			WithArgs("hek", "hel", sampleSearchCountCap).
-			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
-
-		// Part C anchor page: the (token, id_sample_tmp) range for "hek", bounded.
-		roMock.ExpectQuery(`SELECT token, id_sample_tmp FROM sample_search_token WHERE token >= \? AND token < \? ORDER BY token, id_sample_tmp LIMIT \? OFFSET \?`).
-			WithArgs("hek", "hel", sampleSearchCountCap*sampleSearchTokenPageMultiplier+sampleSearchTokenPageMargin, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"token", "id_sample_tmp"}).
-				AddRow("hek", int64(1)).
-				AddRow("hek", int64(2)))
-
-		// Part C in-memory verification: the anchor-matched samples' searchable fields
-		// are fetched by id. id 1 has supplier "Hek_R1" (token "r1" matches the other
-		// token); id 2 "HEK293" has no "r1*" word, so only id 1 survives the AND.
-		roMock.ExpectQuery(`SELECT id_sample_tmp, name, supplier_name, common_name, donor_id FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN \(\?, \?\) ORDER BY id_sample_tmp`).
-			WithArgs(int64(1), int64(2)).
-			WillReturnRows(sqlmock.NewRows([]string{"id_sample_tmp", "name", "supplier_name", "common_name", "donor_id"}).
-				AddRow(int64(1), "7607STDY", "Hek_R1", "Homo sapiens", "donor-1").
-				AddRow(int64(2), "name-2", "HEK293", "Homo sapiens", "donor-2"))
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
 		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
 
 		count, err := client.CountSampleSearch(context.Background(), "Hek_R1")
 
-		convey.Convey("when CountSampleSearch runs, then it counts the de-duplicated union (full-prefix id 1 and word-AND id 1) as one", func() {
+		convey.Convey("when CountSampleSearch runs, then it counts only the literal full-prefix rows", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(count, convey.ShouldResemble, Count{Count: 1})
-		})
-	})
-}
-
-func TestSearchSamplesMySQLPagesTokenIndexThenFetchesByID(t *testing.T) {
-	convey.Convey("Given a sqlmock MySQL Client", t, func() {
-		roDB, roMock, err := sqlmock.New()
-		convey.So(err, convey.ShouldBeNil)
-		defer func() {
-			roMock.ExpectClose()
-			convey.So(roDB.Close(), convey.ShouldBeNil)
-			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
-		}()
-
-		// The page SQL must seek the (token, id_sample_tmp) index by a half-open
-		// token range in index order with LIMIT/OFFSET (a bounded over-fetch of
-		// token rows), and must not be a global SELECT DISTINCT ... ORDER BY
-		// id_sample_tmp. The bound args are [lower, upper) for the prefix "acme"
-		// (upper increments the last byte: "acme" -> "acmf").
-		pageSQL := `SELECT token, id_sample_tmp FROM sample_search_token` +
-			` WHERE token >= \? AND token < \? ORDER BY token, id_sample_tmp LIMIT \? OFFSET \?`
-		roMock.ExpectQuery(pageSQL).
-			WithArgs("acme", "acmf", 100*sampleSearchTokenPageMultiplier+sampleSearchTokenPageMargin, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"token", "id_sample_tmp"}).
-				AddRow("acme", int64(1)).
-				AddRow("acme", int64(2)))
-
-		// The matching samples are then fetched by id, SQSCP-scoped, ordered by
-		// id_sample_tmp.
-		roMock.ExpectQuery(`SELECT .* FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN \(\?, \?\) ORDER BY id_sample_tmp`).
-			WithArgs(int64(1), int64(2)).
-			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).
-				AddRow(sampleResolverRow(1, "uuid-1", "lims-1", "ACME-001", "sanger-1", "ACME-supplier-1", "accession-1", "donor-1")...).
-				AddRow(sampleResolverRow(2, "uuid-2", "lims-2", "ACME-002", "sanger-2", "ACME-supplier-2", "accession-2", "donor-2")...))
-
-		// hydrateSampleFanOut issues one fan-out query for the returned rows.
-		roMock.ExpectQuery(regexp.QuoteMeta(`FROM library_samples`)).
-			WithArgs(int64(1), int64(2)).
-			WillReturnRows(sqlmock.NewRows(sampleFanOutColumnsForTest()))
-
-		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
-
-		samples, err := client.SearchSamples(context.Background(), "acme", 100, 0)
-
-		convey.Convey("when SearchSamples runs, then the token-prefix page SQL and the by-id fetch SQL are built with the prefix and pagination args", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
-		})
-	})
-}
-
-func TestSearchSamplesDeDuplicatesIdsSharingThePrefix(t *testing.T) {
-	convey.Convey("Given a sqlmock MySQL Client whose token page repeats an id across prefix-matching tokens", t, func() {
-		roDB, roMock, err := sqlmock.New()
-		convey.So(err, convey.ShouldBeNil)
-		defer func() {
-			roMock.ExpectClose()
-			convey.So(roDB.Close(), convey.ShouldBeNil)
-			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
-		}()
-
-		// id 1 owns two prefix-matching tokens ("mus", "musculus"); the page must
-		// de-duplicate it to a single sample id before the by-id fetch. The prefix
-		// "mus" seeks the half-open range [mus, mut) (upper increments the last
-		// byte: "mus" -> "mut").
-		roMock.ExpectQuery(`SELECT token, id_sample_tmp FROM sample_search_token`).
-			WithArgs("mus", "mut", 100*sampleSearchTokenPageMultiplier+sampleSearchTokenPageMargin, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"token", "id_sample_tmp"}).
-				AddRow("mus", int64(1)).
-				AddRow("musculus", int64(1)).
-				AddRow("muscle", int64(2)))
-
-		roMock.ExpectQuery(`FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN \(\?, \?\) ORDER BY id_sample_tmp`).
-			WithArgs(int64(1), int64(2)).
-			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).
-				AddRow(sampleResolverRow(1, "uuid-1", "lims-1", "mus-1", "sanger-1", "supplier-1", "accession-1", "donor-1")...).
-				AddRow(sampleResolverRow(2, "uuid-2", "lims-2", "muscle-2", "sanger-2", "supplier-2", "accession-2", "donor-2")...))
-
-		roMock.ExpectQuery(regexp.QuoteMeta(`FROM library_samples`)).
-			WithArgs(int64(1), int64(2)).
-			WillReturnRows(sqlmock.NewRows(sampleFanOutColumnsForTest()))
-
-		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
-
-		samples, err := client.SearchSamples(context.Background(), "mus", 100, 0)
-
-		convey.Convey("when SearchSamples runs, then the duplicated id is fetched once and two distinct samples are returned", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
 		})
 	})
 }
@@ -350,76 +231,83 @@ func TestCountSampleSearchMySQLBuildsBoundedDistinctCount(t *testing.T) {
 			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		}()
 
-		// The count is an exact COUNT over a bounded inner SELECT DISTINCT
-		// id_sample_tmp of the half-open token range, capped with LIMIT so a
-		// mega-term stops at the cap. The bound args are the range [lower, upper)
-		// for the prefix "acme" ("acme" -> "acmf") followed by the cap.
-		countSQL := `(?s)SELECT COUNT\(\*\) FROM \(SELECT DISTINCT id_sample_tmp FROM sample_search_token` +
-			` WHERE token >= \? AND token < \? LIMIT \?\)`
+		countSQL := `(?s)SELECT COUNT\(\*\) FROM \(SELECT id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' AND .*LIKE \? ESCAPE '!'.*LIMIT \?\)`
 		roMock.ExpectQuery(countSQL).
-			WithArgs("acme", "acmf", sampleSearchCountCap).
+			WithArgs("acme%", "acme%", "acme%", "acme%", sampleSearchCountCap).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 
 		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
 
 		count, err := client.CountSampleSearch(context.Background(), "acme")
 
-		convey.Convey("when CountSampleSearch runs, then the bounded DISTINCT-count SQL is built with the prefix and the cap", func() {
+		convey.Convey("when CountSampleSearch runs, then the bounded full-prefix count SQL is built with the cap", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(count, convey.ShouldResemble, Count{Count: 2})
 		})
 	})
 }
 
-func TestSearchSamplesMySQLMultiTokenUnionsPrefixAndAnchor(t *testing.T) {
-	convey.Convey("Given a sqlmock MySQL Client and a two-word term", t, func() {
-		roDB, roMock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+func TestSearchSamplesMySQLPagesFullPrefixThenFetchesByID(t *testing.T) {
+	convey.Convey("Given a sqlmock MySQL Client", t, func() {
+		roDB, roMock, err := sqlmock.New()
 		convey.So(err, convey.ShouldBeNil)
-		roMock.MatchExpectationsInOrder(false)
 		defer func() {
 			roMock.ExpectClose()
 			convey.So(roDB.Close(), convey.ShouldBeNil)
 			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		}()
 
-		// "Hek_R1" -> tokens "hek","r1"; the page is the union of the full-value
-		// prefix match and the word-token AND anchored on "hek". The page need is
-		// offset+limit = 100.
-
-		// Part A: full-value prefix page, anchored prefix "Hek!_R1%", ordered by id.
-		// Matches the literal supplier_name "Hek_R1" sample (id 1).
 		roMock.ExpectQuery(`SELECT id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' AND .*LIKE \? ESCAPE '!'.*ORDER BY id_sample_tmp LIMIT \?`).
-			WithArgs(`Hek!_R1%`, `Hek!_R1%`, `Hek!_R1%`, `Hek!_R1%`, 100).
-			WillReturnRows(sqlmock.NewRows([]string{"id_sample_tmp"}).AddRow(int64(1)))
+			WithArgs("acme%", "acme%", "acme%", "acme%", 100).
+			WillReturnRows(sqlmock.NewRows([]string{"id_sample_tmp"}).
+				AddRow(int64(1)).
+				AddRow(int64(2)))
 
-		// Part C anchor selection: bounded distinct count of token "hek", below the cap.
-		roMock.ExpectQuery(`SELECT COUNT\(\*\) FROM \(SELECT DISTINCT id_sample_tmp FROM sample_search_token WHERE token >= \? AND token < \? LIMIT \?\)`).
-			WithArgs("hek", "hel", sampleSearchCountCap).
-			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
-
-		// Part C anchor page: the "hek" range, in token-index order, bounded by the cap.
-		roMock.ExpectQuery(`SELECT token, id_sample_tmp FROM sample_search_token WHERE token >= \? AND token < \? ORDER BY token, id_sample_tmp LIMIT \? OFFSET \?`).
-			WithArgs("hek", "hel", sampleSearchCountCap*sampleSearchTokenPageMultiplier+sampleSearchTokenPageMargin, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"token", "id_sample_tmp"}).
-				AddRow("hek", int64(1)).
-				AddRow("hek", int64(2)))
-
-		// Part C verification: both anchor ids' fields; both supplier names start
-		// "Hek_R1", so both have an "r1*" word and survive the AND with "r1".
-		roMock.ExpectQuery(`SELECT id_sample_tmp, name, supplier_name, common_name, donor_id FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN \(\?, \?\) ORDER BY id_sample_tmp`).
-			WithArgs(int64(1), int64(2)).
-			WillReturnRows(sqlmock.NewRows([]string{"id_sample_tmp", "name", "supplier_name", "common_name", "donor_id"}).
-				AddRow(int64(1), "7607STDY", "Hek_R1", "Homo sapiens", "donor-1").
-				AddRow(int64(2), "name-2", "Hek_R1_a", "Homo sapiens", "donor-2"))
-
-		// The union {1} ∪ {1,2} = {1,2} is fetched by id, SQSCP-scoped, id-ordered.
-		// The resolver selects qualified sample_mirror.* columns, distinguishing it
-		// from the unqualified field-verification fetch above.
-		roMock.ExpectQuery(`SELECT sample_mirror\.id_sample_tmp.* FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN \(\?, \?\) ORDER BY id_sample_tmp`).
+		// The matching samples are then fetched by id, SQSCP-scoped, ordered by
+		// id_sample_tmp.
+		roMock.ExpectQuery(`SELECT .* FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN \(\?, \?\) ORDER BY id_sample_tmp`).
 			WithArgs(int64(1), int64(2)).
 			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).
-				AddRow(sampleResolverRow(1, "uuid-1", "lims-1", "7607STDY", "sanger-1", "Hek_R1", "accession-1", "donor-1")...).
-				AddRow(sampleResolverRow(2, "uuid-2", "lims-2", "name-2", "sanger-2", "Hek_R1_a", "accession-2", "donor-2")...))
+				AddRow(sampleResolverRow(1, "uuid-1", "lims-1", "ACME-001", "sanger-1", "ACME-supplier-1", "accession-1", "donor-1")...).
+				AddRow(sampleResolverRow(2, "uuid-2", "lims-2", "ACME-002", "sanger-2", "ACME-supplier-2", "accession-2", "donor-2")...))
+
+		// hydrateSampleFanOut issues one fan-out query for the returned rows.
+		roMock.ExpectQuery(regexp.QuoteMeta(`FROM library_samples`)).
+			WithArgs(int64(1), int64(2)).
+			WillReturnRows(sqlmock.NewRows(sampleFanOutColumnsForTest()))
+
+		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
+
+		samples, err := client.SearchSamples(context.Background(), "acme", 100, 0)
+
+		convey.Convey("when SearchSamples runs, then the literal-prefix page SQL and the by-id fetch SQL are built", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
+		})
+	})
+}
+
+func TestSearchSamplesMySQLPagesFullPrefixByIDOrder(t *testing.T) {
+	convey.Convey("Given a sqlmock MySQL Client whose prefix page returns id-ordered samples", t, func() {
+		roDB, roMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			roMock.ExpectClose()
+			convey.So(roDB.Close(), convey.ShouldBeNil)
+			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		}()
+
+		roMock.ExpectQuery(`SELECT id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' AND .*LIKE \? ESCAPE '!'.*ORDER BY id_sample_tmp LIMIT \?`).
+			WithArgs("mus%", "mus%", "mus%", "mus%", 100).
+			WillReturnRows(sqlmock.NewRows([]string{"id_sample_tmp"}).
+				AddRow(int64(1)).
+				AddRow(int64(2)))
+
+		roMock.ExpectQuery(`FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN \(\?, \?\) ORDER BY id_sample_tmp`).
+			WithArgs(int64(1), int64(2)).
+			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).
+				AddRow(sampleResolverRow(1, "uuid-1", "lims-1", "mus-1", "sanger-1", "supplier-1", "accession-1", "donor-1")...).
+				AddRow(sampleResolverRow(2, "uuid-2", "lims-2", "muscle-2", "sanger-2", "supplier-2", "accession-2", "donor-2")...))
 
 		roMock.ExpectQuery(regexp.QuoteMeta(`FROM library_samples`)).
 			WithArgs(int64(1), int64(2)).
@@ -427,11 +315,45 @@ func TestSearchSamplesMySQLMultiTokenUnionsPrefixAndAnchor(t *testing.T) {
 
 		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
 
-		samples, err := client.SearchSamples(context.Background(), "Hek_R1", 100, 0)
+		samples, err := client.SearchSamples(context.Background(), "mus", 100, 0)
 
-		convey.Convey("when SearchSamples runs, then the full-prefix page and the anchored word-AND union resolve the samples in id order", func() {
+		convey.Convey("when SearchSamples runs, then the id-ordered full-prefix page is fetched", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
+		})
+	})
+}
+
+func TestSearchSamplesMySQLMultiTokenTermUsesOnlyLiteralPrefixC1(t *testing.T) {
+	convey.Convey("Given a sqlmock MySQL Client and a two-word term", t, func() {
+		roDB, roMock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			roMock.ExpectClose()
+			convey.So(roDB.Close(), convey.ShouldBeNil)
+			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		}()
+
+		roMock.ExpectQuery(`SELECT id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' AND .*LIKE \? ESCAPE '!'.*ORDER BY id_sample_tmp LIMIT \?`).
+			WithArgs(`Hek!_R1%`, `Hek!_R1%`, `Hek!_R1%`, `Hek!_R1%`, 100).
+			WillReturnRows(sqlmock.NewRows([]string{"id_sample_tmp"}).AddRow(int64(1)))
+
+		roMock.ExpectQuery(`SELECT sample_mirror\.id_sample_tmp.* FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN \(\?\) ORDER BY id_sample_tmp`).
+			WithArgs(int64(1)).
+			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).
+				AddRow(sampleResolverRow(1, "uuid-1", "lims-1", "7607STDY", "sanger-1", "Hek_R1", "accession-1", "donor-1")...))
+
+		roMock.ExpectQuery(regexp.QuoteMeta(`FROM library_samples`)).
+			WithArgs(int64(1)).
+			WillReturnRows(sqlmock.NewRows(sampleFanOutColumnsForTest()))
+
+		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
+
+		samples, err := client.SearchSamples(context.Background(), "Hek_R1", 100, 0)
+
+		convey.Convey("when SearchSamples runs, then only the literal full-prefix page is resolved", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
 		})
 	})
 }

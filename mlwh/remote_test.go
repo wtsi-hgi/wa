@@ -62,6 +62,8 @@ func b1RemotePageMethodCases() []remotePageMethodCase {
 	}
 	runs := []Run{{IDRun: 12345}, {IDRun: 12346}}
 	lanes := []Lane{{IDRun: 12345, Position: 1, TagIndex: 0}, {IDRun: 12346, Position: 2, TagIndex: 1}}
+	studyUsers := []StudyUser{{Role: "owner", Name: "Ana Owner", Login: "ao1", Email: "ao1@sanger.ac.uk"}}
+	sampleCRAMs := []SampleCRAM{{Name: "sample-1", AccessionNumber: "EGAN0001", IRODSPath: "/seq/sample-1.cram"}}
 
 	return []remotePageMethodCase{
 		{
@@ -153,6 +155,17 @@ func b1RemotePageMethodCases() []remotePageMethodCase {
 			},
 		},
 		{
+			name:               "RunsForSamplePage",
+			response:           runs,
+			expectedURI:        "/sample/S1/runs?limit=2&offset=2",
+			wantWithHeaders:    Page[Run]{Items: runs, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[Run]{Items: runs, Total: 0, NextOffset: -1},
+			emptyPage:          Page[Run]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.RunsForSamplePage(ctx, "S1", 2, 2)
+			},
+		},
+		{
 			name:               "LanesForSamplePage",
 			response:           lanes,
 			expectedURI:        "/sample/S1/lanes?limit=2&offset=2",
@@ -161,6 +174,39 @@ func b1RemotePageMethodCases() []remotePageMethodCase {
 			emptyPage:          Page[Lane]{},
 			call: func(ctx context.Context, client *RemoteClient) (any, error) {
 				return client.LanesForSamplePage(ctx, "S1", 2, 2)
+			},
+		},
+		{
+			name:               "StudiesForProgrammePage",
+			response:           studies,
+			expectedURI:        "/studies/programme/prog?limit=2&offset=2",
+			wantWithHeaders:    Page[Study]{Items: studies, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[Study]{Items: studies, Total: 0, NextOffset: -1},
+			emptyPage:          Page[Study]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.StudiesForProgrammePage(ctx, "prog", 2, 2)
+			},
+		},
+		{
+			name:               "StudyUsersPage",
+			response:           studyUsers,
+			expectedURI:        "/study/S1/users?limit=2&offset=2",
+			wantWithHeaders:    Page[StudyUser]{Items: studyUsers, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[StudyUser]{Items: studyUsers, Total: 0, NextOffset: -1},
+			emptyPage:          Page[StudyUser]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.StudyUsersPage(ctx, "S1", "", 2, 2)
+			},
+		},
+		{
+			name:               "SampleCRAMsForStudyPage",
+			response:           sampleCRAMs,
+			expectedURI:        "/study/S1/sample-crams?limit=2&offset=2",
+			wantWithHeaders:    Page[SampleCRAM]{Items: sampleCRAMs, Total: 5, NextOffset: 4},
+			wantWithoutHeaders: Page[SampleCRAM]{Items: sampleCRAMs, Total: 0, NextOffset: -1},
+			emptyPage:          Page[SampleCRAM]{},
+			call: func(ctx context.Context, client *RemoteClient) (any, error) {
+				return client.SampleCRAMsForStudyPage(ctx, "S1", 2, 2)
 			},
 		},
 		{
@@ -635,6 +681,146 @@ func seedRemoteB1ListSizingExtras(t *testing.T, client *Client) {
 	}
 
 	rebuildSampleSearchIndexForTest(t, client.cache.DB())
+}
+
+func TestRemoteClientExportRoundTripsThroughServerD1b(t *testing.T) {
+	convey.Convey("D1b reviewer: Given a real RemoteClient against an in-process MLWH server", t, func() {
+		local, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedExportRunScenario(t, local.cache.DB())
+
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		convey.Convey("when Export runs through the remote server, then it returns the projected rows and total", func() {
+			result, err := remote.Export(context.Background(), ExportRelationship{Children: "runs", ParentKind: "sample"}, "runs-sample", ExportOptions{
+				Columns: []string{"id_run", "platform", "run_date"},
+				Limit:   1,
+				Format:  "tsv",
+			})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Columns, convey.ShouldResemble, []string{"id_run", "platform", "run_date"})
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{{"61010", "Illumina", "2026-06-03"}})
+			convey.So(result.Total, convey.ShouldEqual, 2)
+			convey.So(result.Complete, convey.ShouldBeFalse)
+		})
+
+		convey.Convey("when a created-desc iRODS export asks for all rows, then the remote client pages the complete result like local export", func() {
+			older := time.Date(2026, time.June, 1, 9, 0, 0, 0, time.UTC)
+			newer := older.Add(time.Hour)
+			seedExportIRODSRow(t, local.cache.DB(), exportIRODSSeedRow{
+				IDSeqProductLocation: 610011,
+				IDProduct:            "remote-created-older",
+				FileName:             "older.cram",
+				Created:              older,
+				IDSampleTmp:          31,
+				StudyID:              "RUNS",
+				IDRun:                61010,
+				Position:             1,
+				TagIndex:             1,
+			})
+			seedExportIRODSRow(t, local.cache.DB(), exportIRODSSeedRow{
+				IDSeqProductLocation: 610012,
+				IDProduct:            "remote-created-newer",
+				FileName:             "newer.cram",
+				Created:              newer,
+				IDSampleTmp:          31,
+				StudyID:              "RUNS",
+				IDRun:                61011,
+				Position:             2,
+				TagIndex:             1,
+			})
+			opts := ExportOptions{
+				Columns: []string{"created", "irods_path"},
+				Sort:    "created-desc",
+				All:     true,
+				Limit:   1,
+			}
+
+			localResult, localErr := local.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "RUNS", opts)
+			remoteResult, remoteErr := remote.Export(context.Background(), ExportRelationship{Children: "irods", ParentKind: "study"}, "RUNS", opts)
+			var localRows [][]string
+			localCount, localRenderErr := localResult.ForEachRow(context.Background(), func(row []string) error {
+				localRows = append(localRows, append([]string(nil), row...))
+
+				return nil
+			})
+			var remoteRows [][]string
+			remoteCount, remoteRenderErr := remoteResult.ForEachRow(context.Background(), func(row []string) error {
+				remoteRows = append(remoteRows, append([]string(nil), row...))
+
+				return nil
+			})
+
+			convey.So(localErr, convey.ShouldBeNil)
+			convey.So(remoteErr, convey.ShouldBeNil)
+			convey.So(localRenderErr, convey.ShouldBeNil)
+			convey.So(remoteRenderErr, convey.ShouldBeNil)
+			convey.So(localCount, convey.ShouldEqual, 2)
+			convey.So(remoteCount, convey.ShouldEqual, 2)
+			convey.So(localResult.Rows, convey.ShouldBeNil)
+			convey.So(remoteResult.Rows, convey.ShouldBeNil)
+			convey.So(remoteRows, convey.ShouldResemble, localRows)
+			convey.So(remoteRows, convey.ShouldResemble, [][]string{
+				{formatSyncTime(newer), "/seq/export/newer.cram"},
+				{formatSyncTime(older), "/seq/export/older.cram"},
+			})
+		})
+	})
+}
+
+func TestRemoteClientExportRejectsInvalidPagingBeforeRequest(t *testing.T) {
+	convey.Convey("Given a RemoteClient with invalid bounded export pagination", t, func() {
+		cases := []struct {
+			name string
+			opts ExportOptions
+		}{
+			{
+				name: "negative limit",
+				opts: ExportOptions{Limit: -1},
+			},
+			{
+				name: "negative offset",
+				opts: ExportOptions{Limit: 1, Offset: -1},
+			},
+		}
+
+		for _, tc := range cases {
+			tc := tc
+			convey.Convey("when Export receives "+tc.name+", then it rejects the call before HTTP", func() {
+				requestURIs := make(chan string, 1)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requestURIs <- r.URL.RequestURI()
+					w.Header().Set("Content-Type", "application/json")
+					writeRemoteClientJSONForTest(w, ExportResult{
+						Columns:  []string{"id_run"},
+						Rows:     [][]string{{"61010"}},
+						Total:    1,
+						Complete: true,
+						Format:   "tsv",
+					})
+				}))
+				defer server.Close()
+
+				client := newRemoteClientForTest(t, server.URL, "")
+				defer closeRemoteClientForTest(t, client)
+
+				result, err := client.Export(
+					context.Background(),
+					ExportRelationship{Children: "runs", ParentKind: "sample"},
+					"runs-sample",
+					tc.opts,
+				)
+
+				convey.So(err, convey.ShouldNotBeNil)
+				convey.So(errors.Is(err, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+				convey.So(err.Error(), convey.ShouldContainSubstring, "export limit and offset must be non-negative")
+				convey.So(result, convey.ShouldResemble, ExportResult{})
+				convey.So(len(requestURIs), convey.ShouldEqual, 0)
+			})
+		}
+	})
 }
 
 func TestRemoteClientIRODSPathsForSampleByFileTypePageC2(t *testing.T) {
@@ -1639,6 +1825,120 @@ func TestRemoteClientDetailWithOptionsErrorsD2(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestRemoteClientD1cCountEndpointsRoundTrip(t *testing.T) {
+	cases := []struct {
+		name        string
+		expectedURI string
+		call        func(context.Context, *RemoteClient) (Count, error)
+	}{
+		{
+			name:        "CountRunsForSample",
+			expectedURI: "/sample/S1/runs/count",
+			call: func(ctx context.Context, client *RemoteClient) (Count, error) {
+				return client.CountRunsForSample(ctx, "S1")
+			},
+		},
+		{
+			name:        "CountStudiesForSample",
+			expectedURI: "/sample/S1/studies/count",
+			call: func(ctx context.Context, client *RemoteClient) (Count, error) {
+				return client.CountStudiesForSample(ctx, "S1")
+			},
+		},
+		{
+			name:        "CountStudiesForProgramme",
+			expectedURI: "/studies/programme/Programme%20A/count",
+			call: func(ctx context.Context, client *RemoteClient) (Count, error) {
+				return client.CountStudiesForProgramme(ctx, "Programme A")
+			},
+		},
+		{
+			name:        "CountStudyUsers",
+			expectedURI: "/study/S1/users/count",
+			call: func(ctx context.Context, client *RemoteClient) (Count, error) {
+				return client.CountStudyUsers(ctx, "S1", "")
+			},
+		},
+		{
+			name:        "CountSampleCRAMsForStudy",
+			expectedURI: "/study/S1/sample-crams/count",
+			call: func(ctx context.Context, client *RemoteClient) (Count, error) {
+				return client.CountSampleCRAMsForStudy(ctx, "S1")
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		convey.Convey("D1c: Given a RemoteClient over a server returning a Count for "+tc.name, t, func() {
+			requestURIs := make(chan string, 1)
+			server := newRemoteClientJSONServerForTest(requestURIs, Count{Count: 11})
+			defer server.Close()
+			client := newRemoteClientForTest(t, server.URL, "")
+			defer closeRemoteClientForTest(t, client)
+
+			convey.Convey("when the count method runs, then it hits the relationship /count path", func() {
+				count, err := tc.call(context.Background(), client)
+
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(count, convey.ShouldResemble, Count{Count: 11})
+				convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, tc.expectedURI)
+			})
+		})
+	}
+}
+
+func TestRemoteClientSearchSamplesWithOptionsRoundTripsJ(t *testing.T) {
+	convey.Convey("J: Given a RemoteClient pointed at a server returning optioned sample search rows", t, func() {
+		requestURIs := make(chan string, 2)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestURIs <- r.URL.RequestURI()
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/search/sample/hek_r":
+				writeRemoteClientJSONForTest(w, []Sample{{IDSampleTmp: 1, Name: "Hek_R1"}})
+			case "/search/sample/hek_r/count":
+				writeRemoteClientJSONForTest(w, Count{Count: 1})
+			default:
+				w.WriteHeader(http.StatusNotFound)
+				writeRemoteClientJSONForTest(w, map[string]string{"code": "not_found", "message": "missing"})
+			}
+		}))
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		opts := SampleSearchOptions{
+			Words:            true,
+			Organism:         "musculus",
+			LibraryType:      "Standard",
+			QC:               qcPass,
+			DeliverablesOnly: true,
+		}
+
+		convey.Convey("when optioned search and count run, then the remote query carries every search option", func() {
+			samples, sampleErr := client.SearchSamplesWithOptions(context.Background(), "hek_r", opts, 25, 5)
+			count, countErr := client.CountSampleSearchWithOptions(context.Background(), "hek_r", opts)
+
+			convey.So(sampleErr, convey.ShouldBeNil)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldResemble, []Sample{{IDSampleTmp: 1, Name: "Hek_R1"}})
+			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+			convey.So(
+				receiveRemoteClientTestValue(t, requestURIs, "search request URI"),
+				convey.ShouldEqual,
+				"/search/sample/hek_r?deliverables_only=true&library_type=Standard&limit=25&offset=5&organism=musculus&qc=pass&words=true",
+			)
+			convey.So(
+				receiveRemoteClientTestValue(t, requestURIs, "count request URI"),
+				convey.ShouldEqual,
+				"/search/sample/hek_r/count?deliverables_only=true&library_type=Standard&organism=musculus&qc=pass&words=true",
+			)
+		})
+	})
 }
 
 func newRemoteClientErrorServerForTest(status int, code string) *httptest.Server {

@@ -312,15 +312,15 @@ every value the API emits is one of these strings.
 
 The open-ended `/search/*` endpoints differ in how the term is matched:
 
-- **Sample search** (`/search/sample/:term`) is a **word-prefix** match. The
-  term matches the start of any whitespace/punctuation-delimited word in a
-  sample's `name`, `supplier_name`, `common_name`, or `donor_id`
-  (case-insensitive). So `musculus` and `mus` both match a sample whose
-  `common_name` is "Mus Musculus", but a mid-word substring (e.g. `usculus`)
-  does **not** match. This is backed by a word-token prefix index so it stays
-  fast on the ~10M-row sample table; use the exact `Find*`/resolver lookups for
-  precise identifier matches. The minimum term length is 3; shorter terms return
-  nothing.
+- **Sample search** (`/search/sample/:term`) is a **literal whole-value prefix**
+  match by default. The term matches the start of a sample's `name`,
+  `supplier_name`, `common_name`, or `donor_id` (case-insensitive, with SQL
+  wildcard characters escaped), so `homo` matches `common_name = "Homo sapiens"`
+  but `sapiens` does not. Set `words=true` to opt into the separator-agnostic
+  word-prefix mode where `musculus` and `mus` both match a sample whose
+  `common_name` is "Mus Musculus"; mid-word substrings (e.g. `usculus`) still do
+  not match. The minimum free-text term length is 3; shorter terms return
+  nothing unless an exact sample filter is supplied.
 - **Study search** (`/search/study/:term`) is a plain **substring** match
   (case-insensitive `contains`) over a study's `name`, `study_title`,
   `programme`, or `faculty_sponsor`, on the small (~8k-row) study table. The

@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -116,32 +117,13 @@ func newMLWHManifestCommand() *cobra.Command {
 			"--file-type cram attaches the .cram object. The manifest stays",
 			"product-grained regardless of --with-irods/--file-type: a product with",
 			"no matching iRODS object still appears as a row (its irods_path renders",
-			"as '-'). Use --limit/--offset to page and --json for a single JSON",
-			"manifest object (the envelope, not a bare array) suitable for piping",
-			"into jq.",
+			"as '-'). Known merged multi-lane CRAM gaps are counted as",
+			"products_without_irods across the full manifest scope; use sample-crams",
+			"or export irods for the merged-aware path view. Use --limit/--offset",
+			"to page and --json for a single JSON manifest object (the envelope,",
+			"not a bare array) suitable for piping into jq.",
 			"",
-			"Normal CLI users should point this command at the MLWH query server",
-			"with --server or WA_MLWH_SERVER_URL; database and cache credentials",
-			"stay with the server process. When WA_ENV selects a scenario and no",
-			"server URL is set, the command defaults to the active local MLWH API",
-			"port from WA_*_SEQMETA_PORT. Operators can still run against a local",
-			"cache with WA_MLWH_CACHE_PATH, or use WA_MLWH_DSN for direct local",
-			"operator mode.",
-			"",
-			"Configuration is read from the environment. Use the persistent --env",
-			"flag (or WA_ENV=development|test|production) to load matching",
-			".env.<name> / .env.<name>.local files from the working directory",
-			"before resolving:",
-			"",
-			"  WA_MLWH_SERVER_URL      Preferred. Base URL for wa mlwh serve.",
-			"  WA_MLWH_BACKEND_URL     Lower-precedence compatibility default.",
-			"  WA_*_SEQMETA_PORT       Scenario-local default API port.",
-			"  WA_MLWH_DSN             Optional direct operator mode only.",
-			"  WA_MLWH_PASSWORD        Optional. Password used with WA_MLWH_DSN.",
-			"  WA_MLWH_CACHE_PATH      Optional local operator cache path or",
-			"                          MySQL cache DSN without a password.",
-			"  WA_MLWH_CACHE_PASSWORD  Optional. SQLCipher key used to encrypt",
-			"                          the local cache when set.",
+			mlwhQueryCommandConfigurationHelp,
 			"",
 			"Examples:",
 			"  # The manifest for a study via a development stack started by make dev",
@@ -285,6 +267,7 @@ func writeManifestHeader(out io.Writer, manifest mlwh.StudyManifest) {
 	writeKV(out, "  accession_number", manifest.AccessionNumber)
 	writeKV(out, "  faculty_sponsor", manifest.FacultySponsor)
 	writeKV(out, "  data_access_group", manifest.DataAccessGroup)
+	writeKV(out, "  products_without_irods", strconv.Itoa(manifest.ProductsWithoutIRODS))
 	writeKV(out, "  cache_synced_at", manifest.CacheSyncedAt)
 }
 
@@ -294,6 +277,9 @@ func writeManifestHeader(out io.Writer, manifest mlwh.StudyManifest) {
 func writeManifestRow(out io.Writer, row mlwh.ManifestRow, withIRODS bool) {
 	_, _ = fmt.Fprintf(out, "  name=%s supplier_name=%s accession_number=%s sanger_sample_id=%s id_run=%d lane=%d tag_index=%d",
 		row.Name, row.SupplierName, row.AccessionNumber, row.SangerSampleID, row.IDRun, row.Position, row.TagIndex)
+	if strings.TrimSpace(row.ManualQC) != "" {
+		_, _ = fmt.Fprintf(out, " manual_qc=%s", row.ManualQC)
+	}
 
 	if withIRODS {
 		irodsPath := row.IRODSPath
@@ -302,6 +288,12 @@ func writeManifestRow(out io.Writer, row mlwh.ManifestRow, withIRODS bool) {
 		}
 
 		_, _ = fmt.Fprintf(out, " irods_path=%s", irodsPath)
+		if row.IRODSUnmatched {
+			_, _ = fmt.Fprintf(out, " irods_unmatched=true")
+			if strings.TrimSpace(row.Reason) != "" {
+				_, _ = fmt.Fprintf(out, " reason=%s", row.Reason)
+			}
+		}
 	}
 
 	_, _ = fmt.Fprintln(out)

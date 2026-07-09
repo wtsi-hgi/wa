@@ -45,6 +45,10 @@ const mlwhServerFetchAllLimit = 1_000_000
 // contract: a bounded default page with a hard maximum.
 const mlwhSearchDefaultLimit = 100
 
+// mlwhLatestDataDefaultLimit is the bounded default page size for latest-data:
+// callers get a small newest-first page unless they ask for a different one.
+const mlwhLatestDataDefaultLimit = 10
+
 // SearchMaxLimit is the maximum limit the substring-search endpoints accept. A
 // larger limit is rejected with the bad_request 400 envelope rather than
 // clamped, so callers cannot request unbounded search pages. It is exported so a
@@ -74,32 +78,57 @@ type irodsPathsByFileTypeQueryer interface {
 	CountIRODSPathsForSampleByFileType(ctx context.Context, sangerName, fileType string) (Count, error)
 }
 
-// Both the local Client and the RemoteClient provide the file-type-filtered iRODS
-// variants, so a server over either dispatches a file_type query param to the
-// filtered path.
+type irodsPathsWithOptionsQueryer interface {
+	IRODSPathsForStudyWithOptions(ctx context.Context, studyLimsID string, opts IRODSPathOptions, limit, offset int) ([]IRODSPath, error)
+	IRODSPathsForSampleWithOptions(ctx context.Context, sangerName string, opts IRODSPathOptions, limit, offset int) ([]IRODSPath, error)
+	IRODSPathsForRunWithOptions(ctx context.Context, idRun string, opts IRODSPathOptions, limit, offset int) ([]IRODSPath, error)
+	CountIRODSPathsForStudyWithOptions(ctx context.Context, studyLimsID string, opts IRODSPathOptions) (Count, error)
+	CountIRODSPathsForSampleWithOptions(ctx context.Context, sangerName string, opts IRODSPathOptions) (Count, error)
+	CountIRODSPathsForRunWithOptions(ctx context.Context, idRun string, opts IRODSPathOptions) (Count, error)
+}
+
+type sampleSearchWithOptionsQueryer interface {
+	SearchSamplesWithOptions(ctx context.Context, term string, opts SampleSearchOptions, limit, offset int) ([]Sample, error)
+	CountSampleSearchWithOptions(ctx context.Context, term string, opts SampleSearchOptions) (Count, error)
+}
+
+// Both the local Client and the RemoteClient provide the extended variants, so a
+// server over either can dispatch optional filters and created-time sorting.
 var (
-	_ irodsPathsByFileTypeQueryer = (*Client)(nil)
-	_ irodsPathsByFileTypeQueryer = (*RemoteClient)(nil)
+	_ irodsPathsByFileTypeQueryer    = (*Client)(nil)
+	_ irodsPathsByFileTypeQueryer    = (*RemoteClient)(nil)
+	_ irodsPathsWithOptionsQueryer   = (*Client)(nil)
+	_ irodsPathsWithOptionsQueryer   = (*RemoteClient)(nil)
+	_ sampleSearchWithOptionsQueryer = (*Client)(nil)
+	_ sampleSearchWithOptionsQueryer = (*RemoteClient)(nil)
 )
 
-// irodsPathsForSampleResult dispatches the shared /sample/:id/irods list endpoint
-// the same way as irodsPathsForStudyResult.
-func irodsPathsForSampleResult(c *gin.Context, queryer Queryer, id, fileType string, pagination mlwhPagination) ([]IRODSPath, error) {
-	if fileType != "" {
+func irodsPathsForSampleResult(c *gin.Context, queryer Queryer, id string, opts IRODSPathOptions, pagination mlwhPagination) ([]IRODSPath, error) {
+	if extended, ok := queryer.(irodsPathsWithOptionsQueryer); ok && (opts.FileType != "" || irodsPathOptionsNeedExtended(opts)) {
+		return extended.IRODSPathsForSampleWithOptions(c.Request.Context(), id, opts, pagination.limit, pagination.offset)
+	}
+	if opts.FileType != "" {
 		if filtered, ok := queryer.(irodsPathsByFileTypeQueryer); ok {
-			return filtered.IRODSPathsForSampleByFileType(c.Request.Context(), id, fileType, pagination.limit, pagination.offset)
+			return filtered.IRODSPathsForSampleByFileType(c.Request.Context(), id, opts.FileType, pagination.limit, pagination.offset)
 		}
 	}
 
 	return queryer.IRODSPathsForSample(c.Request.Context(), id, pagination.limit, pagination.offset)
 }
 
+func irodsPathOptionsNeedExtended(opts IRODSPathOptions) bool {
+	return opts.OrderBy != "" || opts.Since != "" || opts.Until != "" || opts.DeliverablesOnly
+}
+
 // countIRODSPathsForSampleResult dispatches the /sample/:id/irods/count endpoint
 // and the sample list's total the same way as countIRODSPathsForStudyResult.
-func countIRODSPathsForSampleResult(c *gin.Context, queryer Queryer, id, fileType string) (Count, error) {
-	if fileType != "" {
+func countIRODSPathsForSampleResult(c *gin.Context, queryer Queryer, id string, opts IRODSPathOptions) (Count, error) {
+	if extended, ok := queryer.(irodsPathsWithOptionsQueryer); ok && (opts.FileType != "" || irodsPathOptionsNeedExtended(opts)) {
+		return extended.CountIRODSPathsForSampleWithOptions(c.Request.Context(), id, opts)
+	}
+	if opts.FileType != "" {
 		if filtered, ok := queryer.(irodsPathsByFileTypeQueryer); ok {
-			return filtered.CountIRODSPathsForSampleByFileType(c.Request.Context(), id, fileType)
+			return filtered.CountIRODSPathsForSampleByFileType(c.Request.Context(), id, opts.FileType)
 		}
 	}
 
@@ -112,10 +141,13 @@ func countIRODSPathsForSampleResult(c *gin.Context, queryer Queryer, id, fileTyp
 // filtered IRODSPathsForStudyByFileType when the queryer supports it, falling
 // back to the all-file-types list otherwise. Pagination is applied identically on
 // both paths.
-func irodsPathsForStudyResult(c *gin.Context, queryer Queryer, id, fileType string, pagination mlwhPagination) ([]IRODSPath, error) {
-	if fileType != "" {
+func irodsPathsForStudyResult(c *gin.Context, queryer Queryer, id string, opts IRODSPathOptions, pagination mlwhPagination) ([]IRODSPath, error) {
+	if extended, ok := queryer.(irodsPathsWithOptionsQueryer); ok && (opts.FileType != "" || irodsPathOptionsNeedExtended(opts)) {
+		return extended.IRODSPathsForStudyWithOptions(c.Request.Context(), id, opts, pagination.limit, pagination.offset)
+	}
+	if opts.FileType != "" {
 		if filtered, ok := queryer.(irodsPathsByFileTypeQueryer); ok {
-			return filtered.IRODSPathsForStudyByFileType(c.Request.Context(), id, fileType, pagination.limit, pagination.offset)
+			return filtered.IRODSPathsForStudyByFileType(c.Request.Context(), id, opts.FileType, pagination.limit, pagination.offset)
 		}
 	}
 
@@ -127,14 +159,223 @@ func irodsPathsForStudyResult(c *gin.Context, queryer Queryer, id, fileType stri
 // all-file-types count, and with a file_type it returns the filtered count when
 // the queryer supports it, so X-Total-Count tracks the filtered list and the two
 // cannot drift.
-func countIRODSPathsForStudyResult(c *gin.Context, queryer Queryer, id, fileType string) (Count, error) {
-	if fileType != "" {
+func countIRODSPathsForStudyResult(c *gin.Context, queryer Queryer, id string, opts IRODSPathOptions) (Count, error) {
+	if extended, ok := queryer.(irodsPathsWithOptionsQueryer); ok && (opts.FileType != "" || irodsPathOptionsNeedExtended(opts)) {
+		return extended.CountIRODSPathsForStudyWithOptions(c.Request.Context(), id, opts)
+	}
+	if opts.FileType != "" {
 		if filtered, ok := queryer.(irodsPathsByFileTypeQueryer); ok {
-			return filtered.CountIRODSPathsForStudyByFileType(c.Request.Context(), id, fileType)
+			return filtered.CountIRODSPathsForStudyByFileType(c.Request.Context(), id, opts.FileType)
 		}
 	}
 
 	return queryer.CountIRODSPathsForStudy(c.Request.Context(), id)
+}
+
+func mlwhRunAggregationOptionsFromQuery(c *gin.Context) (RunAggregationOptions, bool) {
+	opts := RunAggregationOptions{
+		Since:     c.Query("since"),
+		Until:     c.Query("until"),
+		Platforms: mlwhRunAggregationPlatformsFromQuery(c),
+	}
+	normalized, _, err := normaliseRunAggregationOptions(opts)
+	if err != nil {
+		writeMLWHBadRequest(c, err.Error())
+
+		return RunAggregationOptions{}, false
+	}
+
+	return normalized, true
+}
+
+func mlwhRunAggregationPlatformsFromQuery(c *gin.Context) []string {
+	rawValues := c.QueryArray("platform")
+	platforms := make([]string, 0, len(rawValues))
+	for _, raw := range rawValues {
+		for _, platform := range strings.Split(raw, ",") {
+			if strings.TrimSpace(platform) != "" {
+				platforms = append(platforms, platform)
+			}
+		}
+	}
+
+	return platforms
+}
+
+func mlwhRunListingRequestFromQuery(c *gin.Context) (RunAggregationOptions, int, string, bool) {
+	opts, ok := mlwhRunAggregationOptionsFromQuery(c)
+	if !ok {
+		return RunAggregationOptions{}, 0, "", false
+	}
+
+	limit, ok := mlwhQueryInt(c, "limit", RunListingDefaultLimit)
+	if !ok {
+		return RunAggregationOptions{}, 0, "", false
+	}
+	if limit < 0 {
+		writeMLWHBadRequest(c, "limit must not be negative")
+
+		return RunAggregationOptions{}, 0, "", false
+	}
+	if limit > RunListingMaxLimit {
+		writeMLWHBadRequest(c, fmt.Sprintf("limit must not exceed %d", RunListingMaxLimit))
+
+		return RunAggregationOptions{}, 0, "", false
+	}
+	if _, err := parseRunListingCursor(c.Query("cursor")); err != nil {
+		writeMLWHBadRequest(c, err.Error())
+
+		return RunAggregationOptions{}, 0, "", false
+	}
+
+	return opts, limit, c.Query("cursor"), true
+}
+
+func mlwhSequencingAggregateOptionsFromQuery(c *gin.Context) (SequencingAggregateOptions, bool) {
+	opts := SequencingAggregateOptions{
+		GroupBy:   mlwhSequencingAggregateGroupByFromQuery(c),
+		Unit:      c.Query("unit"),
+		Since:     c.Query("since"),
+		Until:     c.Query("until"),
+		Platforms: mlwhRunAggregationPlatformsFromQuery(c),
+	}
+	normalized, _, err := normaliseSequencingAggregateOptions(opts)
+	if err != nil {
+		writeMLWHBadRequest(c, err.Error())
+
+		return SequencingAggregateOptions{}, false
+	}
+
+	return normalized, true
+}
+
+func mlwhSequencingAggregateGroupByFromQuery(c *gin.Context) []string {
+	rawValues := c.QueryArray("group_by")
+	groups := make([]string, 0, len(rawValues))
+	for _, raw := range rawValues {
+		for _, group := range strings.Split(raw, ",") {
+			if strings.TrimSpace(group) != "" {
+				groups = append(groups, group)
+			}
+		}
+	}
+
+	return groups
+}
+
+func mlwhLatestDataPaginationFromQuery(c *gin.Context) (mlwhPagination, bool) {
+	limit, ok := mlwhQueryInt(c, "limit", mlwhLatestDataDefaultLimit)
+	if !ok {
+		return mlwhPagination{}, false
+	}
+	if limit < 0 {
+		writeMLWHBadRequest(c, "limit must not be negative")
+
+		return mlwhPagination{}, false
+	}
+	if limit > mlwhSearchMaxLimit {
+		writeMLWHBadRequest(c, fmt.Sprintf("limit must not exceed %d", mlwhSearchMaxLimit))
+
+		return mlwhPagination{}, false
+	}
+
+	offset, ok := mlwhQueryInt(c, "offset", 0)
+	if !ok {
+		return mlwhPagination{}, false
+	}
+	if offset < 0 {
+		writeMLWHBadRequest(c, "offset must not be negative")
+
+		return mlwhPagination{}, false
+	}
+
+	return mlwhPagination{limit: limit, offset: offset}, true
+}
+
+func mlwhIRODSPathOptionsFromQuery(c *gin.Context) (IRODSPathOptions, bool) {
+	fileType, ok := mlwhFileTypeFromQuery(c)
+	if !ok {
+		return IRODSPathOptions{}, false
+	}
+	deliverablesOnly, ok := mlwhQueryBool(c, "deliverables_only")
+	if !ok {
+		return IRODSPathOptions{}, false
+	}
+	orderBy, ok := mlwhIRODSOrderByFromQuery(c)
+	if !ok {
+		return IRODSPathOptions{}, false
+	}
+	since, until, ok := mlwhAddedWindowFromQuery(c)
+	if !ok {
+		return IRODSPathOptions{}, false
+	}
+
+	return IRODSPathOptions{
+		FileType:         fileType,
+		DeliverablesOnly: deliverablesOnly,
+		OrderBy:          orderBy,
+		Since:            since,
+		Until:            until,
+	}, true
+}
+
+func mlwhIRODSOrderByFromQuery(c *gin.Context) (string, bool) {
+	raw := c.Query("order_by")
+	if raw == "" {
+		return "", true
+	}
+	if _, err := normaliseIRODSOrderBy(raw); err != nil {
+		writeMLWHBadRequest(c, "invalid order_by: supported value is created_desc")
+
+		return "", false
+	}
+
+	return irodsOrderByCreatedDesc, true
+}
+
+func mlwhSampleSearchOptionsFromQuery(c *gin.Context) (SampleSearchOptions, bool) {
+	words, ok := mlwhQueryBool(c, "words")
+	if !ok {
+		return SampleSearchOptions{}, false
+	}
+	deliverablesOnly, ok := mlwhQueryBool(c, "deliverables_only")
+	if !ok {
+		return SampleSearchOptions{}, false
+	}
+
+	return SampleSearchOptions{
+		Words:            words,
+		Organism:         c.Query("organism"),
+		LibraryType:      c.Query("library_type"),
+		QC:               c.Query("qc"),
+		DeliverablesOnly: deliverablesOnly,
+	}, true
+}
+
+func searchSamplesResult(ctx context.Context, queryer Queryer, term string, opts SampleSearchOptions, pagination mlwhPagination) ([]Sample, error) {
+	if !sampleSearchOptionsNeedExtended(opts) {
+		return queryer.SearchSamples(ctx, term, pagination.limit, pagination.offset)
+	}
+	if extended, ok := queryer.(sampleSearchWithOptionsQueryer); ok {
+		return extended.SearchSamplesWithOptions(ctx, term, opts, pagination.limit, pagination.offset)
+	}
+
+	return nil, fmt.Errorf("%w: sample search options require SearchSamplesWithOptions", ErrUnsupportedIdentifier)
+}
+
+func sampleSearchOptionsNeedExtended(opts SampleSearchOptions) bool {
+	return opts.Words || opts.Organism != "" || opts.LibraryType != "" || opts.QC != "" || opts.DeliverablesOnly
+}
+
+func countSampleSearchResult(ctx context.Context, queryer Queryer, term string, opts SampleSearchOptions) (Count, error) {
+	if !sampleSearchOptionsNeedExtended(opts) {
+		return queryer.CountSampleSearch(ctx, term)
+	}
+	if extended, ok := queryer.(sampleSearchWithOptionsQueryer); ok {
+		return extended.CountSampleSearchWithOptions(ctx, term, opts)
+	}
+
+	return Count{}, fmt.Errorf("%w: sample search options require CountSampleSearchWithOptions", ErrUnsupportedIdentifier)
 }
 
 // Server serves the MLWH read/query REST API.
@@ -489,6 +730,45 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 				return countValue(queryer.CountRunsForStudy(ctx, id))
 			})
 		}
+	case "RunsForSample":
+		return func(c *gin.Context) {
+			id, pagination, ok := mlwhIDAndPagination(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.RunsForSample(ctx, id, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountRunsForSample(ctx, id))
+			})
+		}
+	case "MonthlyRunCounts":
+		return func(c *gin.Context) {
+			opts, ok := mlwhRunAggregationOptionsFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.MonthlyRunCounts(c.Request.Context(), opts)
+			writeMLWHResult(c, result, err)
+		}
+	case "RunListing":
+		return func(c *gin.Context) {
+			opts, limit, cursor, ok := mlwhRunListingRequestFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.RunListing(c.Request.Context(), opts, limit, cursor)
+			writeMLWHResult(c, result, err)
+		}
+	case "SequencingAggregate":
+		return func(c *gin.Context) {
+			opts, ok := mlwhSequencingAggregateOptionsFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.SequencingAggregate(c.Request.Context(), opts)
+			writeMLWHResult(c, result, err)
+		}
 	case "StudyOverview":
 		return func(c *gin.Context) {
 			id, ok := mlwhPathParam(c, "id")
@@ -561,6 +841,46 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 				return countSamplesWithoutData(ctx, queryer, id)
 			})
 		}
+	case "LatestDataForStudy":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			pagination, ok := mlwhLatestDataPaginationFromQuery(c)
+			if !ok {
+				return
+			}
+			fileType, ok := mlwhFileTypeFromQuery(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.LatestDataForStudy(ctx, id, fileType, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountLatestDataForStudy(ctx, id, fileType))
+			})
+		}
+	case "LatestDataForFacultySponsor":
+		return func(c *gin.Context) {
+			name, ok := mlwhPeopleName(c, "name")
+			if !ok {
+				return
+			}
+			pagination, ok := mlwhLatestDataPaginationFromQuery(c)
+			if !ok {
+				return
+			}
+			fileType, ok := mlwhFileTypeFromQuery(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.LatestDataForFacultySponsor(ctx, name, fileType, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountLatestDataForFacultySponsor(ctx, name, fileType))
+			})
+		}
 	case "LanesForSample":
 		return func(c *gin.Context) {
 			id, pagination, ok := mlwhIDAndPagination(c)
@@ -579,13 +899,13 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			fileType, ok := mlwhFileTypeFromQuery(c)
+			opts, ok := mlwhIRODSPathOptionsFromQuery(c)
 			if !ok {
 				return
 			}
-			result, err := irodsPathsForSampleResult(c, queryer, id, fileType, pagination)
+			result, err := irodsPathsForSampleResult(c, queryer, id, opts, pagination)
 			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
-				return countValue(countIRODSPathsForSampleResult(c, queryer, id, fileType))
+				return countValue(countIRODSPathsForSampleResult(c, queryer, id, opts))
 			})
 		}
 	case "IRODSPathsForStudy":
@@ -594,13 +914,13 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			fileType, ok := mlwhFileTypeFromQuery(c)
+			opts, ok := mlwhIRODSPathOptionsFromQuery(c)
 			if !ok {
 				return
 			}
-			result, err := irodsPathsForStudyResult(c, queryer, id, fileType, pagination)
+			result, err := irodsPathsForStudyResult(c, queryer, id, opts, pagination)
 			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
-				return countValue(countIRODSPathsForStudyResult(c, queryer, id, fileType))
+				return countValue(countIRODSPathsForStudyResult(c, queryer, id, opts))
 			})
 		}
 	case "IRODSPathsForRun":
@@ -609,14 +929,22 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			fileType, ok := mlwhFileTypeFromQuery(c)
+			opts, ok := mlwhIRODSPathOptionsFromQuery(c)
 			if !ok {
 				return
 			}
 			ctx := c.Request.Context()
-			result, err := queryer.IRODSPathsForRun(ctx, id, fileType, pagination.limit, pagination.offset)
+			if extended, supported := queryer.(irodsPathsWithOptionsQueryer); supported && (opts.FileType != "" || irodsPathOptionsNeedExtended(opts)) {
+				result, err := extended.IRODSPathsForRunWithOptions(ctx, id, opts, pagination.limit, pagination.offset)
+				writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+					return countValue(extended.CountIRODSPathsForRunWithOptions(ctx, id, opts))
+				})
+
+				return
+			}
+			result, err := queryer.IRODSPathsForRun(ctx, id, opts.FileType, pagination.limit, pagination.offset)
 			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
-				return countValue(queryer.CountIRODSPathsForRun(ctx, id, fileType))
+				return countValue(queryer.CountIRODSPathsForRun(ctx, id, opts.FileType))
 			})
 		}
 	case "StudyManifest":
@@ -645,7 +973,100 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			result, err := queryer.StudiesForSample(c.Request.Context(), id)
+			ctx := c.Request.Context()
+			result, err := queryer.StudiesForSample(ctx, id)
+			writeMLWHPaginatedResult(c, result, err, 0, func() (int, error) {
+				return countValue(queryer.CountStudiesForSample(ctx, id))
+			})
+		}
+	case "CountStudiesForSample":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountStudiesForSample(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
+	case "StudiesForProgramme":
+		return func(c *gin.Context) {
+			name, pagination, ok := mlwhTermAndSearchPagination(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.StudiesForProgramme(ctx, name, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountStudiesForProgramme(ctx, name))
+			})
+		}
+	case "CountStudiesForProgramme":
+		return func(c *gin.Context) {
+			name, ok := mlwhPathParam(c, "term")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountStudiesForProgramme(c.Request.Context(), name)
+			writeMLWHResult(c, result, err)
+		}
+	case "Programmes":
+		return func(c *gin.Context) {
+			result, err := queryer.Programmes(c.Request.Context())
+			writeMLWHResult(c, result, err)
+		}
+	case "StudyUsers":
+		return func(c *gin.Context) {
+			id, pagination, ok := mlwhIDAndPagination(c)
+			if !ok {
+				return
+			}
+			role := c.Query("role")
+			ctx := c.Request.Context()
+			result, err := queryer.StudyUsers(ctx, id, role, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountStudyUsers(ctx, id, role))
+			})
+		}
+	case "CountStudyUsers":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountStudyUsers(c.Request.Context(), id, c.Query("role"))
+			writeMLWHResult(c, result, err)
+		}
+	case "SampleCRAMsForStudy":
+		return func(c *gin.Context) {
+			id, pagination, ok := mlwhIDAndPagination(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.SampleCRAMsForStudy(ctx, id, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountSampleCRAMsForStudy(ctx, id))
+			})
+		}
+	case "CountSampleCRAMsForStudy":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountSampleCRAMsForStudy(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
+	case "Export":
+		return func(c *gin.Context) {
+			rel, parentID, opts, ok := mlwhExportRequest(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.Export(c.Request.Context(), rel, parentID, opts)
+			if err == nil {
+				result, err = materializeMLWHExportResult(c.Request.Context(), result)
+			}
 			writeMLWHResult(c, result, err)
 		}
 	case "StudiesForFacultySponsor":
@@ -857,10 +1278,14 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
+			opts, ok := mlwhSampleSearchOptionsFromQuery(c)
+			if !ok {
+				return
+			}
 			ctx := c.Request.Context()
-			result, err := queryer.SearchSamples(ctx, term, pagination.limit, pagination.offset)
+			result, err := searchSamplesResult(ctx, queryer, term, opts, pagination)
 			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
-				return countValue(queryer.CountSampleSearch(ctx, term))
+				return countValue(countSampleSearchResult(ctx, queryer, term, opts))
 			})
 		}
 	case "CountStudySearch":
@@ -878,7 +1303,11 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			result, err := queryer.CountSampleSearch(c.Request.Context(), term)
+			opts, ok := mlwhSampleSearchOptionsFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := countSampleSearchResult(c.Request.Context(), queryer, term, opts)
 			writeMLWHResult(c, result, err)
 		}
 	case "CountStudies":
@@ -906,6 +1335,32 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 				return
 			}
 			result, err := countSamplesWithDataResult(c, queryer, id, since, until)
+			writeMLWHResult(c, result, err)
+		}
+	case "CountLatestDataForStudy":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			fileType, ok := mlwhFileTypeFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.CountLatestDataForStudy(c.Request.Context(), id, fileType)
+			writeMLWHResult(c, result, err)
+		}
+	case "CountLatestDataForFacultySponsor":
+		return func(c *gin.Context) {
+			name, ok := mlwhPeopleName(c, "name")
+			if !ok {
+				return
+			}
+			fileType, ok := mlwhFileTypeFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.CountLatestDataForFacultySponsor(c.Request.Context(), name, fileType)
 			writeMLWHResult(c, result, err)
 		}
 	case "CountSamplesForRun":
@@ -962,6 +1417,24 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			result, err := queryer.CountRunsForStudy(c.Request.Context(), id)
 			writeMLWHResult(c, result, err)
 		}
+	case "CountRunsForSample":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountRunsForSample(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
+	case "CountRunListing":
+		return func(c *gin.Context) {
+			opts, ok := mlwhRunAggregationOptionsFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.CountRunListing(c.Request.Context(), opts)
+			writeMLWHResult(c, result, err)
+		}
 	case "CountStudyManifest":
 		return func(c *gin.Context) {
 			id, ok := mlwhPathParam(c, "id")
@@ -995,11 +1468,11 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			fileType, ok := mlwhFileTypeFromQuery(c)
+			opts, ok := mlwhIRODSPathOptionsFromQuery(c)
 			if !ok {
 				return
 			}
-			result, err := countIRODSPathsForSampleResult(c, queryer, id, fileType)
+			result, err := countIRODSPathsForSampleResult(c, queryer, id, opts)
 			writeMLWHResult(c, result, err)
 		}
 	case "CountIRODSPathsForStudy":
@@ -1008,11 +1481,11 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			fileType, ok := mlwhFileTypeFromQuery(c)
+			opts, ok := mlwhIRODSPathOptionsFromQuery(c)
 			if !ok {
 				return
 			}
-			result, err := countIRODSPathsForStudyResult(c, queryer, id, fileType)
+			result, err := countIRODSPathsForStudyResult(c, queryer, id, opts)
 			writeMLWHResult(c, result, err)
 		}
 	case "CountIRODSPathsForRun":
@@ -1021,11 +1494,17 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			if !ok {
 				return
 			}
-			fileType, ok := mlwhFileTypeFromQuery(c)
+			opts, ok := mlwhIRODSPathOptionsFromQuery(c)
 			if !ok {
 				return
 			}
-			result, err := queryer.CountIRODSPathsForRun(c.Request.Context(), id, fileType)
+			if extended, supported := queryer.(irodsPathsWithOptionsQueryer); supported && (opts.FileType != "" || irodsPathOptionsNeedExtended(opts)) {
+				result, err := extended.CountIRODSPathsForRunWithOptions(c.Request.Context(), id, opts)
+				writeMLWHResult(c, result, err)
+
+				return
+			}
+			result, err := queryer.CountIRODSPathsForRun(c.Request.Context(), id, opts.FileType)
 			writeMLWHResult(c, result, err)
 		}
 	case "CountFindSamplesBySangerID":
@@ -1292,6 +1771,135 @@ func writeMLWHStudyManifest(c *gin.Context, manifest StudyManifest, err error, o
 // remote, and external Queryer implementations.
 func studyManifestTotal(ctx context.Context, queryer Queryer, studyLimsID string) (int, error) {
 	return countValue(queryer.CountStudyManifest(ctx, studyLimsID))
+}
+
+func mlwhExportRequest(c *gin.Context) (ExportRelationship, string, ExportOptions, bool) {
+	children, ok := mlwhPathParam(c, "children")
+	if !ok {
+		return ExportRelationship{}, "", ExportOptions{}, false
+	}
+	parentKind, ok := mlwhPathParam(c, "parent_kind")
+	if !ok {
+		return ExportRelationship{}, "", ExportOptions{}, false
+	}
+	parentID, ok := mlwhPathParam(c, "parent_id")
+	if !ok {
+		return ExportRelationship{}, "", ExportOptions{}, false
+	}
+	opts, ok := mlwhExportOptionsFromQuery(c)
+	if !ok {
+		return ExportRelationship{}, "", ExportOptions{}, false
+	}
+
+	return ExportRelationship{Children: children, ParentKind: parentKind}, parentID, opts, true
+}
+
+func mlwhExportOptionsFromQuery(c *gin.Context) (ExportOptions, bool) {
+	columns, ok := mlwhExportColumnsFromQuery(c)
+	if !ok {
+		return ExportOptions{}, false
+	}
+	deliverablesOnly, ok := mlwhQueryOptionalBool(c, "deliverables_only")
+	if !ok {
+		return ExportOptions{}, false
+	}
+	limit, ok := mlwhQueryInt(c, "limit", 0)
+	if !ok {
+		return ExportOptions{}, false
+	}
+	offset, ok := mlwhQueryInt(c, "offset", 0)
+	if !ok {
+		return ExportOptions{}, false
+	}
+	all, ok := mlwhQueryBool(c, "all")
+	if !ok {
+		return ExportOptions{}, false
+	}
+	sort := c.Query("sort")
+	if sort == "" {
+		sort = c.Query("order_by")
+	}
+
+	return ExportOptions{
+		Columns:          columns,
+		FileType:         c.Query("file_type"),
+		DeliverablesOnly: deliverablesOnly,
+		Role:             c.Query("role"),
+		QC:               c.Query("qc"),
+		LibraryType:      c.Query("library_type"),
+		Organism:         c.Query("organism"),
+		Sort:             sort,
+		Since:            c.Query("since"),
+		Until:            c.Query("until"),
+		Limit:            limit,
+		Offset:           offset,
+		All:              all,
+		Cursor:           c.Query("cursor"),
+		Format:           c.Query("format"),
+	}, true
+}
+
+func mlwhExportColumnsFromQuery(c *gin.Context) ([]string, bool) {
+	raw := strings.TrimSpace(c.Query("columns"))
+	if raw == "" {
+		return nil, true
+	}
+
+	parts := strings.Split(raw, ",")
+	columns := make([]string, 0, len(parts))
+	for _, part := range parts {
+		column := strings.TrimSpace(part)
+		if column == "" {
+			writeMLWHBadRequest(c, "invalid columns: contains an empty column name")
+
+			return nil, false
+		}
+		columns = append(columns, column)
+	}
+
+	return columns, true
+}
+
+func mlwhQueryOptionalBool(c *gin.Context, name string) (*bool, bool) {
+	raw, present := c.GetQuery(name)
+	if !present {
+		return nil, true
+	}
+
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		writeMLWHBadRequest(c, "invalid "+name+": must be a boolean")
+
+		return nil, false
+	}
+
+	return &value, true
+}
+
+func materializeMLWHExportResult(ctx context.Context, result ExportResult) (ExportResult, error) {
+	if result.streamRows == nil {
+		if result.Rows == nil {
+			result.Rows = [][]string{}
+		}
+
+		return result, nil
+	}
+
+	rows := make([][]string, 0)
+	_, err := result.ForEachRow(ctx, func(row []string) error {
+		rows = append(rows, append([]string(nil), row...))
+
+		return nil
+	})
+	if err != nil {
+		return ExportResult{}, err
+	}
+
+	result.Rows = rows
+	result.streamRows = nil
+	result.Complete = true
+
+	return result, nil
 }
 
 // mlwhPeopleName reads a people-endpoint path param (e.g. the faculty-sponsor

@@ -28,6 +28,7 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -51,6 +52,62 @@ var studyUsersExpectedSourceColumns = []string{
 	"email",
 	"name",
 	"last_updated",
+}
+
+type sourceColumnTypeExpectation struct {
+	table     string
+	column    string
+	dataTypes []string
+}
+
+var a9SourceColumnTypeExpectations = []sourceColumnTypeExpectation{
+	{table: "iseq_flowcell", column: "entity_type", dataTypes: []string{"char", "enum", "varchar"}},
+	{table: "iseq_flowcell", column: "pipeline_id_lims", dataTypes: []string{"char", "varchar"}},
+	{table: "eseq_product_metrics", column: "is_sequencing_control", dataTypes: []string{"tinyint"}},
+	{table: "useq_product_metrics", column: "is_sequencing_control", dataTypes: []string{"tinyint"}},
+	{table: "iseq_product_metrics", column: "qc", dataTypes: []string{"tinyint"}},
+	{table: "eseq_product_metrics", column: "qc", dataTypes: []string{"tinyint"}},
+	{table: "useq_product_metrics", column: "qc", dataTypes: []string{"tinyint"}},
+	{table: "pac_bio_product_metrics", column: "qc", dataTypes: []string{"tinyint"}},
+	{table: "iseq_run_status", column: "date", dataTypes: []string{"datetime", "timestamp"}},
+	{table: "iseq_run_status_dict", column: "description", dataTypes: []string{"char", "varchar"}},
+	{table: "oseq_flowcell", column: "last_updated", dataTypes: []string{"datetime", "timestamp"}},
+	{table: "study_users", column: "role", dataTypes: []string{"char", "varchar"}},
+	{table: "study", column: "programme", dataTypes: []string{"char", "varchar"}},
+}
+
+func assertSourceColumnHasExpectedType(t *testing.T, db *sql.DB, expectation sourceColumnTypeExpectation) {
+	t.Helper()
+
+	dataType, err := sourceColumnDataType(t, db, expectation.table, expectation.column)
+	convey.So(err, convey.ShouldBeNil)
+	if err != nil {
+		return
+	}
+
+	convey.So(expectation.dataTypes, convey.ShouldContain, dataType)
+}
+
+func sourceColumnDataType(t *testing.T, db *sql.DB, table, column string) (string, error) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var dataType string
+	err := db.QueryRowContext(ctx, `
+SELECT LOWER(data_type)
+FROM information_schema.columns
+WHERE table_schema = DATABASE()
+	AND table_name = ?
+	AND column_name = ?`,
+		table, column,
+	).Scan(&dataType)
+	if err != nil {
+		return "", fmt.Errorf("%s.%s source column type: %w", table, column, err)
+	}
+
+	return dataType, nil
 }
 
 // TestSyncSourceSchemaMatchesRealMLWH is a runtime-skipped (NOT build-tagged)
@@ -81,6 +138,72 @@ func TestSyncSourceSchemaMatchesRealMLWH(t *testing.T) {
 			for _, query := range queries {
 				prepareAndCloseSourceQuery(t, db, query)
 			}
+		})
+	})
+}
+
+// TestRealMLWHSourceHasA9SchemaAssumptions is the A9 live-source guard for the
+// source columns and rows the realworld3 features depend on. It stays runtime
+// skipped without WA_MLWH_DSN, and it only reads/prepares against the source.
+func TestRealMLWHSourceHasA9SchemaAssumptions(t *testing.T) {
+	db := openRealMLWHSourceOrSkip(t)
+
+	convey.Convey("Given a live connection to the real upstream MLWH source", t, func() {
+		convey.Convey("when the A9 source columns are inspected, then each has the expected source type", func() {
+			for _, expectation := range a9SourceColumnTypeExpectations {
+				assertSourceColumnHasExpectedType(t, db, expectation)
+			}
+		})
+
+		convey.Convey("when the A9 source data assumptions are probed, then the required rows are present", func() {
+			assertSourceRowExists(
+				t,
+				db,
+				"iseq_flowcell deliverable entity_type",
+				`SELECT 1 FROM iseq_flowcell WHERE entity_type IN ('library', 'library_indexed') LIMIT 1`,
+			)
+			assertSourceRowExists(
+				t,
+				db,
+				"eseq_product_metrics deliverable is_sequencing_control",
+				`SELECT 1 FROM eseq_product_metrics WHERE is_sequencing_control = 0 LIMIT 1`,
+			)
+			assertSourceRowExists(
+				t,
+				db,
+				"useq_product_metrics deliverable is_sequencing_control",
+				`SELECT 1 FROM useq_product_metrics WHERE is_sequencing_control = 0 LIMIT 1`,
+			)
+			assertSourceRunStatusDateExists(t, db, "run complete")
+			assertSourceRunStatusDateExists(t, db, "run archived")
+			assertSourceRowExists(
+				t,
+				db,
+				"oseq_flowcell last_updated",
+				`SELECT 1 FROM oseq_flowcell WHERE last_updated IS NOT NULL LIMIT 1`,
+			)
+			assertSourceRowExists(
+				t,
+				db,
+				"study_users SQSCP role rows",
+				`SELECT 1 FROM study_users su INNER JOIN study ON study.id_study_tmp = su.id_study_tmp AND study.id_lims = 'SQSCP' WHERE su.role IS NOT NULL AND su.role <> '' LIMIT 1`,
+			)
+		})
+	})
+}
+
+// TestRealMLWHSourcePreparesA3CompositeRecoveryQuery is the live-source guard for
+// A3's real-world merged CRAM query shape. The current live source may have no
+// composite CRAM rows, so the stable live contract is that the recovery SELECT
+// still validates against the source schema; local real-source fixtures assert
+// row-level composite attribution.
+func TestRealMLWHSourcePreparesA3CompositeRecoveryQuery(t *testing.T) {
+	db := openRealMLWHSourceOrSkip(t)
+
+	convey.Convey("Given a live connection to the real upstream MLWH source", t, func() {
+		prepareAndCloseSourceQuery(t, db, SyncSourceQuery{
+			Name:  "A3 composite recovery probe",
+			Query: `SELECT recovery.id_product, recovery.id_sample_tmp, recovery.id_study_lims FROM (` + seqProductIRODSLocationsIlluminaCompositionRecovery + `) recovery WHERE 1 = 0`,
 		})
 	})
 }
@@ -144,9 +267,10 @@ func TestStudyUsersSyncSourceQueryCovered(t *testing.T) {
 // integration test (skipping when WA_MLWH_DSN is absent, like
 // TestSyncSourceSchemaMatchesRealMLWH) that PREPAREs a probe SELECT naming the new
 // source columns the rest of the suite assumes -- study.faculty_sponsor,
-// study.data_access_group and iseq_product_metrics.qc. A successful PREPARE forces
-// the server to validate every named column without reading rows, so it proves
-// those three columns exist on the real source.
+// study.data_access_group, iseq_product_metrics.qc, and the ONT run-identity
+// columns on oseq_flowcell. A successful PREPARE forces the server to validate
+// every named column without reading rows, so it proves those columns exist on
+// the real source.
 func TestRealMLWHSourceHasNewColumns(t *testing.T) {
 	db := openRealMLWHSourceOrSkip(t)
 
@@ -154,7 +278,7 @@ func TestRealMLWHSourceHasNewColumns(t *testing.T) {
 		convey.Convey("when a probe SELECT naming the new source columns is prepared, then it validates", func() {
 			probe := SyncSourceQuery{
 				Name:  "new-source-columns probe",
-				Query: `SELECT study.faculty_sponsor, study.data_access_group, iseq_product_metrics.qc FROM study, iseq_product_metrics WHERE 1 = 0`,
+				Query: `SELECT study.faculty_sponsor, study.data_access_group, iseq_product_metrics.qc, oseq_flowcell.experiment_name, oseq_flowcell.run_id, oseq_flowcell.run_uuid, oseq_flowcell.last_updated FROM study, iseq_product_metrics, oseq_flowcell WHERE 1 = 0`,
 			}
 
 			prepareAndCloseSourceQuery(t, db, probe)
@@ -264,4 +388,31 @@ func sourceTableForSyncTable(table string) string {
 	}
 
 	return table
+}
+
+func assertSourceRunStatusDateExists(t *testing.T, db *sql.DB, status string) {
+	t.Helper()
+
+	assertSourceRowExists(
+		t,
+		db,
+		"iseq_run_status "+status+" date",
+		`SELECT 1 FROM iseq_run_status irs INNER JOIN iseq_run_status_dict dict ON dict.id_run_status_dict = irs.id_run_status_dict WHERE LOWER(dict.description) = ? AND irs.date IS NOT NULL LIMIT 1`,
+		status,
+	)
+}
+
+func assertSourceRowExists(t *testing.T, db *sql.DB, name, query string, args ...any) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var one int
+	err := db.QueryRowContext(ctx, query, args...).Scan(&one)
+	if err != nil {
+		err = fmt.Errorf("%s: %w", name, err)
+	}
+
+	convey.So(err, convey.ShouldBeNil)
 }

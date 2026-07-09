@@ -48,14 +48,14 @@ import (
 
 const (
 	defaultMySQLLockTimeoutSeconds = 30
+	mysqlReadPoolWarmConns         = 6
 	mysqlSyncLockNamePrefix        = "wa_mlwh_sync_"
 
 	// CacheSchemaVersion is the embedded cache schema version supported by OpenCache.
-	// Bumped to 12 to add seq_product_irods_locations_mirror's stable upstream
-	// source-row id and index. Existing mirror rows lack that identity, so the
-	// migration recreates the mirror tables and clears their sync_state rows;
-	// the next sync repopulates them with source ids for stale-row replacement.
-	CacheSchemaVersion = 12
+	// Bumped to 13 for the Phase 1 foundation schema. The existing migration
+	// recreates mirror tables and clears their sync_state rows; the next sync
+	// repopulates the new/changed mirrors.
+	CacheSchemaVersion = 13
 )
 
 var (
@@ -173,8 +173,9 @@ func openMySQLCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 
 		return nil, fmt.Errorf("mlwh: open mysql read-only cache: %w", err)
 	}
+	roDB.SetMaxIdleConns(mysqlReadPoolWarmConns)
 
-	if err = roDB.PingContext(ctx); err != nil {
+	if err = warmMySQLReadPool(ctx, roDB); err != nil {
 		_ = roDB.Close()
 		_ = rwDB.Close()
 
@@ -494,6 +495,29 @@ func mysqlSyncLockName(dsn string) string {
 	return mysqlSyncLockNamePrefix + hex.EncodeToString(sum[:])[:16]
 }
 
+func warmMySQLReadPool(ctx context.Context, db *sql.DB) error {
+	var wg sync.WaitGroup
+	errCh := make(chan error, mysqlReadPoolWarmConns)
+	for range mysqlReadPoolWarmConns {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := db.PingContext(ctx); err != nil {
+				errCh <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
 func normalizedMySQLLockScope(parsed *mysql.Config) string {
 	if parsed == nil {
 		return ""
@@ -628,7 +652,14 @@ func ensureAdditiveCurrentCacheIndexes(ctx context.Context, db *sql.DB, dialect 
 		}{
 			{stmt: `CREATE INDEX IF NOT EXISTS library_samples_library_id_idx ON library_samples(library_id)`},
 			{stmt: `CREATE INDEX IF NOT EXISTS library_samples_id_library_lims_idx ON library_samples(id_library_lims)`},
-			{stmt: `CREATE INDEX IF NOT EXISTS ipm_mirror_iseq_product_idx ON iseq_product_metrics_mirror(id_iseq_product)`, indexSet: &iseqProductMetricsMirrorIndexSet},
+			{stmt: `CREATE INDEX IF NOT EXISTS library_samples_id_study_lims_id_sample_tmp_idx ON library_samples(id_study_lims, id_sample_tmp)`},
+			{stmt: `CREATE INDEX IF NOT EXISTS pac_bio_product_metrics_mirror_rw_metrics_tmp_idx ON pac_bio_product_metrics_mirror(id_pac_bio_rw_metrics_tmp)`},
+			{stmt: `CREATE INDEX IF NOT EXISTS ipm_mirror_sample_qc_idx ON iseq_product_metrics_mirror(id_sample_tmp, qc)`, indexSet: &iseqProductMetricsMirrorIndexSet},
+			{stmt: `CREATE INDEX IF NOT EXISTS ipm_mirror_study_sample_product_qc_idx ON iseq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_iseq_product, qc)`, indexSet: &iseqProductMetricsMirrorIndexSet},
+			{stmt: `CREATE INDEX IF NOT EXISTS pac_bio_product_metrics_mirror_study_sample_product_qc_idx ON pac_bio_product_metrics_mirror(id_study_lims, id_sample_tmp, id_pac_bio_product, qc)`},
+			{stmt: `CREATE INDEX IF NOT EXISTS eseq_product_metrics_mirror_study_sample_product_qc_idx ON eseq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_eseq_product, qc)`},
+			{stmt: `CREATE INDEX IF NOT EXISTS useq_product_metrics_mirror_study_sample_product_qc_idx ON useq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_useq_product, qc)`},
+			{stmt: `CREATE INDEX IF NOT EXISTS seq_ops_tracking_per_sample_mirror_study_id_sample_lims_idx ON seq_ops_tracking_per_sample_mirror(study_id, id_sample_lims)`},
 			{stmt: `CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_iseq_product_idx ON seq_product_irods_locations_mirror(id_study_lims, id_iseq_product)`, indexSet: &seqProductIRODSLocationsMirrorIndexSet},
 			{stmt: `CREATE INDEX IF NOT EXISTS spi_mirror_sample_tmp_iseq_product_idx ON seq_product_irods_locations_mirror(id_sample_tmp, id_iseq_product)`, indexSet: &seqProductIRODSLocationsMirrorIndexSet},
 		} {
@@ -656,8 +687,36 @@ func ensureAdditiveCurrentCacheIndexes(ctx context.Context, db *sql.DB, dialect 
 			`CREATE INDEX library_samples_id_library_lims_idx ON library_samples(id_library_lims)`); err != nil {
 			return err
 		}
-		if err := ensureAdditiveMySQLIndex(ctx, db, "iseq_product_metrics_mirror", "id_iseq_product",
-			`CREATE INDEX ipm_mirror_iseq_product_idx ON iseq_product_metrics_mirror(id_iseq_product)`); err != nil {
+		if err := ensureAdditiveMySQLIndex(ctx, db, "library_samples", "id_study_lims,id_sample_tmp",
+			`CREATE INDEX library_samples_id_study_lims_id_sample_tmp_idx ON library_samples(id_study_lims, id_sample_tmp)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "pac_bio_product_metrics_mirror", "id_pac_bio_rw_metrics_tmp",
+			`CREATE INDEX pac_bio_product_metrics_mirror_rw_metrics_tmp_idx ON pac_bio_product_metrics_mirror(id_pac_bio_rw_metrics_tmp)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "iseq_product_metrics_mirror", "id_sample_tmp,qc",
+			`CREATE INDEX ipm_mirror_sample_qc_idx ON iseq_product_metrics_mirror(id_sample_tmp, qc)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "iseq_product_metrics_mirror", "id_study_lims,id_sample_tmp,id_iseq_product,qc",
+			`CREATE INDEX ipm_mirror_study_sample_product_qc_idx ON iseq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_iseq_product, qc)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "pac_bio_product_metrics_mirror", "id_study_lims,id_sample_tmp,id_pac_bio_product,qc",
+			`CREATE INDEX pac_bio_product_metrics_mirror_study_sample_product_qc_idx ON pac_bio_product_metrics_mirror(id_study_lims, id_sample_tmp, id_pac_bio_product, qc)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "eseq_product_metrics_mirror", "id_study_lims,id_sample_tmp,id_eseq_product,qc",
+			`CREATE INDEX eseq_product_metrics_mirror_study_sample_product_qc_idx ON eseq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_eseq_product, qc)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "useq_product_metrics_mirror", "id_study_lims,id_sample_tmp,id_useq_product,qc",
+			`CREATE INDEX useq_product_metrics_mirror_study_sample_product_qc_idx ON useq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_useq_product, qc)`); err != nil {
+			return err
+		}
+		if err := ensureAdditiveMySQLIndex(ctx, db, "seq_ops_tracking_per_sample_mirror", "study_id,id_sample_lims",
+			`CREATE INDEX seq_ops_tracking_per_sample_mirror_study_id_sample_lims_idx ON seq_ops_tracking_per_sample_mirror(study_id, id_sample_lims)`); err != nil {
 			return err
 		}
 
@@ -751,7 +810,10 @@ func compareCacheSchemaShapes(expected, actual schemaShape) error {
 }
 
 func allowLargeMySQLColdLoadIndexShape(ctx context.Context, db *sql.DB, expected, actual schemaShape) {
-	for _, indexSet := range []syncMirrorIndexSet{iseqProductMetricsMirrorIndexSet, seqProductIRODSLocationsMirrorIndexSet} {
+	for _, indexSet := range syncMirrorIndexSets {
+		if _, ok := mySQLSparseMirrorReadIndexSet(indexSet); !ok {
+			continue
+		}
 		if stringSlicesEqual(expected.Index[indexSet.Table], actual.Index[indexSet.Table]) {
 			continue
 		}
@@ -770,7 +832,7 @@ func allowLargeMySQLColdLoadIndexShape(ctx context.Context, db *sql.DB, expected
 }
 
 func allowLargeSQLiteColdLoadIndexShape(ctx context.Context, db *sql.DB, expected, actual schemaShape) {
-	for _, indexSet := range []syncMirrorIndexSet{sampleMirrorIndexSet, iseqProductMetricsMirrorIndexSet, seqProductIRODSLocationsMirrorIndexSet} {
+	for _, indexSet := range syncMirrorIndexSets {
 		if stringSlicesEqual(expected.Index[indexSet.Table], actual.Index[indexSet.Table]) {
 			continue
 		}
@@ -783,6 +845,14 @@ func allowLargeSQLiteColdLoadIndexShape(ctx context.Context, db *sql.DB, expecte
 
 		actual.Index[indexSet.Table] = append([]string(nil), expected.Index[indexSet.Table]...)
 	}
+}
+
+func analyzeMirrorTable(ctx context.Context, db *sql.DB, table string) error {
+	if _, err := db.ExecContext(ctx, `ANALYZE TABLE `+table); err != nil {
+		return fmt.Errorf("mlwh: analyze %s after index recovery: %w", table, err)
+	}
+
+	return nil
 }
 
 func sqliteLargeCacheReadIndexShape(indexSet syncMirrorIndexSet, actual []string) bool {
@@ -798,22 +868,27 @@ func sqliteLargeCacheReadIndexShape(indexSet syncMirrorIndexSet, actual []string
 			stringSlicesEqual(actual, []string{"id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"}) ||
 			stringSlicesEqual(actual, []string{"id_sample_tmp", "id_study_lims,id_sample_tmp"})
 	default:
-		return false
+		columns, ok := sparseMirrorReadIndexColumns(indexSet)
+		return ok && stringSlicesEqual(actual, columns)
 	}
 }
 
 func iseqProductMetricsSparseReadIndexColumns() []string {
-	return []string{"id_iseq_product", "id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_study_lims,id_run,position"}
+	columns, _ := sparseMirrorReadIndexColumns(iseqProductMetricsMirrorIndexSet)
+
+	return columns
 }
 
 // seqProductIRODSLocationsSparseReadIndexColumns is the sorted, comma-joined column
 // shape of the iRODS-locations mirror's sparse cold-load read index set
 // (seqProductIRODSLocationsMirrorReadIndexes), used to accept the post-cold-load
-// shape that includes the source-row replacement index, the (id_study_lims,
-// id_iseq_product) status-breakdown index, and the (id_iseq_product) D1
-// run-scope / D2 manifest LEFT JOIN index.
+// shape that includes the source-row replacement index, the export covering
+// index, the recency indexes, the status-breakdown index, and product-id join
+// indexes.
 func seqProductIRODSLocationsSparseReadIndexColumns() []string {
-	return []string{"id_iseq_product", "id_sample_tmp", "id_sample_tmp,id_iseq_product", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"}
+	columns, _ := sparseMirrorReadIndexColumns(seqProductIRODSLocationsMirrorIndexSet)
+
+	return columns
 }
 
 func sqliteSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table string) bool {
@@ -823,6 +898,21 @@ func sqliteSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table
 	}
 
 	return indexesDropped == 1
+}
+
+func sparseMirrorReadIndexColumns(indexSet syncMirrorIndexSet) ([]string, bool) {
+	readIndexSet, ok := mySQLSparseMirrorReadIndexSet(indexSet)
+	if !ok {
+		return nil, false
+	}
+
+	columns := make([]string, 0, len(readIndexSet.Indexes))
+	for _, index := range readIndexSet.Indexes {
+		columns = append(columns, strings.ReplaceAll(index.Column, " ", ""))
+	}
+	sort.Strings(columns)
+
+	return columns, true
 }
 
 func mysqlSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table string) bool {
@@ -1388,10 +1478,13 @@ func repairDroppedMirrorIndexSet(ctx context.Context, db *sql.DB, dialect string
 			return fmt.Errorf("mlwh: configure sqlite dropped-index recovery: %w", err)
 		}
 	}
-	var repaired bool
+	var (
+		createdIndexes bool
+		repaired       bool
+	)
 	if indexSet.Table == "sample_mirror" {
 		if repairSampleLookupIndexes {
-			if err = createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
+			if _, err = createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
 				return err
 			}
 			repaired = true
@@ -1402,7 +1495,7 @@ func repairDroppedMirrorIndexSet(ctx context.Context, db *sql.DB, dialect string
 			}
 		}
 	} else {
-		repaired, err = createMirrorDroppedIndexes(ctx, tx, dialect, indexSet)
+		repaired, createdIndexes, err = createMirrorDroppedIndexes(ctx, tx, dialect, indexSet)
 		if err != nil {
 			return err
 		}
@@ -1417,6 +1510,12 @@ func repairDroppedMirrorIndexSet(ctx context.Context, db *sql.DB, dialect string
 	}
 
 	committed = true
+
+	if dialect == "mysql" && createdIndexes {
+		if err = analyzeMirrorTable(ctx, db, indexSet.Table); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }

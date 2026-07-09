@@ -11,5 +11,11 @@ CREATE TABLE IF NOT EXISTS pac_bio_product_metrics_mirror (
 CREATE INDEX pac_bio_product_metrics_mirror_id_sample_tmp_idx
 	ON pac_bio_product_metrics_mirror(id_sample_tmp);
 
+CREATE INDEX pac_bio_product_metrics_mirror_rw_metrics_tmp_idx
+	ON pac_bio_product_metrics_mirror(id_pac_bio_rw_metrics_tmp);
+
 CREATE INDEX pac_bio_product_metrics_mirror_id_study_lims_idx
 	ON pac_bio_product_metrics_mirror(id_study_lims);
+
+CREATE INDEX pac_bio_product_metrics_mirror_study_sample_product_qc_idx
+	ON pac_bio_product_metrics_mirror(id_study_lims, id_sample_tmp, id_pac_bio_product, qc);

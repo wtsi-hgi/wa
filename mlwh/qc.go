@@ -54,3 +54,20 @@ func qcString(qc sql.NullInt64) string {
 
 	return qcFail
 }
+
+// qcRollupString maps a product-set QC aggregate to the canonical verdict
+// string. It is intentionally the shared fail > pending > pass rule for every
+// caller that renders a rolled-up manual QC value. A zero product count means no
+// product-metrics were present, so there is no manual QC to render.
+func qcRollupString(productCount int, pending, minQC sql.NullInt64) string {
+	switch {
+	case productCount == 0:
+		return ""
+	case minQC.Valid && minQC.Int64 == 0:
+		return qcFail
+	case pending.Valid && pending.Int64 > 0:
+		return qcPending
+	default:
+		return qcPass
+	}
+}

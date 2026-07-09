@@ -466,9 +466,12 @@ unchanged** (plain `LIKE '%term%'` scan on the ~8k-row `study_mirror`; measured
   `wa mlwh sync`: cold-load bulk-build with index-added-after (mirroring the
   secondary-index discipline), incremental upsert/delete on sample writes.
   Measured: ~4 tokens/row, **~1.7GB**, ~7.5min to build at 10.35M.
-- **`SearchSamples`:** match the lowercased query as a **prefix against tokens**.
-  Page via index-order — `WHERE token LIKE 'prefix%' ORDER BY token,
-id_sample_tmp LIMIT ? OFFSET ?` — then fetch the sample rows (small over-fetch - dedupe ids). This streams the page from the index with no global sort:
+- **Current `SearchSamples`:** default search matches a literal whole-value
+  prefix over `name`, `supplier_name`, `common_name`, and `donor_id`;
+  `words=true` opts into matching the lowercased query as a **prefix against
+  tokens**. The word mode pages via index-order — `WHERE token LIKE 'prefix%'
+ORDER BY token, id_sample_tmp LIMIT ? OFFSET ?` — then fetches the sample rows
+  (small over-fetch - dedupe ids). This streams the page from the index with no global sort:
   measured **48-62ms at any cardinality** (`homo`/1.9M matches = 62ms). All
   sample rows are `id_lims='SQSCP'` (the sync invariant), so no scoping join is
   needed in the hot path. Do NOT use `SELECT DISTINCT ... ORDER BY id` (measured
@@ -477,12 +480,13 @@ id_sample_tmp LIMIT ? OFFSET ?` — then fetch the sample rows (small over-fetch
   result sets (≈sub-second up to a few hundred k), but **bounded** for very
   common tokens — cap the scan (e.g. count up to 10000 and report "10000+") so
   the count stays fast (measured ~80ms) on mega-terms like `homo` (1.9M).
-- **Semantics:** matches the **start of any word** in the searchable fields
-  (e.g. `musculus` matches "Mus Musculus"; `mus` matches both). It is **not**
-  mid-word infix (`tagenom` will not find "metagenome"; a substring inside a
-  single token like `STDY7058331` inside "3662STDY7058331" is not matched) — an
-  accepted trade-off; the exact `Find*` finders cover precise lookups. Min term
-  length stays 3; shorter returns empty/0.
+- **Word-mode semantics:** with `words=true`, the term matches the **start of
+  any word** in the searchable fields (e.g. `musculus` matches "Mus Musculus";
+  `mus` matches both). It is **not** mid-word infix (`tagenom` will not find
+  "metagenome"; a substring inside a single token like `STDY7058331` inside
+  "3662STDY7058331" is not matched) - an accepted trade-off; the exact `Find*`
+  finders cover precise lookups. Min free-text term length stays 3; shorter
+  returns empty/0.
 - **Remove the round-3 startup refusal (Goal/phase-6).** Token-prefix has no
   FULLTEXT dependency and works on MariaDB and MySQL < 8 too, so `wa mlwh serve`
   no longer inspects the backend flavor or refuses MariaDB/MySQL<8 — it runs on

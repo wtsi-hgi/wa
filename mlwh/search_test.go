@@ -585,6 +585,389 @@ func TestSearchSamplesMatchesSupplierNameOrderedByTmpID(t *testing.T) {
 	})
 }
 
+// C1 acceptance test 1: the no-mode sample search is a literal whole-value
+// prefix over name, supplier_name, common_name and donor_id only. The old default
+// also unioned in the word-token path, which made "hek_r" return every sample
+// carrying both a "hek*" word and an "r*" word (55 here) instead of the four
+// supplier_names that literally start with Hek_R.
+func TestSearchSamplesDefaultLiteralPrefixExcludesWordTokenUnionC1(t *testing.T) {
+	convey.Convey("C1: Given four Hek_R supplier prefixes plus many word-token hek/r decoys", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		for id := int64(1); id <= 4; id++ {
+			seedSampleMirrorSearchRow(t, cache.DB(), id, "name-"+formatInt(id), "Hek_R"+formatInt(id), "Homo sapiens", "donor-"+formatInt(id))
+		}
+		for id := int64(5); id <= 55; id++ {
+			seedSampleMirrorSearchRow(t, cache.DB(), id, "name-"+formatInt(id), "HEK293 R-decoy-"+formatInt(id), "Homo sapiens", "donor-"+formatInt(id))
+		}
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when SearchSamples runs for hek_r with no mode, then only the four literal prefixes are returned", func() {
+			samples, err := client.SearchSamples(context.Background(), "hek_r", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2, 3, 4})
+		})
+
+		convey.Convey("when CountSampleSearch runs for hek_r with no mode, then it counts the same four literal prefixes", func() {
+			count, err := client.CountSampleSearch(context.Background(), "hek_r")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 4})
+		})
+	})
+}
+
+// C2 acceptance test 1: opt-in Words mode uses the retained sample_search_token
+// path, so a later word such as "musculus" matches common_name "Mus Musculus".
+func TestSearchSamplesWordsModeMatchesLaterWordC2(t *testing.T) {
+	convey.Convey("C2: Given a synced SQLite cache with a Mus Musculus common_name", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "specimen-1", "supplier-1", "Mus Musculus", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "specimen-2", "supplier-2", "Mus spretus", "donor-2")
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "specimen-3", "supplier-3", "Homo Sapiens", "donor-3")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		opts := SampleSearchOptions{Words: true}
+
+		convey.Convey("when SearchSamples runs with Words for musculus, then the Mus Musculus sample matches", func() {
+			samples, err := client.SearchSamplesWithOptions(context.Background(), "musculus", opts, 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+		})
+
+		convey.Convey("when CountSampleSearch runs with Words for musculus, then it counts the same word-prefix match", func() {
+			count, err := client.CountSampleSearchWithOptions(context.Background(), "musculus", opts)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+		})
+	})
+}
+
+// C2 acceptance test 2: the broad cross-field word-token AND for "hek_r" is
+// reached only via Words mode. The no-mode C1 path stays at the four literal
+// supplier prefixes, while Words mode includes the broader hek*/r* set.
+func TestSearchSamplesWordsModeUsesBroaderHekRTokenSetC2(t *testing.T) {
+	convey.Convey("C2: Given four Hek_R supplier prefixes plus many word-token hek/r decoys", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		for id := int64(1); id <= 4; id++ {
+			seedSampleMirrorSearchRow(t, cache.DB(), id, "name-"+formatInt(id), "Hek_R"+formatInt(id), "Homo sapiens", "donor-"+formatInt(id))
+		}
+		for id := int64(5); id <= 55; id++ {
+			seedSampleMirrorSearchRow(t, cache.DB(), id, "name-"+formatInt(id), "HEK293 R-decoy-"+formatInt(id), "Homo sapiens", "donor-"+formatInt(id))
+		}
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		opts := SampleSearchOptions{Words: true}
+
+		convey.Convey("when SearchSamples runs with Words for hek_r, then it returns the broader word-prefix set distinct from default", func() {
+			defaultSamples, err := client.SearchSamples(context.Background(), "hek_r", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			wordSamples, err := client.SearchSamplesWithOptions(context.Background(), "hek_r", opts, 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			defaultIDs := sampleTmpIDs(defaultSamples)
+			wordIDs := sampleTmpIDs(wordSamples)
+			wantWordIDs := make([]int64, 0, 55)
+			for id := int64(1); id <= 55; id++ {
+				wantWordIDs = append(wantWordIDs, id)
+			}
+
+			convey.So(defaultIDs, convey.ShouldResemble, []int64{1, 2, 3, 4})
+			convey.So(wordIDs, convey.ShouldResemble, wantWordIDs)
+			convey.So(len(wordIDs), convey.ShouldBeGreaterThanOrEqualTo, len(defaultIDs))
+			convey.So(wordIDs, convey.ShouldNotResemble, defaultIDs)
+		})
+
+		convey.Convey("when CountSampleSearch runs with Words for hek_r, then it counts the same broader set", func() {
+			defaultCount, err := client.CountSampleSearch(context.Background(), "hek_r")
+			convey.So(err, convey.ShouldBeNil)
+
+			wordCount, err := client.CountSampleSearchWithOptions(context.Background(), "hek_r", opts)
+			convey.So(err, convey.ShouldBeNil)
+
+			wordSamples, searchErr := client.SearchSamplesWithOptions(context.Background(), "hek_r", opts, 1000, 0)
+			convey.So(searchErr, convey.ShouldBeNil)
+
+			convey.So(defaultCount, convey.ShouldResemble, Count{Count: 4})
+			convey.So(wordCount, convey.ShouldResemble, Count{Count: 55})
+			convey.So(wordCount.Count, convey.ShouldEqual, len(wordSamples))
+			convey.So(wordCount.Count, convey.ShouldBeGreaterThanOrEqualTo, defaultCount.Count)
+			convey.So(wordCount.Count, convey.ShouldNotEqual, defaultCount.Count)
+		})
+	})
+}
+
+// C3 acceptance tests: --organism is a word-membership filter over common_name,
+// not a whole-value exact match or substring match. It is resolved through the A5
+// common_name_word_mirror and then applied to sample_mirror.common_name.
+func TestSearchSamplesOrganismWordMembershipC3(t *testing.T) {
+	convey.Convey("C3: Given a synced SQLite cache with distinct common_name organism words", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "c3sample-1", "supplier-1", "Mus Musculus", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "c3sample-2", "supplier-2", "Mus musculus castaneus", "donor-2")
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "c3sample-3", "supplier-3", "Mus spretus", "donor-3")
+		seedSampleMirrorSearchRow(t, cache.DB(), 4, "c3sample-4", "supplier-4", "Homo sapiens", "donor-4")
+		seedSampleMirrorSearchRow(t, cache.DB(), 5, "c3sample-5", "supplier-5", "Musculus species", "donor-5")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		rebuildCommonNameWordMirrorForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when Organism is musculus, then every common_name with the whole word matches including subspecies", func() {
+			opts := SampleSearchOptions{Organism: "musculus"}
+
+			samples, err := client.SearchSamplesWithOptions(context.Background(), "c3sample", opts, 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2, 5})
+
+			filterOnly, filterOnlyErr := client.SearchSamplesWithOptions(context.Background(), "", opts, 100, 0)
+			convey.So(filterOnlyErr, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(filterOnly), convey.ShouldResemble, []int64{1, 2, 5})
+
+			count, countErr := client.CountSampleSearchWithOptions(context.Background(), "c3sample", opts)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 3})
+
+			exactMusMusculus := countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror WHERE common_name = ?`, "Mus Musculus")
+			convey.So(count.Count, convey.ShouldBeGreaterThan, exactMusMusculus)
+		})
+
+		convey.Convey("when Organism is usculus, then mid-word fragments do not match", func() {
+			opts := SampleSearchOptions{Organism: "usculus"}
+
+			samples, err := client.SearchSamplesWithOptions(context.Background(), "", opts, 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldBeEmpty)
+
+			count, countErr := client.CountSampleSearchWithOptions(context.Background(), "", opts)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 0})
+		})
+
+		convey.Convey("when Organism has two words, then both whole words are required", func() {
+			opts := SampleSearchOptions{Organism: "mus musculus"}
+
+			samples, err := client.SearchSamplesWithOptions(context.Background(), "", opts, 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
+
+			count, countErr := client.CountSampleSearchWithOptions(context.Background(), "", opts)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 2})
+		})
+	})
+}
+
+func TestSearchSamplesOrganismFilterUsesWordAndCommonNameIndexesC3(t *testing.T) {
+	convey.Convey("C3: Given a synced SQLite cache with common_name_word_mirror populated", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "c3sample-1", "supplier-1", "Mus Musculus", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "c3sample-2", "supplier-2", "Mus musculus castaneus", "donor-2")
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "c3sample-3", "supplier-3", "Mus spretus", "donor-3")
+		seedSampleMirrorSearchRow(t, cache.DB(), 4, "c3sample-4", "supplier-4", "Homo sapiens", "donor-4")
+		rebuildCommonNameWordMirrorForTest(t, cache.DB())
+
+		readDB := cacheReadDB(cache)
+		convey.So(readDB, convey.ShouldNotBeNil)
+
+		convey.Convey("when the common_name word membership query is planned, then it uses the word index and no full mirror scan", func() {
+			query, args := commonNameWordMembershipQuery(sampleOrganismTokens("mus musculus"))
+			details := explainQueryPlanDetails(t, readDB, query, args...)
+
+			convey.So(planUsesNamedIndexSearch(details, "common_name_word_mirror_word_idx"), convey.ShouldBeTrue)
+			convey.So(planHasFullTableScan(details, commonNameWordMirrorTable), convey.ShouldBeFalse)
+		})
+
+		convey.Convey("when the sample common_name constraint is planned, then it uses the common_name index and no full sample scan", func() {
+			details := explainQueryPlanDetails(t, readDB, sampleOrganismCommonNamePageSQL, "Mus Musculus", 100)
+
+			convey.So(planUsesNamedIndexSearch(details, "sample_mirror_common_name_idx"), convey.ShouldBeTrue)
+			convey.So(planHasFullTableScan(details, "sample_mirror"), convey.ShouldBeFalse)
+		})
+	})
+}
+
+// C4 acceptance test 1: --qc on sample search is the per-sample roll-up verdict
+// (fail > pending > pass), agreeing with SampleProgress.qc and not the Phase 4
+// export surface's raw per-product QC grain.
+func TestSearchSamplesQCFilterUsesSampleRollupC4(t *testing.T) {
+	convey.Convey("C4: Given samples with pass, fail and pending product QC roll-ups", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "c4qc-pass", "supplier-1", "Homo sapiens", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "c4qc-fail", "supplier-2", "Homo sapiens", "donor-2")
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "c4qc-pending", "supplier-3", "Homo sapiens", "donor-3")
+		seedSampleMirrorSearchRow(t, cache.DB(), 4, "c4qc-not-tracked", "supplier-4", "Homo sapiens", "donor-4")
+		seedIseqProductMetricsMirrorRowWithQC(t, cache.DB(), 40101, 1, 54001, 1, 1, "S1", sql.NullInt64{Int64: 1, Valid: true})
+		seedIseqProductMetricsMirrorRowWithQC(t, cache.DB(), 40201, 2, 54001, 2, 1, "S1", sql.NullInt64{Int64: 1, Valid: true})
+		seedIseqProductMetricsMirrorRowWithQC(t, cache.DB(), 40202, 2, 54001, 2, 2, "S1", sql.NullInt64{Int64: 0, Valid: true})
+		seedIseqProductMetricsMirrorRowWithQC(t, cache.DB(), 40301, 3, 54001, 3, 1, "S1", sql.NullInt64{})
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 17, 1, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when QC pass is requested, then the mixed pass/fail sample is excluded", func() {
+			samples, err := client.SearchSamplesWithOptions(context.Background(), "c4qc", SampleSearchOptions{QC: qcPass}, 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+
+			count, countErr := client.CountSampleSearchWithOptions(context.Background(), "c4qc", SampleSearchOptions{QC: qcPass})
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+
+			progress, progressErr := client.SampleProgress(context.Background(), "c4qc-fail")
+			convey.So(progressErr, convey.ShouldBeNil)
+			convey.So(progress.QC, convey.ShouldEqual, qcFail)
+		})
+
+		convey.Convey("when QC fail and pending are requested, then each roll-up bucket is distinct", func() {
+			failSamples, failErr := client.SearchSamplesWithOptions(context.Background(), "c4qc", SampleSearchOptions{QC: qcFail}, 100, 0)
+			convey.So(failErr, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(failSamples), convey.ShouldResemble, []int64{2})
+
+			pendingSamples, pendingErr := client.SearchSamplesWithOptions(context.Background(), "c4qc", SampleSearchOptions{QC: qcPending}, 100, 0)
+			convey.So(pendingErr, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(pendingSamples), convey.ShouldResemble, []int64{3})
+		})
+	})
+}
+
+// C4 acceptance test 3: library-type and organism are independent indexed
+// candidate sets whose intersection is returned; the free-text term may be empty
+// because the filter family is exempt from the 3-character minimum.
+func TestSearchSamplesLibraryTypeAndOrganismIntersectC4(t *testing.T) {
+	convey.Convey("C4: Given library type and organism filters select overlapping sample sets", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "c4lib-mus-standard", "supplier-1", "Mus Musculus", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "c4lib-mus-bespoke", "supplier-2", "Mus musculus castaneus", "donor-2")
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "c4lib-human-standard", "supplier-3", "Homo sapiens", "donor-3")
+		seedSampleMirrorSearchRow(t, cache.DB(), 4, "c4lib-mus-standard-2", "supplier-4", "Mus musculus domesticus", "donor-4")
+		seedLibrarySample(t, cache.DB(), "Standard", 1, "S1")
+		seedLibrarySample(t, cache.DB(), "Bespoke", 2, "S1")
+		seedLibrarySample(t, cache.DB(), "Standard", 3, "S1")
+		seedLibrarySample(t, cache.DB(), "Standard", 4, "S1")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		rebuildCommonNameWordMirrorForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		opts := SampleSearchOptions{LibraryType: "Standard", Organism: "musculus"}
+
+		convey.Convey("when the filters run without a free-text term, then the filter-only intersection is returned", func() {
+			samples, err := client.SearchSamplesWithOptions(context.Background(), "", opts, 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 4})
+
+			count, countErr := client.CountSampleSearchWithOptions(context.Background(), "", opts)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 2})
+		})
+
+		convey.Convey("when the same filters run with a matching term, then term and filters AND-combine", func() {
+			samples, err := client.SearchSamplesWithOptions(context.Background(), "c4lib", opts, 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 4})
+		})
+	})
+}
+
+func TestSearchSamplesLibraryTypeAndOrganismUseIndexedFilterQueriesC4(t *testing.T) {
+	convey.Convey("C4: Given a SQLite cache with library and organism filter rows", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "c4lib-mus-standard", "supplier-1", "Mus Musculus", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "c4lib-mus-bespoke", "supplier-2", "Mus musculus castaneus", "donor-2")
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "c4lib-human-standard", "supplier-3", "Homo sapiens", "donor-3")
+		seedLibrarySample(t, cache.DB(), "Standard", 1, "S1")
+		seedLibrarySample(t, cache.DB(), "Bespoke", 2, "S1")
+		seedLibrarySample(t, cache.DB(), "Standard", 3, "S1")
+		rebuildCommonNameWordMirrorForTest(t, cache.DB())
+
+		readDB := cacheReadDB(cache)
+		convey.So(readDB, convey.ShouldNotBeNil)
+
+		convey.Convey("when the library-type candidate query is planned, then library_samples uses its pipeline index and sample_mirror is not scanned", func() {
+			details := explainQueryPlanDetails(t, readDB, sampleLibraryTypePageSQL, "Standard", 100, 0)
+
+			convey.So(planUsesNamedIndexSearch(details, "sqlite_autoindex_library_samples_1"), convey.ShouldBeTrue)
+			convey.So(planHasFullTableScan(details, "sample_mirror"), convey.ShouldBeFalse)
+		})
+
+		convey.Convey("when an organism candidate query is planned, then sample_mirror uses common_name and the library filter uses library_samples", func() {
+			organismDetails := explainQueryPlanDetails(t, readDB, sampleOrganismCommonNamePageSQL, "Mus Musculus", 100)
+			convey.So(planUsesNamedIndexSearch(organismDetails, "sample_mirror_common_name_idx"), convey.ShouldBeTrue)
+			convey.So(planHasFullTableScan(organismDetails, "sample_mirror"), convey.ShouldBeFalse)
+
+			query, args := sampleLibraryTypeFilterQuery([]int64{1, 2}, "Standard")
+			libraryDetails := explainQueryPlanDetails(t, readDB, query, args...)
+			convey.So(planUsesNamedIndexSearch(libraryDetails, "sqlite_autoindex_library_samples_1"), convey.ShouldBeTrue)
+			convey.So(planHasFullTableScan(libraryDetails, "library_samples"), convey.ShouldBeFalse)
+		})
+	})
+}
+
+// C4 acceptance coverage for the B2 deliverables-only filter combining with the
+// new exact family: deliverables-only and QC are both candidate-id filters.
+func TestSearchSamplesDeliverablesOnlyCombinesWithQCFilterC4(t *testing.T) {
+	convey.Convey("C4: Given pass/fail and deliverable/control samples matching one term", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 10, "c4deliver-pass-illumina", "supplier-10", "Homo sapiens", "donor-10")
+		seedSampleMirrorSearchRow(t, cache.DB(), 11, "c4deliver-pass-control", "supplier-11", "Homo sapiens", "donor-11")
+		seedSampleMirrorSearchRow(t, cache.DB(), 12, "c4deliver-pass-pacbio", "supplier-12", "Homo sapiens", "donor-12")
+		seedSampleMirrorSearchRow(t, cache.DB(), 13, "c4deliver-fail-illumina", "supplier-13", "Homo sapiens", "donor-13")
+		seedIseqFlowcellMirrorSearchRow(t, cache.DB(), 10, 10, "library")
+		seedIseqProductMetricsMirrorRowWithQC(t, cache.DB(), 41010, 10, 54002, 1, 1, "S1", sql.NullInt64{Int64: 1, Valid: true})
+		seedIseqFlowcellMirrorSearchRow(t, cache.DB(), 11, 11, "library_control")
+		seedIseqProductMetricsMirrorRowWithQC(t, cache.DB(), 41011, 11, 54002, 1, 2, "S1", sql.NullInt64{Int64: 1, Valid: true})
+		seedPacBioProductMetricsMirrorRow(t, cache.DB(), "pacbio-c4deliver-12", 12, "S1")
+		seedIseqFlowcellMirrorSearchRow(t, cache.DB(), 13, 13, "library")
+		seedIseqProductMetricsMirrorRowWithQC(t, cache.DB(), 41013, 13, 54002, 1, 3, "S1", sql.NullInt64{Int64: 0, Valid: true})
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableIseqFlowcell, time.Date(2026, time.May, 6, 17, 1, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 17, 2, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTablePacBioProductMetrics, time.Date(2026, time.May, 6, 17, 3, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		opts := SampleSearchOptions{QC: qcPass, DeliverablesOnly: true}
+
+		convey.Convey("when QC pass and deliverables-only are both applied, then both filters must pass", func() {
+			samples, err := client.SearchSamplesWithOptions(context.Background(), "c4deliver", opts, 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{10, 12})
+
+			count, countErr := client.CountSampleSearchWithOptions(context.Background(), "c4deliver", opts)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 2})
+		})
+	})
+}
+
 // TestSearchSamplesMatchesMultiTokenSupplierName is the 260627-6 regression: a
 // term that the tokeniser splits into several words (a supplier_name like
 // "Hek_R1" -> tokens "hek","r1") must match a sample that has a word-prefix for
@@ -668,16 +1051,11 @@ func TestSearchSamplesMultiWordTermRequiresEveryTokenAsWordPrefix(t *testing.T) 
 	})
 }
 
-// TestSearchSamplesPrefixSubsumedTermEqualsMoreSpecificTerm is the
-// prefix-subsumption correctness repro (260627-8): the query token "mus" is a
-// prefix of the query token "musculus", so searching "mus musculus" must return
-// exactly the same samples as searching "musculus" alone - only the sample with
-// a "musculus*" word, NOT a sample that merely has a "mus*" word (e.g. "Mus
-// spretus"). Before the reduction the multi-token AND over the OR-union still
-// produced the right answer but scanned the huge redundant "mus*" range; this
-// test pins that the answer is identical to the single more-specific token (and
-// the next test pins that it now takes the fast single-range plan).
-func TestSearchSamplesPrefixSubsumedTermEqualsMoreSpecificTerm(t *testing.T) {
+// TestSearchSamplesLiteralPhraseDoesNotEqualLaterWordC1 pins the C1 no-mode
+// default: a multi-word term is a literal whole-value prefix, not a token query.
+// Therefore "mus musculus" matches the common_name "Mus musculus", while the
+// later word "musculus" alone does not.
+func TestSearchSamplesLiteralPhraseDoesNotEqualLaterWordC1(t *testing.T) {
 	convey.Convey("Given a synced SQLite cache with a musculus sample, a mus-only sample, and a decoy", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
@@ -695,26 +1073,26 @@ func TestSearchSamplesPrefixSubsumedTermEqualsMoreSpecificTerm(t *testing.T) {
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		convey.Convey("when SearchSamples runs for \"mus musculus\", then it returns exactly the same samples as \"musculus\" (only the musculus sample)", func() {
-			subsumed, err := client.SearchSamples(context.Background(), "mus musculus", 100, 0)
+		convey.Convey("when SearchSamples runs for the whole phrase and the later word, then only the phrase matches", func() {
+			phrase, err := client.SearchSamples(context.Background(), "mus musculus", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
 
-			specific, err := client.SearchSamples(context.Background(), "musculus", 100, 0)
+			laterWord, err := client.SearchSamples(context.Background(), "musculus", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
 
-			convey.So(sampleTmpIDs(subsumed), convey.ShouldResemble, []int64{1})
-			convey.So(sampleTmpIDs(subsumed), convey.ShouldResemble, sampleTmpIDs(specific))
+			convey.So(sampleTmpIDs(phrase), convey.ShouldResemble, []int64{1})
+			convey.So(laterWord, convey.ShouldBeEmpty)
 		})
 
-		convey.Convey("when CountSampleSearch runs for \"mus musculus\", then it equals the count for \"musculus\"", func() {
-			subsumed, err := client.CountSampleSearch(context.Background(), "mus musculus")
+		convey.Convey("when CountSampleSearch runs for the phrase and the later word, then only the phrase is counted", func() {
+			phrase, err := client.CountSampleSearch(context.Background(), "mus musculus")
 			convey.So(err, convey.ShouldBeNil)
 
-			specific, err := client.CountSampleSearch(context.Background(), "musculus")
+			laterWord, err := client.CountSampleSearch(context.Background(), "musculus")
 			convey.So(err, convey.ShouldBeNil)
 
-			convey.So(subsumed, convey.ShouldResemble, Count{Count: 1})
-			convey.So(subsumed, convey.ShouldResemble, specific)
+			convey.So(phrase, convey.ShouldResemble, Count{Count: 1})
+			convey.So(laterWord, convey.ShouldResemble, Count{Count: 0})
 		})
 	})
 }
@@ -767,14 +1145,14 @@ func TestSearchSamplesPrefixSubsumedTermUsesSingleRangePlanNotGroupBy(t *testing
 }
 
 // TestSearchSamplesMultiWordCountEqualsPagedResults proves CountSampleSearch
-// agrees with len(SearchSamples(...all)) for a multi-word term across a larger
-// match set, so the multi-token count uses the same AND as the multi-token page.
+// agrees with len(SearchSamples(...all)) for a multi-word literal prefix across a
+// larger match set.
 func TestSearchSamplesMultiWordCountEqualsPagedResults(t *testing.T) {
-	convey.Convey("Given a synced SQLite cache where several samples share two query words", t, func() {
+	convey.Convey("Given a synced SQLite cache where several samples carry similar hek/r values", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		// Five samples carry both "hek" and "r1" words; one carries only "hek".
+		// Only ids 3 and 4 have a whole searchable value that starts with "hek r1".
 		seedSampleMirrorSearchRow(t, cache.DB(), 1, "name-1", "Hek_R1", "common-1", "donor-1")
 		seedSampleMirrorSearchRow(t, cache.DB(), 2, "name-2", "Hek_R1_a", "common-2", "donor-2")
 		seedSampleMirrorSearchRow(t, cache.DB(), 3, "hek R1", "supplier-3", "common-3", "donor-3")
@@ -789,18 +1167,18 @@ func TestSearchSamplesMultiWordCountEqualsPagedResults(t *testing.T) {
 		convey.Convey("when CountSampleSearch and the full SearchSamples run for hek r1, then the count equals the row-set size", func() {
 			samples, err := client.SearchSamples(context.Background(), "hek r1", 1000, 0)
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2, 3, 4, 5})
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{3, 4})
 
 			count, countErr := client.CountSampleSearch(context.Background(), "hek r1")
 			convey.So(countErr, convey.ShouldBeNil)
-			convey.So(count, convey.ShouldResemble, Count{Count: 5})
+			convey.So(count, convey.ShouldResemble, Count{Count: 2})
 			convey.So(count.Count, convey.ShouldEqual, len(samples))
 		})
 
 		convey.Convey("when SearchSamples pages a multi-word term (limit 2 offset 1), then it returns the second page in id order", func() {
 			samples, err := client.SearchSamples(context.Background(), "hek r1", 2, 1)
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{2, 3})
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{4})
 		})
 	})
 }
@@ -921,12 +1299,10 @@ func TestSearchSamplesMultiWordFullPrefixPageUsesNoBroadGroupBy(t *testing.T) {
 	})
 }
 
-// TestSearchSamplesSeparatorInsensitiveSpacedTermMatchesViaAnchor pins that the
-// spaced term "hek r1" still matches the supplier_name "Hek_R1" through the
-// word-token anchor (the term and the stored value tokenise identically), while a
-// "hek"-only sample and an "r1"-only sample are excluded - the word-AND behaviour
-// from 260627-6 preserved through the anchor strategy that replaced the GROUP BY.
-func TestSearchSamplesSeparatorInsensitiveSpacedTermMatchesViaAnchor(t *testing.T) {
+// TestSearchSamplesDefaultIsSeparatorSensitiveC1 pins that the no-mode default is
+// literal: the spaced term "hek r1" does not match the underscored supplier_name
+// "Hek_R1".
+func TestSearchSamplesDefaultIsSeparatorSensitiveC1(t *testing.T) {
 	convey.Convey("Given a synced SQLite cache with Hek_R1 and single-word decoys", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
@@ -939,16 +1315,16 @@ func TestSearchSamplesSeparatorInsensitiveSpacedTermMatchesViaAnchor(t *testing.
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		convey.Convey("when SearchSamples runs for the spaced term \"hek r1\", then only the sample with both words matches", func() {
+		convey.Convey("when SearchSamples runs for the spaced term \"hek r1\", then the underscored value does not match", func() {
 			samples, err := client.SearchSamples(context.Background(), "hek r1", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+			convey.So(samples, convey.ShouldBeEmpty)
 		})
 
-		convey.Convey("when CountSampleSearch runs for \"hek r1\", then it equals the full SearchSamples length", func() {
+		convey.Convey("when CountSampleSearch runs for \"hek r1\", then it also returns zero", func() {
 			count, err := client.CountSampleSearch(context.Background(), "hek r1")
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+			convey.So(count, convey.ShouldResemble, Count{Count: 0})
 
 			samples, searchErr := client.SearchSamples(context.Background(), "hek r1", 1000, 0)
 			convey.So(searchErr, convey.ShouldBeNil)
@@ -1002,24 +1378,21 @@ func TestSearchSamplesMultiWordWithOnlyBroadShortTokensDoesNotBlowUp(t *testing.
 	})
 }
 
-// TestSearchSamplesNonASCIITermSearchesItsAsciiTokens proves the new tokenised
-// behaviour: a non-ASCII term is tokenised the same way stored values are, so
-// "café" searches its token "caf" (matching a sample with a "caf*" word) while a
-// term that tokenises to nothing ("ÿ", "___") returns empty without error and
-// without ever fabricating an invalid-UTF-8 bound.
-func TestSearchSamplesNonASCIITermSearchesItsAsciiTokens(t *testing.T) {
-	convey.Convey("Given a synced SQLite cache with a sample carrying a caf* word", t, func() {
+// TestSearchSamplesNonASCIITermUsesLiteralPrefixC1 proves the no-mode search keeps
+// non-ASCII terms literal instead of tokenising them to ASCII prefixes.
+func TestSearchSamplesNonASCIITermUsesLiteralPrefixC1(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache with a sample carrying a literal café prefix", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		seedSampleMirrorSearchRow(t, cache.DB(), 1, "cafeteria-sample", "supplier-1", "common-1", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "café-sample", "supplier-1", "common-1", "donor-1")
 		seedSampleMirrorSearchRow(t, cache.DB(), 2, "name-2", "supplier-2", "common-2", "donor-2")
 		rebuildSampleSearchIndexForTest(t, cache.DB())
 		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		convey.Convey("when the term is café (token caf), then the sample with a caf* word matches", func() {
+		convey.Convey("when the term is café, then only the sample with the literal café prefix matches", func() {
 			samples, err := client.SearchSamples(context.Background(), "café", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
@@ -1029,18 +1402,15 @@ func TestSearchSamplesNonASCIITermSearchesItsAsciiTokens(t *testing.T) {
 			convey.So(count, convey.ShouldResemble, Count{Count: 1})
 		})
 
-		// A term whose runes are all separators or non-ASCII yields zero query
-		// tokens, so there is nothing to query: the search returns empty without
-		// error, and bytePrefixSuccessor is never asked to increment a non-ASCII
-		// byte (no invalid-UTF-8 bound).
+		// These terms have no literal prefix match in the fixture.
 		for _, term := range []string{"ÿ", "ÿÿÿ", "___"} {
-			convey.Convey("when the term "+term+" tokenises to nothing, then SearchSamples returns empty with no error", func() {
+			convey.Convey("when the term "+term+" has no literal prefix match, then SearchSamples returns empty with no error", func() {
 				samples, err := client.SearchSamples(context.Background(), term, 100, 0)
 				convey.So(err, convey.ShouldBeNil)
 				convey.So(samples, convey.ShouldBeEmpty)
 			})
 
-			convey.Convey("when the term "+term+" tokenises to nothing, then CountSampleSearch returns Count 0 with no error", func() {
+			convey.Convey("when the term "+term+" has no literal prefix match, then CountSampleSearch returns Count 0 with no error", func() {
 				count, err := client.CountSampleSearch(context.Background(), term)
 				convey.So(err, convey.ShouldBeNil)
 				convey.So(count, convey.ShouldResemble, Count{})
@@ -1050,7 +1420,7 @@ func TestSearchSamplesNonASCIITermSearchesItsAsciiTokens(t *testing.T) {
 }
 
 func TestSearchSamplesMatchesAcrossAllFourSearchableFields(t *testing.T) {
-	convey.Convey("Given a synced SQLite cache whose only sapien hit is via common_name", t, func() {
+	convey.Convey("Given a synced SQLite cache whose only homo hit is via common_name", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
@@ -1061,7 +1431,7 @@ func TestSearchSamplesMatchesAcrossAllFourSearchableFields(t *testing.T) {
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		samples, err := client.SearchSamples(context.Background(), "sapien", 100, 0)
+		samples, err := client.SearchSamples(context.Background(), "homo", 100, 0)
 
 		convey.Convey("when SearchSamples runs over all four fields, then the common_name match is returned", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -1070,7 +1440,7 @@ func TestSearchSamplesMatchesAcrossAllFourSearchableFields(t *testing.T) {
 	})
 }
 
-func TestSearchSamplesMatchesWordPrefixNotMidWord(t *testing.T) {
+func TestSearchSamplesMatchesWholeValuePrefixNotLaterWordOrMidWord(t *testing.T) {
 	convey.Convey("Given a synced SQLite cache whose samples carry multi-word searchable fields", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
@@ -1083,19 +1453,19 @@ func TestSearchSamplesMatchesWordPrefixNotMidWord(t *testing.T) {
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		convey.Convey("when the term is a whole later word (musculus), then the Mus Musculus sample matches", func() {
+		convey.Convey("when the term is a whole later word (musculus), then no no-mode sample matches", func() {
 			samples, err := client.SearchSamples(context.Background(), "musculus", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+			convey.So(samples, convey.ShouldBeEmpty)
 		})
 
-		convey.Convey("when the term is a prefix of the first word (mus), then the Mus Musculus sample matches", func() {
+		convey.Convey("when the term is a prefix of the whole common_name (mus), then the Mus Musculus sample matches", func() {
 			samples, err := client.SearchSamples(context.Background(), "mus", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
 		})
 
-		convey.Convey("when the term is a mid-word substring (usculus), then it does not match (accepted word-prefix semantics)", func() {
+		convey.Convey("when the term is a mid-word substring (usculus), then it does not match the whole-value prefix", func() {
 			samples, err := client.SearchSamples(context.Background(), "usculus", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(samples, convey.ShouldBeEmpty)
@@ -1119,10 +1489,47 @@ func TestSearchSamplesShortTermReturnsEmptyWithoutMatching(t *testing.T) {
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
 		samples, err := client.SearchSamples(context.Background(), "ac", 100, 0)
+		count, countErr := client.CountSampleSearch(context.Background(), "ac")
+		wordSamples, wordErr := client.SearchSamplesWithOptions(context.Background(), "ac", SampleSearchOptions{Words: true}, 100, 0)
+		wordCount, wordCountErr := client.CountSampleSearchWithOptions(context.Background(), "ac", SampleSearchOptions{Words: true})
 
-		convey.Convey("when SearchSamples runs with a length-2 term, then it returns an empty slice and no match", func() {
+		convey.Convey("when sample free-text search runs with a length-2 term, then it returns empty rows and counts for both text modes", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(samples, convey.ShouldResemble, []Sample{})
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{})
+			convey.So(wordErr, convey.ShouldBeNil)
+			convey.So(wordSamples, convey.ShouldResemble, []Sample{})
+			convey.So(wordCountErr, convey.ShouldBeNil)
+			convey.So(wordCount, convey.ShouldResemble, Count{})
+		})
+	})
+}
+
+func TestSearchSamplesShortTermWithExactFilterUsesFilterOnly(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache with library-type-filtered samples and a 2-char term", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "ab-standard", "supplier-1", "Homo sapiens", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "zz-standard", "supplier-2", "Homo sapiens", "donor-2")
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "ab-bespoke", "supplier-3", "Homo sapiens", "donor-3")
+		seedLibrarySample(t, cache.DB(), "Standard", 1, "S1")
+		seedLibrarySample(t, cache.DB(), "Standard", 2, "S1")
+		seedLibrarySample(t, cache.DB(), "Bespoke", 3, "S1")
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		opts := SampleSearchOptions{LibraryType: "Standard"}
+
+		samples, err := client.SearchSamplesWithOptions(context.Background(), "ab", opts, 100, 0)
+		count, countErr := client.CountSampleSearchWithOptions(context.Background(), "ab", opts)
+
+		convey.Convey("when optioned search runs, then the short free-text term is ignored and the exact filter is applied", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 2})
 		})
 	})
 }
@@ -1185,14 +1592,13 @@ func TestSearchSamplesReturnsFullRowsWithFanOut(t *testing.T) {
 	})
 }
 
-func TestSearchSamplesTreatsQueryWildcardsAndOperatorsAsTokenSeparatorsNotSQLWildcards(t *testing.T) {
-	convey.Convey("Given a synced SQLite cache whose tokens are plain words and a query carrying LIKE/operator characters", t, func() {
+func TestSearchSamplesTreatsQueryWildcardsAndOperatorsAsLiteralPrefixBytes(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache whose searchable value is a plain abc prefix", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		// supplier_name "abcXYZ" tokenises to the single word "abcxyz"; a second
-		// sample carries an unrelated word so a wildcard char cannot be smuggled
-		// through as a SQL wildcard matching everything.
+		// A second sample carries an unrelated value so wildcard characters cannot
+		// be smuggled through as SQL wildcards matching everything.
 		seedSampleMirrorSearchRow(t, cache.DB(), 1, "specimen-1", "abcXYZ", "common-1", "donor-1")
 		seedSampleMirrorSearchRow(t, cache.DB(), 2, "specimen-2", "zzzzz", "common-2", "donor-2")
 		rebuildSampleSearchIndexForTest(t, cache.DB())
@@ -1200,60 +1606,49 @@ func TestSearchSamplesTreatsQueryWildcardsAndOperatorsAsTokenSeparatorsNotSQLWil
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		convey.Convey("when the term is a plain prefix (abc), then the word-prefix token matches", func() {
+		convey.Convey("when the term is a plain prefix (abc), then the literal whole-value prefix matches", func() {
 			samples, err := client.SearchSamples(context.Background(), "abc", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
 		})
 
-		// '%' is a token separator, not a SQL LIKE wildcard: "abc%" tokenises to the
-		// single word "abc", which prefix-matches "abcxyz" (and nothing else), so it
-		// must not act as a wildcard matching every sample.
-		convey.Convey("when the term embeds a percent (abc%), then it tokenises to abc and matches only the abc-prefixed sample", func() {
+		convey.Convey("when the term embeds a percent (abc%), then percent is escaped and no literal prefix matches", func() {
 			samples, err := client.SearchSamples(context.Background(), "abc%", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+			convey.So(samples, convey.ShouldBeEmpty)
 
 			count, countErr := client.CountSampleSearch(context.Background(), "abc%")
 			convey.So(countErr, convey.ShouldBeNil)
-			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+			convey.So(count, convey.ShouldResemble, Count{Count: 0})
 		})
 
-		// Likewise the underscore is a token separator: "ab_" tokenises to the word
-		// "ab", which word-prefix-matches "abcxyz" - it is NOT treated as the LIKE
-		// single-character wildcard.
-		convey.Convey("when the term embeds an underscore (ab_), then it tokenises to ab and matches the ab-prefixed sample", func() {
+		convey.Convey("when the term embeds an underscore (ab_), then underscore is escaped and no literal prefix matches", func() {
 			samples, err := client.SearchSamples(context.Background(), "ab_", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+			convey.So(samples, convey.ShouldBeEmpty)
 		})
 	})
 }
 
-func TestSearchSamplesPunctuationInTermSeparatesTokens(t *testing.T) {
+func TestSearchSamplesPunctuationInTermIsLiteralPrefixC1(t *testing.T) {
 	convey.Convey("Given a synced SQLite cache and a term containing a non-token punctuation byte", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		// "abc" is an ordinary alphanumeric token of supplier_name "abc supplier".
 		seedSampleMirrorSearchRow(t, cache.DB(), 1, "specimen-1", "abc supplier", "common-1", "donor-1")
 		rebuildSampleSearchIndexForTest(t, cache.DB())
 		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		// A punctuation byte that cannot appear in a [a-z0-9] token (here '!') is a
-		// token separator, so "ab!" tokenises to the single word "ab", the query
-		// stays well-formed (an index range seek, no LIKE), and it word-prefix-matches
-		// the sample's "abc" word.
-		convey.Convey("when the term embeds a non-token punctuation byte (ab!), then it tokenises to ab and matches the abc-prefixed sample", func() {
+		convey.Convey("when the term embeds punctuation (ab!), then it remains literal and no value matches", func() {
 			samples, err := client.SearchSamples(context.Background(), "ab!", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+			convey.So(samples, convey.ShouldBeEmpty)
 
 			count, countErr := client.CountSampleSearch(context.Background(), "ab!")
 			convey.So(countErr, convey.ShouldBeNil)
-			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+			convey.So(count, convey.ShouldResemble, Count{Count: 0})
 		})
 	})
 }
@@ -1316,6 +1711,45 @@ func TestCountSampleSearchMatchesSearchSamplesCount(t *testing.T) {
 			samples, searchErr := client.SearchSamples(context.Background(), "acme", 1000, 0)
 			convey.So(searchErr, convey.ShouldBeNil)
 			convey.So(count.Count, convey.ShouldEqual, len(samples))
+		})
+	})
+}
+
+func TestSearchSamplesDeliverablesOnlyRetainsPacBioONTAndDropsControlOnlyIllumina(t *testing.T) {
+	convey.Convey("B2 sample search: Given deliverable, control-only Illumina, PacBio and ONT samples matching one term", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "b2sample-illumina-deliverable", "supplier-1", "common-1", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "b2sample-illumina-control", "supplier-2", "common-2", "donor-2")
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "b2sample-pacbio-only", "supplier-3", "common-3", "donor-3")
+		seedSampleMirrorSearchRow(t, cache.DB(), 4, "b2sample-ont-only", "supplier-4", "common-4", "donor-4")
+		seedIseqFlowcellMirrorSearchRow(t, cache.DB(), 1, 1, "library")
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 1001, 1, 52553, 1, 1, "S1")
+		seedIseqFlowcellMirrorSearchRow(t, cache.DB(), 2, 2, "library_control")
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 1002, 2, 52553, 1, 2, "S1")
+		seedPacBioProductMetricsMirrorRow(t, cache.DB(), "pacbio-search-3", 3, "S1")
+		seedOseqFlowcellMirrorRow(t, cache.DB(), 4004, 4, "S1")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableIseqFlowcell, time.Date(2026, time.May, 6, 17, 1, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 17, 2, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTablePacBioProductMetrics, time.Date(2026, time.May, 6, 17, 3, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableOseqFlowcell, time.Date(2026, time.May, 6, 17, 4, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		all, allErr := client.SearchSamples(context.Background(), "b2sample", 100, 0)
+		filtered, filteredErr := client.SearchSamplesWithOptions(context.Background(), "b2sample", SampleSearchOptions{DeliverablesOnly: true}, 100, 0)
+		count, countErr := client.CountSampleSearchWithOptions(context.Background(), "b2sample", SampleSearchOptions{DeliverablesOnly: true})
+
+		convey.Convey("when deliverables-only is applied to sample search, then only the control-only Illumina sample is dropped", func() {
+			convey.So(allErr, convey.ShouldBeNil)
+			convey.So(filteredErr, convey.ShouldBeNil)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(all), convey.ShouldResemble, []int64{1, 2, 3, 4})
+			convey.So(sampleTmpIDs(filtered), convey.ShouldResemble, []int64{1, 3, 4})
+			convey.So(count, convey.ShouldResemble, Count{Count: 3})
 		})
 	})
 }
@@ -1586,6 +2020,22 @@ func seedSampleMirrorSearchRow(t *testing.T, db *sql.DB, id int64, name, supplie
 	}
 }
 
+func seedIseqFlowcellMirrorSearchRow(t *testing.T, db *sql.DB, idIseqFlowcellTmp, idSampleTmp int64, entityType string) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO iseq_flowcell_mirror(id_iseq_flowcell_tmp, entity_type, pipeline_id_lims, id_sample_tmp, id_study_tmp) VALUES (?, ?, ?, ?, ?)`,
+		idIseqFlowcellTmp,
+		entityType,
+		"library-type-"+formatInt(idSampleTmp),
+		idSampleTmp,
+		idSampleTmp,
+	)
+	if err != nil {
+		t.Fatalf("seedIseqFlowcellMirrorSearchRow(): %v", err)
+	}
+}
+
 // rebuildSampleSearchIndexForTest repopulates the SQLite sample_search_token
 // prefix index from sample_mirror via the same code path the sample sync uses,
 // so seeded sample_mirror rows become word-prefix searchable.
@@ -1613,6 +2063,24 @@ func rebuildSampleSearchIndexForTestDialect(t *testing.T, db *sql.DB, dialect st
 
 	if err = tx.Commit(); err != nil {
 		t.Fatalf("rebuildSampleSearchIndexForTest() commit: %v", err)
+	}
+}
+
+func rebuildCommonNameWordMirrorForTest(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("rebuildCommonNameWordMirrorForTest() begin: %v", err)
+	}
+
+	if err = rebuildCommonNameWordMirror(context.Background(), tx); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("rebuildCommonNameWordMirrorForTest(): %v", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		t.Fatalf("rebuildCommonNameWordMirrorForTest() commit: %v", err)
 	}
 }
 
@@ -1707,6 +2175,16 @@ func planUsesGroupBy(details []string) bool {
 func planUsesNamedIndexSearch(details []string, indexName string) bool {
 	for _, detail := range details {
 		if strings.Contains(detail, "SEARCH") && strings.Contains(detail, indexName) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func planHasFullTableScan(details []string, table string) bool {
+	for _, detail := range details {
+		if strings.HasPrefix(detail, "SCAN "+table) {
 			return true
 		}
 	}

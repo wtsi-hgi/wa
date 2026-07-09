@@ -28,12 +28,15 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/smartystreets/goconvey/convey"
 )
 
@@ -218,6 +221,61 @@ const (
 	d1qRegistered = int64(414) // registered-only: library link, NO products, NO iRODS -> distinct.registered, excluded from QC
 	d1qONT        = int64(415) // ONT: oseq_flowcell only, NO products, NO iRODS -> distinct.registered, excluded from QC
 )
+
+func TestStatusBreakdownPopulatedStudyRunsIndependentReadsConcurrently(t *testing.T) {
+	convey.Convey("Given a populated status breakdown whose independent reads are individually slow", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+		mock.MatchExpectationsInOrder(false)
+
+		const studyID = "SLOW"
+		delay := 120 * time.Millisecond
+		mock.ExpectQuery(regexp.QuoteMeta(statusBreakdownDistinctCacheSQL)).
+			WithArgs(driverValuesForTest(statusBreakdownDistinctArgs(studyID))...).
+			WillReturnRows(sqlmock.NewRows([]string{"total", "with_data", "sequenced_no_data", "registered"}).AddRow(5, 3, 1, 1))
+
+		mock.ExpectQuery(regexp.QuoteMeta(statusBreakdownPerPlatformSQL())).
+			WithArgs(driverValuesForTest(statusBreakdownPerPlatformArgs(studyID))...).
+			WillDelayFor(delay).
+			WillReturnRows(sqlmock.NewRows([]string{"platform", "with_data", "sequenced_no_data", "registered"}).
+				AddRow(platformIllumina, 3, 1, 0).
+				AddRow(platformONT, 0, 0, 1))
+
+		qcArgs := make([]any, len(statusBreakdownProductPlatformArms))
+		for i := range qcArgs {
+			qcArgs[i] = studyID
+		}
+		mock.ExpectQuery(regexp.QuoteMeta(statusBreakdownQCCacheSQL)).
+			WithArgs(driverValuesForTest(qcArgs)...).
+			WillDelayFor(delay).
+			WillReturnRows(sqlmock.NewRows([]string{"pass", "fail", "pending"}).AddRow(2, 1, 1))
+		mock.ExpectQuery(regexp.QuoteMeta(countSamplesWithDetailedTimelineCacheSQL)).
+			WithArgs(studyID).
+			WillDelayFor(delay).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+		expectOldestFeedingLastRun(mock, statusBreakdownFeedingTables, b1OldestLastRun, delay)
+
+		client := &Client{cacheReader: db}
+		start := time.Now()
+		breakdown, err := client.StatusBreakdown(context.Background(), studyID)
+		elapsed := time.Since(start)
+
+		convey.Convey("when StatusBreakdown runs, then the populated independent reads overlap while preserving the response fields", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(elapsed, convey.ShouldBeLessThan, delay*4)
+			convey.So(breakdown.Distinct, convey.ShouldResemble, PhaseLadder{WithData: 3, SequencedNoData: 1, Registered: 1})
+			convey.So(breakdown.PerPlatform, convey.ShouldResemble, []PlatformPhaseLadder{
+				{Platform: platformIllumina, Ladder: PhaseLadder{WithData: 3, SequencedNoData: 1}},
+				{Platform: platformONT, Ladder: PhaseLadder{Registered: 1}},
+			})
+			convey.So(breakdown.QC, convey.ShouldResemble, StudyQCBreakdown{QCPass: 2, QCFail: 1, QCPending: 1})
+			convey.So(breakdown.WithDetailedTimeline, convey.ShouldEqual, 2)
+			convey.So(breakdown.CacheSyncedAt, convey.ShouldEqual, b1OldestLastRun.Format(utcRFC3339Layout))
+			convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+	})
+}
 
 // F1 acceptance test 1: a sample with a library link but NO products is
 // registered, its QC is NOT pending (no products => not tracked, not pending),
@@ -1245,9 +1303,14 @@ func TestStatusBreakdownNeverSyncedUnknownAndEmptyCascade(t *testing.T) {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(breakdown.IDStudyLims, convey.ShouldEqual, f4StudyLims)
 			convey.So(breakdown.Distinct, convey.ShouldResemble, PhaseLadder{})
-			convey.So(breakdown.PerPlatform, convey.ShouldBeEmpty)
+			convey.So(breakdown.PerPlatform, convey.ShouldResemble, []PlatformPhaseLadder{})
+			convey.So(breakdown.PerPlatform, convey.ShouldNotBeNil)
 			convey.So(breakdown.WithDetailedTimeline, convey.ShouldEqual, 0)
 			convey.So(breakdown.CacheSyncedAt, convey.ShouldNotEqual, "")
+
+			raw, marshalErr := json.Marshal(breakdown)
+			convey.So(marshalErr, convey.ShouldBeNil)
+			convey.So(string(raw), convey.ShouldContainSubstring, `"per_platform":[]`)
 		})
 	})
 }
@@ -1646,12 +1709,13 @@ func seedIseqRunStatusMirrorRow(t *testing.T, db *sql.DB, idRunStatus, idRun int
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO iseq_run_status_mirror(id_run_status, id_run, date, id_run_status_dict, iscurrent) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO iseq_run_status_mirror(id_run_status, id_run, date, id_run_status_dict, iscurrent, normalised_date) VALUES (?, ?, ?, ?, ?, ?)`,
 		idRunStatus,
 		idRun,
 		formatSyncTime(date),
 		idRunStatusDict,
 		iscurrent,
+		formatSyncDate(date),
 	)
 	if err != nil {
 		t.Fatalf("seedIseqRunStatusMirrorRow(): %v", err)
@@ -1677,7 +1741,7 @@ func seedPacBioRunWellMetricsMirrorRow(t *testing.T, db *sql.DB, idPacBioRWMetri
 	}
 
 	_, err := db.Exec(
-		`INSERT INTO pac_bio_run_well_metrics_mirror(id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, run_start, run_complete, well_complete, qc_seq_date, run_status, well_status, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO pac_bio_run_well_metrics_mirror(id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, run_start, run_complete, well_complete, qc_seq_date, run_status, well_status, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		idPacBioRWMetrics,
 		"pb-run-"+formatInt(idPacBioRWMetrics),
 		"A01",
@@ -1688,6 +1752,7 @@ func seedPacBioRunWellMetricsMirrorRow(t *testing.T, db *sql.DB, idPacBioRWMetri
 		runStatus,
 		wellStatus,
 		formatSyncTime(time.Date(2026, time.May, 6, 12, 10, 0, 0, time.UTC)),
+		normalisedDateFromDateMap(dates, "run_complete"),
 	)
 	if err != nil {
 		t.Fatalf("seedPacBioRunWellMetricsMirrorRow(): %v", err)
@@ -1771,12 +1836,13 @@ func seedEseqRunLaneMetricsMirrorRow(t *testing.T, db *sql.DB, idRun int64, date
 	}
 
 	_, err := db.Exec(
-		`INSERT INTO eseq_run_lane_metrics_mirror(id_run, lane, run_started, run_complete, last_updated) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO eseq_run_lane_metrics_mirror(id_run, lane, run_started, run_complete, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?)`,
 		idRun,
 		int64(1),
 		dated("run_started"),
 		dated("run_complete"),
 		formatSyncTime(time.Date(2026, time.May, 6, 12, 10, 0, 0, time.UTC)),
+		normalisedDateFromDateMap(dates, "run_complete"),
 	)
 	if err != nil {
 		t.Fatalf("seedEseqRunLaneMetricsMirrorRow(): %v", err)
@@ -1822,17 +1888,26 @@ func seedUseqRunMetricsMirrorRow(t *testing.T, db *sql.DB, idRun int64, runStatu
 	}
 
 	_, err := db.Exec(
-		`INSERT INTO useq_run_metrics_mirror(id_run, run_name, run_status, run_start, run_complete, last_updated) VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO useq_run_metrics_mirror(id_run, run_name, run_status, run_start, run_complete, last_updated, normalised_date) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		idRun,
 		"useq-run-"+formatInt(idRun),
 		runStatus,
 		dated("run_start"),
 		dated("run_complete"),
 		formatSyncTime(time.Date(2026, time.May, 6, 12, 10, 0, 0, time.UTC)),
+		normalisedDateFromDateMap(dates, "run_complete"),
 	)
 	if err != nil {
 		t.Fatalf("seedUseqRunMetricsMirrorRow(): %v", err)
 	}
+}
+
+func normalisedDateFromDateMap(dates map[string]time.Time, name string) string {
+	if value, ok := dates[name]; ok {
+		return formatSyncDate(value)
+	}
+
+	return ""
 }
 
 func TestSampleProgressUsesSyncedUltimagenLifecyclePhases(t *testing.T) {

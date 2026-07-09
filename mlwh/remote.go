@@ -247,6 +247,80 @@ func (rc *RemoteClient) RunsForStudyPage(ctx context.Context, studyLimsID string
 	return remoteCallPage[Run](rc, ctx, "RunsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
 }
 
+// RunsForSample lists runs for a sample through the remote server.
+func (rc *RemoteClient) RunsForSample(ctx context.Context, sangerName string, limit, offset int) ([]Run, error) {
+	return remoteCall[[]Run](rc, ctx, "RunsForSample", []string{sangerName}, remotePagination(limit, offset))
+}
+
+// RunsForSamplePage is the Page[Run] variant of RunsForSample.
+func (rc *RemoteClient) RunsForSamplePage(ctx context.Context, sangerName string, limit, offset int) (Page[Run], error) {
+	return remoteCallPage[Run](rc, ctx, "RunsForSample", []string{sangerName}, remotePagination(limit, offset))
+}
+
+// MonthlyRunCounts returns monthly grouped run counts through the remote server.
+func (rc *RemoteClient) MonthlyRunCounts(ctx context.Context, opts RunAggregationOptions) ([]MonthlyRunCount, error) {
+	return remoteCall[[]MonthlyRunCount](rc, ctx, "MonthlyRunCounts", nil, remoteRunAggregationOptions(opts))
+}
+
+func remoteRunAggregationOptions(opts RunAggregationOptions) url.Values {
+	values := url.Values{}
+	if strings.TrimSpace(opts.Since) != "" {
+		values.Set("since", strings.TrimSpace(opts.Since))
+	}
+	if strings.TrimSpace(opts.Until) != "" {
+		values.Set("until", strings.TrimSpace(opts.Until))
+	}
+	for _, platform := range opts.Platforms {
+		if strings.TrimSpace(platform) != "" {
+			values.Add("platform", strings.TrimSpace(platform))
+		}
+	}
+
+	return values
+}
+
+// RunListing returns a bounded global run listing page through the remote
+// server.
+func (rc *RemoteClient) RunListing(ctx context.Context, opts RunAggregationOptions, limit int, cursor string) ([]RunListingRow, error) {
+	return remoteCall[[]RunListingRow](rc, ctx, "RunListing", nil, remoteRunListingOptions(opts, limit, cursor))
+}
+
+func remoteRunListingOptions(opts RunAggregationOptions, limit int, cursor string) url.Values {
+	values := remoteRunAggregationOptions(opts)
+	if limit > 0 {
+		values.Set("limit", strconv.Itoa(limit))
+	}
+	if strings.TrimSpace(cursor) != "" {
+		values.Set("cursor", strings.TrimSpace(cursor))
+	}
+
+	return values
+}
+
+// SequencingAggregate returns grouped sequencing aggregate rows through the
+// remote server.
+func (rc *RemoteClient) SequencingAggregate(ctx context.Context, opts SequencingAggregateOptions) ([]SequencingAggregateRow, error) {
+	return remoteCall[[]SequencingAggregateRow](rc, ctx, "SequencingAggregate", nil, remoteSequencingAggregateOptions(opts))
+}
+
+func remoteSequencingAggregateOptions(opts SequencingAggregateOptions) url.Values {
+	values := remoteRunAggregationOptions(RunAggregationOptions{
+		Since:     opts.Since,
+		Until:     opts.Until,
+		Platforms: opts.Platforms,
+	})
+	for _, group := range opts.GroupBy {
+		if strings.TrimSpace(group) != "" {
+			values.Add("group_by", strings.TrimSpace(group))
+		}
+	}
+	if strings.TrimSpace(opts.Unit) != "" {
+		values.Set("unit", strings.TrimSpace(opts.Unit))
+	}
+
+	return values
+}
+
 // StudyOverview returns a study's overview aggregate through the remote server.
 func (rc *RemoteClient) StudyOverview(ctx context.Context, studyLimsID string) (StudyOverview, error) {
 	return remoteCall[StudyOverview](rc, ctx, "StudyOverview", []string{studyLimsID}, nil)
@@ -301,6 +375,51 @@ func (rc *RemoteClient) SamplesWithoutData(ctx context.Context, studyLimsID stri
 // (Page.Total / Page.NextOffset).
 func (rc *RemoteClient) SamplesWithoutDataPage(ctx context.Context, studyLimsID string, limit, offset int) (Page[SampleWithData], error) {
 	return remoteCallPage[SampleWithData](rc, ctx, "SamplesWithoutData", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// LatestDataForStudy lists newest raw iRODS data rows for a study through the
+// remote server, optionally filtered to a file-type suffix.
+func (rc *RemoteClient) LatestDataForStudy(ctx context.Context, studyLimsID, fileType string, limit, offset int) ([]RecentDataRow, error) {
+	return remoteCall[[]RecentDataRow](rc, ctx, "LatestDataForStudy", []string{studyLimsID}, remotePaginationWithFileType(limit, offset, fileType))
+}
+
+// LatestDataForStudyPage is the Page[RecentDataRow] variant of
+// LatestDataForStudy.
+func (rc *RemoteClient) LatestDataForStudyPage(ctx context.Context, studyLimsID, fileType string, limit, offset int) (Page[RecentDataRow], error) {
+	return remoteCallPage[RecentDataRow](rc, ctx, "LatestDataForStudy", []string{studyLimsID}, remotePaginationWithFileType(limit, offset, fileType))
+}
+
+// LatestDataForFacultySponsor lists newest raw iRODS data rows across studies
+// whose faculty_sponsor contains name.
+func (rc *RemoteClient) LatestDataForFacultySponsor(ctx context.Context, name, fileType string, limit, offset int) ([]RecentDataRow, error) {
+	return remoteCall[[]RecentDataRow](rc, ctx, "LatestDataForFacultySponsor", []string{name}, remotePaginationWithFileType(limit, offset, fileType))
+}
+
+// LatestDataForFacultySponsorPage is the Page[RecentDataRow] variant of
+// LatestDataForFacultySponsor.
+func (rc *RemoteClient) LatestDataForFacultySponsorPage(ctx context.Context, name, fileType string, limit, offset int) (Page[RecentDataRow], error) {
+	return remoteCallPage[RecentDataRow](rc, ctx, "LatestDataForFacultySponsor", []string{name}, remotePaginationWithFileType(limit, offset, fileType))
+}
+
+// CountLatestDataForStudy counts newest-list raw iRODS data rows for a study
+// through the remote server, optionally filtered to a file-type suffix.
+func (rc *RemoteClient) CountLatestDataForStudy(ctx context.Context, studyLimsID, fileType string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountLatestDataForStudy", []string{studyLimsID}, remoteFileType(fileType))
+}
+
+func remoteFileType(fileType string) url.Values {
+	values := url.Values{}
+	if fileType != "" {
+		values.Set("file_type", fileType)
+	}
+
+	return values
+}
+
+// CountLatestDataForFacultySponsor counts newest-list raw iRODS data rows across
+// studies whose faculty_sponsor contains name through the remote server.
+func (rc *RemoteClient) CountLatestDataForFacultySponsor(ctx context.Context, name, fileType string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountLatestDataForFacultySponsor", []string{name}, remoteFileType(fileType))
 }
 
 // SamplesWithDataSince lists the distinct samples whose study-scoped iRODS data
@@ -362,7 +481,7 @@ func (rc *RemoteClient) IRODSPathsForSample(ctx context.Context, sangerName stri
 // parameterised by the filter); an empty fileType requests all file types. The
 // server validates the file_type and returns 400 for an invalid value.
 func (rc *RemoteClient) IRODSPathsForSampleByFileType(ctx context.Context, sangerName, fileType string, limit, offset int) ([]IRODSPath, error) {
-	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForSample", []string{sangerName}, remotePaginationWithFileType(limit, offset, fileType))
+	return rc.IRODSPathsForSampleWithOptions(ctx, sangerName, IRODSPathOptions{FileType: fileType}, limit, offset)
 }
 
 // remotePaginationWithFileType builds the query values for an iRODS list: the
@@ -373,6 +492,19 @@ func remotePaginationWithFileType(limit, offset int, fileType string) url.Values
 	if fileType != "" {
 		values.Set("file_type", fileType)
 	}
+
+	return values
+}
+
+// IRODSPathsForSampleWithOptions lists iRODS paths for a sample through the
+// remote server with file-type and created-date ordering/window options.
+func (rc *RemoteClient) IRODSPathsForSampleWithOptions(ctx context.Context, sangerName string, opts IRODSPathOptions, limit, offset int) ([]IRODSPath, error) {
+	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForSample", []string{sangerName}, remotePaginationWithIRODSPathOptions(limit, offset, opts))
+}
+
+func remotePaginationWithIRODSPathOptions(limit, offset int, opts IRODSPathOptions) url.Values {
+	values := remotePagination(limit, offset)
+	addIRODSPathOptionValues(values, opts)
 
 	return values
 }
@@ -401,7 +533,13 @@ func (rc *RemoteClient) IRODSPathsForStudy(ctx context.Context, studyLimsID stri
 // server, optionally filtered to a file-type suffix, the same way as
 // IRODSPathsForSampleByFileType.
 func (rc *RemoteClient) IRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, fileType string, limit, offset int) ([]IRODSPath, error) {
-	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForStudy", []string{studyLimsID}, remotePaginationWithFileType(limit, offset, fileType))
+	return rc.IRODSPathsForStudyWithOptions(ctx, studyLimsID, IRODSPathOptions{FileType: fileType}, limit, offset)
+}
+
+// IRODSPathsForStudyWithOptions lists iRODS paths for a study through the remote
+// server with file-type and created-date ordering/window options.
+func (rc *RemoteClient) IRODSPathsForStudyWithOptions(ctx context.Context, studyLimsID string, opts IRODSPathOptions, limit, offset int) ([]IRODSPath, error) {
+	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForStudy", []string{studyLimsID}, remotePaginationWithIRODSPathOptions(limit, offset, opts))
 }
 
 // IRODSPathsForStudyByFileTypePage is the Page[IRODSPath] variant of
@@ -426,7 +564,13 @@ func (rc *RemoteClient) IRODSPathsForStudyPage(ctx context.Context, studyLimsID 
 // all file types. The server validates the file_type and returns 400 for an invalid
 // value, and resolves :id through the run space (ResolveRun).
 func (rc *RemoteClient) IRODSPathsForRun(ctx context.Context, idRun, fileType string, limit, offset int) ([]IRODSPath, error) {
-	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForRun", []string{idRun}, remotePaginationWithFileType(limit, offset, fileType))
+	return rc.IRODSPathsForRunWithOptions(ctx, idRun, IRODSPathOptions{FileType: fileType}, limit, offset)
+}
+
+// IRODSPathsForRunWithOptions lists iRODS paths for a run through the remote
+// server with file-type and created-date ordering/window options.
+func (rc *RemoteClient) IRODSPathsForRunWithOptions(ctx context.Context, idRun string, opts IRODSPathOptions, limit, offset int) ([]IRODSPath, error) {
+	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForRun", []string{idRun}, remotePaginationWithIRODSPathOptions(limit, offset, opts))
 }
 
 // IRODSPathsForRunByFileTypePage is the Page[IRODSPath] variant of
@@ -492,6 +636,199 @@ func (rc *RemoteClient) StudyManifestPage(ctx context.Context, studyLimsID, file
 // StudiesForSample lists studies for a sample through the remote server.
 func (rc *RemoteClient) StudiesForSample(ctx context.Context, sangerName string) ([]Study, error) {
 	return remoteCall[[]Study](rc, ctx, "StudiesForSample", []string{sangerName}, nil)
+}
+
+// CountStudiesForSample counts the studies for a sample through the remote server.
+func (rc *RemoteClient) CountStudiesForSample(ctx context.Context, sangerName string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudiesForSample", []string{sangerName}, nil)
+}
+
+// StudiesForProgramme lists studies for an exact programme through the remote server.
+func (rc *RemoteClient) StudiesForProgramme(ctx context.Context, programme string, limit, offset int) ([]Study, error) {
+	return remoteCall[[]Study](rc, ctx, "StudiesForProgramme", []string{programme}, remotePagination(limit, offset))
+}
+
+// StudiesForProgrammePage is the Page[Study] variant of StudiesForProgramme.
+func (rc *RemoteClient) StudiesForProgrammePage(ctx context.Context, programme string, limit, offset int) (Page[Study], error) {
+	return remoteCallPage[Study](rc, ctx, "StudiesForProgramme", []string{programme}, remotePagination(limit, offset))
+}
+
+// CountStudiesForProgramme counts exact-programme studies through the remote server.
+func (rc *RemoteClient) CountStudiesForProgramme(ctx context.Context, programme string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudiesForProgramme", []string{programme}, nil)
+}
+
+// Programmes lists distinct programmes through the remote server.
+func (rc *RemoteClient) Programmes(ctx context.Context) ([]Programme, error) {
+	return remoteCall[[]Programme](rc, ctx, "Programmes", nil, nil)
+}
+
+// StudyUsers lists study_users assignments for a study through the remote server.
+func (rc *RemoteClient) StudyUsers(ctx context.Context, studyLimsID, role string, limit, offset int) ([]StudyUser, error) {
+	return remoteCall[[]StudyUser](rc, ctx, "StudyUsers", []string{studyLimsID}, remotePaginationWithRole(limit, offset, role))
+}
+
+// StudyUsersPage is the Page[StudyUser] variant of StudyUsers.
+func (rc *RemoteClient) StudyUsersPage(ctx context.Context, studyLimsID, role string, limit, offset int) (Page[StudyUser], error) {
+	return remoteCallPage[StudyUser](rc, ctx, "StudyUsers", []string{studyLimsID}, remotePaginationWithRole(limit, offset, role))
+}
+
+// CountStudyUsers counts study_users assignments for a study through the remote server.
+func (rc *RemoteClient) CountStudyUsers(ctx context.Context, studyLimsID, role string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudyUsers", []string{studyLimsID}, remoteRole(role))
+}
+
+// SampleCRAMsForStudy lists selected sample CRAMs for a study through the remote server.
+func (rc *RemoteClient) SampleCRAMsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleCRAM, error) {
+	return remoteCall[[]SampleCRAM](rc, ctx, "SampleCRAMsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// SampleCRAMsForStudyPage is the Page[SampleCRAM] variant of SampleCRAMsForStudy.
+func (rc *RemoteClient) SampleCRAMsForStudyPage(ctx context.Context, studyLimsID string, limit, offset int) (Page[SampleCRAM], error) {
+	return remoteCallPage[SampleCRAM](rc, ctx, "SampleCRAMsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// CountSampleCRAMsForStudy counts selected sample CRAMs for a study through the remote server.
+func (rc *RemoteClient) CountSampleCRAMsForStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountSampleCRAMsForStudy", []string{studyLimsID}, nil)
+}
+
+// Export projects a supported parent-child relationship through the remote server.
+func (rc *RemoteClient) Export(ctx context.Context, rel ExportRelationship, parentID string, opts ExportOptions) (ExportResult, error) {
+	if _, err := newExportPlan(rel, parentID, opts); err != nil {
+		return ExportResult{}, err
+	}
+
+	if opts.All && remoteExportCanPageAll(rel) {
+		return rc.exportAllByRemotePages(ctx, rel, parentID, opts)
+	}
+
+	return remoteCall[ExportResult](rc, ctx, "Export", []string{rel.Children, rel.ParentKind, parentID}, remoteExportQuery(opts))
+}
+
+func remoteExportCanPageAll(rel ExportRelationship) bool {
+	_, _, err := normaliseExportRelationship(rel)
+
+	return err == nil
+}
+
+func remoteExportQuery(opts ExportOptions) url.Values {
+	query := url.Values{}
+	remoteSetNonEmptyQuery(query, "columns", strings.Join(opts.Columns, ","))
+	remoteSetNonEmptyQuery(query, "file_type", opts.FileType)
+	remoteSetNonEmptyQuery(query, "role", opts.Role)
+	remoteSetNonEmptyQuery(query, "qc", opts.QC)
+	remoteSetNonEmptyQuery(query, "library_type", opts.LibraryType)
+	remoteSetNonEmptyQuery(query, "organism", opts.Organism)
+	remoteSetNonEmptyQuery(query, "sort", opts.Sort)
+	remoteSetNonEmptyQuery(query, "since", opts.Since)
+	remoteSetNonEmptyQuery(query, "until", opts.Until)
+	remoteSetNonEmptyQuery(query, "cursor", opts.Cursor)
+	remoteSetNonEmptyQuery(query, "format", opts.Format)
+	if opts.DeliverablesOnly != nil {
+		query.Set("deliverables_only", strconv.FormatBool(*opts.DeliverablesOnly))
+	}
+	if opts.Limit > 0 {
+		query.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if opts.Offset > 0 {
+		query.Set("offset", strconv.Itoa(opts.Offset))
+	}
+	if opts.All {
+		query.Set("all", "true")
+	}
+
+	return query
+}
+
+func (rc *RemoteClient) exportAllByRemotePages(ctx context.Context, rel ExportRelationship, parentID string, opts ExportOptions) (ExportResult, error) {
+	firstOpts := opts
+	firstOpts.All = false
+	if firstOpts.Limit == 0 {
+		firstOpts.Limit = defaultExportAllLimit
+	}
+
+	first, err := rc.exportRemotePage(ctx, rel, parentID, firstOpts)
+	if err != nil {
+		return ExportResult{}, err
+	}
+
+	return ExportResult{
+		Columns:  first.Columns,
+		Rows:     nil,
+		Total:    -1,
+		Complete: true,
+		Format:   first.Format,
+		streamRows: func(streamCtx context.Context, emit func([]string) error) (int, error) {
+			return rc.streamRemoteExportPages(streamCtx, rel, parentID, firstOpts, first, emit)
+		},
+	}, nil
+}
+
+func (rc *RemoteClient) streamRemoteExportPages(
+	ctx context.Context,
+	rel ExportRelationship,
+	parentID string,
+	opts ExportOptions,
+	first ExportResult,
+	emit func([]string) error,
+) (int, error) {
+	total, err := first.ForEachRow(ctx, emit)
+	if err != nil || first.Complete {
+		return total, err
+	}
+
+	pageOpts := opts
+	offset := opts.Offset + len(first.Rows)
+	nextCursor := first.NextCursor
+	useCursor := strings.TrimSpace(opts.Sort) == "" && nextCursor != ""
+	if !useCursor && len(first.Rows) == 0 {
+		return total, remoteExportNoProgressError()
+	}
+
+	for {
+		if err = ctx.Err(); err != nil {
+			return total, err
+		}
+		if useCursor {
+			pageOpts.Cursor = nextCursor
+			pageOpts.Offset = 0
+		} else {
+			pageOpts.Cursor = ""
+			pageOpts.Offset = offset
+		}
+
+		page, pageErr := rc.exportRemotePage(ctx, rel, parentID, pageOpts)
+		if pageErr != nil {
+			return total, pageErr
+		}
+
+		emitted, emitErr := page.ForEachRow(ctx, emit)
+		total += emitted
+		if emitErr != nil || page.Complete {
+			return total, emitErr
+		}
+		if emitted == 0 {
+			return total, remoteExportNoProgressError()
+		}
+
+		offset += emitted
+		if useCursor && page.NextCursor != "" {
+			nextCursor = page.NextCursor
+		} else {
+			useCursor = false
+		}
+	}
+}
+
+func remoteExportNoProgressError() error {
+	return fmt.Errorf("%w: remote Export did not advance while paging all rows", ErrUpstreamImpaired)
+}
+
+func (rc *RemoteClient) exportRemotePage(ctx context.Context, rel ExportRelationship, parentID string, opts ExportOptions) (ExportResult, error) {
+	opts.All = false
+
+	return remoteCall[ExportResult](rc, ctx, "Export", []string{rel.Children, rel.ParentKind, parentID}, remoteExportQuery(opts))
 }
 
 // StudiesForFacultySponsor lists the studies of a named PI/sponsor through the
@@ -647,9 +984,23 @@ func (rc *RemoteClient) SearchStudiesPage(ctx context.Context, term string, limi
 	return remoteCallPage[Study](rc, ctx, "SearchStudies", []string{term}, remotePagination(limit, offset))
 }
 
-// SearchSamples runs a sample substring search through the remote server.
+// SearchSamples runs the default sample literal-prefix search through the remote
+// server.
 func (rc *RemoteClient) SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
-	return remoteCall[[]Sample](rc, ctx, "SearchSamples", []string{term}, remotePagination(limit, offset))
+	return rc.SearchSamplesWithOptions(ctx, term, SampleSearchOptions{}, limit, offset)
+}
+
+// SearchSamplesWithOptions runs a sample search through the remote server with
+// the optioned Phase 10 search modes and exact filters.
+func (rc *RemoteClient) SearchSamplesWithOptions(ctx context.Context, term string, opts SampleSearchOptions, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "SearchSamples", []string{term}, remoteSampleSearchQuery(limit, offset, opts))
+}
+
+func remoteSampleSearchQuery(limit, offset int, opts SampleSearchOptions) url.Values {
+	query := remotePagination(limit, offset)
+	addSampleSearchOptionValues(query, opts)
+
+	return query
 }
 
 // SearchSamplesPage is the Page[Sample] variant of SearchSamples. It sends the
@@ -667,7 +1018,20 @@ func (rc *RemoteClient) CountStudySearch(ctx context.Context, term string) (Coun
 
 // CountSampleSearch counts the samples matching term through the remote server.
 func (rc *RemoteClient) CountSampleSearch(ctx context.Context, term string) (Count, error) {
-	return remoteCall[Count](rc, ctx, "CountSampleSearch", []string{term}, nil)
+	return rc.CountSampleSearchWithOptions(ctx, term, SampleSearchOptions{})
+}
+
+// CountSampleSearchWithOptions counts optioned sample-search rows through the
+// remote server.
+func (rc *RemoteClient) CountSampleSearchWithOptions(ctx context.Context, term string, opts SampleSearchOptions) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountSampleSearch", []string{term}, remoteSampleSearchOptions(opts))
+}
+
+func remoteSampleSearchOptions(opts SampleSearchOptions) url.Values {
+	query := url.Values{}
+	addSampleSearchOptionValues(query, opts)
+
+	return query
 }
 
 // CountStudies counts the mirrored studies through the remote server.
@@ -741,6 +1105,16 @@ func (rc *RemoteClient) CountRunsForStudy(ctx context.Context, studyLimsID strin
 	return remoteCall[Count](rc, ctx, "CountRunsForStudy", []string{studyLimsID}, nil)
 }
 
+// CountRunsForSample counts the distinct runs for a sample through the remote server.
+func (rc *RemoteClient) CountRunsForSample(ctx context.Context, sangerName string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountRunsForSample", []string{sangerName}, nil)
+}
+
+// CountRunListing counts global run listing rows through the remote server.
+func (rc *RemoteClient) CountRunListing(ctx context.Context, opts RunAggregationOptions) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountRunListing", nil, remoteRunAggregationOptions(opts))
+}
+
 // CountStudyManifest counts the distinct products in a study's manifest through
 // the remote server (spec C2), the count counterpart of StudyManifest. It is a
 // plain remoteCall returning the Count envelope; the figure is product-grained
@@ -773,19 +1147,32 @@ func (rc *RemoteClient) CountIRODSPathsForSample(ctx context.Context, sangerName
 // all-file-types count. The server validates the file_type and returns 400 for an
 // invalid value.
 func (rc *RemoteClient) CountIRODSPathsForSampleByFileType(ctx context.Context, sangerName, fileType string) (Count, error) {
-	return remoteCall[Count](rc, ctx, "CountIRODSPathsForSample", []string{sangerName}, remoteFileType(fileType))
+	return rc.CountIRODSPathsForSampleWithOptions(ctx, sangerName, IRODSPathOptions{FileType: fileType})
 }
 
-// remoteFileType builds the file_type query values for a filtered iRODS count,
-// omitting an empty fileType so an all-file-types request sends no query string
-// (matching the bare count call).
-func remoteFileType(fileType string) url.Values {
+// CountIRODSPathsForSampleWithOptions counts sample iRODS paths through the
+// remote server with file-type and created-date window options.
+func (rc *RemoteClient) CountIRODSPathsForSampleWithOptions(ctx context.Context, sangerName string, opts IRODSPathOptions) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountIRODSPathsForSample", []string{sangerName}, remoteIRODSPathOptions(opts))
+}
+
+func remoteIRODSPathOptions(opts IRODSPathOptions) url.Values {
 	values := url.Values{}
-	if fileType != "" {
-		values.Set("file_type", fileType)
-	}
+	addIRODSPathOptionValues(values, opts)
 
 	return values
+}
+
+// CountIRODSPathsForStudyWithOptions counts study iRODS paths through the remote
+// server with file-type and created-date window options.
+func (rc *RemoteClient) CountIRODSPathsForStudyWithOptions(ctx context.Context, studyLimsID string, opts IRODSPathOptions) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountIRODSPathsForStudy", []string{studyLimsID}, remoteIRODSPathOptions(opts))
+}
+
+// CountIRODSPathsForRunWithOptions counts run iRODS paths through the remote
+// server with file-type and created-date window options.
+func (rc *RemoteClient) CountIRODSPathsForRunWithOptions(ctx context.Context, idRun string, opts IRODSPathOptions) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountIRODSPathsForRun", []string{idRun}, remoteIRODSPathOptions(opts))
 }
 
 // CountIRODSPathsForStudy counts the distinct iRODS data objects for a study through the remote server.
@@ -797,7 +1184,7 @@ func (rc *RemoteClient) CountIRODSPathsForStudy(ctx context.Context, studyLimsID
 // study through the remote server, optionally filtered to a file-type suffix, the
 // same way as CountIRODSPathsForSampleByFileType.
 func (rc *RemoteClient) CountIRODSPathsForStudyByFileType(ctx context.Context, studyLimsID, fileType string) (Count, error) {
-	return remoteCall[Count](rc, ctx, "CountIRODSPathsForStudy", []string{studyLimsID}, remoteFileType(fileType))
+	return rc.CountIRODSPathsForStudyWithOptions(ctx, studyLimsID, IRODSPathOptions{FileType: fileType})
 }
 
 // CountIRODSPathsForRun counts the iRODS data objects on a run through the remote
@@ -806,7 +1193,7 @@ func (rc *RemoteClient) CountIRODSPathsForStudyByFileType(ctx context.Context, s
 // counts all file types. The server validates the file_type and resolves :id
 // through the run space (ResolveRun).
 func (rc *RemoteClient) CountIRODSPathsForRun(ctx context.Context, idRun, fileType string) (Count, error) {
-	return remoteCall[Count](rc, ctx, "CountIRODSPathsForRun", []string{idRun}, remoteFileType(fileType))
+	return rc.CountIRODSPathsForRunWithOptions(ctx, idRun, IRODSPathOptions{FileType: fileType})
 }
 
 // CountFindSamplesBySangerID counts the samples matching a Sanger sample id through the remote server.
@@ -1180,6 +1567,42 @@ type RemoteConfig struct {
 	Token    string
 	CACert   string
 	CacheTTL time.Duration
+}
+
+func addSampleSearchOptionValues(query url.Values, opts SampleSearchOptions) {
+	if opts.Words {
+		query.Set("words", "true")
+	}
+	remoteSetNonEmptyQuery(query, "organism", opts.Organism)
+	remoteSetNonEmptyQuery(query, "library_type", opts.LibraryType)
+	remoteSetNonEmptyQuery(query, "qc", opts.QC)
+	if opts.DeliverablesOnly {
+		query.Set("deliverables_only", "true")
+	}
+}
+
+func addIRODSPathOptionValues(values url.Values, opts IRODSPathOptions) {
+	if opts.FileType != "" {
+		values.Set("file_type", opts.FileType)
+	}
+	if opts.DeliverablesOnly {
+		values.Set("deliverables_only", "true")
+	}
+	if opts.OrderBy != "" {
+		values.Set("order_by", opts.OrderBy)
+	}
+	if opts.Since != "" {
+		values.Set("since", opts.Since)
+	}
+	if opts.Until != "" {
+		values.Set("until", opts.Until)
+	}
+}
+
+func remoteSetNonEmptyQuery(query url.Values, key, value string) {
+	if strings.TrimSpace(value) != "" {
+		query.Set(key, value)
+	}
 }
 
 func invalidRemoteErrorEnvelopeError(response *http.Response, entry Endpoint, proxyURL *url.URL) error {

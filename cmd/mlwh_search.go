@@ -86,8 +86,10 @@ var openMLWHSearchRemoteClient = func(_ context.Context, cfg mlwh.RemoteConfig) 
 type mlwhSearchClient interface {
 	SearchStudies(ctx context.Context, term string, limit, offset int) ([]mlwh.Study, error)
 	SearchSamples(ctx context.Context, term string, limit, offset int) ([]mlwh.Sample, error)
+	SearchSamplesWithOptions(ctx context.Context, term string, opts mlwh.SampleSearchOptions, limit, offset int) ([]mlwh.Sample, error)
 	CountStudySearch(ctx context.Context, term string) (mlwh.Count, error)
 	CountSampleSearch(ctx context.Context, term string) (mlwh.Count, error)
+	CountSampleSearchWithOptions(ctx context.Context, term string, opts mlwh.SampleSearchOptions) (mlwh.Count, error)
 	Close() error
 }
 
@@ -115,11 +117,16 @@ func openMLWHSearchConfiguredClient(ctx context.Context, serverURL string) (mlwh
 
 func newMLWHSearchCommand() *cobra.Command {
 	var (
-		serverURL string
-		typeFlag  string
-		limit     int
-		offset    int
-		jsonOut   bool
+		serverURL        string
+		typeFlag         string
+		words            bool
+		organism         string
+		libraryType      string
+		qc               string
+		deliverablesOnly bool
+		limit            int
+		offset           int
+		jsonOut          bool
 	)
 
 	command := &cobra.Command{
@@ -129,40 +136,22 @@ func newMLWHSearchCommand() *cobra.Command {
 			"Search the Sanger Multi-LIMS Warehouse (MLWH) for studies and samples",
 			"that match a free-text term, through a wa mlwh serve API. Study search",
 			"is a case-insensitive substring over study name, title, programme and",
-			"faculty sponsor; sample search is a case-insensitive word-prefix over",
-			"sample name, supplier name, common name and donor id. The term must be",
-			"at least 3 characters. This is a read-only query tool.",
+			"faculty sponsor; sample search defaults to a literal whole-value prefix",
+			"over sample name, supplier name, common name and donor id. Add --words",
+			"for the legacy separator-agnostic word-prefix search. Free-text terms",
+			"must be at least 3 characters unless an exact sample filter is supplied",
+			"for a sample search. This is a read-only query tool.",
 			"",
 			"Use this when you have a partial study title, programme, organism or",
 			"supplier name and want to discover the matching studies or samples.",
 			"By default both studies and samples are searched; pass --type to",
-			"restrict to one. Use --limit/--offset to page results and --json for a",
-			"single JSON object suitable for piping into jq. Each section reports a",
-			"total match count; a very common sample term reports its count as a",
-			"floor (e.g. 10000+).",
+			"restrict to one. Sample searches can be narrowed with --organism,",
+			"--library-type, --qc pass|fail|pending and --deliverables-only. Use",
+			"--limit/--offset to page results and --json for a single JSON object",
+			"suitable for piping into jq. Each section reports a total match count;",
+			"a very common sample term reports its count as a floor (e.g. 10000+).",
 			"",
-			"Normal CLI users should point this command at the MLWH query server",
-			"with --server or WA_MLWH_SERVER_URL; database and cache credentials",
-			"stay with the server process. When WA_ENV selects a scenario and no",
-			"server URL is set, the command defaults to the active local MLWH API",
-			"port from WA_*_SEQMETA_PORT. Operators can still run against a local",
-			"cache with WA_MLWH_CACHE_PATH, or use WA_MLWH_DSN for direct local",
-			"operator mode.",
-			"",
-			"Configuration is read from the environment. Use the persistent --env",
-			"flag (or WA_ENV=development|test|production) to load matching",
-			".env.<name> / .env.<name>.local files from the working directory",
-			"before resolving:",
-			"",
-			"  WA_MLWH_SERVER_URL      Preferred. Base URL for wa mlwh serve.",
-			"  WA_MLWH_BACKEND_URL     Lower-precedence compatibility default.",
-			"  WA_*_SEQMETA_PORT       Scenario-local default API port.",
-			"  WA_MLWH_DSN             Optional direct operator mode only.",
-			"  WA_MLWH_PASSWORD        Optional. Password used with WA_MLWH_DSN.",
-			"  WA_MLWH_CACHE_PATH      Optional local operator cache path or",
-			"                          MySQL cache DSN without a password.",
-			"  WA_MLWH_CACHE_PASSWORD  Optional. SQLCipher key used to encrypt",
-			"                          the local cache when set.",
+			mlwhQueryCommandConfigurationHelp,
 			"",
 			"Examples:",
 			"  # Query a development stack started by make dev",
@@ -196,12 +185,25 @@ func newMLWHSearchCommand() *cobra.Command {
 			}
 			defer func() { _ = client.Close() }()
 
-			return runMLWHSearch(ctx, client, cmd.OutOrStdout(), term, typeFlag, limit, offset, jsonOut)
+			opts := mlwh.SampleSearchOptions{
+				Words:            words,
+				Organism:         organism,
+				LibraryType:      libraryType,
+				QC:               qc,
+				DeliverablesOnly: deliverablesOnly,
+			}
+
+			return runMLWHSearch(ctx, client, cmd.OutOrStdout(), term, typeFlag, opts, limit, offset, jsonOut)
 		},
 	}
 
 	command.Flags().StringVar(&serverURL, "server", defaultMLWHInfoServerURL(), "MLWH server base URL (defaults to WA_MLWH_SERVER_URL, WA_MLWH_BACKEND_URL, or active WA_*_SEQMETA_PORT)")
 	command.Flags().StringVar(&typeFlag, "type", "", "restrict the search to one kind (study|sample); default is both")
+	command.Flags().BoolVar(&words, "words", false, "use separator-agnostic word-prefix sample search instead of the default literal whole-value prefix")
+	command.Flags().StringVar(&organism, "organism", "", "restrict sample matches to this organism/common name")
+	command.Flags().StringVar(&libraryType, "library-type", "", "restrict sample matches to this library type")
+	command.Flags().StringVar(&qc, "qc", "", "restrict sample matches by product QC: pass, fail or pending")
+	command.Flags().BoolVar(&deliverablesOnly, "deliverables-only", false, "restrict sample matches to deliverable data objects")
 	command.Flags().IntVar(&limit, "limit", 50, "maximum number of results to return per kind")
 	command.Flags().IntVar(&offset, "offset", 0, "number of results to skip per kind (for pagination)")
 	command.Flags().BoolVar(&jsonOut, "json", false, "emit a single JSON object instead of human-readable text")
@@ -209,16 +211,16 @@ func newMLWHSearchCommand() *cobra.Command {
 	return command
 }
 
-func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, term, typeFlag string, limit, offset int, jsonOut bool) error {
-	if len(strings.TrimSpace(term)) < searchMinTermLength {
-		_, _ = fmt.Fprintf(out, "search term must be at least %d characters\n", searchMinTermLength)
-
-		return nil
-	}
-
+func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, term, typeFlag string, sampleOpts mlwh.SampleSearchOptions, limit, offset int, jsonOut bool) error {
 	wantStudies, wantSamples, err := searchTypeSelection(typeFlag)
 	if err != nil {
 		return err
+	}
+
+	if len(strings.TrimSpace(term)) < searchMinTermLength && (!wantSamples || !sampleSearchHasExactFilter(sampleOpts)) {
+		_, _ = fmt.Fprintf(out, "search term must be at least %d characters\n", searchMinTermLength)
+
+		return nil
 	}
 
 	report := searchReport{Term: term}
@@ -234,7 +236,7 @@ func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, 
 	}
 
 	if wantSamples && !report.TimedOut {
-		if err := addSampleSearchSection(ctx, client, &report, term, limit, offset); err != nil {
+		if err := addSampleSearchSection(ctx, client, &report, term, sampleOpts, limit, offset); err != nil {
 			return err
 		}
 	}
@@ -259,6 +261,13 @@ func searchTypeSelection(typeFlag string) (wantStudies, wantSamples bool, err er
 	default:
 		return false, false, fmt.Errorf("unknown --type %q (expected study or sample)", typeFlag)
 	}
+}
+
+func sampleSearchHasExactFilter(opts mlwh.SampleSearchOptions) bool {
+	return strings.TrimSpace(opts.Organism) != "" ||
+		strings.TrimSpace(opts.LibraryType) != "" ||
+		strings.TrimSpace(opts.QC) != "" ||
+		opts.DeliverablesOnly
 }
 
 // addStudySearchSection runs the study search and folds the result into report.
@@ -329,8 +338,8 @@ func isSearchTimeoutError(err error) bool {
 
 // addSampleSearchSection runs the sample search and folds the result into report,
 // mirroring addStudySearchSection's timeout/partial-results handling.
-func addSampleSearchSection(ctx context.Context, client mlwhSearchClient, report *searchReport, term string, limit, offset int) error {
-	section, emptyCache, err := buildSampleSearchSection(ctx, client, term, limit, offset)
+func addSampleSearchSection(ctx context.Context, client mlwhSearchClient, report *searchReport, term string, opts mlwh.SampleSearchOptions, limit, offset int) error {
+	section, emptyCache, err := buildSampleSearchSection(ctx, client, term, opts, limit, offset)
 	if err != nil {
 		if isSearchTimeoutError(err) {
 			report.TimedOut = true
@@ -347,10 +356,10 @@ func addSampleSearchSection(ctx context.Context, client mlwhSearchClient, report
 	return nil
 }
 
-func buildSampleSearchSection(ctx context.Context, client mlwhSearchClient, term string, limit, offset int) (*sampleSearchSection, bool, error) {
+func buildSampleSearchSection(ctx context.Context, client mlwhSearchClient, term string, opts mlwh.SampleSearchOptions, limit, offset int) (*sampleSearchSection, bool, error) {
 	emptyCache := false
 
-	samples, err := client.SearchSamples(ctx, term, limit, offset)
+	samples, err := client.SearchSamplesWithOptions(ctx, term, opts, limit, offset)
 	if err != nil {
 		if !isEmptyCacheSearchError(err) {
 			return nil, false, fmt.Errorf("search samples for %q: %w", term, err)
@@ -359,7 +368,7 @@ func buildSampleSearchSection(ctx context.Context, client mlwhSearchClient, term
 		emptyCache = true
 	}
 
-	count, err := client.CountSampleSearch(ctx, term)
+	count, err := client.CountSampleSearchWithOptions(ctx, term, opts)
 	if err != nil {
 		if !isEmptyCacheSearchError(err) {
 			return nil, false, fmt.Errorf("count samples for %q: %w", term, err)

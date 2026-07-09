@@ -33,6 +33,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -209,34 +210,34 @@ var sampleProgressFeedingTables = []string{
 const trackingTimelineReason = "not in tracking window"
 
 // statusBreakdownDistinctCacheSQL is the ONE grouped query for the distinct-sample
-// partition of the study status breakdown (spec F4): a single pass over the shared
-// Phase 2 membership join (studyDataMembershipJoin) that buckets each linked sample
-// by its most-advanced phase via conditional aggregation. with_data counts the
-// distinct samples with >=1 study-scoped iRODS row (studyScopedIRODSExists, the same
-// predicate StudyOverview / SamplesWithData use); sequenced_no_data counts those
-// with NO study-scoped iRODS row but >=1 study-scoped product-metrics row
-// (studyScopedProductMetricsExists); registered counts the rest (no products,
-// including ONT). Each distinct sample satisfies exactly one CASE, so the three
-// COUNT(DISTINCT ...) buckets sum to samples_total -- it is the SAME partition
-// StudyOverview computes (precedence with_data > sequenced_no_data > registered),
-// expressed as one query rather than three counts. No id_lims filter, matching the
-// canonical study membership (CountSamplesForStudy), so the buckets stay a partition
-// of the study's linked samples.
+// partition of the study status breakdown (spec F4). It shares the same I2
+// set-at-once linked-sample/data/product shape as StudyOverview: linked samples
+// are materialised once, study-scoped iRODS/product sample sets are materialised
+// once, and the final SELECT buckets every linked sample by precedence
+// with_data > sequenced_no_data > registered. The leading total lets the caller
+// preserve the CountSamplesForStudy empty/unknown/never-synced cascade without
+// issuing a separate sample-count query.
 var statusBreakdownDistinctCacheSQL = `SELECT ` +
-	`COUNT(DISTINCT CASE WHEN EXISTS (` + studyScopedIRODSExists("") + `) THEN sample_mirror.id_sample_tmp END), ` +
-	`COUNT(DISTINCT CASE WHEN NOT EXISTS (` + studyScopedIRODSExists("") + `) AND EXISTS (` + studyScopedProductMetricsExists() + `) THEN sample_mirror.id_sample_tmp END), ` +
-	`COUNT(DISTINCT CASE WHEN NOT EXISTS (` + studyScopedIRODSExists("") + `) AND NOT EXISTS (` + studyScopedProductMetricsExists() + `) THEN sample_mirror.id_sample_tmp END) ` +
-	`FROM ` + studyDataMembershipJoin + ` WHERE library_samples.id_study_lims = ?`
+	`COUNT(linked.id_sample_tmp), ` +
+	`SUM(CASE WHEN data.id_sample_tmp IS NOT NULL THEN 1 ELSE 0 END), ` +
+	`SUM(CASE WHEN data.id_sample_tmp IS NULL AND products.id_sample_tmp IS NOT NULL THEN 1 ELSE 0 END), ` +
+	`SUM(CASE WHEN data.id_sample_tmp IS NULL AND products.id_sample_tmp IS NULL THEN 1 ELSE 0 END) ` +
+	`FROM (` + studyLinkedSamplesSQL + `) AS linked ` +
+	`LEFT JOIN (SELECT DISTINCT id_sample_tmp FROM seq_product_irods_locations_mirror WHERE id_study_lims = ?) AS data ` +
+	`ON data.id_sample_tmp = linked.id_sample_tmp ` +
+	`LEFT JOIN (` + studyProductSampleSetSQL() + `) AS products ON products.id_sample_tmp = linked.id_sample_tmp`
 
 // countSamplesWithDetailedTimelineCacheSQL counts the study's linked samples that
 // are also present in the seq_ops_tracking_per_sample mirror (spec F4
-// with_detailed_timeline). It reuses the shared membership join and joins the
-// tracking mirror by its sample key (sample_mirror.id_sample_lims =
-// seq_ops_tracking_per_sample_mirror.id_sample_lims) via a correlated EXISTS, so it
-// counts distinct SAMPLES present in tracking, never tracking rows.
-var countSamplesWithDetailedTimelineCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM ` + studyDataMembershipJoin +
-	` WHERE library_samples.id_study_lims = ? AND EXISTS (` +
-	`SELECT 1 FROM seq_ops_tracking_per_sample_mirror t WHERE t.id_sample_lims = sample_mirror.id_sample_lims)`
+// with_detailed_timeline). It reuses the same distinct linked-sample membership as
+// CountSamplesForStudy and joins the tracking mirror set-at-once by (study_id,
+// id_sample_lims), so it counts distinct SAMPLES present in tracking without a
+// per-sample correlated EXISTS.
+var countSamplesWithDetailedTimelineCacheSQL = `SELECT COUNT(DISTINCT linked.id_sample_tmp) ` +
+	`FROM (SELECT DISTINCT library_samples.id_sample_tmp, sample_mirror.id_sample_lims, library_samples.id_study_lims ` +
+	`FROM ` + studyDataMembershipJoin + ` WHERE library_samples.id_study_lims = ?) AS linked ` +
+	`INNER JOIN seq_ops_tracking_per_sample_mirror t ` +
+	`ON t.study_id = linked.id_study_lims AND t.id_sample_lims = linked.id_sample_lims`
 
 // statusBreakdownFeedingTables are the sync tables whose oldest last_run defines a
 // StatusBreakdown's cache_synced_at (spec F4): the study + sample identity tables,
@@ -277,27 +278,24 @@ var statusBreakdownQCCacheSQL = `SELECT ` +
 	`ELSE '` + qcPass + `' END AS verdict ` +
 	`FROM (` + studyScopedSampleQCUnion() + `) AS study_sample_products GROUP BY id_sample_tmp) AS sample_qc`
 
-// statusBreakdownPlatformArm pairs one platform's product-metrics mirror with its
-// product-id column, so the per-platform partition can both establish the
-// platform's membership and test per-platform delivery (the shared product id links
-// an iRODS row to that platform's products).
+// statusBreakdownPlatformArm pairs one canonical platform with its product-metrics
+// mirror, so the per-platform partition can establish the platform's sample
+// membership before intersecting it with iRODS rows for the same study/sample and
+// source platform.
 type statusBreakdownPlatformArm struct {
-	platform  string
-	table     string
-	productID string
+	platform string
+	table    string
 }
 
 // statusBreakdownProductPlatformArms are the four product-bearing platforms of the
 // per-platform partition, in platformCanonicalOrder. Each platform's sample set is
-// its product-metrics rows in the study, and a (sample, platform) is delivered when
-// the sample has a study-scoped iRODS row whose id_iseq_product matches one of that
-// sample's products on that platform (the A2 linkage: iseq via id_iseq_product,
-// pacbio via id_pac_bio_product, eseq via id_eseq_product, useq via id_useq_product).
+// its product-metrics rows in the study, and a (sample, platform) is delivered
+// when it intersects a study-scoped iRODS row from the same source platform.
 var statusBreakdownProductPlatformArms = []statusBreakdownPlatformArm{
-	{platformIllumina, "iseq_product_metrics_mirror", "id_iseq_product"},
-	{platformPacBio, "pac_bio_product_metrics_mirror", "id_pac_bio_product"},
-	{platformElembio, "eseq_product_metrics_mirror", "id_eseq_product"},
-	{platformUltimagen, "useq_product_metrics_mirror", "id_useq_product"},
+	{platformIllumina, "iseq_product_metrics_mirror"},
+	{platformPacBio, "pac_bio_product_metrics_mirror"},
+	{platformElembio, "eseq_product_metrics_mirror"},
+	{platformUltimagen, "useq_product_metrics_mirror"},
 }
 
 // sampleProductMetricsQCUnion is the UNION ALL of the overall qc column across
@@ -339,55 +337,66 @@ func studyScopedSampleQCUnion() string {
 }
 
 // statusBreakdownPerPlatformSQL is the ONE grouped query for the per-platform
-// partition of the study status breakdown (spec F4). Its inner SELECT fans a sample
-// out to one row per platform it spans, tagged with that platform's bucket, and the
-// outer GROUP BY platform sums those rows into each platform's ladder. Because a
-// multi-platform sample contributes a row under EACH of its platforms, the grand
-// total across platforms may exceed samples_total (the two-denominator decision).
-// Within a platform the buckets sum to that platform's distinct sample count.
+// partition of the study status breakdown (spec F4). Each platform arm aggregates
+// directly to one ladder row, counting distinct samples on that platform and the
+// distinct subset with a delivered product. Because a multi-platform sample
+// contributes to EACH of its platforms, the grand total across platforms may exceed
+// samples_total (the two-denominator decision). Within a platform the buckets sum
+// to that platform's distinct sample count.
 //
-// Each product-platform arm selects the distinct samples with that platform's
-// product-metrics in the study, tagging the bucket as with_data when the sample has
-// a study-scoped iRODS row joined to ANY of its products on that platform (so the
-// bucket is per (sample, platform), correct even when a sample has both a delivered
-// and an undelivered product on the platform), else sequenced_no_data. The ONT arm
-// selects the study's oseq_flowcell samples, always tagged registered (ONT has no
-// product-metrics or iRODS). The platform name is a canonical literal per arm (never
-// the iRODS seq_platform_name string), matching platformsForStudySamplesSQL.
-//
-// Each product arm computes delivered-ness with a LEFT JOIN to the iRODS mirror
-// (the platform's product id = spi.id_iseq_product, and spi.id_study_lims =
-// pm.id_study_lims) rolled up to the sample with GROUP BY pm.id_sample_tmp, so the
-// linkage is evaluated set-at-once and index-served instead of as a correlated
-// subquery re-run per product-metrics row (the per-row EXISTS was the ~5s study
-// page). A sample is with_data when MAX(spi matched) is true for any of its products
-// on the platform, else sequenced_no_data -- identical (sample, platform) semantics
-// to the previous per-row EXISTS, including a sample with both a delivered and an
-// undelivered product landing in with_data.
+// Each product-platform arm counts a sample as with_data when the sample is present
+// in that platform's study-scoped product set and has a study-scoped iRODS row
+// whose source platform normalises to the same platform. The iRODS mirror's
+// id_sample_tmp/id_study_lims values are recovered from the source product during
+// sync, so this keeps the sample/platform semantics while letting MySQL use the
+// (id_study_lims, id_sample_tmp) iRODS index instead of expanding a large product-id
+// join. A sample with both delivered and undelivered products on the platform lands
+// in with_data. The ONT arm counts the study's oseq_flowcell samples as registered
+// (ONT has no product-metrics or iRODS).
 func statusBreakdownPerPlatformSQL() string {
 	productArm := func(arm statusBreakdownPlatformArm) string {
-		delivered := `MAX(CASE WHEN spi.id_iseq_product IS NOT NULL THEN 1 ELSE 0 END) = 1`
-
-		return `SELECT pm.id_sample_tmp, '` + arm.platform + `' AS platform, ` +
-			`CASE WHEN ` + delivered + ` THEN 'with_data' ELSE 'sequenced_no_data' END AS bucket ` +
-			`FROM ` + arm.table + ` pm ` +
-			`LEFT JOIN seq_product_irods_locations_mirror spi ` +
-			`ON spi.id_iseq_product = pm.` + arm.productID + ` AND spi.id_study_lims = pm.id_study_lims ` +
-			`WHERE pm.id_study_lims = ? GROUP BY pm.id_sample_tmp`
+		return `SELECT platform, with_data, sequenced_no_data, registered FROM (` +
+			`SELECT '` + arm.platform + `' AS platform, ` +
+			`delivered.with_data AS with_data, ` +
+			`total.samples - delivered.with_data AS sequenced_no_data, ` +
+			`0 AS registered FROM ` +
+			`(SELECT COUNT(DISTINCT id_sample_tmp) AS samples FROM ` + arm.table + ` WHERE id_study_lims = ?) AS total ` +
+			`CROSS JOIN (` +
+			`SELECT COUNT(DISTINCT spi.id_sample_tmp) AS with_data ` +
+			`FROM seq_product_irods_locations_mirror spi ` +
+			`INNER JOIN (SELECT DISTINCT id_sample_tmp FROM ` + arm.table + ` WHERE id_study_lims = ?) AS product_samples ` +
+			`ON product_samples.id_sample_tmp = spi.id_sample_tmp ` +
+			`WHERE spi.id_study_lims = ? AND ` + statusBreakdownIRODSPlatformPredicate("spi", arm.platform) +
+			`) AS delivered) AS platform_counts ` +
+			`WHERE with_data + sequenced_no_data + registered > 0`
 	}
 
 	arms := make([]string, 0, len(statusBreakdownProductPlatformArms)+1)
 	for _, arm := range statusBreakdownProductPlatformArms {
 		arms = append(arms, productArm(arm))
 	}
-	arms = append(arms, `SELECT DISTINCT o.id_sample_tmp, '`+platformONT+`' AS platform, 'registered' AS bucket `+
-		`FROM oseq_flowcell_mirror o WHERE o.id_study_lims = ?`)
+	arms = append(arms, `SELECT platform, with_data, sequenced_no_data, registered FROM (`+
+		`SELECT '`+platformONT+`' AS platform, 0 AS with_data, 0 AS sequenced_no_data, COUNT(DISTINCT o.id_sample_tmp) AS registered `+
+		`FROM oseq_flowcell_mirror o WHERE o.id_study_lims = ?) AS platform_counts `+
+		`WHERE with_data + sequenced_no_data + registered > 0`)
 
-	return `SELECT platform, ` +
-		`SUM(CASE WHEN bucket = 'with_data' THEN 1 ELSE 0 END), ` +
-		`SUM(CASE WHEN bucket = 'sequenced_no_data' THEN 1 ELSE 0 END), ` +
-		`SUM(CASE WHEN bucket = 'registered' THEN 1 ELSE 0 END) ` +
-		`FROM (` + strings.Join(arms, " UNION ALL ") + `) AS per_platform_samples GROUP BY platform`
+	return strings.Join(arms, " UNION ALL ")
+}
+
+func statusBreakdownIRODSPlatformPredicate(alias, platform string) string {
+	column := `LOWER(` + alias + `.platform)`
+	switch platform {
+	case platformIllumina:
+		return column + ` = 'illumina'`
+	case platformPacBio:
+		return column + ` IN ('pacbio', 'pac_bio', 'pac bio')`
+	case platformElembio:
+		return column + ` IN ('elembio', 'element')`
+	case platformUltimagen:
+		return column + ` IN ('ultimagen', 'ultima')`
+	default:
+		return column + ` = '` + strings.ToLower(platform) + `'`
+	}
 }
 
 // runStatusRawEvent is one un-normalized status transition (a phase and the
@@ -717,6 +726,25 @@ func buildMilestones(reached []reachedMilestone) []Milestone {
 	return milestones
 }
 
+func statusBreakdownDistinctArgs(studyLimsID string) []any {
+	args := []any{studyLimsID, studyLimsID}
+	for range 4 {
+		args = append(args, studyLimsID)
+	}
+
+	return args
+}
+
+func statusBreakdownPerPlatformArgs(studyLimsID string) []any {
+	args := make([]any, 0, len(statusBreakdownProductPlatformArms)*3+1)
+	for range statusBreakdownProductPlatformArms {
+		args = append(args, studyLimsID, studyLimsID, studyLimsID)
+	}
+	args = append(args, studyLimsID)
+
+	return args
+}
+
 // sampleProductMetricsPlatformsSQL returns the distinct platforms one sample
 // spans, sample-wide (not study-scoped): one (platform) row per platform the
 // sample has products on, plus ONT from oseq_flowcell membership. The canonical
@@ -758,16 +786,12 @@ func baselinePhaseFor(productCount int, delivered bool) string {
 // qcFail when any product fails (MIN(qc) == 0, since SQL MIN ignores NULLs),
 // else qcPending when any product's qc is NULL, else qcPass.
 func rollUpSampleQC(productCount int, pending, minQC sql.NullInt64) string {
-	switch {
-	case productCount == 0:
+	qc := qcRollupString(productCount, pending, minQC)
+	if qc == "" {
 		return qcNotTracked
-	case minQC.Valid && minQC.Int64 == 0:
-		return qcFail
-	case pending.Valid && pending.Int64 > 0:
-		return qcPending
-	default:
-		return qcPass
 	}
+
+	return qc
 }
 
 // sampleBaseline is the always-derivable P0 baseline for one sample (spec F1):
@@ -1301,64 +1325,102 @@ func (c *Client) sampleUseqRunTimelines(ctx context.Context, idSampleTmp int64) 
 // synced study with no samples returns all-zero ladders with cache_synced_at
 // populated.
 func (c *Client) StatusBreakdown(ctx context.Context, studyLimsID string) (StatusBreakdown, error) {
-	total, err := c.queryCount(ctx, countSamplesForStudyCacheSQL, "count study samples for status breakdown", studyLimsID)
-	if err != nil {
+	var (
+		distinct     PhaseLadder
+		perPlatform  []PlatformPhaseLadder
+		qc           StudyQCBreakdown
+		syncedAt     string
+		total        int
+		withTimeline int
+		wg           sync.WaitGroup
+	)
+	errCh := make(chan orderedAsyncError, 5)
+	run := func(order int, fill func() error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := fill(); err != nil {
+				errCh <- orderedAsyncError{order: order, err: err}
+			}
+		}()
+	}
+
+	run(0, func() error {
+		var err error
+		total, distinct, err = c.statusBreakdownDistinct(ctx, studyLimsID)
+
+		return err
+	})
+	run(1, func() error {
+		var err error
+		perPlatform, err = c.statusBreakdownPerPlatform(ctx, studyLimsID)
+
+		return err
+	})
+	run(2, func() error {
+		var err error
+		qc, err = c.statusBreakdownQC(ctx, studyLimsID)
+
+		return err
+	})
+	run(3, func() error {
+		var err error
+		withTimeline, err = c.queryCount(ctx, countSamplesWithDetailedTimelineCacheSQL, "count study samples with detailed timeline", studyLimsID)
+
+		return err
+	})
+	run(4, func() error {
+		var err error
+		syncedAt, err = c.oldestFeedingLastRun(ctx, statusBreakdownFeedingTables)
+
+		return err
+	})
+
+	wg.Wait()
+	close(errCh)
+	if err := firstOrderedAsyncError(errCh); err != nil {
 		return StatusBreakdown{}, err
 	}
 	if total == 0 {
 		return c.statusBreakdownForEmptyStudy(ctx, studyLimsID)
 	}
 
-	breakdown := StatusBreakdown{IDStudyLims: studyLimsID}
-
-	distinct, err := c.statusBreakdownDistinct(ctx, studyLimsID)
-	if err != nil {
-		return StatusBreakdown{}, err
+	breakdown := StatusBreakdown{
+		IDStudyLims:          studyLimsID,
+		Distinct:             distinct,
+		PerPlatform:          perPlatform,
+		QC:                   qc,
+		WithDetailedTimeline: withTimeline,
+		CacheSyncedAt:        syncedAt,
 	}
-	breakdown.Distinct = distinct
-
-	perPlatform, err := c.statusBreakdownPerPlatform(ctx, studyLimsID)
-	if err != nil {
-		return StatusBreakdown{}, err
-	}
-	breakdown.PerPlatform = perPlatform
-
-	qc, err := c.statusBreakdownQC(ctx, studyLimsID)
-	if err != nil {
-		return StatusBreakdown{}, err
-	}
-	breakdown.QC = qc
-
-	withTimeline, err := c.queryCount(ctx, countSamplesWithDetailedTimelineCacheSQL, "count study samples with detailed timeline", studyLimsID)
-	if err != nil {
-		return StatusBreakdown{}, err
-	}
-	breakdown.WithDetailedTimeline = withTimeline
-
-	syncedAt, err := c.oldestFeedingLastRun(ctx, statusBreakdownFeedingTables)
-	if err != nil {
-		return StatusBreakdown{}, err
-	}
-	breakdown.CacheSyncedAt = syncedAt
 
 	return breakdown, nil
 }
 
 // statusBreakdownDistinct runs the single grouped distinct-partition query and
 // returns the most-advanced-phase ladder summing to samples_total.
-func (c *Client) statusBreakdownDistinct(ctx context.Context, studyLimsID string) (PhaseLadder, error) {
+func (c *Client) statusBreakdownDistinct(ctx context.Context, studyLimsID string) (int, PhaseLadder, error) {
 	db := c.readCacheDB()
 	if db == nil {
-		return PhaseLadder{}, fmt.Errorf("mlwh: cache reader not configured")
+		return 0, PhaseLadder{}, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	var ladder PhaseLadder
-	if err := db.QueryRowContext(ctx, statusBreakdownDistinctCacheSQL, studyLimsID).
-		Scan(&ladder.WithData, &ladder.SequencedNoData, &ladder.Registered); err != nil {
-		return PhaseLadder{}, fmt.Errorf("%w: aggregate study status breakdown distinct partition: %w", ErrUpstreamImpaired, err)
+	var (
+		total           int
+		withData        sql.NullInt64
+		sequencedNoData sql.NullInt64
+		registered      sql.NullInt64
+	)
+	if err := db.QueryRowContext(ctx, statusBreakdownDistinctCacheSQL, statusBreakdownDistinctArgs(studyLimsID)...).
+		Scan(&total, &withData, &sequencedNoData, &registered); err != nil {
+		return 0, PhaseLadder{}, fmt.Errorf("%w: aggregate study status breakdown distinct partition: %w", ErrUpstreamImpaired, err)
 	}
 
-	return ladder, nil
+	return total, PhaseLadder{
+		WithData:        int(withData.Int64),
+		SequencedNoData: int(sequencedNoData.Int64),
+		Registered:      int(registered.Int64),
+	}, nil
 }
 
 // statusBreakdownPerPlatform runs the single grouped per-platform-partition query
@@ -1372,12 +1434,7 @@ func (c *Client) statusBreakdownPerPlatform(ctx context.Context, studyLimsID str
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	args := make([]any, len(statusBreakdownProductPlatformArms)+1)
-	for i := range args {
-		args[i] = studyLimsID
-	}
-
-	rows, err := db.QueryContext(ctx, statusBreakdownPerPlatformSQL(), args...)
+	rows, err := db.QueryContext(ctx, statusBreakdownPerPlatformSQL(), statusBreakdownPerPlatformArgs(studyLimsID)...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: query study status breakdown per-platform partition: %w", ErrUpstreamImpaired, err)
 	}
@@ -1463,7 +1520,11 @@ func (c *Client) statusBreakdownForEmptyStudy(ctx context.Context, studyLimsID s
 			return StatusBreakdown{}, err
 		}
 
-		return StatusBreakdown{IDStudyLims: studyLimsID, CacheSyncedAt: syncedAt}, nil
+		return StatusBreakdown{
+			IDStudyLims:   studyLimsID,
+			PerPlatform:   []PlatformPhaseLadder{},
+			CacheSyncedAt: syncedAt,
+		}, nil
 	}
 
 	if err := c.requireAnySyncState(ctx, syncTableStudy); err != nil {

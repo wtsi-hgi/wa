@@ -19,11 +19,14 @@ CREATE INDEX IF NOT EXISTS iseq_product_metrics_mirror_id_run_position_tag_index
 CREATE INDEX IF NOT EXISTS ipm_mirror_sample_run_position_tag_idx
 	ON iseq_product_metrics_mirror(id_sample_tmp, id_run, position, tag_index);
 
+CREATE INDEX IF NOT EXISTS ipm_mirror_sample_qc_idx
+	ON iseq_product_metrics_mirror(id_sample_tmp, qc);
+
 CREATE INDEX IF NOT EXISTS iseq_product_metrics_mirror_id_iseq_flowcell_tmp_idx
 	ON iseq_product_metrics_mirror(id_iseq_flowcell_tmp);
 
-CREATE INDEX IF NOT EXISTS ipm_mirror_iseq_product_idx
-	ON iseq_product_metrics_mirror(id_iseq_product);
-
 CREATE INDEX IF NOT EXISTS iseq_product_metrics_mirror_id_study_lims_id_run_position_idx
 	ON iseq_product_metrics_mirror(id_study_lims, id_run, position);
+
+CREATE INDEX IF NOT EXISTS ipm_mirror_study_sample_product_qc_idx
+	ON iseq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_iseq_product, qc);

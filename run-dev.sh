@@ -396,8 +396,10 @@ WA_DEV_ALLOWED_ORIGINS="$(collect_dev_origins)"
 export WA_DEV_ALLOWED_ORIGINS
 
 TMP_DIR="$REPO_ROOT/.tmp"
-BIN_PATH="$TMP_DIR/wa"
-LOG_DIR="$REPO_ROOT/logs"
+BIN_PATH="$TMP_DIR/wa-run-dev-$$"
+STABLE_BIN_PATH="$TMP_DIR/wa"
+STABLE_BIN_LOCK="$TMP_DIR/wa.lock"
+LOG_DIR="${WA_RUN_DEV_LOG_DIR:-$REPO_ROOT/logs}"
 SEED_PATH="$REPO_ROOT/.docs/results-web/fixtures/seed.json"
 FRONTEND_DIR="${WA_RUN_DEV_FRONTEND_CWD:-$REPO_ROOT/frontend}"
 DEFAULT_DEV_TLS_CERT="$TMP_DIR/wa-dev-cert.pem"
@@ -854,6 +856,26 @@ terminate_child_process() {
   wait "$pid" 2>/dev/null || true
 }
 
+update_stable_bin_symlink() {
+  local tmp_link="$TMP_DIR/.wa-link-$$"
+
+  (
+    flock -x 9
+    rm -f "$tmp_link"
+    ln -s "$BIN_PATH" "$tmp_link"
+    mv -Tf "$tmp_link" "$STABLE_BIN_PATH"
+  ) 9>"$STABLE_BIN_LOCK"
+}
+
+cleanup_stable_bin_symlink() {
+  (
+    flock -x 9
+    if [[ -L "$STABLE_BIN_PATH" && "$(readlink "$STABLE_BIN_PATH")" == "$BIN_PATH" ]]; then
+      rm -f "$STABLE_BIN_PATH"
+    fi
+  ) 9>"$STABLE_BIN_LOCK"
+}
+
 cleanup() {
   local exit_code="$1"
 
@@ -875,6 +897,9 @@ cleanup() {
   if (( MLWH_CACHE_EPHEMERAL )) && [[ -n "$MLWH_CACHE_PATH" ]]; then
     rm -f "$MLWH_CACHE_PATH"
   fi
+
+  cleanup_stable_bin_symlink
+  rm -f "$BIN_PATH"
 
   return "$exit_code"
 }
@@ -956,7 +981,7 @@ wait_for_http() {
       return 0
     fi
 
-    if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+    if [[ -n "$pid" ]] && ! process_is_running "$pid"; then
       if wait "$pid"; then
         exit_status=0
       else
@@ -1121,10 +1146,30 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readServerToken(tokenPath) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try {
+      return fs.readFileSync(tokenPath, "utf8").trim();
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+      await sleep(50);
+    }
+  }
+
+  throw new Error(`timed out waiting for server token ${tokenPath}`);
+}
+
 async function ownerJWT(resultsBaseUrl) {
   const tokenDir = process.env.XDG_STATE_HOME || os.homedir();
   const tokenPath = path.join(tokenDir, ".wa-results-server.token");
-  const token = fs.readFileSync(tokenPath, "utf8").trim();
+  const token = await readServerToken(tokenPath);
   const form = new URLSearchParams({
     username: os.userInfo().username,
     password: token,
@@ -1466,6 +1511,7 @@ preflight_service_ports
 printf 'Building Go binary at %s\n' "$BIN_PATH"
 rm -f "$BIN_PATH"
 go build -o "$BIN_PATH" .
+update_stable_bin_symlink
 
 # Choose the database path per scenario: test gets a throwaway file under
 # .tmp/ that is removed on shutdown; dev/prod use the persistent path the

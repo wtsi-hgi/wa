@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -64,6 +65,14 @@ const (
 // where it is the established join.
 const studyDataMembershipJoin = `library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp`
 
+// studyLinkedSamplesSQL is the distinct linked-sample set shared by the I2
+// overview/status aggregate arms. It is the same membership as
+// CountSamplesForStudy, but materialised once before joining to data/product sets
+// so MySQL can use study-scoped indexes instead of re-running correlated EXISTS
+// predicates per linked sample.
+const studyLinkedSamplesSQL = `SELECT DISTINCT library_samples.id_sample_tmp FROM ` + studyDataMembershipJoin +
+	` WHERE library_samples.id_study_lims = ?`
+
 // samplesWithDataCacheSQL lists the distinct samples that have data for the
 // study (the with-data partition), ordered like the other study fan-outs.
 var samplesWithDataCacheSQL = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM ` + studyDataMembershipJoin +
@@ -85,7 +94,9 @@ var samplesWithoutDataCacheSQL = `SELECT DISTINCT ` + sampleMirrorSelectColumns 
 // cross-check). It counts distinct SAMPLES, never iRODS data objects: a sample
 // with many study-scoped iRODS rows contributes exactly one.
 var countSamplesWithDataCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM ` + studyDataMembershipJoin +
-	` WHERE library_samples.id_study_lims = ? AND EXISTS (` + studyScopedIRODSExists("") + `)`
+	` INNER JOIN seq_product_irods_locations_mirror spi ` +
+	`ON spi.id_sample_tmp = sample_mirror.id_sample_tmp AND spi.id_study_lims = library_samples.id_study_lims ` +
+	`WHERE library_samples.id_study_lims = ?`
 
 // platformCanonicalOrder is the stable order platforms are reported in, so a
 // multi-platform sample's Platforms slice is deterministic across calls.
@@ -106,15 +117,7 @@ var studyOverviewFeedingTables = []string{
 	syncTableSeqProductIRODSLocations,
 }
 
-// countSamplesSequencedNoDataCacheSQL counts the distinct samples linked to the
-// study that have product-metrics in this study but NO study-scoped iRODS row: the
-// sequenced-no-data bucket of the distinct-sample partition (most-advanced-phase
-// precedence with_data > sequenced_no_data > registered). It reuses the shared
-// membership join so it stays a complement of the with-data partition over the
-// same linked-sample set.
-var countSamplesSequencedNoDataCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM ` + studyDataMembershipJoin +
-	` WHERE library_samples.id_study_lims = ? AND NOT EXISTS (` + studyScopedIRODSExists("") + `)` +
-	` AND EXISTS (` + studyScopedProductMetricsExists() + `)`
+var studyOverviewCountsCacheSQL = studyPhaseCountsSQL(true)
 
 // studyOverviewIRODSAggregateSQL is the single study-scoped iRODS aggregate that
 // yields data_objects (row count) and the sequencing date range / newest added
@@ -177,7 +180,9 @@ const studyScopedIRODSAddedWindow = `AND spi.created >= ? AND spi.created < ?`
 // countSamplesAddedSinceCacheSQL counts the distinct samples whose study-scoped
 // iRODS data was added in a half-open [since, until) window on the created column.
 var countSamplesAddedSinceCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM ` + studyDataMembershipJoin +
-	` WHERE library_samples.id_study_lims = ? AND EXISTS (` + studyScopedIRODSExists(studyScopedIRODSAddedWindow) + `)`
+	` INNER JOIN seq_product_irods_locations_mirror spi ` +
+	`ON spi.id_sample_tmp = sample_mirror.id_sample_tmp AND spi.id_study_lims = library_samples.id_study_lims ` +
+	`WHERE library_samples.id_study_lims = ? AND spi.created >= ? AND spi.created < ?`
 
 // samplesAddedSinceCacheSQL lists the distinct samples whose study-scoped iRODS
 // data was added in a half-open [since, until) window on the created column: the
@@ -190,6 +195,16 @@ var countSamplesAddedSinceCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sam
 var samplesAddedSinceCacheSQL = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM ` + studyDataMembershipJoin +
 	` WHERE library_samples.id_study_lims = ? AND EXISTS (` + studyScopedIRODSExists(studyScopedIRODSAddedWindow) + `)` +
 	` ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
+
+const latestDataSelectColumns = `COALESCE(spi.created, '') AS created, spi.id_iseq_product AS id_product, spi.irods_collection AS collection, spi.irods_file_name AS data_object, spi.id_study_lims AS id_study_lims, COALESCE(study_mirror.name, '') AS study_name, COALESCE(sample_mirror.name, '') AS name, COALESCE(sample_mirror.supplier_name, '') AS supplier_name, spi.id_run AS id_run, spi.position AS lane, spi.tag_index AS tag_index, spi.platform AS platform, spi.merged AS merged`
+
+const latestDataFromSQL = ` FROM seq_product_irods_locations_mirror spi INNER JOIN study_mirror ON study_mirror.id_study_lims = spi.id_study_lims AND study_mirror.id_lims = 'SQSCP' LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp`
+
+const latestDataForStudySQLPrefix = `SELECT ` + latestDataSelectColumns + latestDataFromSQL + ` WHERE spi.id_study_lims = ?`
+
+const latestDataCreatedOrderSQL = ` ORDER BY spi.created DESC, spi.id_run, spi.id_iseq_product`
+
+var latestDataFacultySponsorStudyIDsSQL = `SELECT id_study_lims FROM study_mirror WHERE ` + facultySponsorWhereClause + ` ORDER BY id_study_lims`
 
 // addedWindowOpenEnded is the upper bound used by the [since, until) created
 // filter when until is omitted: a sentinel string that sorts after every RFC3339
@@ -222,23 +237,147 @@ func studyScopedIRODSExists(window string) string {
 	return predicate
 }
 
-// studyScopedProductMetricsExists is the correlated predicate for "this linked
-// sample has >=1 product-metrics row in this study", across every platform's
-// product-metrics mirror, scoped by the mirror's own id_study_lims (NOT the iRODS
-// row's). ONT (oseq_flowcell) carries no product-metrics, so an ONT-only sample
-// is never counted as sequenced. It anchors samples_sequenced_no_data, which pairs
-// it with NOT EXISTS(study-scoped iRODS).
-func studyScopedProductMetricsExists() string {
-	scoped := func(table string) string {
-		return `SELECT 1 FROM ` + table + ` pm WHERE pm.id_sample_tmp = sample_mirror.id_sample_tmp AND pm.id_study_lims = library_samples.id_study_lims`
+type orderedAsyncError struct {
+	err   error
+	order int
+}
+
+func (c *Client) fillPopulatedStudyOverviewIndependentFields(ctx context.Context, studyLimsID string, overview *StudyOverview) error {
+	var (
+		irods        StudyOverview
+		libraries    int
+		libraryTypes []string
+		metadata     StudyOverview
+		runs         int
+		syncedAt     string
+		wg           sync.WaitGroup
+	)
+	errCh := make(chan orderedAsyncError, 6)
+	run := func(order int, fill func() error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := fill(); err != nil {
+				errCh <- orderedAsyncError{order: order, err: err}
+			}
+		}()
+	}
+
+	run(0, func() error {
+		return c.fillStudyOverviewMetadata(ctx, studyLimsID, &metadata)
+	})
+	run(1, func() error {
+		return c.fillStudyOverviewIRODS(ctx, studyLimsID, &irods)
+	})
+	run(2, func() error {
+		var err error
+		runs, err = c.queryCount(ctx, studyOverviewRunsCacheSQL, "count study runs for overview", studyLimsID)
+
+		return err
+	})
+	run(3, func() error {
+		var err error
+		libraries, err = c.queryCount(ctx, studyOverviewLibrariesCacheSQL, "count study libraries for overview", studyLimsID)
+
+		return err
+	})
+	run(4, func() error {
+		var err error
+		libraryTypes, err = c.studyOverviewLibraryTypes(ctx, studyLimsID)
+
+		return err
+	})
+	run(5, func() error {
+		var err error
+		syncedAt, err = c.oldestFeedingLastRun(ctx, studyOverviewFeedingTables)
+
+		return err
+	})
+
+	wg.Wait()
+	close(errCh)
+	if err := firstOrderedAsyncError(errCh); err != nil {
+		return err
+	}
+
+	overview.Name = metadata.Name
+	overview.AccessionNumber = metadata.AccessionNumber
+	overview.FacultySponsor = metadata.FacultySponsor
+	overview.Programme = metadata.Programme
+	overview.DataAccessGroup = metadata.DataAccessGroup
+	overview.DataObjects = irods.DataObjects
+	overview.NewestDataAdded = irods.NewestDataAdded
+	overview.SequencingDateRange = irods.SequencingDateRange
+	overview.Runs = runs
+	overview.Libraries = libraries
+	overview.LibraryTypes = libraryTypes
+	overview.CacheSyncedAt = syncedAt
+
+	return nil
+}
+
+func firstOrderedAsyncError(errCh <-chan orderedAsyncError) error {
+	var first orderedAsyncError
+	for asyncErr := range errCh {
+		if first.err == nil || asyncErr.order < first.order {
+			first = asyncErr
+		}
+	}
+
+	return first.err
+}
+
+func studyPhaseCountsSQL(includeRecent bool) string {
+	selects := []string{
+		`COUNT(linked.id_sample_tmp)`,
+		`SUM(CASE WHEN data.id_sample_tmp IS NOT NULL THEN 1 ELSE 0 END)`,
+		`SUM(CASE WHEN data.id_sample_tmp IS NULL AND products.id_sample_tmp IS NOT NULL THEN 1 ELSE 0 END)`,
+	}
+	joins := []string{
+		`FROM (` + studyLinkedSamplesSQL + `) AS linked`,
+		`LEFT JOIN (SELECT DISTINCT id_sample_tmp FROM seq_product_irods_locations_mirror WHERE id_study_lims = ?) AS data ` +
+			`ON data.id_sample_tmp = linked.id_sample_tmp`,
+	}
+	if includeRecent {
+		selects = append(selects, `SUM(CASE WHEN recent.id_sample_tmp IS NOT NULL THEN 1 ELSE 0 END)`)
+		joins = append(joins,
+			`LEFT JOIN (SELECT DISTINCT id_sample_tmp FROM seq_product_irods_locations_mirror `+
+				`WHERE id_study_lims = ? AND created >= ? AND created < ?) AS recent `+
+				`ON recent.id_sample_tmp = linked.id_sample_tmp`,
+		)
+	}
+	joins = append(joins,
+		`LEFT JOIN (`+studyProductSampleSetSQL()+`) AS products ON products.id_sample_tmp = linked.id_sample_tmp`,
+	)
+
+	return `SELECT ` + strings.Join(selects, ", ") + " " + strings.Join(joins, " ")
+}
+
+// studyProductSampleSetSQL returns the distinct sample ids with product metrics in
+// one study across all product-bearing platforms. Each arm is study-scoped so the
+// I2 aggregate queries are served by (id_study_lims, id_sample_tmp, product, qc)
+// indexes instead of scanning product mirrors or probing them per sample.
+func studyProductSampleSetSQL() string {
+	arm := func(table string) string {
+		return `SELECT id_sample_tmp FROM ` + table + ` WHERE id_study_lims = ?`
 	}
 
 	return strings.Join([]string{
-		scoped("iseq_product_metrics_mirror"),
-		scoped("pac_bio_product_metrics_mirror"),
-		scoped("eseq_product_metrics_mirror"),
-		scoped("useq_product_metrics_mirror"),
-	}, " UNION ALL ")
+		arm("iseq_product_metrics_mirror"),
+		arm("pac_bio_product_metrics_mirror"),
+		arm("eseq_product_metrics_mirror"),
+		arm("useq_product_metrics_mirror"),
+	}, " UNION ")
+}
+
+func studyOverviewCountsArgs(studyLimsID string, windowArgs []any) []any {
+	args := []any{studyLimsID, studyLimsID, studyLimsID}
+	args = append(args, windowArgs...)
+	for range 4 {
+		args = append(args, studyLimsID)
+	}
+
+	return args
 }
 
 // platformsForStudySamplesSQL returns, for the given sample ids, every (sample,
@@ -278,23 +417,29 @@ func orderPlatformsBySample(platformSet map[int64]map[string]struct{}) map[int64
 	return platformsBySample
 }
 
-// readTableLastRun reads one table's sync_state last_run as a time, returning the
-// zero time when the row is absent or its last_run is empty.
-func readTableLastRun(ctx context.Context, db *sql.DB, table string) (time.Time, error) {
-	freshness, err := readTableFreshness(ctx, db, table)
-	if err != nil {
-		return time.Time{}, err
-	}
-	if !freshness.EverSynced || freshness.LastRun == "" {
+func parseLastRunValue(table string, raw any) (time.Time, error) {
+	switch value := raw.(type) {
+	case nil:
 		return time.Time{}, nil
+	case string:
+		if strings.TrimSpace(value) == "" {
+			return time.Time{}, nil
+		}
+	case []byte:
+		if strings.TrimSpace(string(value)) == "" {
+			return time.Time{}, nil
+		}
 	}
 
-	parsed, err := parseSyncTimeString(freshness.LastRun)
+	parsed, err := parseSyncTimeValue(raw)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("mlwh: parse last_run for %s: %w", table, err)
 	}
+	if parsed.IsZero() {
+		return time.Time{}, nil
+	}
 
-	return parsed, nil
+	return parsed.UTC(), nil
 }
 
 // normalizeAddedWindowArgs converts the RFC3339 since/until bounds into the
@@ -322,6 +467,71 @@ func normalizeAddedWindowArgs(since, until string) ([]any, error) {
 	}
 
 	return []any{formatSyncTime(sinceUTC), untilArg}, nil
+}
+
+func latestDataForStudyQuery(studyLimsID, fileType string, limit, offset int) (string, []any, error) {
+	query, args, err := latestDataFilterQuery(latestDataForStudySQLPrefix, "", fileType, studyLimsID)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return query + latestDataCreatedOrderSQL + ` LIMIT ? OFFSET ?`, append(args, limit, offset), nil
+}
+
+func latestDataForFacultySponsorQuery(studyIDs []string, fileType string, limit, offset int) (string, []any, error) {
+	perStudyLimit := limit + offset
+	parts := make([]string, 0, len(studyIDs))
+	args := make([]any, 0, len(studyIDs)*3+2)
+
+	for index, studyID := range studyIDs {
+		query, queryArgs, err := latestDataFilterQuery(latestDataForStudySQLPrefix, "", fileType, studyID)
+		if err != nil {
+			return "", nil, err
+		}
+
+		parts = append(parts, fmt.Sprintf("SELECT * FROM (%s%s LIMIT ?) AS latest_%d", query, latestDataCreatedOrderSQL, index))
+		args = append(args, queryArgs...)
+		args = append(args, perStudyLimit)
+	}
+
+	query := `SELECT created, id_product, collection, data_object, id_study_lims, study_name, name, supplier_name, id_run, lane, tag_index, platform, merged FROM (` +
+		strings.Join(parts, ` UNION ALL `) +
+		`) AS per_study_latest ORDER BY created DESC, id_run, id_product LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+
+	return query, args, nil
+}
+
+func scanRecentDataRow(scan func(dest ...any) error) (RecentDataRow, error) {
+	var (
+		row        RecentDataRow
+		idProduct  string
+		collection string
+		dataObject string
+		merged     int
+	)
+	if err := scan(
+		&row.Created,
+		&idProduct,
+		&collection,
+		&dataObject,
+		&row.IDStudyLims,
+		&row.StudyName,
+		&row.Name,
+		&row.SupplierName,
+		&row.IDRun,
+		&row.Position,
+		&row.TagIndex,
+		&row.Platform,
+		&merged,
+	); err != nil {
+		return RecentDataRow{}, err
+	}
+
+	row.IRODSPath = strings.TrimRight(collection, "/") + "/" + dataObject
+	row.Merged = merged != 0
+
+	return row, nil
 }
 
 // SamplesWithData lists the distinct samples linked to the study that have at
@@ -445,6 +655,156 @@ func (c *Client) CountSamplesWithDataSince(ctx context.Context, studyLimsID, sin
 	return c.countSamplesForEmptyStudy(ctx, studyLimsID)
 }
 
+// LatestDataForStudy returns one bounded, pageable newest-first page of raw iRODS
+// location rows for a study. Membership is the raw
+// seq_product_irods_locations_mirror scan scoped by (id_study_lims, created),
+// not the manifest/product grain, so the first row's created timestamp reconciles
+// with StudyOverview.newest_data_added. Ties are stable by (id_run, id_product).
+func (c *Client) LatestDataForStudy(ctx context.Context, studyLimsID, fileType string, limit, offset int) ([]RecentDataRow, error) {
+	study, err := c.resolveStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, studyLimsID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireAnySyncState(ctx, syncTableStudy); syncErr != nil {
+				if errors.Is(syncErr, ErrCacheNeverSynced) {
+					return []RecentDataRow{}, syncErr
+				}
+
+				return nil, syncErr
+			}
+
+			return nil, ErrNotFound
+		}
+
+		return nil, err
+	}
+
+	query, args, err := latestDataForStudyQuery(study.IDStudyLims, fileType, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := c.queryRecentDataRows(ctx, query, args, "query latest data for study")
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		if syncErr := c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); syncErr != nil {
+			if errors.Is(syncErr, ErrCacheNeverSynced) {
+				return []RecentDataRow{}, syncErr
+			}
+
+			return nil, syncErr
+		}
+	}
+
+	return rows, nil
+}
+
+// LatestDataForFacultySponsor returns a newest-first page across all SQSCP
+// studies whose faculty_sponsor contains name. It fetches each matching study's
+// bounded top rows through the study+created access path and merges that bounded
+// candidate set, avoiding both one-query-per-study fan-out and an unbounded
+// all-files sort.
+func (c *Client) LatestDataForFacultySponsor(ctx context.Context, name, fileType string, limit, offset int) ([]RecentDataRow, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("%w: faculty sponsor name is required", ErrUnsupportedIdentifier)
+	}
+	if _, err := normaliseFileType(fileType); err != nil {
+		return nil, err
+	}
+
+	studyIDs, err := c.latestDataFacultySponsorStudyIDs(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(studyIDs) == 0 || limit == 0 {
+		return []RecentDataRow{}, nil
+	}
+
+	query, args, err := latestDataForFacultySponsorQuery(studyIDs, fileType, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := c.queryRecentDataRows(ctx, query, args, "query latest data for faculty sponsor")
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		if syncErr := c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); syncErr != nil {
+			if errors.Is(syncErr, ErrCacheNeverSynced) {
+				return []RecentDataRow{}, syncErr
+			}
+
+			return nil, syncErr
+		}
+	}
+
+	return rows, nil
+}
+
+func (c *Client) latestDataFacultySponsorStudyIDs(ctx context.Context, name string) ([]string, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	rows, err := db.QueryContext(ctx, latestDataFacultySponsorStudyIDsSQL, likeContainsArgs(escapeLIKEPattern(name), facultySponsorField)...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: query latest-data faculty sponsor studies: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	studyIDs := make([]string, 0)
+	for rows.Next() {
+		var studyID string
+		if err = rows.Scan(&studyID); err != nil {
+			return nil, fmt.Errorf("%w: scan latest-data faculty sponsor studies: %w", ErrUpstreamImpaired, err)
+		}
+
+		studyIDs = append(studyIDs, studyID)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: query latest-data faculty sponsor studies: %w", ErrUpstreamImpaired, err)
+	}
+	if len(studyIDs) > 0 {
+		return studyIDs, nil
+	}
+	if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+		return []string{}, err
+	}
+
+	return []string{}, nil
+}
+
+func (c *Client) queryRecentDataRows(ctx context.Context, query string, args []any, action string) ([]RecentDataRow, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	recent := make([]RecentDataRow, 0)
+	for rows.Next() {
+		row, scanErr := scanRecentDataRow(rows.Scan)
+		if scanErr != nil {
+			return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, scanErr)
+		}
+
+		recent = append(recent, row)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
+	}
+
+	return recent, nil
+}
+
 // StudyOverview returns the fixed-size study aggregate (spec B1): the
 // distinct-sample partition (samples_total / with_data / without_data /
 // sequenced_no_data, most-advanced-phase precedence with_data > sequenced_no_data
@@ -459,7 +819,8 @@ func (c *Client) CountSamplesWithDataSince(ctx context.Context, studyLimsID, sin
 // synced study with no samples returns an all-zero overview with cache_synced_at
 // populated.
 func (c *Client) StudyOverview(ctx context.Context, studyLimsID string) (StudyOverview, error) {
-	total, err := c.queryCount(ctx, countSamplesForStudyCacheSQL, "count study samples for overview", studyLimsID)
+	overview := StudyOverview{IDStudyLims: studyLimsID}
+	total, err := c.fillStudyOverviewCounts(ctx, studyLimsID, &overview)
 	if err != nil {
 		return StudyOverview{}, err
 	}
@@ -467,25 +828,9 @@ func (c *Client) StudyOverview(ctx context.Context, studyLimsID string) (StudyOv
 		return c.studyOverviewForEmptyStudy(ctx, studyLimsID)
 	}
 
-	overview := StudyOverview{IDStudyLims: studyLimsID, SamplesTotal: total}
-	if err = c.fillStudyOverviewMetadata(ctx, studyLimsID, &overview); err != nil {
+	if err = c.fillPopulatedStudyOverviewIndependentFields(ctx, studyLimsID, &overview); err != nil {
 		return StudyOverview{}, err
 	}
-	if err = c.fillStudyOverviewCounts(ctx, studyLimsID, &overview); err != nil {
-		return StudyOverview{}, err
-	}
-	if err = c.fillStudyOverviewIRODS(ctx, studyLimsID, &overview); err != nil {
-		return StudyOverview{}, err
-	}
-	if err = c.fillStudyOverviewLibraries(ctx, studyLimsID, &overview); err != nil {
-		return StudyOverview{}, err
-	}
-
-	syncedAt, err := c.oldestFeedingLastRun(ctx, studyOverviewFeedingTables)
-	if err != nil {
-		return StudyOverview{}, err
-	}
-	overview.CacheSyncedAt = syncedAt
 
 	return overview, nil
 }
@@ -505,39 +850,41 @@ func (c *Client) fillStudyOverviewMetadata(ctx context.Context, studyLimsID stri
 	overview.Name = study.Name
 	overview.AccessionNumber = study.AccessionNumber
 	overview.FacultySponsor = study.FacultySponsor
+	overview.Programme = study.Programme
 	overview.DataAccessGroup = study.DataAccessGroup
 
 	return nil
 }
 
 // fillStudyOverviewCounts fills the distinct-sample partition and the recency
-// count. samples_with_data and samples_sequenced_no_data are independent indexed
-// aggregates over the shared membership join; without_data and the implied
-// registered bucket derive from the totals (registered = total - with_data -
-// sequenced_no_data), so a sample lands in exactly one bucket.
-func (c *Client) fillStudyOverviewCounts(ctx context.Context, studyLimsID string, overview *StudyOverview) error {
-	withData, err := c.queryCount(ctx, countSamplesWithDataCacheSQL, "count study samples with data for overview", studyLimsID)
-	if err != nil {
-		return err
+// count in one set-at-once aggregate over the distinct linked-sample set. The
+// data/product/recent arms are pre-filtered by study and then joined once, avoiding
+// the repeated correlated EXISTS probes that are too slow for study 7699 scale.
+func (c *Client) fillStudyOverviewCounts(ctx context.Context, studyLimsID string, overview *StudyOverview) (int, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return 0, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	sequencedNoData, err := c.queryCount(ctx, countSamplesSequencedNoDataCacheSQL, "count study samples sequenced without data for overview", studyLimsID)
-	if err != nil {
-		return err
+	var (
+		total           int
+		withData        sql.NullInt64
+		sequencedNoData sql.NullInt64
+		addedLast7Days  sql.NullInt64
+	)
+	args := studyOverviewCountsArgs(studyLimsID, c.studyOverviewWindowArgs())
+	if err := db.QueryRowContext(ctx, studyOverviewCountsCacheSQL, args...).
+		Scan(&total, &withData, &sequencedNoData, &addedLast7Days); err != nil {
+		return 0, fmt.Errorf("%w: aggregate study overview counts: %w", ErrUpstreamImpaired, err)
 	}
 
-	windowArgs := append([]any{studyLimsID}, c.studyOverviewWindowArgs()...)
-	addedLast7Days, err := c.queryCount(ctx, countSamplesAddedSinceCacheSQL, "count study samples added in the last 7 days", windowArgs...)
-	if err != nil {
-		return err
-	}
+	overview.SamplesTotal = total
+	overview.SamplesWithData = int(withData.Int64)
+	overview.SamplesWithoutData = total - int(withData.Int64)
+	overview.SamplesSequencedNoData = int(sequencedNoData.Int64)
+	overview.AddedLast7Days = int(addedLast7Days.Int64)
 
-	overview.SamplesWithData = withData
-	overview.SamplesWithoutData = overview.SamplesTotal - withData
-	overview.SamplesSequencedNoData = sequencedNoData
-	overview.AddedLast7Days = addedLast7Days
-
-	return nil
+	return total, nil
 }
 
 // studyOverviewWindowArgs are the half-open [now-7d, now) bounds for
@@ -596,30 +943,6 @@ func (c *Client) fillStudyOverviewIRODS(ctx context.Context, studyLimsID string,
 	return nil
 }
 
-// fillStudyOverviewLibraries fills runs, libraries and the sorted library types.
-func (c *Client) fillStudyOverviewLibraries(ctx context.Context, studyLimsID string, overview *StudyOverview) error {
-	runs, err := c.queryCount(ctx, studyOverviewRunsCacheSQL, "count study runs for overview", studyLimsID)
-	if err != nil {
-		return err
-	}
-
-	libraries, err := c.queryCount(ctx, studyOverviewLibrariesCacheSQL, "count study libraries for overview", studyLimsID)
-	if err != nil {
-		return err
-	}
-
-	libraryTypes, err := c.studyOverviewLibraryTypes(ctx, studyLimsID)
-	if err != nil {
-		return err
-	}
-
-	overview.Runs = runs
-	overview.Libraries = libraries
-	overview.LibraryTypes = libraryTypes
-
-	return nil
-}
-
 // studyOverviewLibraryTypes lists the distinct library types present in the study,
 // sorted, as a non-nil slice (empty rather than null when the study has none).
 func (c *Client) studyOverviewLibraryTypes(ctx context.Context, studyLimsID string) ([]string, error) {
@@ -659,10 +982,35 @@ func (c *Client) oldestFeedingLastRun(ctx context.Context, tables []string) (str
 	if db == nil {
 		return "", fmt.Errorf("mlwh: cache reader not configured")
 	}
+	if len(tables) == 0 {
+		return "", nil
+	}
+
+	args := make([]any, 0, len(tables))
+	for _, table := range tables {
+		args = append(args, table)
+	}
+
+	rows, err := db.QueryContext(ctx,
+		`SELECT table_name, last_run FROM sync_state WHERE table_name IN (`+placeholders(len(tables))+`)`,
+		args...,
+	)
+	if err != nil {
+		return "", fmt.Errorf("%w: query feeding sync state last_run: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
 
 	var oldest time.Time
-	for _, table := range tables {
-		lastRun, err := readTableLastRun(ctx, db, table)
+	for rows.Next() {
+		var (
+			table   string
+			lastRaw any
+		)
+		if err = rows.Scan(&table, &lastRaw); err != nil {
+			return "", fmt.Errorf("%w: scan feeding sync state last_run: %w", ErrUpstreamImpaired, err)
+		}
+
+		lastRun, err := parseLastRunValue(table, lastRaw)
 		if err != nil {
 			return "", err
 		}
@@ -672,6 +1020,9 @@ func (c *Client) oldestFeedingLastRun(ctx context.Context, tables []string) (str
 		if oldest.IsZero() || lastRun.Before(oldest) {
 			oldest = lastRun
 		}
+	}
+	if err = rows.Err(); err != nil {
+		return "", fmt.Errorf("%w: query feeding sync state last_run: %w", ErrUpstreamImpaired, err)
 	}
 
 	if oldest.IsZero() {

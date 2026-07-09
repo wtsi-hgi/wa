@@ -103,14 +103,11 @@ func TestServerOpenAPIRouteServesDocumentC2(t *testing.T) {
 	})
 }
 
-func TestAPIVersionIsTheG1ReleaseG1(t *testing.T) {
-	// G1 acceptance test 4: the served MLWH REST API version is bumped to the
-	// Phase 6 (G1) release once the new run-iRODS / manifest / people endpoints
-	// are wired through the Registry. Pinning the literal here (rather than only
-	// the self-tracking served-document equality in TestOpenAPIPublicVersionConstantNoDrift)
-	// means the wiring pass cannot land without the matching version bump.
-	convey.Convey("Given the public APIVersion constant, then it equals the Phase 6 release 1.7.0", t, func() {
-		convey.So(APIVersion, convey.ShouldEqual, "1.7.0")
+func TestAPIVersionIsThePhase1A8Release(t *testing.T) {
+	// A8 acceptance test 2: the generated OpenAPI document advertises the
+	// Phase 1 schema/API release once CacheSchemaVersion moves to 13.
+	convey.Convey("Given the public APIVersion constant, then it equals the Phase 1 A8 release 1.8.0", t, func() {
+		convey.So(APIVersion, convey.ShouldEqual, "1.8.0")
 	})
 }
 
@@ -292,6 +289,42 @@ func TestOpenAPISchemaUsesDocTagDescriptionsC2(t *testing.T) {
 	})
 }
 
+func TestOpenAPISchemaExplainsEGAAccessionTerminologyC2(t *testing.T) {
+	convey.Convey("Given the generated OpenAPI schemas, then every accession-number property explains EGA terminology and the canonical field name", t, func() {
+		doc := decodedOpenAPIDocForTest(t)
+		schemas := openAPISchemas(t, doc)
+		checked := 0
+
+		for _, rawSchema := range schemas {
+			schema, ok := rawSchema.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			properties, ok := schema["properties"].(map[string]any)
+			if !ok {
+				continue
+			}
+
+			for _, fieldName := range []string{"accession_number", "study_accession_number"} {
+				property, ok := properties[fieldName].(map[string]any)
+				if !ok {
+					continue
+				}
+
+				description, ok := property["description"].(string)
+				convey.So(ok, convey.ShouldBeTrue)
+				convey.So(description, convey.ShouldContainSubstring, "EGA ID")
+				convey.So(description, convey.ShouldContainSubstring, "EGA accession")
+				convey.So(description, convey.ShouldContainSubstring, fieldName)
+				checked++
+			}
+		}
+
+		convey.So(checked, convey.ShouldBeGreaterThan, 3)
+	})
+}
+
 func TestOpenAPISchemaRequiredHonoursOmitemptyC2(t *testing.T) {
 	// Pointer / omitempty fields must not be required; plain value fields must
 	// be (C2: "Handle ... omitempty correctly (omitempty / pointer => not
@@ -430,16 +463,23 @@ func openAPISchemaProperties(t *testing.T, doc map[string]any, name string) map[
 func openAPISchema(t *testing.T, doc map[string]any, name string) map[string]any {
 	t.Helper()
 
+	schemas := openAPISchemas(t, doc)
+	schema, ok := schemas[name].(map[string]any)
+	convey.So(ok, convey.ShouldBeTrue)
+
+	return schema
+}
+
+func openAPISchemas(t *testing.T, doc map[string]any) map[string]any {
+	t.Helper()
+
 	components, ok := doc["components"].(map[string]any)
 	convey.So(ok, convey.ShouldBeTrue)
 
 	schemas, ok := components["schemas"].(map[string]any)
 	convey.So(ok, convey.ShouldBeTrue)
 
-	schema, ok := schemas[name].(map[string]any)
-	convey.So(ok, convey.ShouldBeTrue)
-
-	return schema
+	return schemas
 }
 
 // openAPIDocumentedErrorCodes walks every operation's error responses and maps

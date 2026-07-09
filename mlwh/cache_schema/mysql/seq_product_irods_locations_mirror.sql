@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS seq_product_irods_locations_mirror (
 	id_seq_product_irods_locations_tmp BIGINT       NOT NULL,
-	id_iseq_product          VARCHAR(255) NOT NULL,
+	id_iseq_product          CHAR(64)     NOT NULL,
 	irods_root_collection    TEXT         NOT NULL,
 	irods_data_relative_path TEXT         NOT NULL,
 	irods_collection         TEXT         NOT NULL,
@@ -10,6 +10,12 @@ CREATE TABLE IF NOT EXISTS seq_product_irods_locations_mirror (
 	last_updated             VARCHAR(255) NOT NULL,
 	created                  VARCHAR(255),
 	platform                 VARCHAR(255) NOT NULL,
+	id_run                   BIGINT       NOT NULL DEFAULT 0,
+	position                 BIGINT       NOT NULL DEFAULT 0,
+	tag_index                BIGINT       NOT NULL DEFAULT 0,
+	qc                       INT,
+	is_deliverable           TINYINT,
+	merged                   TINYINT      NOT NULL DEFAULT 0,
 	CHECK(id_study_lims <> '')
 );
 
@@ -27,6 +33,15 @@ CREATE INDEX spi_mirror_study_lims_sample_tmp_idx
 
 CREATE INDEX spi_mirror_study_lims_created_idx
 	ON seq_product_irods_locations_mirror(id_study_lims, created);
+
+CREATE INDEX spi_mirror_sample_tmp_created_idx
+	ON seq_product_irods_locations_mirror(id_sample_tmp, created);
+
+CREATE INDEX spi_mirror_run_created_idx
+	ON seq_product_irods_locations_mirror(id_run, created);
+
+CREATE INDEX spi_mirror_study_lims_export_idx
+	ON seq_product_irods_locations_mirror(id_study_lims, id_run, position, tag_index, id_seq_product_irods_locations_tmp);
 
 CREATE INDEX spi_mirror_study_lims_iseq_product_idx
 	ON seq_product_irods_locations_mirror(id_study_lims, id_iseq_product);

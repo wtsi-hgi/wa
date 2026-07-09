@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS useq_product_metrics_mirror (
 	id_run            INTEGER NOT NULL,
 	id_sample_tmp     INTEGER NOT NULL,
 	id_study_lims     TEXT    NOT NULL COLLATE NOCASE,
+	is_sequencing_control INTEGER,
 	qc                INTEGER,
 	qc_seq            INTEGER,
 	qc_lib            INTEGER,
@@ -22,3 +23,6 @@ CREATE INDEX IF NOT EXISTS useq_product_metrics_mirror_id_useq_wafer_tmp_idx
 
 CREATE INDEX IF NOT EXISTS useq_product_metrics_mirror_id_run_idx
 	ON useq_product_metrics_mirror(id_run);
+
+CREATE INDEX IF NOT EXISTS useq_product_metrics_mirror_study_sample_product_qc_idx
+	ON useq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_useq_product, qc);

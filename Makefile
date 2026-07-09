@@ -88,14 +88,20 @@ LOAD_MLWH_SOURCE_CREDS = \
 		done; \
 	fi
 
+GO_TEST_TIMEOUT ?= 10m
+MLWH_SYNC_PERF_GO_TEST_TIMEOUT ?= 70m
+
 # test-go runs the whole suite in the hermetic test env. The ./mlwh package is run
 # separately WITH the upstream source creds surfaced so its source-schema
 # integration test runs locally; every other package is run WITHOUT them so the
 # cmd env-guard tests see a clean environment.
 test-go:
 	@$(LOAD_TEST_ENV); \
-		go test -tags netgo --count 1 $$(go list ./... | grep -v '/mlwh$$') && \
-		( $(LOAD_MLWH_SOURCE_CREDS); go test -tags netgo --count 1 ./mlwh )
+		go test -tags netgo --count 1 -timeout $(GO_TEST_TIMEOUT) $$(go list ./... | grep -v '/mlwh$$') && \
+		( $(LOAD_MLWH_SOURCE_CREDS); \
+			mlwh_timeout="$(GO_TEST_TIMEOUT)"; \
+			if [ "$${MLWH_SYNC_PERF_TEST:-}" = "1" ]; then mlwh_timeout="$(MLWH_SYNC_PERF_GO_TEST_TIMEOUT)"; fi; \
+			go test -tags netgo --count 1 -timeout "$$mlwh_timeout" ./mlwh )
 
 test-frontend:
 	@$(LOAD_TEST_ENV); cd $(FRONTEND_DIR) && pnpm test

@@ -49,15 +49,53 @@ func seedRealMLWHIseqRunStatusDictRow(t *testing.T, db *sql.DB, idRunStatusDict 
 	}
 }
 
+func TestClientSyncSeqProductIRODSLocationsRecoversONTIdentityWithNullA4Fields(t *testing.T) {
+	convey.Convey("A4.4: Given an ONT iRODS row whose id_product matches oseq_flowcell identity", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.July, 2, 9, 0, 0, 0, time.UTC)
+		created := time.Date(2026, time.July, 2, 12, 0, 0, 0, time.UTC)
+		seedRealMLWHStudyRow(t, source, 172, "SQSCP", "17201", "uuid-study-172", "Study ONT", "acc-st-172", base)
+		seedRealMLWHOseqFlowcellRow(t, source, 9400, 941, 172)
+		seedRealMLWHIRODSLocationPlatformRow(t, source, 94001, "9400", "ont", "/seq/ont/runs/run-9400", "sample.fastq.gz", created, base.Add(time.Minute))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.Convey("when syncing, then the ONT row is retained with sample/study identity and NULL qc/deliverable", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 1)
+
+			row := readIRODSLocationMirrorRowForTest(t, cache.DB(), "9400")
+			convey.So(row.idSampleTmp, convey.ShouldEqual, 941)
+			convey.So(row.idStudyLims, convey.ShouldEqual, "17201")
+			convey.So(row.platform, convey.ShouldEqual, "ont")
+			convey.So(row.created, convey.ShouldEqual, formatSyncTime(created))
+
+			fields := readA4IRODSExportFieldsForTest(t, cache.DB(), "9400")
+			convey.So(fields.qc.Valid, convey.ShouldBeFalse)
+			convey.So(fields.isDeliverable.Valid, convey.ShouldBeFalse)
+		})
+	})
+}
+
 func seedRealMLWHOseqFlowcellRow(t *testing.T, db *sql.DB, idOseqFlowcellTmp, idSampleTmp, idStudyTmp int64) {
 	t.Helper()
 
-	if _, err := db.Exec(
-		`INSERT INTO oseq_flowcell(id_oseq_flowcell_tmp, id_sample_tmp, id_study_tmp) VALUES (?, ?, ?)`,
-		idOseqFlowcellTmp, idSampleTmp, idStudyTmp,
-	); err != nil {
-		t.Fatalf("seedRealMLWHOseqFlowcellRow: %v", err)
-	}
+	seedRealMLWHOseqFlowcellRunRow(
+		t,
+		db,
+		idOseqFlowcellTmp,
+		idSampleTmp,
+		idStudyTmp,
+		fmt.Sprintf("ONT-%d", idOseqFlowcellTmp),
+		nil,
+		fmt.Sprintf("ont-run-uuid-%d", idOseqFlowcellTmp),
+		time.Time{},
+	)
 }
 
 // seedRealMLWHStudyUsersRow inserts a study_users role assignment linked to a
@@ -104,6 +142,17 @@ func readIRODSLocationMirrorRowForTest(t *testing.T, db *sql.DB, productID strin
 	}
 
 	return row
+}
+
+func seedRealMLWHOseqFlowcellRunRow(t *testing.T, db *sql.DB, idOseqFlowcellTmp, idSampleTmp, idStudyTmp int64, experimentName string, runID any, runUUID string, lastUpdated time.Time) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO oseq_flowcell(id_oseq_flowcell_tmp, id_sample_tmp, id_study_tmp, experiment_name, run_id, run_uuid, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		idOseqFlowcellTmp, idSampleTmp, idStudyTmp, experimentName, runID, runUUID, formatSyncTime(lastUpdated),
+	); err != nil {
+		t.Fatalf("seedRealMLWHOseqFlowcellRow: %v", err)
+	}
 }
 
 func TestClientSyncSeqProductIRODSLocationsStoresCreatedAndPlatformForIllumina(t *testing.T) {
@@ -445,12 +494,24 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 			paths, pathErr := client.IRODSPathsForSample(context.Background(), "sample-a", 100, 0)
 			convey.So(pathErr, convey.ShouldBeNil)
 			convey.So(paths, convey.ShouldResemble, []IRODSPath{{
-				IDProduct:  "product-1001",
-				Collection: "/seq/run",
-				DataObject: "1",
-				IRODSPath:  "/seq/run/1",
-				IDRun:      9001,
-				Platform:   "Illumina",
+				IDProduct:            "product-1001",
+				Collection:           "/seq/run",
+				DataObject:           "1",
+				IRODSPath:            "/seq/run/1",
+				IDSampleTmp:          1,
+				Name:                 "sample-a",
+				SupplierName:         "supplier-a",
+				SangerSampleID:       "ssid-a",
+				AccessionNumber:      "acc-sa",
+				IDStudyLims:          "5001",
+				StudyAccessionNumber: "acc-st-1",
+				Created:              "2026-05-07T09:20:00Z",
+				IDRun:                9001,
+				Position:             1,
+				TagIndex:             1,
+				Platform:             "Illumina",
+				ManualQC:             "pass",
+				Deliverable:          boolPtr(true),
 			}})
 
 			var studyLimsForSample1 string
@@ -765,6 +826,7 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 
 	mustExec(t, db, `CREATE TABLE iseq_flowcell (
 		id_iseq_flowcell_tmp INTEGER PRIMARY KEY,
+		entity_type           TEXT NOT NULL,
 		pipeline_id_lims     TEXT NOT NULL,
 		id_sample_tmp        INTEGER NOT NULL,
 		id_study_tmp         INTEGER NOT NULL,
@@ -831,6 +893,7 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 		id_eseq_flowcell_tmp   INTEGER,
 		id_run                 INTEGER NOT NULL,
 		id_eseq_product        TEXT NOT NULL,
+		is_sequencing_control  INTEGER,
 		qc                     INTEGER,
 		qc_seq                 INTEGER,
 		qc_lib                 INTEGER,
@@ -848,6 +911,7 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 		id_useq_wafer_tmp      INTEGER,
 		id_run                 INTEGER NOT NULL,
 		id_useq_product        TEXT NOT NULL,
+		is_sequencing_control  INTEGER,
 		qc                     INTEGER,
 		qc_seq                 INTEGER,
 		qc_lib                 INTEGER,
@@ -871,12 +935,16 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 		temporal_index     INTEGER
 	)`)
 
-	// oseq_flowcell carries ONT identity only and links to study via id_study_tmp;
-	// it is mirrored wholesale.
+	// oseq_flowcell carries ONT identity and links to study via id_study_tmp; it
+	// is mirrored wholesale.
 	mustExec(t, db, `CREATE TABLE oseq_flowcell (
 		id_oseq_flowcell_tmp INTEGER PRIMARY KEY,
 		id_sample_tmp        INTEGER NOT NULL,
-		id_study_tmp         INTEGER NOT NULL
+		id_study_tmp         INTEGER NOT NULL,
+		experiment_name      TEXT NOT NULL,
+		run_id               INTEGER,
+		run_uuid             TEXT NOT NULL,
+		last_updated         TEXT NOT NULL
 	)`)
 
 	// Per-run status/date tables mirrored wholesale (small per-platform tables).
@@ -995,8 +1063,8 @@ func seedRealMLWHFlowcellRow(t *testing.T, db *sql.DB, idTmp int64, pipelineIDLi
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO iseq_flowcell(id_iseq_flowcell_tmp, pipeline_id_lims, id_sample_tmp, id_study_tmp, legacy_library_id, id_library_lims, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		idTmp, pipelineIDLims, idSampleTmp, idStudyTmp, nil, nil, formatSyncTime(lastUpdated),
+		`INSERT INTO iseq_flowcell(id_iseq_flowcell_tmp, entity_type, pipeline_id_lims, id_sample_tmp, id_study_tmp, legacy_library_id, id_library_lims, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		idTmp, "library", pipelineIDLims, idSampleTmp, idStudyTmp, nil, nil, formatSyncTime(lastUpdated),
 	)
 	if err != nil {
 		t.Fatalf("seedRealMLWHFlowcellRow: %v", err)
@@ -1074,6 +1142,11 @@ func rewriteJSONTableQueryForSQLite(query string) string {
 	// to the unqualified fixture table.
 	query = strings.ReplaceAll(query, "mlwh_reporting.seq_ops_tracking_per_sample", "seq_ops_tracking_per_sample")
 	query = strings.Replace(query,
+		`JSON_TABLE(COALESCE(ipm.iseq_composition_tmp, '{"components":[]}'), '$.components[1]' COLUMNS(component_run INT PATH '$.id_run')) direct_component`,
+		`json_each(COALESCE(ipm.iseq_composition_tmp, '{"components":[]}'), '$.components[1]') direct_component`,
+		1,
+	)
+	query = strings.Replace(query,
 		`INNER JOIN JSON_TABLE(path_ipm.iseq_composition_tmp, '$.components[*]' COLUMNS(component_run INT PATH '$.id_run', component_position INT PATH '$.position', component_tag_index INT PATH '$.tag_index')) component ON TRUE`,
 		`INNER JOIN json_each(path_ipm.iseq_composition_tmp, '$.components') component ON TRUE`,
 		1,
@@ -1083,6 +1156,9 @@ func rewriteJSONTableQueryForSQLite(query string) string {
 		`ipm.id_run = CAST(json_extract(component.value, '$.id_run') AS INTEGER) AND ipm.position = CAST(json_extract(component.value, '$.position') AS INTEGER) AND ipm.tag_index = CAST(json_extract(component.value, '$.tag_index') AS INTEGER)`,
 		1,
 	)
+	query = strings.ReplaceAll(query, `component.component_run`, `CAST(json_extract(component.value, '$.id_run') AS INTEGER)`)
+	query = strings.ReplaceAll(query, `component.component_position`, `CAST(json_extract(component.value, '$.position') AS INTEGER)`)
+	query = strings.ReplaceAll(query, `component.component_tag_index`, `CAST(json_extract(component.value, '$.tag_index') AS INTEGER)`)
 
 	return query
 }

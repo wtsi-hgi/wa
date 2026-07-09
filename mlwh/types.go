@@ -113,6 +113,13 @@ type PersonCandidate struct {
 	StudyCount int    `json:"study_count" doc:"distinct studies for this candidate"`
 }
 
+// Programme is one row of the /programmes enumeration: a programme grouping /
+// attribution unit and the number of SQSCP studies carrying that exact value.
+type Programme struct {
+	Name       string `json:"name" doc:"distinct programme value"`
+	StudyCount int    `json:"study_count" doc:"distinct SQSCP studies in this programme"`
+}
+
 // Lane identifies a run/lane/tag combination linked to a sample.
 type Lane struct {
 	IDRun    int `json:"id_run" doc:"sequencing run identifier"`
@@ -120,24 +127,120 @@ type Lane struct {
 	TagIndex int `json:"tag_index" doc:"index of the multiplexing tag within the lane"`
 }
 
-// IRODSPath identifies a product path exported from MLWH joins. IDSampleTmp and
-// Name identify the sample the data object belongs to, so a study iRODS listing
-// is aggregatable by sample without a second query. IDRun is the Illumina NPG run
-// id, derived by LEFT JOIN id_iseq_product -> iseq_product_metrics_mirror.id_run;
-// it is 0 when not derivable (non-Illumina / unmatched), matching the existing
-// RunOverview.IDRun / RunStatusTimeline.IDRun "0 for non-Illumina" convention.
+// IRODSPath identifies a product path exported from MLWH joins. IDSampleTmp,
+// Name, SupplierName, SangerSampleID and AccessionNumber identify the sample the
+// data object belongs to, while IDStudyLims and StudyAccessionNumber identify the
+// study the iRODS row is scoped under. IDRun, Position and TagIndex come from the
+// iRODS mirror's denormalised export fields, with a product-metrics fallback for
+// older non-merged cache rows; composite merged rows report all three as 0.
 // Platform is the iRODS row's mirrored platform string (the source
 // seq_platform_name, e.g. "illumina"), so a 0 id_run reads as ONT / non-Illumina
-// rather than ambiguous. Both fields are additive; existing fields unchanged.
+// or a merged composite when Merged is true. Deliverable is tri-state: true/false
+// when the mirrored platform discriminator is known, nil for PacBio/ONT/no
+// discriminator pass-through rows.
 type IRODSPath struct {
-	IDProduct   string `json:"id_product" doc:"product identifier of the iRODS data object"`
-	Collection  string `json:"collection" doc:"iRODS collection containing the data object"`
-	DataObject  string `json:"data_object" doc:"iRODS data object name"`
-	IRODSPath   string `json:"irods_path" doc:"full iRODS path of the data object"`
-	IDSampleTmp int64  `json:"id_sample_tmp" doc:"internal MLWH surrogate key of the sample the data object belongs to"`
-	Name        string `json:"name" doc:"Sanger sample name of the sample the data object belongs to; empty when the sample is not present in the sample mirror"`
-	IDRun       int    `json:"id_run" doc:"Illumina NPG run id of the data object; 0 when not derivable (non-Illumina or unmatched)"`
-	Platform    string `json:"platform" doc:"platform string the iRODS row was synced with (source seq_platform_name); disambiguates a 0 id_run as ONT/non-Illumina"`
+	IDProduct            string `json:"id_product" doc:"product identifier of the iRODS data object"`
+	Collection           string `json:"collection" doc:"iRODS collection containing the data object"`
+	DataObject           string `json:"data_object" doc:"iRODS data object name"`
+	IRODSPath            string `json:"irods_path" doc:"full iRODS path of the data object"`
+	IDSampleTmp          int64  `json:"id_sample_tmp" doc:"internal MLWH surrogate key of the sample the data object belongs to"`
+	Name                 string `json:"name" doc:"Sanger sample name of the sample the data object belongs to; empty when the sample is not present in the sample mirror"`
+	SupplierName         string `json:"supplier_name" doc:"name the sample supplier gave the sample; empty when the sample is not present in the sample mirror"`
+	SangerSampleID       string `json:"sanger_sample_id" doc:"Sanger sample identifier; empty when the sample is not present in the sample mirror"`
+	AccessionNumber      string `json:"accession_number" doc:"public archive accession number for the sample; empty when unavailable"`
+	IDStudyLims          string `json:"id_study_lims" doc:"LIMS study id the iRODS row is scoped under"`
+	StudyAccessionNumber string `json:"study_accession_number" doc:"public archive accession number for the study; empty when unavailable"`
+	Created              string `json:"created" doc:"iRODS created time (data added), UTC RFC3339; empty if unknown"`
+	IDRun                int    `json:"id_run" doc:"Illumina NPG run id of the data object; 0 when not derivable (non-Illumina, unmatched or merged composite)"`
+	Position             int    `json:"lane" doc:"lane position on the run; 0 for merged composite objects or when not derivable"`
+	TagIndex             int    `json:"tag_index" doc:"index of the multiplexing tag within the lane; 0 for merged composite objects or when not derivable"`
+	Platform             string `json:"platform" doc:"platform string the iRODS row was synced with (source seq_platform_name); disambiguates a 0 id_run as ONT/non-Illumina"`
+	Merged               bool   `json:"merged" doc:"true for a merged multi-lane composite object; id_run, lane and tag_index are 0 because the object has no single product coordinate"`
+	ManualQC             string `json:"manual_qc" doc:"per-product QC roll-up pass|fail|pending from the denormalized product qc; empty when no product-metrics (e.g. ONT)"`
+	Deliverable          *bool  `json:"deliverable" doc:"tri-state deliverable flag: true/false when a platform discriminator exists, null for PacBio/ONT/no discriminator pass-through"`
+}
+
+// IRODSPathOptions carries optional filters for iRODS path listings and their
+// matching counts.
+type IRODSPathOptions struct {
+	FileType         string
+	DeliverablesOnly bool
+	OrderBy          string
+	Since            string
+	Until            string
+}
+
+// RecentDataRow is one row of a "latest data" listing, ordered created DESC.
+type RecentDataRow struct {
+	Created      string `json:"created" doc:"iRODS created time, UTC RFC3339"`
+	IRODSPath    string `json:"irods_path" doc:"full iRODS path"`
+	IDStudyLims  string `json:"id_study_lims" doc:"LIMS study id"`
+	StudyName    string `json:"study_name" doc:"study name"`
+	Name         string `json:"name" doc:"Sanger sample name"`
+	SupplierName string `json:"supplier_name" doc:"supplier-given sample name"`
+	IDRun        int    `json:"id_run" doc:"Illumina NPG run id; 0 for merged/non-Illumina"`
+	Position     int    `json:"lane" doc:"lane position; 0 for merged"`
+	TagIndex     int    `json:"tag_index" doc:"tag index; 0 for merged"`
+	Platform     string `json:"platform" doc:"platform string"`
+	Merged       bool   `json:"merged" doc:"true for a merged composite object"`
+}
+
+// MonthlyRunCount is one grouped monthly run count. Manufacturer is derived from
+// Platform. DateBasis states which per-platform completion date the month bucket
+// used, including the ONT warehouse-load caveat.
+type MonthlyRunCount struct {
+	Month         string `json:"month" doc:"YYYY-MM bucket"`
+	Manufacturer  string `json:"manufacturer" doc:"manufacturer derived from platform"`
+	Platform      string `json:"platform" doc:"platform"`
+	Count         int    `json:"count" doc:"distinct runs at run grain in the bucket"`
+	DateBasis     string `json:"date_basis" doc:"the completion date field/status used for this platform"`
+	CacheSyncedAt string `json:"cache_synced_at" doc:"oldest last_run across feeding tables, UTC RFC3339"`
+}
+
+// RunListingRow is one global run listing row. ID is the stable cross-platform
+// composite "<platform>:<native_id>" (for example illumina:47409,
+// pacbio:<run_name>, ont:<experiment_name>) and is the keyset cursor.
+type RunListingRow struct {
+	ID            string `json:"id" doc:"composite <platform>:<native_id> run identifier (keyset cursor)"`
+	Platform      string `json:"platform" doc:"platform"`
+	NativeID      string `json:"native_id" doc:"platform-native run id (id_run / pac_bio_run_name / experiment_name)"`
+	Manufacturer  string `json:"manufacturer" doc:"manufacturer derived from platform"`
+	RunDate       string `json:"run_date" doc:"completion date per date_basis; empty if unknown"`
+	DateBasis     string `json:"date_basis" doc:"the completion date field/status used"`
+	CacheSyncedAt string `json:"cache_synced_at" doc:"oldest last_run across feeding tables, UTC RFC3339"`
+}
+
+// SequencingAggregateOptions carries filters for the grouped sequencing
+// aggregate. GroupBy is explicit and may combine month, platform, manufacturer,
+// programme and faculty_sponsor. Unit is explicit: runs uses the per-platform run
+// date basis, while samples and products use iRODS created timestamps.
+type SequencingAggregateOptions struct {
+	GroupBy   []string
+	Unit      string
+	Since     string
+	Until     string
+	Platforms []string
+}
+
+// SequencingAggregateRow is one row of the grouped sequencing aggregate. Group
+// carries only the requested group_by keys. Unit is the counted unit
+// (runs|samples|products), and DateBasis states the date field used.
+type SequencingAggregateRow struct {
+	Group         map[string]string `json:"group" doc:"requested group_by key values"`
+	Unit          string            `json:"unit" doc:"counted unit: runs|samples|products"`
+	Count         int               `json:"count" doc:"count of the unit in this group"`
+	DateBasis     string            `json:"date_basis" doc:"date field/basis used: per-platform run basis for runs, iRODS created for samples/products"`
+	CacheSyncedAt string            `json:"cache_synced_at" doc:"oldest last_run across feeding tables, UTC RFC3339"`
+}
+
+// SampleSearchOptions carries optional sample-search modes and filters. Phase 2
+// consumes DeliverablesOnly; later realworld3 search phases fill in the rest.
+type SampleSearchOptions struct {
+	Words            bool
+	Organism         string
+	LibraryType      string
+	QC               string
+	DeliverablesOnly bool
 }
 
 // ManifestRow is one row of a study's data manifest: one sequencing product
@@ -145,6 +248,8 @@ type IRODSPath struct {
 // metadata carried once in the envelope (not per row). When the file-type / iRODS
 // path is requested, IRODSPath is the data object for that product matching the
 // suffix filter (empty string when the product has no matching iRODS object).
+// IRODSUnmatched/Reason make known merge-driven gaps explicit without copying a
+// composite CRAM path onto each single-lane row.
 type ManifestRow struct {
 	Name            string `json:"name" doc:"Sanger sample name"`
 	SupplierName    string `json:"supplier_name" doc:"supplier-given sample name"`
@@ -153,7 +258,10 @@ type ManifestRow struct {
 	IDRun           int    `json:"id_run" doc:"Illumina NPG run id of the product"`
 	Position        int    `json:"lane" doc:"lane position of the product"`
 	TagIndex        int    `json:"tag_index" doc:"multiplexing tag index of the product"`
+	ManualQC        string `json:"manual_qc" doc:"per-product QC roll-up pass|fail|pending from the product qc"`
 	IRODSPath       string `json:"irods_path,omitempty" doc:"iRODS path of the product's data object matching the file-type filter; present only when with_irods is set"`
+	IRODSUnmatched  bool   `json:"irods_unmatched,omitempty" doc:"true when the product has no direct iRODS match because its CRAM is represented by a merged composite object"`
+	Reason          string `json:"reason,omitempty" doc:"reason for irods_unmatched; currently merged_multilane"`
 }
 
 // StudyManifest is the manifest response body: the study-level metadata once,
@@ -162,13 +270,14 @@ type ManifestRow struct {
 // sizing headers. The study fields answer Q3's "study details" without
 // repeating per row (D2/D5).
 type StudyManifest struct {
-	IDStudyLims     string        `json:"id_study_lims" doc:"LIMS study id"`
-	Name            string        `json:"name" doc:"study name"`
-	AccessionNumber string        `json:"accession_number" doc:"study accession number"`
-	FacultySponsor  string        `json:"faculty_sponsor" doc:"study faculty sponsor"`
-	DataAccessGroup string        `json:"data_access_group" doc:"study data access group"`
-	Rows            []ManifestRow `json:"rows" doc:"page of per-product manifest rows"`
-	CacheSyncedAt   string        `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
+	IDStudyLims          string        `json:"id_study_lims" doc:"LIMS study id"`
+	Name                 string        `json:"name" doc:"study name"`
+	AccessionNumber      string        `json:"accession_number" doc:"study accession number"`
+	FacultySponsor       string        `json:"faculty_sponsor" doc:"study faculty sponsor"`
+	DataAccessGroup      string        `json:"data_access_group" doc:"study data access group"`
+	ProductsWithoutIRODS int           `json:"products_without_irods" doc:"full unpaginated count of product rows whose iRODS path is absent for a known reason such as merged multi-lane CRAM in the requested with_irods/file_type scope"`
+	Rows                 []ManifestRow `json:"rows" doc:"page of per-product manifest rows"`
+	CacheSyncedAt        string        `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
 }
 
 // PagedStudyManifest is the header-aware remote result for StudyManifest. It
@@ -213,6 +322,7 @@ type StudyOverview struct {
 	Name                   string     `json:"name" doc:"study name"`
 	AccessionNumber        string     `json:"accession_number" doc:"study accession number"`
 	FacultySponsor         string     `json:"faculty_sponsor" doc:"study faculty sponsor"`
+	Programme              string     `json:"programme" doc:"study programme grouping / attribution unit"`
 	DataAccessGroup        string     `json:"data_access_group" doc:"study data access group governing data access"`
 	SamplesTotal           int        `json:"samples_total" doc:"distinct samples linked via library_samples"`
 	SamplesWithData        int        `json:"samples_with_data" doc:"distinct samples with >=1 study-scoped iRODS row"`

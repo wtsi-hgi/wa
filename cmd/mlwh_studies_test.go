@@ -37,24 +37,42 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-func TestMLWHStudiesHelpRendersConfigurationDetails(t *testing.T) {
-	convey.Convey("wa mlwh studies --help renders documentation about env vars and the mode flags", t, func() {
+func TestMLWHStudiesHelpRendersConfigurationPointer(t *testing.T) {
+	convey.Convey("wa mlwh studies --help points to centralized configuration help and keeps the mode flags", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "studies", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_SERVER_URL")
+		convey.So(output, convey.ShouldContainSubstring, "see `wa mlwh -h`")
+		convey.So(output, convey.ShouldNotContainSubstring, "before resolving:")
+		convey.So(output, convey.ShouldNotContainSubstring, "Normal CLI users")
 		convey.So(output, convey.ShouldContainSubstring, "--faculty-sponsor")
+		convey.So(output, convey.ShouldContainSubstring, "--programme")
 		convey.So(output, convey.ShouldContainSubstring, "--user")
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh studies")
 	})
 }
 
-func TestMLWHPeopleHelpRendersConfigurationDetails(t *testing.T) {
-	convey.Convey("wa mlwh people --help renders documentation about env vars and an example", t, func() {
+func TestMLWHProgrammesHelpRendersConfigurationPointer(t *testing.T) {
+	convey.Convey("wa mlwh programmes --help points to centralized configuration help and keeps JSON output", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "programmes", "--help"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "see `wa mlwh -h`")
+		convey.So(output, convey.ShouldNotContainSubstring, "before resolving:")
+		convey.So(output, convey.ShouldNotContainSubstring, "Normal CLI users")
+		convey.So(output, convey.ShouldContainSubstring, "--json")
+		convey.So(output, convey.ShouldContainSubstring, "wa mlwh programmes")
+	})
+}
+
+func TestMLWHPeopleHelpRendersConfigurationPointer(t *testing.T) {
+	convey.Convey("wa mlwh people --help points to centralized configuration help and keeps examples", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "people", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_SERVER_URL")
+		convey.So(output, convey.ShouldContainSubstring, "see `wa mlwh -h`")
+		convey.So(output, convey.ShouldNotContainSubstring, "before resolving:")
+		convey.So(output, convey.ShouldNotContainSubstring, "Normal CLI users")
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh people")
 	})
 }
@@ -97,6 +115,23 @@ func TestMLWHStudiesBothFlagsIsUsageError(t *testing.T) {
 	})
 }
 
+func TestMLWHStudiesProgrammeWithAnotherModeIsUsageErrorG1(t *testing.T) {
+	convey.Convey("Given --programme with another mode, when wa mlwh studies runs, then it errors with usage and never opens a client", t, func() {
+		original := openMLWHStudiesClient
+		t.Cleanup(func() { openMLWHStudiesClient = original })
+		openMLWHStudiesClient = func(context.Context, mlwh.Config) (mlwhStudiesClient, error) {
+			t.Fatalf("client should not be opened when multiple mode flags are given")
+
+			return nil, nil
+		}
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "studies", "--faculty-sponsor", "carl", "--programme", "Human Genetics"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "exactly one")
+	})
+}
+
 func TestMLWHPeopleRequiresTerm(t *testing.T) {
 	convey.Convey("Given a missing term, when wa mlwh people runs, then it errors with usage and never opens a client", t, func() {
 		original := openMLWHStudiesClient
@@ -121,11 +156,15 @@ func TestMLWHPeopleRequiresTerm(t *testing.T) {
 type stubMLWHStudiesClient struct {
 	facultySponsor      func(ctx context.Context, name string, limit, offset int) ([]mlwh.PersonStudy, error)
 	countFacultySponsor func(ctx context.Context, name string) (mlwh.Count, error)
+	programme           func(ctx context.Context, name string, limit, offset int) ([]mlwh.Study, error)
+	countProgramme      func(ctx context.Context, name string) (mlwh.Count, error)
+	programmes          func(ctx context.Context) ([]mlwh.Programme, error)
 	user                func(ctx context.Context, person, role string, limit, offset int) ([]mlwh.PersonStudy, error)
 	countUser           func(ctx context.Context, person, role string) (mlwh.Count, error)
 	resolvePerson       func(ctx context.Context, term string, limit, offset int) ([]mlwh.PersonCandidate, error)
 
 	lastFacultySponsorPageLen int
+	lastProgrammePageLen      int
 	lastUserPageLen           int
 	closed                    bool
 }
@@ -147,6 +186,33 @@ func (s *stubMLWHStudiesClient) CountStudiesForFacultySponsor(ctx context.Contex
 	}
 
 	return mlwh.Count{Count: s.lastFacultySponsorPageLen}, nil
+}
+
+func (s *stubMLWHStudiesClient) StudiesForProgramme(ctx context.Context, name string, limit, offset int) ([]mlwh.Study, error) {
+	if s.programme != nil {
+		studies, err := s.programme(ctx, name, limit, offset)
+		s.lastProgrammePageLen = len(studies)
+
+		return studies, err
+	}
+
+	return nil, errors.New("programme not stubbed")
+}
+
+func (s *stubMLWHStudiesClient) CountStudiesForProgramme(ctx context.Context, name string) (mlwh.Count, error) {
+	if s.countProgramme != nil {
+		return s.countProgramme(ctx, name)
+	}
+
+	return mlwh.Count{Count: s.lastProgrammePageLen}, nil
+}
+
+func (s *stubMLWHStudiesClient) Programmes(ctx context.Context) ([]mlwh.Programme, error) {
+	if s.programmes != nil {
+		return s.programmes(ctx)
+	}
+
+	return nil, errors.New("programmes not stubbed")
 }
 
 func (s *stubMLWHStudiesClient) StudiesForUser(ctx context.Context, person, role string, limit, offset int) ([]mlwh.PersonStudy, error) {
@@ -217,6 +283,43 @@ func TestMLWHStudiesFacultySponsorPrintsStudies(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "faculty_sponsor")
 		convey.So(output, convey.ShouldContainSubstring, "Carl")
 		convey.So(output, convey.ShouldContainSubstring, "3")
+		convey.So(stub.closed, convey.ShouldBeTrue)
+	})
+}
+
+func TestMLWHStudiesForProgrammePrintsRowsAndTotalG1(t *testing.T) {
+	convey.Convey("Given StudiesForProgramme(\"Human Genetics\") returns 2 studies, when wa mlwh studies --programme runs, then 2 study lines print with the total and programme", t, func() {
+		stub := &stubMLWHStudiesClient{
+			programme: func(_ context.Context, name string, limit, offset int) ([]mlwh.Study, error) {
+				convey.So(name, convey.ShouldEqual, "Human Genetics")
+				convey.So(limit, convey.ShouldEqual, 50)
+				convey.So(offset, convey.ShouldEqual, 0)
+
+				return []mlwh.Study{
+					{IDStudyLims: "7001", Name: "Study A", Programme: "Human Genetics", FacultySponsor: "Carl Anderson"},
+					{IDStudyLims: "7002", Name: "Study B", Programme: "Human Genetics", FacultySponsor: "Carla Anders"},
+				}, nil
+			},
+			countProgramme: func(_ context.Context, name string) (mlwh.Count, error) {
+				convey.So(name, convey.ShouldEqual, "Human Genetics")
+
+				return mlwh.Count{Count: 2}, nil
+			},
+			user: func(context.Context, string, string, int, int) ([]mlwh.PersonStudy, error) {
+				t.Fatalf("user dispatch must not be used for --programme")
+
+				return nil, nil
+			},
+		}
+		withStubMLWHStudiesClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "studies", "--programme", "Human Genetics"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "Studies (2 total):")
+		convey.So(output, convey.ShouldContainSubstring, "id_study_lims=7001")
+		convey.So(output, convey.ShouldContainSubstring, "programme=Human Genetics")
+		convey.So(output, convey.ShouldContainSubstring, "faculty_sponsor=Carl Anderson")
 		convey.So(stub.closed, convey.ShouldBeTrue)
 	})
 }
@@ -353,6 +456,47 @@ func TestMLWHStudiesJSONArrayOutput(t *testing.T) {
 		study, ok := decoded[0]["study"].(map[string]any)
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(study["id_study_lims"], convey.ShouldEqual, "X")
+	})
+}
+
+func TestMLWHProgrammesPrintsVocabularyG1(t *testing.T) {
+	convey.Convey("Given Programmes returns distinct programme values, when wa mlwh programmes runs, then the text output lists names with study counts", t, func() {
+		stub := &stubMLWHStudiesClient{
+			programmes: func(context.Context) ([]mlwh.Programme, error) {
+				return []mlwh.Programme{
+					{Name: "Cancer Genomics", StudyCount: 1},
+					{Name: "Human Genetics", StudyCount: 2},
+				}, nil
+			},
+		}
+		withStubMLWHStudiesClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "programmes"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "Programmes (2 total):")
+		convey.So(output, convey.ShouldContainSubstring, "name=Cancer Genomics study_count=1")
+		convey.So(output, convey.ShouldContainSubstring, "name=Human Genetics study_count=2")
+		convey.So(stub.closed, convey.ShouldBeTrue)
+	})
+}
+
+func TestMLWHProgrammesJSONOutputG1(t *testing.T) {
+	convey.Convey("Given --json, when wa mlwh programmes runs, then stdout is a single JSON array of Programme rows", t, func() {
+		stub := &stubMLWHStudiesClient{
+			programmes: func(context.Context) ([]mlwh.Programme, error) {
+				return []mlwh.Programme{{Name: "Human Genetics", StudyCount: 2}}, nil
+			},
+		}
+		withStubMLWHStudiesClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "programmes", "--json"})
+
+		convey.So(err, convey.ShouldBeNil)
+
+		var decoded []mlwh.Programme
+		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
+		convey.So(decoded, convey.ShouldResemble, []mlwh.Programme{{Name: "Human Genetics", StudyCount: 2}})
 	})
 }
 

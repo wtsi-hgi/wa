@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS library_samples (
 CREATE INDEX IF NOT EXISTS library_samples_id_sample_tmp_id_study_lims_idx
 	ON library_samples(id_sample_tmp, id_study_lims);
 
+CREATE INDEX IF NOT EXISTS library_samples_id_study_lims_id_sample_tmp_idx
+	ON library_samples(id_study_lims, id_sample_tmp);
+
 CREATE INDEX IF NOT EXISTS library_samples_id_study_lims_pipeline_id_lims_id_sample_tmp_idx
 	ON library_samples(id_study_lims, pipeline_id_lims, id_sample_tmp);
 

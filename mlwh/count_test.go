@@ -269,6 +269,31 @@ func TestCountIRODSPathsForRunEqualsListLength(t *testing.T) {
 	})
 }
 
+// E1 reviewer regression: default run count/list both scope by the denormalised
+// iRODS mirror id_run, so mirror-only run rows are counted and returned.
+func TestCountIRODSPathsForRunIncludesMirrorOnlyRowsE1(t *testing.T) {
+	convey.Convey("Given run 52553 with a mirror-only iRODS row carrying id_run", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedB3RunIRODSScenario(t, cache.DB())
+		seedB3MirrorOnlyRunIRODSRow(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		ctx := context.Background()
+		count, countErr := client.CountIRODSPathsForRun(ctx, "52553", "")
+		list, listErr := client.IRODSPathsForRun(ctx, "52553", "", countListFetchAll, 0)
+
+		convey.Convey("when the default count and full list are fetched, then they both include the mirror-only row", func() {
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(listErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(list))
+			convey.So(count.Count, convey.ShouldEqual, 7)
+			convey.So(irodsProductIDs(list), convey.ShouldContain, "mirror-only-52553")
+		})
+	})
+}
+
 // C2 acceptance test 1: CountStudyManifest counts the distinct (id_run, position,
 // tag_index) products that ARE the manifest's row grain, so for study S1 with 3
 // distinct products it is Count{3} AND equal to len(StudyManifest("S1","",false,
@@ -379,6 +404,50 @@ func TestCountStudyManifestSyncedStudyWithNoProductsReturnsZeroC2(t *testing.T) 
 	})
 }
 
+func TestSampleCRAMsForStudyReturnsOneCramPerSampleH3(t *testing.T) {
+	convey.Convey("H3: Given a study has merged, multi-lane, non-deliverable-only, and null-deliverable CRAM samples", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedExportSampleCRAMScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		rows, err := client.SampleCRAMsForStudy(context.Background(), "CRAMS", countListFetchAll, 0)
+		count, countErr := client.CountSampleCRAMsForStudy(context.Background(), "CRAMS")
+
+		convey.Convey("when sample-crams are listed, then every sample with a CRAM contributes one populated row with merged objects preferred", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(rows))
+			convey.So(rows, convey.ShouldResemble, []SampleCRAM{
+				{Name: "cram-control-only", AccessionNumber: "EGAN-control", IRODSPath: "/seq/crams/control/52554_1#1.cram", Merged: false},
+				{Name: "cram-merged", AccessionNumber: "EGAN-merged", IRODSPath: "/seq/crams/merged/49348_1-2#1.cram", Merged: true},
+				{Name: "cram-null-deliverable", AccessionNumber: "EGAN-null", IRODSPath: "/seq/crams/null/pacbio.cram", Merged: false},
+				{Name: "cram-single", AccessionNumber: "EGAN-single", IRODSPath: "/seq/crams/single/52553_1#1.cram", Merged: false},
+			})
+		})
+	})
+}
+
+func TestSampleCRAMJSONUsesCanonicalFieldsAndReadsLegacyAliasesD1(t *testing.T) {
+	convey.Convey("Given a sample CRAM row, when it is encoded, then only canonical fields are present", t, func() {
+		encoded, err := json.Marshal(SampleCRAM{Name: "sample-1", AccessionNumber: "EGAN0001", IRODSPath: "/seq/sample-1.cram", Merged: true})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(encoded), convey.ShouldContainSubstring, `"accession_number":"EGAN0001"`)
+		convey.So(string(encoded), convey.ShouldContainSubstring, `"irods_path":"/seq/sample-1.cram"`)
+		convey.So(string(encoded), convey.ShouldNotContainSubstring, `"ega_id"`)
+		convey.So(string(encoded), convey.ShouldNotContainSubstring, `"irods_cram_path"`)
+	})
+
+	convey.Convey("Given a legacy sample CRAM JSON row, when it is decoded, then canonical fields are populated", t, func() {
+		var decoded SampleCRAM
+		err := json.Unmarshal([]byte(`{"name":"sample-1","ega_id":"EGAN0001","irods_cram_path":"/seq/sample-1.cram","merged":true}`), &decoded)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(decoded, convey.ShouldResemble, SampleCRAM{Name: "sample-1", AccessionNumber: "EGAN0001", IRODSPath: "/seq/sample-1.cram", Merged: true})
+	})
+}
+
 // e1Count names one new /count endpoint under test: its Client count method and
 // the corresponding all-rows list-length, so the E1 cross-check
 // (count == len(list-all)) can be asserted for every count uniformly. zeroIs
@@ -391,6 +460,76 @@ type e1Count struct {
 	count          func(c *Client) (Count, error)
 	listLen        func(c *Client) (int, error)
 	zeroIsNotFound bool
+}
+
+// D1c acceptance test: the D1 export relationship set's new count siblings match
+// their full list length. Earlier E1/F2/B3/C2 tests already cover the older
+// hierarchy relationships; this pins the D1a relationships that did not yet have
+// public /count counterparts.
+func TestD1cExportRelationshipCountsMatchListLength(t *testing.T) {
+	convey.Convey("D1c: Given a cache seeded for the remaining D1 export relationships", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedExportSampleCRAMScenario(t, cache.DB())
+		seedHierarchyStudy(t, cache.DB(), 301, "E1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, e1SampleWithData, "e1-supplier-1", "Homo sapiens", "e1-donor-1")
+		seedLibrarySample(t, cache.DB(), "Standard", 1, "E1")
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 7001, 1, 70001, 1, 1, "E1")
+		seedStudyUsersMirrorRow(t, cache.DB(), 9801, 301, "owner", "d1c-owner", "d1c-owner@sanger.ac.uk", "D One")
+		seedStudyUsersMirrorRow(t, cache.DB(), 9802, 301, "manager", "d1c-manager", "d1c-manager@sanger.ac.uk", "D Two")
+		seedSyncState(t, cache.DB(), syncTableStudyUsers, time.Date(2026, time.July, 1, 6, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		ctx := context.Background()
+		cases := []e1Count{
+			{
+				name:  "CountRunsForSample",
+				count: func(c *Client) (Count, error) { return c.CountRunsForSample(ctx, e1SampleWithData) },
+				listLen: func(c *Client) (int, error) {
+					return listLen(c.RunsForSample(ctx, e1SampleWithData, countListFetchAll, 0))
+				},
+			},
+			{
+				name:    "CountStudiesForSample",
+				count:   func(c *Client) (Count, error) { return c.CountStudiesForSample(ctx, e1SampleWithData) },
+				listLen: func(c *Client) (int, error) { return listLen(c.StudiesForSample(ctx, e1SampleWithData)) },
+			},
+			{
+				name:  "CountStudiesForProgramme",
+				count: func(c *Client) (Count, error) { return c.CountStudiesForProgramme(ctx, "programme") },
+				listLen: func(c *Client) (int, error) {
+					return listLen(c.StudiesForProgramme(ctx, "programme", countListFetchAll, 0))
+				},
+			},
+			{
+				name:    "CountStudyUsers",
+				count:   func(c *Client) (Count, error) { return c.CountStudyUsers(ctx, "E1", "") },
+				listLen: func(c *Client) (int, error) { return listLen(c.StudyUsers(ctx, "E1", "", countListFetchAll, 0)) },
+			},
+			{
+				name:  "CountSampleCRAMsForStudy",
+				count: func(c *Client) (Count, error) { return c.CountSampleCRAMsForStudy(ctx, "CRAMS") },
+				listLen: func(c *Client) (int, error) {
+					return listLen(c.SampleCRAMsForStudy(ctx, "CRAMS", countListFetchAll, 0))
+				},
+			},
+		}
+
+		convey.Convey("when each relationship count and full list are fetched, then count == len(rows)", func() {
+			mismatches := []string{}
+
+			for _, tc := range cases {
+				count, countErr := tc.count(client)
+				length, listErr := tc.listLen(client)
+				if countErr != nil || listErr != nil || count.Count != length {
+					mismatches = append(mismatches, tc.name)
+				}
+			}
+
+			convey.So(mismatches, convey.ShouldBeEmpty)
+		})
+	})
 }
 
 // e1CountCases enumerates the fifteen new /count endpoints added for E1, bound to

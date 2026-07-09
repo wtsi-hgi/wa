@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS useq_product_metrics_mirror (
 	id_run            BIGINT       NOT NULL,
 	id_sample_tmp     BIGINT       NOT NULL,
 	id_study_lims     VARCHAR(255) NOT NULL COLLATE {{MYSQL_TEXT_COLLATION}},
+	is_sequencing_control INT,
 	qc                INT,
 	qc_seq            INT,
 	qc_lib            INT,
@@ -22,3 +23,6 @@ CREATE INDEX useq_product_metrics_mirror_id_useq_wafer_tmp_idx
 
 CREATE INDEX useq_product_metrics_mirror_id_run_idx
 	ON useq_product_metrics_mirror(id_run);
+
+CREATE INDEX useq_product_metrics_mirror_study_sample_product_qc_idx
+	ON useq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_useq_product, qc);

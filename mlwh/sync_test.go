@@ -121,6 +121,44 @@ var seqProductIRODSLocationsSyncSourceColumns = []string{
 	"seq_platform_name",
 }
 
+var iseqFlowcellA1SyncSourceColumns = []string{
+	"id_iseq_flowcell_tmp",
+	"entity_type",
+	"pipeline_id_lims",
+	"id_sample_tmp",
+	"id_study_tmp",
+	"id_study_lims",
+	"legacy_library_id",
+	"id_library_lims",
+	"last_updated",
+}
+
+var eseqProductMetricsA1SyncSourceColumns = []string{
+	"id_eseq_product",
+	"id_eseq_flowcell_tmp",
+	"id_run",
+	"id_sample_tmp",
+	"id_study_lims",
+	"is_sequencing_control",
+	"qc",
+	"qc_seq",
+	"qc_lib",
+	"last_changed",
+}
+
+var useqProductMetricsA1SyncSourceColumns = []string{
+	"id_useq_product",
+	"id_useq_wafer_tmp",
+	"id_run",
+	"id_sample_tmp",
+	"id_study_lims",
+	"is_sequencing_control",
+	"qc",
+	"qc_seq",
+	"qc_lib",
+	"last_changed",
+}
+
 // newSyncTestSourceTables is the set of sync tables added by A4/A5 (everything in
 // supportedSyncTables beyond the original five). A full-Sync test that seeds only
 // the original five gets an empty source for these, so they sync zero rows rather
@@ -172,6 +210,97 @@ func TestSeqProductIRODSLocationsMirrorReadIndexesIncludeIseqProductIndex(t *tes
 		convey.Convey("and the mirror's full secondary-index set also includes it, so a full rebuild keeps the join index-served", func() {
 			convey.So(seqProductIRODSLocationsMirrorSecondaryIndexes, convey.ShouldContain, syncIndexSpec{Name: "spi_mirror_iseq_product_idx", Column: "id_iseq_product"})
 		})
+	})
+}
+
+func TestIseqProductMetricsMirrorIndexSetsHandleProductIDIndexByShape(t *testing.T) {
+	convey.Convey("A2: Given the product-metrics mirror index registries", t, func() {
+		redundant := syncIndexSpec{Name: a2RedundantProductIDIndex, Column: a2ProductIDColumn}
+
+		convey.Convey("when the full rebuild set is inspected, then it does not recreate the primary-key duplicate", func() {
+			convey.So(iseqProductMetricsMirrorSecondaryIndexes, convey.ShouldNotContain, redundant)
+		})
+
+		convey.Convey("when the sparse read set is inspected, then product-id lookup is covered while the primary key is deferred", func() {
+			convey.So(iseqProductMetricsMirrorReadIndexes, convey.ShouldContain, redundant)
+		})
+
+		convey.Convey("and required non-redundant product lookup indexes remain available", func() {
+			convey.So(iseqProductMetricsMirrorSecondaryIndexes, convey.ShouldContain, syncIndexSpec{Name: "ipm_mirror_sample_qc_idx", Column: "id_sample_tmp, qc"})
+			convey.So(iseqProductMetricsMirrorReadIndexes, convey.ShouldContain, syncIndexSpec{Name: "ipm_mirror_sample_qc_idx", Column: "id_sample_tmp, qc"})
+			convey.So(iseqProductMetricsMirrorSecondaryIndexes, convey.ShouldContain, syncIndexSpec{Name: "ipm_mirror_study_sample_product_qc_idx", Column: "id_study_lims, id_sample_tmp, id_iseq_product, qc"})
+			convey.So(iseqProductMetricsMirrorReadIndexes, convey.ShouldContain, syncIndexSpec{Name: "ipm_mirror_study_sample_product_qc_idx", Column: "id_study_lims, id_sample_tmp, id_iseq_product, qc"})
+		})
+	})
+}
+
+func TestA8SparseColdLoadReadIndexesIncludePhase1ReadCriticalIndexes(t *testing.T) {
+	convey.Convey("A8: Given the sparse cold-load read-index registry", t, func() {
+		convey.Convey("when the iRODS-locations read indexes are inspected, then export and recency reads stay index-served after a sparse cold load", func() {
+			convey.So(seqProductIRODSLocationsMirrorReadIndexes, convey.ShouldContain, syncIndexSpec{Name: "spi_mirror_study_lims_export_idx", Column: "id_study_lims, id_run, position, tag_index, id_seq_product_irods_locations_tmp"})
+			convey.So(seqProductIRODSLocationsMirrorReadIndexes, convey.ShouldContain, syncIndexSpec{Name: "spi_mirror_sample_tmp_created_idx", Column: "id_sample_tmp, created"})
+			convey.So(seqProductIRODSLocationsMirrorReadIndexes, convey.ShouldContain, syncIndexSpec{Name: "spi_mirror_run_created_idx", Column: "id_run, created"})
+		})
+
+		convey.Convey("when iseq_flowcell is inspected, then its product join key and deliverable discriminator are available as read indexes", func() {
+			readIndexSet, ok := mySQLSparseMirrorReadIndexSet(syncMirrorIndexSet{Table: "iseq_flowcell_mirror"})
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(readIndexSet.Indexes, convey.ShouldContain, syncIndexSpec{Name: "iseq_flowcell_mirror_id_iseq_flowcell_tmp_idx", Column: "id_iseq_flowcell_tmp"})
+			convey.So(readIndexSet.Indexes, convey.ShouldContain, syncIndexSpec{Name: "iseq_flowcell_mirror_entity_type_idx", Column: "entity_type"})
+		})
+
+		for _, expected := range []struct {
+			table string
+			index syncIndexSpec
+		}{
+			{table: "iseq_run_status_mirror", index: syncIndexSpec{Name: "iseq_run_status_mirror_normalised_date_idx", Column: "normalised_date, id_run_status_dict, id_run"}},
+			{table: "pac_bio_run_well_metrics_mirror", index: syncIndexSpec{Name: "pac_bio_run_well_metrics_mirror_normalised_date_idx", Column: "normalised_date"}},
+			{table: "oseq_flowcell_mirror", index: syncIndexSpec{Name: "oseq_flowcell_mirror_normalised_date_idx", Column: "normalised_date"}},
+			{table: "useq_run_metrics_mirror", index: syncIndexSpec{Name: "useq_run_metrics_mirror_normalised_date_idx", Column: "normalised_date"}},
+			{table: "eseq_run_lane_metrics_mirror", index: syncIndexSpec{Name: "eseq_run_lane_metrics_mirror_normalised_date_idx", Column: "normalised_date"}},
+		} {
+			expected := expected
+			convey.Convey("when "+expected.table+" is inspected, then its normalised run-date index is recreated for sparse cold reads", func() {
+				readIndexSet, ok := mySQLSparseMirrorReadIndexSet(syncMirrorIndexSet{Table: expected.table})
+				convey.So(ok, convey.ShouldBeTrue)
+				convey.So(readIndexSet.Indexes, convey.ShouldContain, expected.index)
+			})
+		}
+	})
+}
+
+func TestRealworldA3IseqProductMetricsSourceQueryIncludesCompositeProducts(t *testing.T) {
+	convey.Convey("A3: Given the registered iseq_product_metrics source queries", t, func() {
+		queries := map[string]SyncSourceQuery{}
+		for _, query := range AllSyncSourceQueries() {
+			queries[query.Name] = query
+		}
+
+		for _, name := range []string{
+			"iseq_product_metrics incremental",
+			"iseq_product_metrics cold",
+			"iseq_product_metrics from cursor",
+		} {
+			query := queries[name]
+
+			convey.So(query.Query, convey.ShouldContainSubstring, "JSON_TABLE(path_ipm.iseq_composition_tmp")
+			convey.So(query.Query, convey.ShouldContainSubstring, "NOT EXISTS (SELECT 1 FROM JSON_TABLE(COALESCE(ipm.iseq_composition_tmp")
+			convey.So(query.Query, convey.ShouldContainSubstring, "seq_product_irods_locations spi")
+			convey.So(query.Query, convey.ShouldContainSubstring, "study.id_lims = 'SQSCP'")
+			convey.So(query.Query, convey.ShouldContainSubstring, "CASE WHEN MIN(component.component_run) = MAX(component.component_run)")
+		}
+
+		convey.So(queries["iseq_product_metrics incremental"].ArgCount, convey.ShouldEqual, 2)
+		convey.So(queries["iseq_product_metrics cold"].ArgCount, convey.ShouldEqual, 2)
+		convey.So(queries["iseq_product_metrics from cursor"].ArgCount, convey.ShouldEqual, 6)
+
+		for _, name := range []string{
+			"iseq_product_metrics legacy incremental",
+			"iseq_product_metrics legacy cold",
+			"iseq_product_metrics legacy from cursor",
+		} {
+			convey.So(queries[name].Query, convey.ShouldNotContainSubstring, "JSON_TABLE")
+		}
 	})
 }
 
@@ -308,6 +437,321 @@ func TestClientSyncIseqProductMetricsMapsQCOneZeroNullToPassFailPending(t *testi
 	})
 }
 
+func TestClientSyncElementAndUltimaProductMetricsMirrorA1SequencingControl(t *testing.T) {
+	convey.Convey("A1.3: Given Element and Ultima source product rows with is_sequencing_control values", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.June, 30, 10, 0, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableEseqProductMetrics: {
+				columns: eseqProductMetricsA1SyncSourceColumns,
+				rows: [][]driver.Value{
+					{"eseq-deliverable", int64(201), int64(7701), int64(101), "study-e", int64(0), int64(1), int64(1), int64(1), formatSyncTime(base)},
+					{"eseq-control", int64(202), int64(7702), int64(102), "study-e", int64(1), int64(1), int64(1), int64(1), formatSyncTime(base.Add(time.Minute))},
+				},
+			},
+			syncTableUseqProductMetrics: {
+				columns: useqProductMetricsA1SyncSourceColumns,
+				rows: [][]driver.Value{
+					{"useq-deliverable", int64(301), int64(8801), int64(201), "study-u", int64(0), int64(1), int64(1), int64(1), formatSyncTime(base)},
+					{"useq-control", int64(302), int64(8802), int64(202), "study-u", int64(1), int64(1), int64(1), int64(1), formatSyncTime(base.Add(time.Minute))},
+				},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableEseqProductMetrics, syncTableUseqProductMetrics)
+
+		convey.Convey("when Sync runs, then each product mirror carries the source control discriminator", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 2)
+			convey.So(readInt64ColumnForTest(t, cache.DB(), "eseq_product_metrics_mirror", "is_sequencing_control", "id_eseq_product", "eseq-deliverable"), convey.ShouldEqual, int64(0))
+			convey.So(readInt64ColumnForTest(t, cache.DB(), "eseq_product_metrics_mirror", "is_sequencing_control", "id_eseq_product", "eseq-control"), convey.ShouldEqual, int64(1))
+			convey.So(readInt64ColumnForTest(t, cache.DB(), "useq_product_metrics_mirror", "is_sequencing_control", "id_useq_product", "useq-deliverable"), convey.ShouldEqual, int64(0))
+			convey.So(readInt64ColumnForTest(t, cache.DB(), "useq_product_metrics_mirror", "is_sequencing_control", "id_useq_product", "useq-control"), convey.ShouldEqual, int64(1))
+		})
+	})
+}
+
+func readInt64ColumnForTest(t *testing.T, db *sql.DB, table, column, keyColumn, keyValue string) int64 {
+	t.Helper()
+
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s = ?", column, table, keyColumn)
+	var value sql.NullInt64
+	if err := db.QueryRow(query, keyValue).Scan(&value); err != nil {
+		t.Fatalf("read %s.%s for %s=%q: %v", table, column, keyColumn, keyValue, err)
+	}
+	if !value.Valid {
+		t.Fatalf("read %s.%s for %s=%q: value is NULL", table, column, keyColumn, keyValue)
+	}
+
+	return value.Int64
+}
+
+func TestClientSyncSeqProductIRODSLocationsA4MergedExportFields(t *testing.T) {
+	convey.Convey("A4.3: Given an Illumina merged product already present in the product and flowcell mirrors", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.July, 1, 9, 0, 0, 0, time.UTC)
+		seedIseqFlowcellMirrorForA4(t, cache.DB(), 4934801, "library", 9419243, 760701)
+		seedIseqProductMetricsMirrorForA4(t, cache.DB(), "merged-product-a4", 4934801, 49348, 0, 0, 9419243, "7607", sql.NullInt64{Int64: 1, Valid: true}, base)
+
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSeqProductIRODSLocations: {
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows: [][]driver.Value{
+					{int64(493481210), "merged-product-a4", "/seq", "lane1-2/plex1/49348_1-2#1.cram", int64(9419243), "7607", formatSyncTime(base.Add(time.Minute)), formatSyncTime(base), "illumina"},
+				},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.Convey("when the iRODS row syncs, then the persisted export fields mark it as merged and keep a searchable run with zero lane/tag coordinates", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+
+			row := readA4IRODSExportFieldsForTest(t, cache.DB(), "merged-product-a4")
+			convey.So(row.idSampleTmp, convey.ShouldEqual, int64(9419243))
+			convey.So(row.idRun, convey.ShouldEqual, int64(49348))
+			convey.So(row.position, convey.ShouldEqual, int64(0))
+			convey.So(row.tagIndex, convey.ShouldEqual, int64(0))
+			convey.So(row.merged, convey.ShouldEqual, int64(1))
+			convey.So(row.qc.Valid, convey.ShouldBeTrue)
+			convey.So(row.qc.Int64, convey.ShouldEqual, int64(1))
+			convey.So(row.isDeliverable.Valid, convey.ShouldBeTrue)
+			convey.So(row.isDeliverable.Int64, convey.ShouldEqual, int64(1))
+		})
+	})
+}
+
+func seedIseqFlowcellMirrorForA4(t *testing.T, db *sql.DB, idFlowcell int64, entityType string, idSampleTmp, idStudyTmp int64) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO iseq_flowcell_mirror(id_iseq_flowcell_tmp, entity_type, pipeline_id_lims, id_sample_tmp, id_study_tmp) VALUES (?, ?, ?, ?, ?)`,
+		idFlowcell,
+		entityType,
+		"Standard",
+		idSampleTmp,
+		idStudyTmp,
+	)
+	if err != nil {
+		t.Fatalf("seed A4 iseq flowcell mirror: %v", err)
+	}
+}
+
+func seedIseqProductMetricsMirrorForA4(t *testing.T, db *sql.DB, productID string, idFlowcell, idRun, position, tagIndex, idSampleTmp int64, study string, qc sql.NullInt64, lastUpdated time.Time) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO iseq_product_metrics_mirror(id_iseq_product, id_iseq_flowcell_tmp, id_run, position, tag_index, id_sample_tmp, id_study_lims, qc, qc_lib, qc_seq, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		productID,
+		idFlowcell,
+		idRun,
+		position,
+		tagIndex,
+		idSampleTmp,
+		study,
+		qc,
+		qc,
+		qc,
+		formatSyncTime(lastUpdated),
+	)
+	if err != nil {
+		t.Fatalf("seed A4 iseq product mirror: %v", err)
+	}
+}
+
+func readA4IRODSExportFieldsForTest(t *testing.T, db *sql.DB, productID string) a4IRODSExportFields {
+	t.Helper()
+
+	var row a4IRODSExportFields
+	err := db.QueryRow(
+		`SELECT id_sample_tmp, id_run, position, tag_index, qc, is_deliverable, merged FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`,
+		productID,
+	).Scan(&row.idSampleTmp, &row.idRun, &row.position, &row.tagIndex, &row.qc, &row.isDeliverable, &row.merged)
+	if err != nil {
+		t.Fatalf("read A4 iRODS export fields for %q: %v", productID, err)
+	}
+
+	return row
+}
+
+func TestClientSyncSeqProductIRODSLocationsA4PlatformQCAndDeliverable(t *testing.T) {
+	convey.Convey("A4.4: Given Element, Ultima, PacBio and ONT iRODS rows with their platform mirrors", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.July, 1, 10, 0, 0, 0, time.UTC)
+		seedEseqProductMetricsMirrorForA4(t, cache.DB(), "eseq-product-a4", 7701, 101, "study-e", sql.NullInt64{Int64: 0, Valid: true}, sql.NullInt64{Int64: 1, Valid: true}, base)
+		seedUseqProductMetricsMirrorForA4(t, cache.DB(), "useq-product-a4", 8801, 201, "study-u", sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{Int64: 0, Valid: true}, base)
+		seedPacBioProductMetricsMirrorForA4(t, cache.DB(), "pacbio-product-a4", 301, "study-p", sql.NullInt64{Int64: 1, Valid: true}, base)
+
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSeqProductIRODSLocations: {
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows: [][]driver.Value{
+					{int64(7710), "eseq-product-a4", "/seq", "element/sample.cram", int64(101), "study-e", formatSyncTime(base.Add(time.Minute)), formatSyncTime(base), "elembio"},
+					{int64(8810), "useq-product-a4", "/seq", "ultima/sample.cram", int64(201), "study-u", formatSyncTime(base.Add(2 * time.Minute)), formatSyncTime(base), "ultimagen"},
+					{int64(9910), "pacbio-product-a4", "/seq", "pacbio/sample.cram", int64(301), "study-p", formatSyncTime(base.Add(3 * time.Minute)), formatSyncTime(base), "pacbio"},
+					{int64(1110), "ont-flowcell-a4", "/seq", "ont/sample.cram", int64(401), "study-o", formatSyncTime(base.Add(4 * time.Minute)), formatSyncTime(base), "ont"},
+				},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.Convey("when the iRODS rows sync, then qc and deliverable are denormalised per platform with PacBio/ONT tri-state NULLs", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+
+			elembio := readA4IRODSExportFieldsForTest(t, cache.DB(), "eseq-product-a4")
+			convey.So(elembio.idRun, convey.ShouldEqual, int64(7701))
+			convey.So(elembio.qc.Int64, convey.ShouldEqual, int64(1))
+			convey.So(elembio.isDeliverable.Int64, convey.ShouldEqual, int64(1))
+
+			ultima := readA4IRODSExportFieldsForTest(t, cache.DB(), "useq-product-a4")
+			convey.So(ultima.idRun, convey.ShouldEqual, int64(8801))
+			convey.So(ultima.qc.Int64, convey.ShouldEqual, int64(0))
+			convey.So(ultima.isDeliverable.Int64, convey.ShouldEqual, int64(0))
+
+			pacbio := readA4IRODSExportFieldsForTest(t, cache.DB(), "pacbio-product-a4")
+			convey.So(pacbio.qc.Valid, convey.ShouldBeTrue)
+			convey.So(pacbio.qc.Int64, convey.ShouldEqual, int64(1))
+			convey.So(pacbio.isDeliverable.Valid, convey.ShouldBeFalse)
+
+			ont := readA4IRODSExportFieldsForTest(t, cache.DB(), "ont-flowcell-a4")
+			convey.So(ont.qc.Valid, convey.ShouldBeFalse)
+			convey.So(ont.isDeliverable.Valid, convey.ShouldBeFalse)
+		})
+	})
+}
+
+func seedEseqProductMetricsMirrorForA4(t *testing.T, db *sql.DB, productID string, idRun, idSampleTmp int64, study string, isControl, qc sql.NullInt64, lastUpdated time.Time) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO eseq_product_metrics_mirror(id_eseq_product, id_eseq_flowcell_tmp, id_run, id_sample_tmp, id_study_lims, is_sequencing_control, qc, qc_seq, qc_lib, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		productID,
+		int64(700001),
+		idRun,
+		idSampleTmp,
+		study,
+		isControl,
+		qc,
+		qc,
+		qc,
+		formatSyncTime(lastUpdated),
+	)
+	if err != nil {
+		t.Fatalf("seed A4 eseq product mirror: %v", err)
+	}
+}
+
+func seedUseqProductMetricsMirrorForA4(t *testing.T, db *sql.DB, productID string, idRun, idSampleTmp int64, study string, isControl, qc sql.NullInt64, lastUpdated time.Time) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO useq_product_metrics_mirror(id_useq_product, id_useq_wafer_tmp, id_run, id_sample_tmp, id_study_lims, is_sequencing_control, qc, qc_seq, qc_lib, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		productID,
+		int64(800001),
+		idRun,
+		idSampleTmp,
+		study,
+		isControl,
+		qc,
+		qc,
+		qc,
+		formatSyncTime(lastUpdated),
+	)
+	if err != nil {
+		t.Fatalf("seed A4 useq product mirror: %v", err)
+	}
+}
+
+func seedPacBioProductMetricsMirrorForA4(t *testing.T, db *sql.DB, productID string, idSampleTmp int64, study string, qc sql.NullInt64, lastUpdated time.Time) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO pac_bio_product_metrics_mirror(id_pac_bio_product, id_pac_bio_rw_metrics_tmp, id_sample_tmp, id_study_lims, qc, last_updated) VALUES (?, ?, ?, ?, ?, ?)`,
+		productID,
+		int64(900001),
+		idSampleTmp,
+		study,
+		qc,
+		formatSyncTime(lastUpdated),
+	)
+	if err != nil {
+		t.Fatalf("seed A4 pacbio product mirror: %v", err)
+	}
+}
+
+func TestClientSyncFreshFullSyncEnrichesIRODSAfterProductMirrors(t *testing.T) {
+	convey.Convey("A4 regression: Given a fresh cache where the iRODS source row is available before its product and flowcell mirror rows", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.July, 2, 9, 0, 0, 0, time.UTC)
+		dependencyDelay := 100 * time.Millisecond
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows:    nil,
+			},
+			syncTableStudy: {
+				columns: studySyncSourceColumns,
+				rows:    nil,
+			},
+			syncTableIseqFlowcell: {
+				columns:       iseqFlowcellA1SyncSourceColumns,
+				rows:          [][]driver.Value{{int64(52001), "library", "Standard", int64(101), int64(501), "5001", nil, nil, formatSyncTime(base)}},
+				firstRowDelay: dependencyDelay,
+			},
+			syncTableIseqProductMetrics: {
+				columns:       iseqProductMetricsSyncSourceColumns,
+				rows:          [][]driver.Value{{"fresh-full-sync-a4", int64(53001), int64(52001), int64(52553), int64(3), int64(7), int64(101), "5001", int64(1), int64(1), int64(1), formatSyncTime(base.Add(time.Second))}},
+				firstRowDelay: dependencyDelay,
+			},
+			syncTableSeqProductIRODSLocations: {
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows:    [][]driver.Value{{int64(54001), "fresh-full-sync-a4", "/seq", "run/fresh-full-sync-a4.cram", int64(101), "5001", formatSyncTime(base.Add(2 * time.Second)), formatSyncTime(base), "illumina"}},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		reports, err := client.Sync(context.Background())
+
+		convey.Convey("when Client.Sync completes, then the iRODS row is enriched from the populated dependency mirrors rather than defaulting from goroutine order", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, len(supportedSyncTables))
+
+			row := readA4IRODSExportFieldsForTest(t, cache.DB(), "fresh-full-sync-a4")
+			convey.So(row.idSampleTmp, convey.ShouldEqual, int64(101))
+			convey.So(row.idRun, convey.ShouldEqual, int64(52553))
+			convey.So(row.position, convey.ShouldEqual, int64(3))
+			convey.So(row.tagIndex, convey.ShouldEqual, int64(7))
+			convey.So(row.merged, convey.ShouldEqual, int64(0))
+			convey.So(row.qc.Valid, convey.ShouldBeTrue)
+			convey.So(row.qc.Int64, convey.ShouldEqual, int64(1))
+			convey.So(row.isDeliverable.Valid, convey.ShouldBeTrue)
+			convey.So(row.isDeliverable.Int64, convey.ShouldEqual, int64(1))
+		})
+	})
+}
+
 func TestClientSyncSeqProductIRODSLocationsKeepsSiblingDataObjects(t *testing.T) {
 	convey.Convey("Given two iRODS source objects for the same product, sample and study", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -407,6 +851,355 @@ func TestClientSyncSeqProductIRODSLocationsIncrementalReplacesOldPathForSourceRo
 	})
 }
 
+func TestClientSyncSampleBuildsCommonNameWordMirrorVocabulary(t *testing.T) {
+	convey.Convey("A5: Given sample common_name values with shared organism words", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.June, 17, 10, 0, 0, 0, time.UTC)
+		rows := sampleSyncRowsForRange(1, 3, base, map[int64]sampleSyncRowOverride{
+			1: {CommonName: "Mus Musculus"},
+			2: {CommonName: "Mus musculus castaneus"},
+			3: {CommonName: "Homo sapiens"},
+		})
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows:    rows,
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		report, sawRows, err := client.syncTableData(context.Background(), syncTableSample, syncStateRecord{})
+
+		convey.Convey("when the vocabulary is built, then musculus maps to both matching common names and no mid-word fragment is stored", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sawRows, convey.ShouldBeTrue)
+			convey.So(report.Inserted, convey.ShouldEqual, 3)
+
+			commonNames := queryStrings(t, cache.DB(), `SELECT common_name FROM common_name_word_mirror WHERE word = ? ORDER BY common_name`, "musculus")
+			convey.So(commonNames, convey.ShouldResemble, []string{"Mus Musculus", "Mus musculus castaneus"})
+			convey.So(commonNames, convey.ShouldNotContain, "Homo sapiens")
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM common_name_word_mirror WHERE word = ?`, "usculus"), convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func queryStrings(t *testing.T, db *sql.DB, query string, args ...any) []string {
+	t.Helper()
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		t.Fatalf("queryStrings(%q): %v", query, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	values := []string{}
+	for rows.Next() {
+		var value string
+		if err = rows.Scan(&value); err != nil {
+			t.Fatalf("queryStrings(%q) scan: %v", query, err)
+		}
+
+		values = append(values, value)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatalf("queryStrings(%q): %v", query, err)
+	}
+
+	return values
+}
+
+func TestClientSyncRepairsSparseProductReadIndexesBeforeIRODSEnrichment(t *testing.T) {
+	convey.Convey("Given a staged MySQL sync of product metrics and iRODS locations", t, func() {
+		originalTables := supportedSyncTables
+		supportedSyncTables = []string{syncTableIseqProductMetrics, syncTableSeqProductIRODSLocations}
+		t.Cleanup(func() {
+			supportedSyncTables = originalTables
+		})
+
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		indexRowsFor := func(indexes []syncIndexSpec) *sqlmock.Rows {
+			rows := sqlmock.NewRows([]string{"INDEX_NAME"})
+			for _, index := range indexes {
+				rows.AddRow(index.Name)
+			}
+
+			return rows
+		}
+
+		base := time.Date(2026, time.May, 13, 12, 0, 0, 0, time.UTC)
+		productRow := iseqProductMetricsSyncRow{
+			IDIseqProduct:     "product-1001",
+			SourceRowID:       5001,
+			IDIseqFlowcellTmp: 2001,
+			IDRun:             9001,
+			Position:          1,
+			TagIndex:          1,
+			IDSampleTmp:       3001,
+			IDStudyLims:       "5001",
+			QC:                sql.NullInt64{Int64: 1, Valid: true},
+			QCLib:             sql.NullInt64{Int64: 1, Valid: true},
+			QCSeq:             sql.NullInt64{Int64: 1, Valid: true},
+			LastUpdated:       base,
+		}
+		forcedEnrichmentErr := fmt.Errorf("forced enrichment stop")
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableIseqProductMetrics).
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
+		mock.ExpectBegin()
+		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", iseqProductMetricsMirrorIndexSet.Table))).
+			WillReturnRows(indexRowsFor(iseqProductMetricsMirrorSecondaryIndexes))
+		for _, index := range iseqProductMetricsMirrorSecondaryIndexes {
+			mock.ExpectExec(regexp.QuoteMeta(`DROP INDEX ` + index.Name + ` ON ` + iseqProductMetricsMirrorIndexSet.Table)).
+				WillReturnResult(sqlmock.NewResult(0, 0))
+		}
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = 'PRIMARY'`)).
+			WithArgs(iseqProductMetricsMirrorIndexSet.Table).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE ` + iseqProductMetricsMirrorIndexSet.Table + ` DROP PRIMARY KEY`)).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(regexp.QuoteMeta(buildUpsertStatement("mysql", "sync_state", syncStateColumns, []string{"table_name"}))).
+			WithArgs(syncTableIseqProductMetrics, formatSyncTime(time.Time{}), sqlmock.AnyArg(), nil, 1).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
+		mock.ExpectBegin()
+		mock.ExpectExec(regexp.QuoteMeta(buildBulkInsertStatement("iseq_product_metrics_mirror", iseqProductMetricsMirrorColumns, 1))).
+			WithArgs(driverValuesForTest(iseqProductMetricsMirrorRowArgs(productRow))...).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectExec(regexp.QuoteMeta(buildUpsertStatement("mysql", "sync_state", syncStateColumns, []string{"table_name"}))).
+			WithArgs(syncTableIseqProductMetrics, formatSyncTime(base), sqlmock.AnyArg(), encodeAscendingIDResumeCursor(iseqProductMetricsIDResumeMode, productRow.SourceRowID), 1).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
+		mock.ExpectBegin()
+		mock.ExpectExec(regexp.QuoteMeta(buildUpsertStatement("mysql", "sync_state", syncStateColumns, []string{"table_name"}))).
+			WithArgs(syncTableIseqProductMetrics, formatSyncTime(base), sqlmock.AnyArg(), nil, 1).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableIseqProductMetrics).
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}).AddRow(formatSyncTime(base), nil, 1))
+		mock.ExpectBegin()
+		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", iseqProductMetricsMirrorIndexSet.Table))).
+			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME"}))
+		mock.ExpectExec(regexp.QuoteMeta(buildMySQLCreateMirrorSecondaryIndexesStatement(iseqProductMetricsMirrorIndexSet.Table, iseqProductMetricsMirrorReadIndexes))).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectCommit()
+		mock.ExpectExec(regexp.QuoteMeta(`ANALYZE TABLE iseq_product_metrics_mirror`)).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableSeqProductIRODSLocations).
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
+		mock.ExpectBegin()
+		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", seqProductIRODSLocationsMirrorIndexSet.Table))).
+			WillReturnRows(indexRowsFor(seqProductIRODSLocationsMirrorSecondaryIndexes))
+		for _, index := range seqProductIRODSLocationsMirrorSecondaryIndexes {
+			mock.ExpectExec(regexp.QuoteMeta(`DROP INDEX ` + index.Name + ` ON ` + seqProductIRODSLocationsMirrorIndexSet.Table)).
+				WillReturnResult(sqlmock.NewResult(0, 0))
+		}
+		mock.ExpectExec(regexp.QuoteMeta(buildUpsertStatement("mysql", "sync_state", syncStateColumns, []string{"table_name"}))).
+			WithArgs(syncTableSeqProductIRODSLocations, formatSyncTime(time.Time{}), sqlmock.AnyArg(), nil, 1).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT ipm.id_iseq_product, ipm.id_run, ipm.position, ipm.tag_index, ipm.qc, CASE WHEN ifc.entity_type IN ('library', 'library_indexed') THEN 1 ELSE 0 END, CASE WHEN ipm.position = 0 AND ipm.tag_index = 0 THEN 1 ELSE 0 END FROM iseq_product_metrics_mirror ipm LEFT JOIN iseq_flowcell_mirror ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp WHERE ipm.id_iseq_product IN (?)`)).
+			WithArgs(productRow.IDIseqProduct).
+			WillReturnError(forcedEnrichmentErr)
+
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableIseqProductMetrics: {
+				columns: iseqProductMetricsSyncSourceColumns,
+				rows: [][]driver.Value{{
+					productRow.IDIseqProduct,
+					productRow.SourceRowID,
+					productRow.IDIseqFlowcellTmp,
+					int64(productRow.IDRun),
+					int64(productRow.Position),
+					int64(productRow.TagIndex),
+					productRow.IDSampleTmp,
+					productRow.IDStudyLims,
+					productRow.QC.Int64,
+					productRow.QCLib.Int64,
+					productRow.QCSeq.Int64,
+					formatSyncTime(productRow.LastUpdated),
+				}},
+			},
+			syncTableSeqProductIRODSLocations: {
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows: [][]driver.Value{{
+					int64(7001),
+					productRow.IDIseqProduct,
+					"/seq",
+					"run/file.cram",
+					productRow.IDSampleTmp,
+					productRow.IDStudyLims,
+					formatSyncTime(base.Add(time.Minute)),
+					formatSyncTime(base.Add(time.Minute)),
+					"illumina",
+				}},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{
+			cache:           &mysqlCache{rwDB: db, roDB: db},
+			cacheReader:     db,
+			syncSource:      source,
+			disableSyncLock: true,
+		}
+
+		_, err = client.Sync(context.Background())
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, forcedEnrichmentErr.Error())
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
+func TestClientSyncIseqFlowcellMirrorsA1EntityTypeRows(t *testing.T) {
+	convey.Convey("A1.2: Given source iseq_flowcell rows for each deliverable entity_type discriminator", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.June, 30, 9, 0, 0, 0, time.UTC)
+		sourceDB, sourceMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = sourceDB.Close() }()
+
+		sourceMock.ExpectQuery(regexp.QuoteMeta(flowcellSyncSourceQuery())).
+			WithArgs(formatSyncTime(time.Time{})).
+			WillReturnRows(sqlmock.NewRows(iseqFlowcellA1SyncSourceColumns).
+				AddRow(101, "library", "lib-a", 11, 201, "study-a", nil, nil, formatSyncTime(base)).
+				AddRow(102, "library_indexed", "lib-b", 12, 202, "study-b", nil, nil, formatSyncTime(base.Add(time.Minute))).
+				AddRow(103, "library_indexed_spike", "lib-c", 13, 203, "study-c", nil, nil, formatSyncTime(base.Add(2*time.Minute))).
+				AddRow(104, "library_control", "lib-d", 14, 204, "study-d", nil, nil, formatSyncTime(base.Add(3*time.Minute))))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqFlowcell)
+
+		convey.Convey("when Sync runs, then every row is mirrored with entity_type and source identity columns", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_flowcell_mirror`), convey.ShouldEqual, 4)
+
+			rows, queryErr := cache.DB().Query(`SELECT id_iseq_flowcell_tmp, entity_type, pipeline_id_lims, id_sample_tmp, id_study_tmp FROM iseq_flowcell_mirror ORDER BY id_iseq_flowcell_tmp`)
+			convey.So(queryErr, convey.ShouldBeNil)
+			defer func() { _ = rows.Close() }()
+
+			var mirrored []string
+			for rows.Next() {
+				var id, idSampleTmp, idStudyTmp int64
+				var entityType, pipelineIDLims string
+				convey.So(rows.Scan(&id, &entityType, &pipelineIDLims, &idSampleTmp, &idStudyTmp), convey.ShouldBeNil)
+				mirrored = append(mirrored, fmt.Sprintf("%d:%s:%s:%d:%d", id, entityType, pipelineIDLims, idSampleTmp, idStudyTmp))
+			}
+
+			convey.So(rows.Err(), convey.ShouldBeNil)
+			convey.So(mirrored, convey.ShouldResemble, []string{
+				"101:library:lib-a:11:201",
+				"102:library_indexed:lib-b:12:202",
+				"103:library_indexed_spike:lib-c:13:203",
+				"104:library_control:lib-d:14:204",
+			})
+			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestClientSyncRunDateMirrorsA6RunIdentityAndNormalisedDates(t *testing.T) {
+	convey.Convey("A6: Given ONT and platform run-date source rows", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.July, 1, 9, 0, 0, 0, time.UTC)
+		ontLastUpdated := time.Date(2026, time.July, 1, 12, 34, 56, 0, time.UTC)
+		iseqDate := time.Date(2026, time.July, 2, 8, 0, 0, 0, time.UTC)
+		pacBioComplete := time.Date(2026, time.July, 3, 8, 0, 0, 0, time.UTC)
+		ultimaArchived := time.Date(2026, time.July, 4, 8, 0, 0, 0, time.UTC)
+		elementComplete := time.Date(2026, time.July, 5, 8, 0, 0, 0, time.UTC)
+
+		seedRealMLWHStudyRow(t, source, 811, "SQSCP", "8111", "uuid-study-811", "Study A6 ONT", "acc-st-811", base)
+		seedRealMLWHOseqFlowcellRunRow(t, source, 9811, 981101, 811, "ONTRUN-11", nil, "ont-run-uuid-11", ontLastUpdated)
+		seedRealMLWHIseqRunStatusRow(t, source, 111, 52553, 1, iseqDate, 1)
+		seedRealMLWHIseqRunStatusRow(t, source, 112, 7701, 1, iseqDate.Add(time.Hour), 1)
+		seedRealMLWHIseqRunStatusRow(t, source, 113, 8801, 2, iseqDate.Add(2*time.Hour), 1)
+		_, err := source.Exec(
+			`INSERT INTO pac_bio_run_well_metrics(id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, plate_number, run_complete, last_changed) VALUES (?, ?, ?, ?, ?, ?)`,
+			201, "pacbio-run-a6", "A01", 1, formatSyncTime(pacBioComplete), formatSyncTime(pacBioComplete.Add(time.Hour)),
+		)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = source.Exec(
+			`INSERT INTO useq_run_metrics(id_run, run_folder_name, run_in_progress, run_archived, last_changed) VALUES (?, ?, ?, ?, ?)`,
+			8801, "ultima-run-a6", formatSyncTime(ultimaArchived.Add(-time.Hour)), formatSyncTime(ultimaArchived), formatSyncTime(ultimaArchived.Add(time.Hour)),
+		)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = source.Exec(
+			`INSERT INTO eseq_run_lane_metrics(id_run, lane, run_folder_name, run_started, run_complete, last_changed) VALUES (?, ?, ?, ?, ?, ?)`,
+			7701, 1, "element-run-a6", formatSyncTime(elementComplete.Add(-time.Hour)), formatSyncTime(elementComplete), formatSyncTime(elementComplete.Add(time.Hour)),
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(
+			context.Background(),
+			client,
+			syncTableOseqFlowcell,
+			syncTableIseqRunStatus,
+			syncTablePacBioRunWellMetrics,
+			syncTableUseqRunMetrics,
+			syncTableEseqRunLaneMetrics,
+		)
+
+		convey.Convey("when synced, then ONT run identity and each run-date normalised_date are persisted", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 5)
+
+			var (
+				experimentName string
+				runID          sql.NullInt64
+				runUUID        string
+				lastUpdated    string
+				normalisedDate string
+			)
+			convey.So(cache.DB().QueryRow(
+				`SELECT experiment_name, run_id, run_uuid, last_updated, normalised_date FROM oseq_flowcell_mirror WHERE id_oseq_flowcell_tmp = ?`,
+				9811,
+			).Scan(&experimentName, &runID, &runUUID, &lastUpdated, &normalisedDate), convey.ShouldBeNil)
+			convey.So(experimentName, convey.ShouldEqual, "ONTRUN-11")
+			convey.So(runID.Valid, convey.ShouldBeFalse)
+			convey.So(runUUID, convey.ShouldEqual, "ont-run-uuid-11")
+			convey.So(lastUpdated, convey.ShouldEqual, formatSyncTime(ontLastUpdated))
+			convey.So(normalisedDate, convey.ShouldEqual, "2026-07-01")
+
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_run_status_mirror WHERE id_run IN (?, ?)`, 7701, 8801), convey.ShouldEqual, 2)
+			convey.So(readStringCellForTest(t, cache.DB(), `SELECT normalised_date FROM iseq_run_status_mirror WHERE id_run_status = ?`, 111), convey.ShouldEqual, "2026-07-02")
+			convey.So(readStringCellForTest(t, cache.DB(), `SELECT normalised_date FROM pac_bio_run_well_metrics_mirror WHERE id_pac_bio_rw_metrics_tmp = ?`, 201), convey.ShouldEqual, "2026-07-03")
+			convey.So(readStringCellForTest(t, cache.DB(), `SELECT normalised_date FROM useq_run_metrics_mirror WHERE id_run = ?`, 8801), convey.ShouldEqual, "2026-07-04")
+			convey.So(readStringCellForTest(t, cache.DB(), `SELECT normalised_date FROM eseq_run_lane_metrics_mirror WHERE id_run = ? AND lane = ?`, 7701, 1), convey.ShouldEqual, "2026-07-05")
+		})
+	})
+}
+
+func readStringCellForTest(t *testing.T, db *sql.DB, query string, args ...any) string {
+	t.Helper()
+
+	var value string
+	if err := db.QueryRow(query, args...).Scan(&value); err != nil {
+		t.Fatalf("readStringCellForTest(%q): %v", query, err)
+	}
+
+	return value
+}
+
 func TestFinalizeSampleSyncStateRebuildsLargeSQLiteSecondaryIndexes(t *testing.T) {
 	convey.Convey("Given a completed large SQLite sample cold load with indexes still dropped", t, func() {
 		db, mock, err := sqlmock.New()
@@ -438,6 +1231,9 @@ func TestFinalizeSampleSyncStateRebuildsLargeSQLiteSecondaryIndexes(t *testing.T
 			mock.ExpectExec(regexp.QuoteMeta(fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON sample_mirror(%s)`, index.Name, index.Column))).
 				WillReturnResult(sqlmock.NewResult(0, 0))
 		}
+		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM common_name_word_mirror`)).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT DISTINCT common_name FROM sample_mirror ORDER BY common_name`)).
+			WillReturnRows(sqlmock.NewRows([]string{"common_name"}))
 		mock.ExpectExec(regexp.QuoteMeta(buildUpsertStatement("sqlite", "sync_state", syncStateColumns, []string{"table_name"}))).
 			WithArgs(syncTableSample, formatSyncTime(highWater), sqlmock.AnyArg(), nil, 0).
 			WillReturnResult(sqlmock.NewResult(1, 1))
@@ -535,6 +1331,139 @@ func TestClientSyncStudyUsersDropsNonSQSCPStudy(t *testing.T) {
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_users_mirror WHERE id_study_users_tmp = ?`, 9001), convey.ShouldEqual, 1)
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_users_mirror WHERE id_study_users_tmp = ?`, 9101), convey.ShouldEqual, 0)
 		})
+	})
+}
+
+func TestRealworldA3ClientSyncMirrorsCompositeProductMetricsForIRODSJoin(t *testing.T) {
+	convey.Convey("A3: Given study 7568 has a merged lane1-2 composite CRAM product", t, func() {
+		withSyncColdBatchSizeForTest(t, 1)
+
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.May, 13, 9, 0, 0, 0, time.UTC)
+		const compositeProduct = "a3-composite-product"
+		const multiRunCompositeProduct = "a3-multirun-composite-product"
+
+		seedRealMLWHStudyRow(t, source, 7568, "SQSCP", "7568", "uuid-study-7568", "Study 7568", "acc-st-7568", base)
+		seedRealMLWHFlowcellRow(t, source, 4934801, "Standard", 756801, 7568, base.Add(time.Minute))
+		seedRealMLWHFlowcellRow(t, source, 4934802, "Standard", 756801, 7568, base.Add(2*time.Minute))
+		seedRealMLWHFlowcellRow(t, source, 4934901, "Standard", 756802, 7568, base.Add(2*time.Minute))
+		seedRealMLWHProductMetricRow(t, source, 49348011, 4934801, 49348, 1, 1, 1, 1, 1, base.Add(3*time.Minute))
+		seedRealMLWHProductMetricRow(t, source, 49348021, 4934802, 49348, 2, 1, 1, 1, 1, base.Add(4*time.Minute))
+		seedRealMLWHProductMetricRow(t, source, 49348012, 4934801, 49348, 1, 2, 1, 1, 1, base.Add(4*time.Minute))
+		seedRealMLWHProductMetricRow(t, source, 49349012, 4934901, 49349, 1, 2, 1, 1, 1, base.Add(4*time.Minute))
+		seedRealMLWHCompositeProductMetricRow(t, source, 49348121, compositeProduct, `{"components":[{"id_run":49348,"position":1,"tag_index":1},{"id_run":49348,"position":2,"tag_index":1}]}`, base.Add(5*time.Minute))
+		seedRealMLWHCompositeProductMetricRow(t, source, 49349121, multiRunCompositeProduct, `{"components":[{"id_run":49348,"position":1,"tag_index":2},{"id_run":49349,"position":1,"tag_index":2}]}`, base.Add(5*time.Minute))
+		_, err := source.Exec(
+			`UPDATE iseq_product_metrics SET id_iseq_flowcell_tmp = ?, id_run = ?, position = ?, tag_index = ? WHERE id_iseq_product = ?`,
+			4934801,
+			99999,
+			9,
+			9,
+			compositeProduct,
+		)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = source.Exec(
+			`UPDATE iseq_product_metrics SET id_iseq_flowcell_tmp = ?, id_run = ?, position = ?, tag_index = ? WHERE id_iseq_product = ?`,
+			4934801,
+			99999,
+			9,
+			9,
+			multiRunCompositeProduct,
+		)
+		convey.So(err, convey.ShouldBeNil)
+		seedRealMLWHIRODSLocationProductRow(t, source, 493481210, compositeProduct, "/seq/illumina/runs/49/49348", "lane1-2/plex1/49348_1-2#1.cram", base.Add(6*time.Minute))
+		seedRealMLWHIRODSLocationProductRow(t, source, 493491210, multiRunCompositeProduct, "/seq/illumina/runs/49/49348-49349", "plex2/49348-49349#2.cram", base.Add(6*time.Minute))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics, syncTableSeqProductIRODSLocations)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 2)
+		convey.So(reports[0].Inserted, convey.ShouldEqual, 6)
+
+		var idFlowcell, idRun, position, tagIndex int
+		var qc sql.NullInt64
+		err = cache.DB().QueryRow(
+			`SELECT id_iseq_flowcell_tmp, id_run, position, tag_index, qc FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`,
+			compositeProduct,
+		).Scan(&idFlowcell, &idRun, &position, &tagIndex, &qc)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(idFlowcell, convey.ShouldEqual, 4934801)
+		convey.So(idRun, convey.ShouldEqual, 49348)
+		convey.So(position, convey.ShouldEqual, 0)
+		convey.So(tagIndex, convey.ShouldEqual, 0)
+		convey.So(qcString(qc), convey.ShouldEqual, "pass")
+		convey.So(productMirrorRunForTest(t, cache.DB(), multiRunCompositeProduct), convey.ShouldEqual, 0)
+
+		var joinedQC sql.NullInt64
+		err = cache.DB().QueryRow(
+			`SELECT ipm.qc
+			 FROM seq_product_irods_locations_mirror spi
+			 INNER JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product
+			 WHERE spi.id_iseq_product = ? AND spi.irods_file_name = ?
+			 LIMIT 1`,
+			compositeProduct,
+			"49348_1-2#1.cram",
+		).Scan(&joinedQC)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(qcString(joinedQC), convey.ShouldEqual, "pass")
+	})
+}
+
+func TestRepairDroppedSeqProductIRODSLocationsIndexesAnalyzesAfterSparseCreate(t *testing.T) {
+	convey.Convey("Given a completed large MySQL iRODS locations mirror with sparse read indexes missing", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		highWater := time.Date(2026, time.July, 8, 10, 30, 0, 0, time.UTC)
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableSeqProductIRODSLocations).
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}).AddRow(formatSyncTime(highWater), nil, 1))
+		mock.ExpectBegin()
+		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", seqProductIRODSLocationsMirrorIndexSet.Table))).
+			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME"}))
+		mock.ExpectExec(regexp.QuoteMeta(buildMySQLCreateMirrorSecondaryIndexesStatement(seqProductIRODSLocationsMirrorIndexSet.Table, seqProductIRODSLocationsMirrorReadIndexes))).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectCommit()
+		mock.ExpectExec(regexp.QuoteMeta(`ANALYZE TABLE seq_product_irods_locations_mirror`)).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err = repairDroppedMirrorIndexSet(context.Background(), db, "mysql", seqProductIRODSLocationsMirrorIndexSet)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
+func TestRepairDroppedSeqProductIRODSLocationsIndexesSkipsAnalyzeWhenSparseIndexesAlreadyExist(t *testing.T) {
+	convey.Convey("Given a completed large MySQL iRODS locations mirror with sparse read indexes already present", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		highWater := time.Date(2026, time.July, 8, 10, 45, 0, 0, time.UTC)
+		indexRows := sqlmock.NewRows([]string{"INDEX_NAME"})
+		for _, index := range seqProductIRODSLocationsMirrorReadIndexes {
+			indexRows.AddRow(index.Name)
+		}
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableSeqProductIRODSLocations).
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}).AddRow(formatSyncTime(highWater), nil, 1))
+		mock.ExpectBegin()
+		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", seqProductIRODSLocationsMirrorIndexSet.Table))).
+			WillReturnRows(indexRows)
+		mock.ExpectCommit()
+
+		err = repairDroppedMirrorIndexSet(context.Background(), db, "mysql", seqProductIRODSLocationsMirrorIndexSet)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
 	})
 }
 
@@ -728,7 +1657,7 @@ func TestClientSyncFiveTableParallelJoinsErrors(t *testing.T) {
 }
 
 func TestClientSyncStartsEachTableWithinOverlapWindow(t *testing.T) {
-	convey.Convey("B1.3: Given an instrumented source, when Client.Sync runs, then each table starts within 100ms and on a distinct goroutine", t, func() {
+	convey.Convey("B1.3: Given an instrumented source, when Client.Sync runs, then non-iRODS tables start within 100ms and iRODS still runs on its own goroutine after the dependency wave", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
@@ -781,13 +1710,21 @@ func TestClientSyncStartsEachTableWithinOverlapWindow(t *testing.T) {
 		}
 
 		var first time.Time
-		for _, record := range starts.records {
+		nonIRODSTables := []string{
+			syncTableSample,
+			syncTableStudy,
+			syncTableIseqFlowcell,
+			syncTableIseqProductMetrics,
+		}
+		for _, table := range nonIRODSTables {
+			record := starts.records[table]
 			if first.IsZero() || record.At.Before(first) {
 				first = record.At
 			}
 		}
 
-		for _, record := range starts.records {
+		for _, table := range nonIRODSTables {
+			record := starts.records[table]
 			convey.So(record.At.Sub(first) <= 100*time.Millisecond, convey.ShouldBeTrue)
 		}
 		convey.So(goroutines, convey.ShouldHaveLength, 5)
@@ -1014,19 +1951,19 @@ func TestClientSyncLibrarySamplesUpsertIsIdempotentAcrossDuplicateTriples(t *tes
 }
 
 func TestClientSyncConsumesRowsInStreamingMode(t *testing.T) {
-	convey.Convey("B1.6: Given sources that block before row two, when Client.Sync runs, then each table consumes row one before the producer finishes even though the partial batch is not committed yet", t, func() {
+	convey.Convey("B1.6: Given non-iRODS sources that block before row two, when Client.Sync runs, then each non-iRODS table consumes row one before the producer finishes even though the partial batch is not committed yet", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		// Only the original five tables are seeded with blocking two-row sources
-		// for this streaming probe; the new fan-out tables have empty sources and
-		// emit no first row, so the wait targets just these streaming tables.
+		// Only the original non-iRODS tables are seeded with blocking two-row
+		// sources for this streaming probe. The iRODS table is intentionally
+		// staged after its enrichment dependencies, so it must not be part of the
+		// initial overlap wait.
 		streamingTables := []string{
 			syncTableSample,
 			syncTableStudy,
 			syncTableIseqFlowcell,
 			syncTableIseqProductMetrics,
-			syncTableSeqProductIRODSLocations,
 		}
 		releaseRow2 := make(chan struct{})
 		firstRowSeen := make(chan string, len(streamingTables))
@@ -1058,10 +1995,8 @@ func TestClientSyncConsumesRowsInStreamingMode(t *testing.T) {
 				afterFirstRow:   func() { firstRowSeen <- syncTableIseqProductMetrics },
 			},
 			syncTableSeqProductIRODSLocations: {
-				columns:         seqProductIRODSLocationsSyncSourceColumns,
-				rows:            [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file-1.cram", int64(1), "5001", now, now, "illumina"}, {int64(7002), "product-1002", "/seq", "run/file-2.cram", int64(2), "5002", now, now, "illumina"}},
-				blockBeforeRow2: releaseRow2,
-				afterFirstRow:   func() { firstRowSeen <- syncTableSeqProductIRODSLocations },
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file-1.cram", int64(1), "5001", now, now, "illumina"}, {int64(7002), "product-1002", "/seq", "run/file-2.cram", int64(2), "5002", now, now, "illumina"}},
 			},
 		})
 		defer func() { _ = source.Close() }()
@@ -1100,6 +2035,7 @@ func TestClientSyncConsumesRowsInStreamingMode(t *testing.T) {
 
 		close(releaseRow2)
 		convey.So(<-errCh, convey.ShouldBeNil)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 2)
 	})
 }
 
@@ -1428,8 +2364,9 @@ func TestClientSyncConstraintViolationNamesOffendingLibrarySampleRow(t *testing.
 		convey.So(err.Error(), convey.ShouldContainSubstring, syncTableIseqFlowcell)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "(Standard, 31)")
 		convey.So(err.Error(), convey.ShouldContainSubstring, "id_study_lims")
-		convey.So(reports, convey.ShouldHaveLength, len(supportedSyncTables))
+		convey.So(reports, convey.ShouldHaveLength, len(supportedSyncTables)-1)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 0)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 0)
 	})
 }
 
@@ -2072,6 +3009,16 @@ func TestClientSyncSampleColdLoadRecreatesIndexesAfterFinalBatchSQLite(t *testin
 	})
 }
 
+type a4IRODSExportFields struct {
+	idSampleTmp   int64
+	idRun         int64
+	position      int64
+	tagIndex      int64
+	qc            sql.NullInt64
+	isDeliverable sql.NullInt64
+	merged        int64
+}
+
 func TestCreateSampleMirrorSecondaryIndexesMySQLUsesSingleAlter(t *testing.T) {
 	convey.Convey("Given all sample_mirror secondary indexes are missing for a MySQL cache", t, func() {
 		statement := buildMySQLCreateSampleMirrorSecondaryIndexesStatement(sampleMirrorSecondaryIndexes)
@@ -2157,9 +3104,11 @@ func TestRepairDroppedProductMirrorIndexesCreatesRunLookupIndexWithoutPrimaryKey
 		mock.ExpectBegin()
 		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", iseqProductMetricsMirrorIndexSet.Table))).
 			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME"}).AddRow("ipm_mirror_sample_run_position_tag_idx"))
-		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE iseq_product_metrics_mirror ADD INDEX iseq_product_metrics_mirror_id_run_position_tag_index_idx(id_run, position, tag_index), ADD INDEX ipm_mirror_iseq_product_idx(id_iseq_product), ADD INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx(id_study_lims, id_run, position)`)).
+		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE iseq_product_metrics_mirror ADD INDEX ipm_mirror_iseq_product_idx(id_iseq_product), ADD INDEX iseq_product_metrics_mirror_id_run_position_tag_index_idx(id_run, position, tag_index), ADD INDEX ipm_mirror_sample_qc_idx(id_sample_tmp, qc), ADD INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx(id_study_lims, id_run, position), ADD INDEX ipm_mirror_study_sample_product_qc_idx(id_study_lims, id_sample_tmp, id_iseq_product, qc)`)).
 			WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectCommit()
+		mock.ExpectExec(regexp.QuoteMeta(`ANALYZE TABLE iseq_product_metrics_mirror`)).
+			WillReturnResult(sqlmock.NewResult(0, 0))
 
 		err = repairDroppedMirrorIndexSet(context.Background(), db, "mysql", iseqProductMetricsMirrorIndexSet)
 
@@ -2181,9 +3130,11 @@ func TestRepairDroppedProductMirrorIndexesCreatesRunAndSampleLookupIndexes(t *te
 		mock.ExpectBegin()
 		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", iseqProductMetricsMirrorIndexSet.Table))).
 			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME"}))
-		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE iseq_product_metrics_mirror ADD INDEX iseq_product_metrics_mirror_id_run_position_tag_index_idx(id_run, position, tag_index), ADD INDEX ipm_mirror_sample_run_position_tag_idx(id_sample_tmp, id_run, position, tag_index), ADD INDEX ipm_mirror_iseq_product_idx(id_iseq_product), ADD INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx(id_study_lims, id_run, position)`)).
+		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE iseq_product_metrics_mirror ADD INDEX ipm_mirror_iseq_product_idx(id_iseq_product), ADD INDEX iseq_product_metrics_mirror_id_run_position_tag_index_idx(id_run, position, tag_index), ADD INDEX ipm_mirror_sample_run_position_tag_idx(id_sample_tmp, id_run, position, tag_index), ADD INDEX ipm_mirror_sample_qc_idx(id_sample_tmp, qc), ADD INDEX iseq_product_metrics_mirror_id_study_lims_id_run_position_idx(id_study_lims, id_run, position), ADD INDEX ipm_mirror_study_sample_product_qc_idx(id_study_lims, id_sample_tmp, id_iseq_product, qc)`)).
 			WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectCommit()
+		mock.ExpectExec(regexp.QuoteMeta(`ANALYZE TABLE iseq_product_metrics_mirror`)).
+			WillReturnResult(sqlmock.NewResult(0, 0))
 
 		err = repairDroppedMirrorIndexSet(context.Background(), db, "mysql", iseqProductMetricsMirrorIndexSet)
 
@@ -2206,10 +3157,12 @@ func TestRepairDroppedProductMirrorIndexesDefersLargeSQLiteSecondaryRebuild(t *t
 		mock.ExpectExec(regexp.QuoteMeta(`PRAGMA busy_timeout = 5000`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM iseq_product_metrics_mirror`)).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(mysqlInlineMirrorIndexRowLimit + 1))
 		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("sqlite", iseqProductMetricsMirrorIndexSet.Table))).WillReturnRows(sqlmock.NewRows([]string{"name"}))
+		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS ipm_mirror_iseq_product_idx ON iseq_product_metrics_mirror(id_iseq_product)`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS iseq_product_metrics_mirror_id_run_position_tag_index_idx ON iseq_product_metrics_mirror(id_run, position, tag_index)`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS ipm_mirror_sample_run_position_tag_idx ON iseq_product_metrics_mirror(id_sample_tmp, id_run, position, tag_index)`)).WillReturnResult(sqlmock.NewResult(0, 0))
-		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS ipm_mirror_iseq_product_idx ON iseq_product_metrics_mirror(id_iseq_product)`)).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS ipm_mirror_sample_qc_idx ON iseq_product_metrics_mirror(id_sample_tmp, qc)`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS iseq_product_metrics_mirror_id_study_lims_id_run_position_idx ON iseq_product_metrics_mirror(id_study_lims, id_run, position)`)).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS ipm_mirror_study_sample_product_qc_idx ON iseq_product_metrics_mirror(id_study_lims, id_sample_tmp, id_iseq_product, qc)`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectCommit()
 
 		err = repairDroppedMirrorIndexSet(context.Background(), db, "sqlite", iseqProductMetricsMirrorIndexSet)
@@ -2503,9 +3456,10 @@ func TestIseqProductMetricsColdSyncUsesDescendingSourceIDKeyset(t *testing.T) {
 		convey.Convey("when the source query is built, then cold sync walks the source row id index instead of filesorting last_changed", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(coldIDSync, convey.ShouldBeTrue)
-			convey.So(args, convey.ShouldResemble, []any{sampleColdInitialID})
+			convey.So(args, convey.ShouldResemble, []any{sampleColdInitialID, sampleColdInitialID})
 			convey.So(query, convey.ShouldContainSubstring, "SELECT /*+ JOIN_FIXED_ORDER() */ ipm.id_iseq_product")
 			convey.So(query, convey.ShouldContainSubstring, "ipm.id_iseq_pr_metrics_tmp < ?")
+			convey.So(query, convey.ShouldContainSubstring, "path_ipm.id_iseq_pr_metrics_tmp < ?")
 			convey.So(query, convey.ShouldContainSubstring, "ORDER BY ipm.id_iseq_pr_metrics_tmp DESC")
 			convey.So(query, convey.ShouldNotContainSubstring, "ORDER BY ipm.last_changed")
 		})
@@ -3163,7 +4117,7 @@ func openSparseProductMirrorReplacementDBForTest(t *testing.T) *sql.DB {
 
 	statements := []string{
 		`CREATE TABLE iseq_product_metrics_mirror(id_iseq_product TEXT NOT NULL, id_iseq_flowcell_tmp INTEGER NOT NULL, id_run INTEGER NOT NULL, position INTEGER NOT NULL, tag_index INTEGER NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL, qc INTEGER NOT NULL, qc_lib INTEGER NOT NULL, qc_seq INTEGER NOT NULL, last_updated TEXT NOT NULL)`,
-		`CREATE TABLE seq_product_irods_locations_mirror(id_seq_product_irods_locations_tmp INTEGER NOT NULL, id_iseq_product TEXT NOT NULL, irods_root_collection TEXT NOT NULL, irods_data_relative_path TEXT NOT NULL, irods_collection TEXT NOT NULL, irods_file_name TEXT NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL, last_updated TEXT NOT NULL, created TEXT, platform TEXT NOT NULL)`,
+		`CREATE TABLE seq_product_irods_locations_mirror(id_seq_product_irods_locations_tmp INTEGER NOT NULL, id_iseq_product TEXT NOT NULL, irods_root_collection TEXT NOT NULL, irods_data_relative_path TEXT NOT NULL, irods_collection TEXT NOT NULL, irods_file_name TEXT NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL, last_updated TEXT NOT NULL, created TEXT, platform TEXT NOT NULL, id_run INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0, tag_index INTEGER NOT NULL DEFAULT 0, qc INTEGER, is_deliverable INTEGER, merged INTEGER NOT NULL DEFAULT 0)`,
 	}
 	for _, statement := range statements {
 		if _, err = db.Exec(statement); err != nil {
@@ -3279,8 +4233,9 @@ func sampleMirrorSecondaryIndexNames() []string {
 
 func iseqProductMetricsMirrorSecondaryIndexNames() []string {
 	return []string{
-		"ipm_mirror_iseq_product_idx",
+		"ipm_mirror_sample_qc_idx",
 		"ipm_mirror_sample_run_position_tag_idx",
+		"ipm_mirror_study_sample_product_qc_idx",
 		"iseq_product_metrics_mirror_id_iseq_flowcell_tmp_idx",
 		"iseq_product_metrics_mirror_id_run_position_tag_index_idx",
 		"iseq_product_metrics_mirror_id_study_lims_id_run_position_idx",
@@ -3296,9 +4251,12 @@ func seqProductIRODSLocationsMirrorSecondaryIndexNames() []string {
 	return []string{
 		"seq_product_irods_locations_mirror_id_sample_tmp_idx",
 		"spi_mirror_iseq_product_idx",
+		"spi_mirror_run_created_idx",
+		"spi_mirror_sample_tmp_created_idx",
 		"spi_mirror_sample_tmp_iseq_product_idx",
 		"spi_mirror_source_row_idx",
 		"spi_mirror_study_lims_created_idx",
+		"spi_mirror_study_lims_export_idx",
 		"spi_mirror_study_lims_iseq_product_idx",
 		"spi_mirror_study_lims_sample_tmp_idx",
 	}
@@ -3826,6 +4784,7 @@ type sampleSyncRowOverride struct {
 	UUIDSampleLims string
 	Name           string
 	DonorID        string
+	CommonName     string
 }
 
 func sampleSyncRowsForRange(startID, endID int64, base time.Time, overrides map[int64]sampleSyncRowOverride) [][]driver.Value {
@@ -3859,6 +4818,10 @@ func sampleSyncRowValues(id int64, lastUpdated time.Time, override sampleSyncRow
 	if donorID == "" {
 		donorID = fmt.Sprintf("donor-%d", id)
 	}
+	commonName := override.CommonName
+	if commonName == "" {
+		commonName = "human"
+	}
 
 	return []driver.Value{
 		id,
@@ -3871,7 +4834,7 @@ func sampleSyncRowValues(id int64, lastUpdated time.Time, override sampleSyncRow
 		fmt.Sprintf("acc-%d", id),
 		donorID,
 		int64(9606),
-		"human",
+		commonName,
 		fmt.Sprintf("desc-%d", id),
 		formatSyncTime(lastUpdated),
 	}

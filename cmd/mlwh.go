@@ -68,6 +68,30 @@ type mlwhSyncReportingClient interface {
 	SetSyncReportWriter(io.Writer)
 }
 
+type mlwhFreshnessClient interface {
+	Freshness(context.Context) (mlwh.Freshness, error)
+}
+
+func mlwhClientNeverSynced(ctx context.Context, client any) bool {
+	freshClient, ok := client.(mlwhFreshnessClient)
+	if !ok {
+		return false
+	}
+
+	freshness, err := freshClient.Freshness(ctx)
+	if err != nil || len(freshness.Tables) == 0 {
+		return false
+	}
+
+	for _, table := range freshness.Tables {
+		if table.EverSynced {
+			return false
+		}
+	}
+
+	return true
+}
+
 type mlwhServeAuthServer interface {
 	Router() *gin.Engine
 	AuthRouter() *gin.RouterGroup
@@ -309,13 +333,13 @@ func newMLWHCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "mlwh",
 		Short: "Manage the local cache of Sanger MLWH metadata",
+		Args:  cobra.NoArgs,
 		Long: strings.Join([]string{
 			"Manage the local cache of Sanger Multi-LIMS Warehouse (MLWH) metadata.",
 			"",
-			"wa keeps a mirrored local cache of five MLWH tables (study, sample,",
-			"iseq_flowcell, iseq_product_metrics and",
-			"seq_product_irods_locations) so commands such as 'wa results register' and 'wa",
-			"mlwhdiff serve' can resolve sample, study, run and library lookups",
+			"wa keeps a mirrored local cache of MLWH study, sample, sequencing",
+			"product and data-object tables so commands such as 'wa results",
+			"register' and 'wa mlwhdiff serve' can resolve sample, study, run and library lookups",
 			"without re-querying the upstream MySQL warehouse on every call.",
 			"Use these subcommands to populate and refresh that cache.",
 			"",
@@ -350,9 +374,12 @@ func newMLWHCommand() *cobra.Command {
 	command.AddCommand(newMLWHSyncCommand())
 	command.AddCommand(newMLWHInfoCommand())
 	command.AddCommand(newMLWHSearchCommand())
-	command.AddCommand(newMLWHIRODSCommand())
+	command.AddCommand(newMLWHExportCommand())
 	command.AddCommand(newMLWHManifestCommand())
+	command.AddCommand(newMLWHLatestCommand())
+	command.AddCommand(newMLWHRunsCommand())
 	command.AddCommand(newMLWHStudiesCommand())
+	command.AddCommand(newMLWHProgrammesCommand())
 	command.AddCommand(newMLWHPeopleCommand())
 	command.AddCommand(newMLWHServeCommand())
 

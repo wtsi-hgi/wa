@@ -108,6 +108,14 @@ var supportedSyncTables = []string{
 	syncTableUseqProductMetrics,
 }
 
+var seqProductIRODSLocationsSyncDependencies = map[string]struct{}{
+	syncTableIseqFlowcell:         {},
+	syncTableIseqProductMetrics:   {},
+	syncTablePacBioProductMetrics: {},
+	syncTableEseqProductMetrics:   {},
+	syncTableUseqProductMetrics:   {},
+}
+
 var sampleMirrorColumns = []string{
 	"id_sample_tmp",
 	"id_lims",
@@ -163,6 +171,14 @@ var iseqProductMetricsMirrorColumns = []string{
 	"last_updated",
 }
 
+var iseqFlowcellMirrorColumns = []string{
+	"id_iseq_flowcell_tmp",
+	"entity_type",
+	"pipeline_id_lims",
+	"id_sample_tmp",
+	"id_study_tmp",
+}
+
 var seqProductIRODSLocationsMirrorColumns = []string{
 	"id_seq_product_irods_locations_tmp",
 	"id_iseq_product",
@@ -175,6 +191,12 @@ var seqProductIRODSLocationsMirrorColumns = []string{
 	"last_updated",
 	"created",
 	"platform",
+	"id_run",
+	"position",
+	"tag_index",
+	"qc",
+	"is_deliverable",
+	"merged",
 }
 
 var seqProductIRODSLocationsMirrorKeyColumns = []string{
@@ -187,6 +209,8 @@ var syncStateColumns = []string{"table_name", "high_water", "last_run", "resume_
 // declaration order by the cold-load bulk build and the incremental
 // maintenance.
 var sampleSearchTokenColumns = []string{"token", "id_sample_tmp"}
+
+var commonNameWordMirrorColumns = []string{"word", "common_name"}
 
 // sampleSearchTokenPageQuery selects one id-range page of sample_mirror rows for
 // the cold-load token rebuild, ordered by the primary key so paging is a strict
@@ -216,10 +240,14 @@ const seqProductIRODSLocationsIlluminaCompositionRecovery = `SELECT path_ipm.id_
 const seqProductIRODSLocationsIlluminaLegacyRecovery = `SELECT path_ipm.id_iseq_product AS id_product, ifc.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM iseq_product_metrics path_ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = path_ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP'`
 
 // seqProductIRODSLocationsNonIlluminaRecovery is the PacBio/Elembio/Ultimagen
-// recovery, keyed on each platform's *_product_metrics id matching
+// and ONT recovery, keyed on each platform's source product/identity id matching
 // spi.id_product and recovering only id_sample_tmp/id_study_lims (platform always
 // comes from spi.seq_platform_name, never from which metrics table matched).
-const seqProductIRODSLocationsNonIlluminaRecovery = `SELECT pbm.id_pac_bio_product AS id_product, pbr.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM pac_bio_product_metrics pbm INNER JOIN pac_bio_run pbr ON pbr.id_pac_bio_tmp = pbm.id_pac_bio_tmp INNER JOIN study ON study.id_study_tmp = pbr.id_study_tmp AND study.id_lims = 'SQSCP' UNION ALL SELECT epm.id_eseq_product AS id_product, efc.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM eseq_product_metrics epm INNER JOIN eseq_flowcell efc ON efc.id_eseq_flowcell_tmp = epm.id_eseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = efc.id_study_tmp AND study.id_lims = 'SQSCP' UNION ALL SELECT upm.id_useq_product AS id_product, uw.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM useq_product_metrics upm INNER JOIN useq_wafer uw ON uw.id_useq_wafer_tmp = upm.id_useq_wafer_tmp INNER JOIN study ON study.id_study_tmp = uw.id_study_tmp AND study.id_lims = 'SQSCP'`
+const seqProductIRODSLocationsNonIlluminaRecovery = `SELECT pbm.id_pac_bio_product AS id_product, pbr.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM pac_bio_product_metrics pbm INNER JOIN pac_bio_run pbr ON pbr.id_pac_bio_tmp = pbm.id_pac_bio_tmp INNER JOIN study ON study.id_study_tmp = pbr.id_study_tmp AND study.id_lims = 'SQSCP' UNION ALL SELECT epm.id_eseq_product AS id_product, efc.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM eseq_product_metrics epm INNER JOIN eseq_flowcell efc ON efc.id_eseq_flowcell_tmp = epm.id_eseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = efc.id_study_tmp AND study.id_lims = 'SQSCP' UNION ALL SELECT upm.id_useq_product AS id_product, uw.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM useq_product_metrics upm INNER JOIN useq_wafer uw ON uw.id_useq_wafer_tmp = upm.id_useq_wafer_tmp INNER JOIN study ON study.id_study_tmp = uw.id_study_tmp AND study.id_lims = 'SQSCP' UNION ALL SELECT CAST(ofc.id_oseq_flowcell_tmp AS CHAR) AS id_product, ofc.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM oseq_flowcell ofc INNER JOIN study ON study.id_study_tmp = ofc.id_study_tmp AND study.id_lims = 'SQSCP'`
+
+const iseqProductMetricsSelectColumns = `ipm.id_iseq_product, ipm.id_iseq_pr_metrics_tmp, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ipm.id_sample_tmp, ipm.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_changed`
+
+const iseqProductMetricsDirectSingleComponentOnly = `NOT EXISTS (SELECT 1 FROM JSON_TABLE(COALESCE(ipm.iseq_composition_tmp, '{"components":[]}'), '$.components[1]' COLUMNS(component_run INT PATH '$.id_run')) direct_component)`
 
 // sampleSearchTokenIndex is the (token, id_sample_tmp) covering index that backs
 // the index-order sample search page. It is dropped before the cold-load bulk
@@ -282,12 +310,29 @@ type syncMirrorIndexSet struct {
 
 var sampleMirrorIndexSet = syncMirrorIndexSet{Table: "sample_mirror", SyncTable: syncTableSample, Indexes: sampleMirrorSecondaryIndexes}
 
+var iseqFlowcellMirrorSecondaryIndexes = []syncIndexSpec{
+	{Name: "iseq_flowcell_mirror_entity_type_idx", Column: "entity_type"},
+}
+
+var iseqFlowcellMirrorReadIndexes = []syncIndexSpec{
+	{Name: "iseq_flowcell_mirror_id_iseq_flowcell_tmp_idx", Column: "id_iseq_flowcell_tmp"},
+	{Name: "iseq_flowcell_mirror_entity_type_idx", Column: "entity_type"},
+}
+
+var iseqFlowcellMirrorIndexSet = syncMirrorIndexSet{
+	Table:            "iseq_flowcell_mirror",
+	SyncTable:        syncTableIseqFlowcell,
+	PrimaryKeyColumn: "id_iseq_flowcell_tmp",
+	Indexes:          iseqFlowcellMirrorSecondaryIndexes,
+}
+
 var iseqProductMetricsMirrorSecondaryIndexes = []syncIndexSpec{
 	{Name: "iseq_product_metrics_mirror_id_run_position_tag_index_idx", Column: "id_run, position, tag_index"},
 	{Name: "ipm_mirror_sample_run_position_tag_idx", Column: "id_sample_tmp, id_run, position, tag_index"},
+	{Name: "ipm_mirror_sample_qc_idx", Column: "id_sample_tmp, qc"},
 	{Name: "iseq_product_metrics_mirror_id_iseq_flowcell_tmp_idx", Column: "id_iseq_flowcell_tmp"},
-	{Name: "ipm_mirror_iseq_product_idx", Column: "id_iseq_product"},
 	{Name: "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx", Column: "id_study_lims, id_run, position"},
+	{Name: "ipm_mirror_study_sample_product_qc_idx", Column: "id_study_lims, id_sample_tmp, id_iseq_product, qc"},
 }
 
 var iseqProductMetricsMirrorIndexSet = syncMirrorIndexSet{
@@ -301,7 +346,10 @@ var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
 	{Name: "spi_mirror_source_row_idx", Column: "id_seq_product_irods_locations_tmp"},
 	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
 	{Name: "spi_mirror_sample_tmp_iseq_product_idx", Column: "id_sample_tmp, id_iseq_product"},
+	{Name: "spi_mirror_sample_tmp_created_idx", Column: "id_sample_tmp, created"},
+	{Name: "spi_mirror_run_created_idx", Column: "id_run, created"},
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
+	{Name: "spi_mirror_study_lims_export_idx", Column: "id_study_lims, id_run, position, tag_index, id_seq_product_irods_locations_tmp"},
 	{Name: "spi_mirror_study_lims_iseq_product_idx", Column: "id_study_lims, id_iseq_product"},
 	{Name: "spi_mirror_iseq_product_idx", Column: "id_iseq_product"},
 }
@@ -314,12 +362,18 @@ var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
 // overview, the availability joins) full-scan the ~9M-row mirror (~52s) instead of
 // being index-served (~1s). Omitting it here was the root cause of the slow study
 // pages, because the large-cold-load schema-shape tolerance then accepted the
-// missing index as expected drift.
+// missing index as expected drift. It MUST also include the (id_iseq_product)
+// index: during the same cold load, seq_product_irods_locations enriches each
+// iRODS batch from this mirror by product id before the deferred primary key is
+// rebuilt, so without a sparse product-id index every iRODS batch full-scans the
+// ~9M-row product mirror.
 var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
+	{Name: "ipm_mirror_iseq_product_idx", Column: "id_iseq_product"},
 	{Name: "iseq_product_metrics_mirror_id_run_position_tag_index_idx", Column: "id_run, position, tag_index"},
 	{Name: "ipm_mirror_sample_run_position_tag_idx", Column: "id_sample_tmp, id_run, position, tag_index"},
-	{Name: "ipm_mirror_iseq_product_idx", Column: "id_iseq_product"},
+	{Name: "ipm_mirror_sample_qc_idx", Column: "id_sample_tmp, qc"},
 	{Name: "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx", Column: "id_study_lims, id_run, position"},
+	{Name: "ipm_mirror_study_sample_product_qc_idx", Column: "id_study_lims, id_sample_tmp, id_iseq_product, qc"},
 }
 
 // seqProductIRODSLocationsMirrorReadIndexes is the subset of the iRODS-locations
@@ -327,20 +381,24 @@ var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
 // (the mirror is too large -- ~9M rows -- to rebuild every declared index inline).
 // It includes the upstream source-row index so warm incremental replacement can
 // remove stale cached paths by stable source identity without scanning the mirror.
-// It MUST include the (id_study_lims, id_iseq_product) index: the per-platform
-// status-breakdown query joins each platform's product id to spi.id_iseq_product
-// scoped by id_study_lims, and without this index that linkage full-scans the mirror
-// per study (the ~5s study page). It MUST also include the (id_iseq_product) index:
-// the D1 run-scoped iRODS join and the D2 manifest per-product iRODS LEFT JOIN match
-// on id_iseq_product alone, so without it those joins full-scan the mirror until the
-// full index set is rebuilt. Omitting either here would let the large-cold-load
-// schema-shape tolerance accept the missing index as expected drift, silently
-// recreating the slow path.
+// It MUST include the (id_study_lims, id_sample_tmp) index: the per-platform
+// status-breakdown query intersects each platform's study samples with study-scoped
+// iRODS rows by sample, and without this index that linkage full-scans the mirror
+// per study. It MUST also include the (id_iseq_product) and (id_study_lims,
+// id_iseq_product) indexes: the D1 run-scoped iRODS join and the D2 manifest
+// per-product iRODS LEFT JOIN match on product id, so without them those joins
+// full-scan the mirror until the full index set is rebuilt. Omitting these here
+// would let the large-cold-load schema-shape tolerance accept the missing indexes
+// as expected drift, silently recreating slow paths.
 var seqProductIRODSLocationsMirrorReadIndexes = []syncIndexSpec{
 	{Name: "spi_mirror_source_row_idx", Column: "id_seq_product_irods_locations_tmp"},
 	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
 	{Name: "spi_mirror_sample_tmp_iseq_product_idx", Column: "id_sample_tmp, id_iseq_product"},
+	{Name: "spi_mirror_sample_tmp_created_idx", Column: "id_sample_tmp, created"},
+	{Name: "spi_mirror_run_created_idx", Column: "id_run, created"},
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
+	{Name: "spi_mirror_study_lims_created_idx", Column: "id_study_lims, created"},
+	{Name: "spi_mirror_study_lims_export_idx", Column: "id_study_lims, id_run, position, tag_index, id_seq_product_irods_locations_tmp"},
 	{Name: "spi_mirror_study_lims_iseq_product_idx", Column: "id_study_lims, id_iseq_product"},
 	{Name: "spi_mirror_iseq_product_idx", Column: "id_iseq_product"},
 }
@@ -352,10 +410,96 @@ var seqProductIRODSLocationsMirrorIndexSet = syncMirrorIndexSet{
 	Indexes:               seqProductIRODSLocationsMirrorSecondaryIndexes,
 }
 
+var iseqRunStatusMirrorSecondaryIndexes = []syncIndexSpec{
+	{Name: "iseq_run_status_mirror_id_run_idx", Column: "id_run"},
+	{Name: "iseq_run_status_mirror_id_run_date_idx", Column: "id_run, date"},
+	{Name: "iseq_run_status_mirror_normalised_date_idx", Column: "normalised_date, id_run_status_dict, id_run"},
+}
+
+var iseqRunStatusMirrorReadIndexes = []syncIndexSpec{
+	{Name: "iseq_run_status_mirror_normalised_date_idx", Column: "normalised_date, id_run_status_dict, id_run"},
+}
+
+var iseqRunStatusMirrorIndexSet = syncMirrorIndexSet{
+	Table:     "iseq_run_status_mirror",
+	SyncTable: syncTableIseqRunStatus,
+	Indexes:   iseqRunStatusMirrorSecondaryIndexes,
+}
+
+var pacBioRunWellMetricsMirrorSecondaryIndexes = []syncIndexSpec{
+	{Name: "pac_bio_run_well_metrics_mirror_run_name_well_label_idx", Column: "pac_bio_run_name, well_label"},
+	{Name: "pac_bio_run_well_metrics_mirror_normalised_date_idx", Column: "normalised_date"},
+}
+
+var pacBioRunWellMetricsMirrorReadIndexes = []syncIndexSpec{
+	{Name: "pac_bio_run_well_metrics_mirror_normalised_date_idx", Column: "normalised_date"},
+}
+
+var pacBioRunWellMetricsMirrorIndexSet = syncMirrorIndexSet{
+	Table:     "pac_bio_run_well_metrics_mirror",
+	SyncTable: syncTablePacBioRunWellMetrics,
+	Indexes:   pacBioRunWellMetricsMirrorSecondaryIndexes,
+}
+
+var oseqFlowcellMirrorSecondaryIndexes = []syncIndexSpec{
+	{Name: "oseq_flowcell_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
+	{Name: "oseq_flowcell_mirror_id_study_lims_idx", Column: "id_study_lims"},
+	{Name: "oseq_flowcell_mirror_experiment_name_idx", Column: "experiment_name"},
+	{Name: "oseq_flowcell_mirror_last_updated_idx", Column: "last_updated"},
+	{Name: "oseq_flowcell_mirror_normalised_date_idx", Column: "normalised_date"},
+}
+
+var oseqFlowcellMirrorReadIndexes = []syncIndexSpec{
+	{Name: "oseq_flowcell_mirror_last_updated_idx", Column: "last_updated"},
+	{Name: "oseq_flowcell_mirror_normalised_date_idx", Column: "normalised_date"},
+}
+
+var oseqFlowcellMirrorIndexSet = syncMirrorIndexSet{
+	Table:     "oseq_flowcell_mirror",
+	SyncTable: syncTableOseqFlowcell,
+	Indexes:   oseqFlowcellMirrorSecondaryIndexes,
+}
+
+var useqRunMetricsMirrorSecondaryIndexes = []syncIndexSpec{
+	{Name: "useq_run_metrics_mirror_run_name_idx", Column: "run_name"},
+	{Name: "useq_run_metrics_mirror_normalised_date_idx", Column: "normalised_date"},
+}
+
+var useqRunMetricsMirrorReadIndexes = []syncIndexSpec{
+	{Name: "useq_run_metrics_mirror_normalised_date_idx", Column: "normalised_date"},
+}
+
+var useqRunMetricsMirrorIndexSet = syncMirrorIndexSet{
+	Table:     "useq_run_metrics_mirror",
+	SyncTable: syncTableUseqRunMetrics,
+	Indexes:   useqRunMetricsMirrorSecondaryIndexes,
+}
+
+var eseqRunLaneMetricsMirrorSecondaryIndexes = []syncIndexSpec{
+	{Name: "eseq_run_lane_metrics_mirror_id_run_idx", Column: "id_run"},
+	{Name: "eseq_run_lane_metrics_mirror_normalised_date_idx", Column: "normalised_date"},
+}
+
+var eseqRunLaneMetricsMirrorReadIndexes = []syncIndexSpec{
+	{Name: "eseq_run_lane_metrics_mirror_normalised_date_idx", Column: "normalised_date"},
+}
+
+var eseqRunLaneMetricsMirrorIndexSet = syncMirrorIndexSet{
+	Table:     "eseq_run_lane_metrics_mirror",
+	SyncTable: syncTableEseqRunLaneMetrics,
+	Indexes:   eseqRunLaneMetricsMirrorSecondaryIndexes,
+}
+
 var syncMirrorIndexSets = []syncMirrorIndexSet{
 	sampleMirrorIndexSet,
+	iseqFlowcellMirrorIndexSet,
 	iseqProductMetricsMirrorIndexSet,
 	seqProductIRODSLocationsMirrorIndexSet,
+	iseqRunStatusMirrorIndexSet,
+	pacBioRunWellMetricsMirrorIndexSet,
+	oseqFlowcellMirrorIndexSet,
+	useqRunMetricsMirrorIndexSet,
+	eseqRunLaneMetricsMirrorIndexSet,
 }
 
 type sampleSyncMode int
@@ -446,6 +590,115 @@ func readSampleSearchTokenPage(ctx context.Context, tx *sql.Tx, pageQuery string
 	return page, maxID, nil
 }
 
+type commonNameWordMirrorRow struct {
+	Word       string
+	CommonName string
+}
+
+// rebuildCommonNameWordMirror repopulates common_name_word_mirror from the
+// distinct common_name vocabulary in sample_mirror. It reuses sampleSearchTokens
+// so organism word membership and sample word-prefix search share the exact same
+// lowercased [a-z0-9] token boundaries.
+func rebuildCommonNameWordMirror(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM `+commonNameWordMirrorTable); err != nil {
+		return fmt.Errorf("mlwh: clear common name word mirror before rebuild: %w", err)
+	}
+
+	commonNames, err := readDistinctCommonNames(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	rows := make([]commonNameWordMirrorRow, 0, len(commonNames)*2)
+	for _, commonName := range commonNames {
+		for _, word := range sampleSearchTokens(commonName) {
+			rows = append(rows, commonNameWordMirrorRow{Word: word, CommonName: commonName})
+		}
+	}
+
+	return insertCommonNameWordMirrorRows(ctx, tx, rows)
+}
+
+func readDistinctCommonNames(ctx context.Context, tx *sql.Tx) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT common_name FROM sample_mirror ORDER BY common_name`)
+	if err != nil {
+		return nil, fmt.Errorf("mlwh: read distinct common names for word mirror: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	commonNames := []string{}
+	for rows.Next() {
+		var commonName string
+		if err = rows.Scan(&commonName); err != nil {
+			return nil, fmt.Errorf("mlwh: scan common name for word mirror: %w", err)
+		}
+
+		commonNames = append(commonNames, commonName)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("mlwh: read distinct common names for word mirror: %w", err)
+	}
+
+	return commonNames, nil
+}
+
+func insertCommonNameWordMirrorRows(ctx context.Context, tx *sql.Tx, rows []commonNameWordMirrorRow) error {
+	return forEachRowChunk(rows, syncStatementRowLimit(len(commonNameWordMirrorColumns)), func(chunk []commonNameWordMirrorRow) error {
+		stmt := buildBulkInsertStatement(commonNameWordMirrorTable, commonNameWordMirrorColumns, len(chunk))
+		args := make([]any, 0, len(chunk)*len(commonNameWordMirrorColumns))
+		for _, row := range chunk {
+			args = append(args, row.Word, row.CommonName)
+		}
+
+		if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
+			return fmt.Errorf("mlwh: insert common name word mirror batch: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func iseqProductMetricsSourceQuery(directHint, directWhere, compositeWhere, orderBy string) string {
+	return `SELECT ` + iseqProductMetricsSelectColumns + ` FROM (` +
+		iseqProductMetricsDirectSourceSelect(directHint, directWhere) +
+		` UNION ALL ` +
+		iseqProductMetricsCompositeSourceSelect(compositeWhere) +
+		`) ipm ORDER BY ` + orderBy
+}
+
+func iseqProductMetricsDirectSourceSelect(hint, whereClause string) string {
+	return iseqProductMetricsDirectSourceSelectWithWhere(hint, whereClause, iseqProductMetricsDirectSingleComponentOnly)
+}
+
+func iseqProductMetricsDirectSourceSelectWithWhere(hint, whereClause, extraWhere string) string {
+	where := `(` + whereClause + `)`
+	if extraWhere != "" {
+		where += ` AND ` + extraWhere
+	}
+
+	return `SELECT ` + hint + `ipm.id_iseq_product, ipm.id_iseq_pr_metrics_tmp, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ifc.id_sample_tmp, study.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_changed FROM iseq_product_metrics ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE ` + where
+}
+
+func iseqProductMetricsCompositeSourceSelect(whereClause string) string {
+	return `SELECT path_ipm.id_iseq_product, path_ipm.id_iseq_pr_metrics_tmp, COALESCE(path_ipm.id_iseq_flowcell_tmp, MIN(ipm.id_iseq_flowcell_tmp)) AS id_iseq_flowcell_tmp, CASE WHEN MIN(component.component_run) = MAX(component.component_run) THEN MIN(component.component_run) ELSE 0 END AS id_run, 0 AS position, 0 AS tag_index, MIN(ifc.id_sample_tmp) AS id_sample_tmp, MIN(study.id_study_lims) AS id_study_lims, path_ipm.qc, path_ipm.qc_lib, path_ipm.qc_seq, path_ipm.last_changed FROM iseq_product_metrics path_ipm INNER JOIN JSON_TABLE(path_ipm.iseq_composition_tmp, '$.components[*]' COLUMNS(component_run INT PATH '$.id_run', component_position INT PATH '$.position', component_tag_index INT PATH '$.tag_index')) component ON TRUE INNER JOIN iseq_product_metrics ipm ON ipm.id_run = component.component_run AND ipm.position = component.component_position AND ipm.tag_index = component.component_tag_index INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE (` + whereClause + `) AND EXISTS (SELECT 1 FROM seq_product_irods_locations spi WHERE spi.id_product = path_ipm.id_iseq_product AND LOWER(spi.seq_platform_name) = 'illumina') GROUP BY path_ipm.id_iseq_product, path_ipm.id_iseq_pr_metrics_tmp, path_ipm.id_iseq_flowcell_tmp, path_ipm.qc, path_ipm.qc_lib, path_ipm.qc_seq, path_ipm.last_changed HAVING COUNT(*) > 1`
+}
+
+func iseqProductMetricsLegacySyncSourceQuery() string {
+	return iseqProductMetricsLegacyDirectSourceSelect("", `ipm.last_changed >= ?`) + ` ORDER BY ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`
+}
+
+func iseqProductMetricsLegacyDirectSourceSelect(hint, whereClause string) string {
+	return iseqProductMetricsDirectSourceSelectWithWhere(hint, whereClause, "")
+}
+
+func iseqProductMetricsLegacyColdSyncSourceQuery() string {
+	return iseqProductMetricsLegacyDirectSourceSelect("/*+ JOIN_FIXED_ORDER() */ ", `ipm.id_iseq_pr_metrics_tmp < ?`) + ` ORDER BY ipm.id_iseq_pr_metrics_tmp DESC`
+}
+
+func iseqProductMetricsLegacySyncSourceQueryFromCursor() string {
+	return iseqProductMetricsLegacyDirectSourceSelect("", `(ipm.last_changed > ?) OR (ipm.last_changed = ? AND ipm.id_iseq_pr_metrics_tmp > ?)`) + ` ORDER BY ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`
+}
+
 // seqProductIRODSLocationsSourceQuery assembles the full iRODS source SELECT for
 // the given Illumina recovery branch (composition or legacy) and WHERE/ORDER
 // suffix. The outer FROM stays seq_product_irods_locations spi and the recovery
@@ -455,6 +708,28 @@ func seqProductIRODSLocationsSourceQuery(illuminaRecovery, whereOrderSuffix stri
 		` FROM seq_product_irods_locations spi INNER JOIN (` +
 		illuminaRecovery + ` UNION ALL ` + seqProductIRODSLocationsNonIlluminaRecovery +
 		`) recovery ON recovery.id_product = spi.id_product ` + whereOrderSuffix
+}
+
+func iseqProductMetricsLegacySyncQuery(state syncStateRecord) (string, []any, bool, error) {
+	if shouldUseAscendingIDColdSync(state, iseqProductMetricsIDResumeMode) {
+		id, err := descendingIDColdResumeID(state, iseqProductMetricsIDResumeMode)
+		if err != nil {
+			return "", nil, true, err
+		}
+
+		return iseqProductMetricsLegacyColdSyncSourceQuery(), []any{id}, true, nil
+	}
+
+	if state.ResumeCursor == nil {
+		return iseqProductMetricsLegacySyncSourceQuery(), []any{formatSyncTime(state.HighWater)}, false, nil
+	}
+
+	lastUpdated, idIseqProduct, err := parseTwoPartResumeCursor(*state.ResumeCursor)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("mlwh: parse iseq_product_metrics resume cursor: %w", err)
+	}
+
+	return iseqProductMetricsLegacySyncSourceQueryFromCursor(), []any{formatSyncTime(lastUpdated), formatSyncTime(lastUpdated), idIseqProduct}, false, nil
 }
 
 // insertSampleSearchTokensFromMirror reads every sample's id and searchable
@@ -660,23 +935,23 @@ func sampleSyncSourceQueryFromCursor() string {
 }
 
 func flowcellSyncSourceQuery() string {
-	return `SELECT iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp, study.id_study_lims, iseq_flowcell.legacy_library_id, iseq_flowcell.id_library_lims, iseq_flowcell.last_updated FROM iseq_flowcell INNER JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp AND study.id_lims = 'SQSCP' WHERE iseq_flowcell.last_updated >= ? ORDER BY iseq_flowcell.last_updated, iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp, study.id_study_lims`
+	return `SELECT iseq_flowcell.id_iseq_flowcell_tmp, iseq_flowcell.entity_type, iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp, iseq_flowcell.id_study_tmp, study.id_study_lims, iseq_flowcell.legacy_library_id, iseq_flowcell.id_library_lims, iseq_flowcell.last_updated FROM iseq_flowcell INNER JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp AND study.id_lims = 'SQSCP' WHERE iseq_flowcell.last_updated >= ? ORDER BY iseq_flowcell.last_updated, iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp, study.id_study_lims`
 }
 
 func flowcellSyncSourceQueryFromCursor() string {
-	return `SELECT iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp, study.id_study_lims, iseq_flowcell.legacy_library_id, iseq_flowcell.id_library_lims, iseq_flowcell.last_updated FROM iseq_flowcell INNER JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp AND study.id_lims = 'SQSCP' WHERE (iseq_flowcell.last_updated > ?) OR (iseq_flowcell.last_updated = ? AND (iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp, study.id_study_lims) > (?, ?, ?)) ORDER BY iseq_flowcell.last_updated, iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp, study.id_study_lims`
+	return `SELECT iseq_flowcell.id_iseq_flowcell_tmp, iseq_flowcell.entity_type, iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp, iseq_flowcell.id_study_tmp, study.id_study_lims, iseq_flowcell.legacy_library_id, iseq_flowcell.id_library_lims, iseq_flowcell.last_updated FROM iseq_flowcell INNER JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp AND study.id_lims = 'SQSCP' WHERE (iseq_flowcell.last_updated > ?) OR (iseq_flowcell.last_updated = ? AND (iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp, study.id_study_lims) > (?, ?, ?)) ORDER BY iseq_flowcell.last_updated, iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp, study.id_study_lims`
 }
 
 func iseqProductMetricsSyncSourceQuery() string {
-	return `SELECT ipm.id_iseq_product, ipm.id_iseq_pr_metrics_tmp, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ifc.id_sample_tmp, study.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_changed FROM iseq_product_metrics ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE ipm.last_changed >= ? ORDER BY ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`
+	return iseqProductMetricsSourceQuery("", `ipm.last_changed >= ?`, `path_ipm.last_changed >= ?`, `ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`)
 }
 
 func iseqProductMetricsColdSyncSourceQuery() string {
-	return `SELECT /*+ JOIN_FIXED_ORDER() */ ipm.id_iseq_product, ipm.id_iseq_pr_metrics_tmp, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ifc.id_sample_tmp, study.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_changed FROM iseq_product_metrics ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE ipm.id_iseq_pr_metrics_tmp < ? ORDER BY ipm.id_iseq_pr_metrics_tmp DESC`
+	return iseqProductMetricsSourceQuery("/*+ JOIN_FIXED_ORDER() */ ", `ipm.id_iseq_pr_metrics_tmp < ?`, `path_ipm.id_iseq_pr_metrics_tmp < ?`, `ipm.id_iseq_pr_metrics_tmp DESC`)
 }
 
 func iseqProductMetricsSyncSourceQueryFromCursor() string {
-	return `SELECT ipm.id_iseq_product, ipm.id_iseq_pr_metrics_tmp, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ifc.id_sample_tmp, study.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_changed FROM iseq_product_metrics ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE (ipm.last_changed > ?) OR (ipm.last_changed = ? AND ipm.id_iseq_pr_metrics_tmp > ?) ORDER BY ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`
+	return iseqProductMetricsSourceQuery("", `(ipm.last_changed > ?) OR (ipm.last_changed = ? AND ipm.id_iseq_pr_metrics_tmp > ?)`, `(path_ipm.last_changed > ?) OR (path_ipm.last_changed = ? AND path_ipm.id_iseq_pr_metrics_tmp > ?)`, `ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`)
 }
 
 func seqProductIRODSLocationsSyncSourceQuery() string {
@@ -732,9 +1007,12 @@ func AllSyncSourceQueries() []SyncSourceQuery {
 		{Name: "sample from cursor", Query: sampleSyncSourceQueryFromCursor(), ArgCount: 3},
 		{Name: "iseq_flowcell incremental", Query: flowcellSyncSourceQuery(), ArgCount: 1},
 		{Name: "iseq_flowcell from cursor", Query: flowcellSyncSourceQueryFromCursor(), ArgCount: 5},
-		{Name: "iseq_product_metrics incremental", Query: iseqProductMetricsSyncSourceQuery(), ArgCount: 1},
-		{Name: "iseq_product_metrics cold", Query: iseqProductMetricsColdSyncSourceQuery(), ArgCount: 1},
-		{Name: "iseq_product_metrics from cursor", Query: iseqProductMetricsSyncSourceQueryFromCursor(), ArgCount: 3},
+		{Name: "iseq_product_metrics incremental", Query: iseqProductMetricsSyncSourceQuery(), ArgCount: 2},
+		{Name: "iseq_product_metrics cold", Query: iseqProductMetricsColdSyncSourceQuery(), ArgCount: 2},
+		{Name: "iseq_product_metrics from cursor", Query: iseqProductMetricsSyncSourceQueryFromCursor(), ArgCount: 6},
+		{Name: "iseq_product_metrics legacy incremental", Query: iseqProductMetricsLegacySyncSourceQuery(), ArgCount: 1},
+		{Name: "iseq_product_metrics legacy cold", Query: iseqProductMetricsLegacyColdSyncSourceQuery(), ArgCount: 1},
+		{Name: "iseq_product_metrics legacy from cursor", Query: iseqProductMetricsLegacySyncSourceQueryFromCursor(), ArgCount: 3},
 		{Name: "seq_product_irods_locations incremental", Query: seqProductIRODSLocationsSyncSourceQuery(), ArgCount: 1},
 		{Name: "seq_product_irods_locations cold", Query: seqProductIRODSLocationsColdSyncSourceQuery(), ArgCount: 1},
 		{Name: "seq_product_irods_locations from cursor", Query: seqProductIRODSLocationsSyncSourceQueryFromCursor(), ArgCount: 3},
@@ -764,6 +1042,182 @@ type syncStateRecord struct {
 	ResumeCursor   *string
 	IndexesDropped bool
 	Exists         bool
+}
+
+func dedupeIseqFlowcellMirrorBatch(rows []flowcellSyncRow) []flowcellSyncRow {
+	indices := make(map[int64]int, len(rows))
+	deduped := make([]flowcellSyncRow, 0, len(rows))
+	for _, row := range rows {
+		if row.IDIseqFlowcellTmp == 0 {
+			continue
+		}
+
+		index, ok := indices[row.IDIseqFlowcellTmp]
+		if ok {
+			deduped[index] = row
+			continue
+		}
+
+		indices[row.IDIseqFlowcellTmp] = len(deduped)
+		deduped = append(deduped, row)
+	}
+
+	return deduped
+}
+
+func upsertIseqFlowcellMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []flowcellSyncRow) error {
+	return forEachRowChunk(rows, syncStatementRowLimit(len(iseqFlowcellMirrorColumns)), func(chunk []flowcellSyncRow) error {
+		stmt := buildBulkUpsertStatement(dialect, "iseq_flowcell_mirror", iseqFlowcellMirrorColumns, []string{"id_iseq_flowcell_tmp"}, len(chunk))
+		args := make([]any, 0, len(chunk)*len(iseqFlowcellMirrorColumns))
+		for _, row := range chunk {
+			args = append(args, row.IDIseqFlowcellTmp, row.EntityType, row.PipelineIDLims, row.IDSampleTmp, row.IDStudyTmp)
+		}
+		if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
+			return fmt.Errorf("mlwh: upsert iseq_flowcell_mirror batch: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func enrichSeqProductIRODSLocationsExportFields(ctx context.Context, db *sql.DB, rows []seqProductIRODSLocationsSyncRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	fieldsByProduct, err := loadSeqProductIRODSLocationsExportFields(ctx, db, rows)
+	if err != nil {
+		return err
+	}
+
+	for i := range rows {
+		fields, ok := fieldsByProduct[seqProductIRODSLocationsExportFieldsKey(rows[i])]
+		if !ok {
+			continue
+		}
+
+		rows[i].IDRun = fields.IDRun
+		rows[i].Position = fields.Position
+		rows[i].TagIndex = fields.TagIndex
+		rows[i].QC = fields.QC
+		rows[i].IsDeliverable = fields.IsDeliverable
+		rows[i].Merged = fields.Merged
+	}
+
+	return nil
+}
+
+func loadSeqProductIRODSLocationsExportFields(ctx context.Context, db *sql.DB, rows []seqProductIRODSLocationsSyncRow) (map[string]seqProductIRODSLocationsExportFields, error) {
+	idsByPlatform := seqProductIRODSLocationsProductIDsByPlatform(rows)
+	fieldsByProduct := make(map[string]seqProductIRODSLocationsExportFields, len(rows))
+
+	queries := map[string]string{
+		"illumina":  `SELECT ipm.id_iseq_product, ipm.id_run, ipm.position, ipm.tag_index, ipm.qc, CASE WHEN ifc.entity_type IN ('library', 'library_indexed') THEN 1 ELSE 0 END, CASE WHEN ipm.position = 0 AND ipm.tag_index = 0 THEN 1 ELSE 0 END FROM iseq_product_metrics_mirror ipm LEFT JOIN iseq_flowcell_mirror ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp WHERE ipm.id_iseq_product IN (%s)`,
+		"elembio":   `SELECT id_eseq_product, id_run, 0, 0, qc, CASE WHEN is_sequencing_control = 0 THEN 1 ELSE 0 END, 0 FROM eseq_product_metrics_mirror WHERE id_eseq_product IN (%s)`,
+		"ultimagen": `SELECT id_useq_product, id_run, 0, 0, qc, CASE WHEN is_sequencing_control = 0 THEN 1 ELSE 0 END, 0 FROM useq_product_metrics_mirror WHERE id_useq_product IN (%s)`,
+		"pacbio":    `SELECT id_pac_bio_product, 0, 0, 0, qc, NULL, 0 FROM pac_bio_product_metrics_mirror WHERE id_pac_bio_product IN (%s)`,
+	}
+
+	for platform, ids := range idsByPlatform {
+		query, ok := queries[platform]
+		if !ok {
+			continue
+		}
+		if err := loadSeqProductIRODSLocationsExportFieldsForPlatform(ctx, db, fmt.Sprintf(query, sqlPlaceholders(len(ids))), platform, ids, fieldsByProduct); err != nil {
+			return nil, err
+		}
+	}
+
+	return fieldsByProduct, nil
+}
+
+func seqProductIRODSLocationsProductIDsByPlatform(rows []seqProductIRODSLocationsSyncRow) map[string][]string {
+	seenByPlatform := map[string]map[string]struct{}{}
+	for _, row := range rows {
+		platform := seqProductIRODSLocationsExportPlatform(row.Platform)
+		if platform == "" {
+			continue
+		}
+		if _, ok := seenByPlatform[platform]; !ok {
+			seenByPlatform[platform] = map[string]struct{}{}
+		}
+		seenByPlatform[platform][row.IDIseqProduct] = struct{}{}
+	}
+
+	idsByPlatform := make(map[string][]string, len(seenByPlatform))
+	for platform, seen := range seenByPlatform {
+		ids := make([]string, 0, len(seen))
+		for id := range seen {
+			ids = append(ids, id)
+		}
+		idsByPlatform[platform] = ids
+	}
+
+	return idsByPlatform
+}
+
+func seqProductIRODSLocationsExportPlatform(platform string) string {
+	normalized := strings.ToLower(strings.TrimSpace(platform))
+	switch normalized {
+	case "illumina":
+		return "illumina"
+	case "elembio", "element":
+		return "elembio"
+	case "ultimagen", "ultima":
+		return "ultimagen"
+	case "pacbio", "pac_bio", "pac bio":
+		return "pacbio"
+	default:
+		return ""
+	}
+}
+
+func loadSeqProductIRODSLocationsExportFieldsForPlatform(ctx context.Context, db *sql.DB, query, platform string, productIDs []string, fieldsByProduct map[string]seqProductIRODSLocationsExportFields) error {
+	if len(productIDs) == 0 {
+		return nil
+	}
+
+	args := make([]any, 0, len(productIDs))
+	for _, id := range productIDs {
+		args = append(args, id)
+	}
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("mlwh: query %s seq_product_irods_locations export fields: %w", platform, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var productID string
+		var fields seqProductIRODSLocationsExportFields
+		if err = rows.Scan(&productID, &fields.IDRun, &fields.Position, &fields.TagIndex, &fields.QC, &fields.IsDeliverable, &fields.Merged); err != nil {
+			return fmt.Errorf("mlwh: scan %s seq_product_irods_locations export fields: %w", platform, err)
+		}
+		fieldsByProduct[platform+"\x00"+productID] = fields
+	}
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("mlwh: read %s seq_product_irods_locations export fields: %w", platform, err)
+	}
+
+	return nil
+}
+
+func sqlPlaceholders(count int) string {
+	if count <= 0 {
+		return ""
+	}
+
+	return strings.TrimRight(strings.Repeat("?,", count), ",")
+}
+
+func seqProductIRODSLocationsExportFieldsKey(row seqProductIRODSLocationsSyncRow) string {
+	platform := seqProductIRODSLocationsExportPlatform(row.Platform)
+	if platform == "" {
+		return ""
+	}
+
+	return platform + "\x00" + row.IDIseqProduct
 }
 
 func seqProductIRODSLocationsBatchDedupeKey(row seqProductIRODSLocationsSyncRow) seqProductIRODSLocationsDedupeKey {
@@ -1089,7 +1543,6 @@ func syncFlowcellTable(ctx context.Context, cache Cache, source Querier, state s
 
 	report := SyncReport{Table: syncTableIseqFlowcell, HighWater: state.HighWater}
 	sawRows := false
-	seen := make(map[string]struct{})
 	batchSize := syncBatchSizeForState(state)
 	assumeInserted := syncStateCanAssumeInserted(state)
 	batch := make([]flowcellSyncRow, 0, batchSize)
@@ -1124,16 +1577,6 @@ func syncFlowcellTable(ctx context.Context, cache Cache, source Querier, state s
 			report.HighWater = row.LastUpdated
 		}
 
-		if row.PipelineIDLims == "" {
-			continue
-		}
-
-		key := flowcellKey(row)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-
 		batch = append(batch, row)
 		if len(batch) == batchSize {
 			if err = flushBatch(); err != nil {
@@ -1157,9 +1600,91 @@ func syncFlowcellTable(ctx context.Context, cache Cache, source Querier, state s
 	return report, sawRows, nil
 }
 
-// Sync syncs all supported cache tables in parallel.
+// Sync syncs supported cache tables, staging iRODS after the product mirrors it
+// reads for A4 export-field enrichment.
 func (c *Client) Sync(ctx context.Context) ([]SyncReport, error) {
 	return c.syncTables(ctx)
+}
+
+func splitSeqProductIRODSLocationsSyncStage(tables []string) ([]string, bool) {
+	preIRODS := make([]string, 0, len(tables))
+	syncIRODS := false
+	for _, table := range tables {
+		if table == syncTableSeqProductIRODSLocations {
+			syncIRODS = true
+			continue
+		}
+
+		preIRODS = append(preIRODS, table)
+	}
+
+	return preIRODS, syncIRODS
+}
+
+func syncResultsContainDependencyError(results []syncResult, dependencies map[string]struct{}) bool {
+	for _, result := range results {
+		if result.err == nil {
+			continue
+		}
+		if _, ok := dependencies[result.report.Table]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+func collectSyncResults(results []syncResult, reportCapacity int) ([]SyncReport, []error) {
+	reports := make([]SyncReport, 0, reportCapacity)
+	var errs []error
+	for _, result := range results {
+		if result.report.Table != "" && (result.err == nil || syncReportHasObservedState(result.report)) {
+			reports = append(reports, result.report)
+		}
+
+		if result.err != nil {
+			errs = append(errs, result.err)
+		}
+	}
+
+	return reports, errs
+}
+
+type syncResult struct {
+	report SyncReport
+	err    error
+}
+
+func (c *Client) syncTablesInParallel(ctx context.Context, tables []string) []syncResult {
+	resultCh := make(chan syncResult, len(tables))
+	var waitGroup sync.WaitGroup
+
+	for _, table := range tables {
+		waitGroup.Add(1)
+
+		go func(table string) {
+			defer waitGroup.Done()
+
+			report, syncErr := c.syncTable(ctx, table)
+			if syncErr != nil {
+				resultCh <- syncResult{report: report, err: fmt.Errorf("%s: %w", table, syncErr)}
+				return
+			}
+
+			c.emitSyncReport(report)
+			resultCh <- syncResult{report: report}
+		}(table)
+	}
+
+	waitGroup.Wait()
+	close(resultCh)
+
+	results := make([]syncResult, 0, len(tables))
+	for result := range resultCh {
+		results = append(results, result)
+	}
+
+	return results
 }
 
 type sqliteSyncWritePragmaState struct {
@@ -1268,43 +1793,18 @@ func (c *Client) syncTables(ctx context.Context) (reports []SyncReport, err erro
 		return c.runSyncRunner(ctx, tables)
 	}
 
-	type syncResult struct {
-		report SyncReport
-		err    error
-	}
-
-	resultCh := make(chan syncResult, len(tables))
-	var waitGroup sync.WaitGroup
-
-	for _, table := range tables {
-		waitGroup.Add(1)
-
-		go func(table string) {
-			defer waitGroup.Done()
-
-			report, syncErr := c.syncTable(ctx, table)
-			if syncErr != nil {
-				resultCh <- syncResult{report: report, err: fmt.Errorf("%s: %w", table, syncErr)}
-				return
-			}
-
-			c.emitSyncReport(report)
-			resultCh <- syncResult{report: report}
-		}(table)
-	}
-
-	waitGroup.Wait()
-	close(resultCh)
-
-	reports = make([]SyncReport, 0, len(tables))
 	var errs []error
-	for result := range resultCh {
-		if result.report.Table != "" && (result.err == nil || syncReportHasObservedState(result.report)) {
-			reports = append(reports, result.report)
-		}
+	preIRODSTables, syncIRODS := splitSeqProductIRODSLocationsSyncStage(tables)
+	preIRODSResults := c.syncTablesInParallel(ctx, preIRODSTables)
+	reports, errs = collectSyncResults(preIRODSResults, len(tables))
 
-		if result.err != nil {
-			errs = append(errs, result.err)
+	if syncIRODS && !syncResultsContainDependencyError(preIRODSResults, seqProductIRODSLocationsSyncDependencies) {
+		if repairErr := c.repairSeqProductIRODSLocationsDependencyIndexes(ctx); repairErr != nil {
+			errs = append(errs, repairErr)
+		} else {
+			irodsReports, irodsErrs := collectSyncResults(c.syncTablesInParallel(ctx, []string{syncTableSeqProductIRODSLocations}), 1)
+			reports = append(reports, irodsReports...)
+			errs = append(errs, irodsErrs...)
 		}
 	}
 	if len(errs) == 0 {
@@ -1505,6 +2005,44 @@ type seqProductIRODSLocationsDedupeKey struct {
 	irodsFileName   string
 }
 
+type seqProductIRODSLocationsExportFields struct {
+	IDRun         int64
+	Position      int64
+	TagIndex      int64
+	QC            sql.NullInt64
+	IsDeliverable sql.NullInt64
+	Merged        int64
+}
+
+func normalisedDateFromNullableTime(value sql.NullString) string {
+	if !value.Valid || value.String == "" {
+		return ""
+	}
+
+	parsed, err := parseSyncTimeString(value.String)
+	if err != nil {
+		return ""
+	}
+
+	return formatSyncDate(parsed)
+}
+
+func formatSyncDate(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+
+	return value.UTC().Format(time.DateOnly)
+}
+
+func (c *Client) repairSeqProductIRODSLocationsDependencyIndexes(ctx context.Context) error {
+	if c.cache.Dialect() != "mysql" {
+		return nil
+	}
+
+	return repairDroppedMirrorIndexSet(ctx, c.cache.DB(), c.cache.Dialect(), iseqProductMetricsMirrorIndexSet)
+}
+
 func (c *Client) emitSyncRetry(table string, attempt int, retryErr error, backoff time.Duration) {
 	var writer io.Writer = os.Stderr
 	if c != nil && c.syncRetryWriter != nil {
@@ -1588,6 +2126,7 @@ func parseSyncTimeString(raw string) (time.Time, error) {
 		time.RFC3339,
 		"2006-01-02 15:04:05.999999999",
 		"2006-01-02 15:04:05",
+		time.DateOnly,
 	}
 	for _, layout := range layouts {
 		parsed, err := time.Parse(layout, raw)
@@ -1774,11 +2313,13 @@ func iseqProductMetricsSyncQuery(state syncStateRecord) (string, []any, bool, er
 			return "", nil, true, err
 		}
 
-		return iseqProductMetricsColdSyncSourceQuery(), []any{id}, true, nil
+		return iseqProductMetricsColdSyncSourceQuery(), []any{id, id}, true, nil
 	}
 
 	if state.ResumeCursor == nil {
-		return iseqProductMetricsSyncSourceQuery(), []any{formatSyncTime(state.HighWater)}, false, nil
+		highWater := formatSyncTime(state.HighWater)
+
+		return iseqProductMetricsSyncSourceQuery(), []any{highWater, highWater}, false, nil
 	}
 
 	lastUpdated, idIseqProduct, err := parseTwoPartResumeCursor(*state.ResumeCursor)
@@ -1786,7 +2327,9 @@ func iseqProductMetricsSyncQuery(state syncStateRecord) (string, []any, bool, er
 		return "", nil, false, fmt.Errorf("mlwh: parse iseq_product_metrics resume cursor: %w", err)
 	}
 
-	return iseqProductMetricsSyncSourceQueryFromCursor(), []any{formatSyncTime(lastUpdated), formatSyncTime(lastUpdated), idIseqProduct}, false, nil
+	formattedLastUpdated := formatSyncTime(lastUpdated)
+
+	return iseqProductMetricsSyncSourceQueryFromCursor(), []any{formattedLastUpdated, formattedLastUpdated, idIseqProduct, formattedLastUpdated, formattedLastUpdated, idIseqProduct}, false, nil
 }
 
 func seqProductIRODSLocationsSyncQuery(state syncStateRecord) (string, []any, bool, error) {
@@ -1885,7 +2428,7 @@ func finalizeMirrorSyncState(ctx context.Context, cache Cache, indexSet syncMirr
 			if shouldDeferMirrorIndexRebuild(cache) {
 				deferredIndexesDropped = true
 			} else {
-				repaired, err := createMirrorDroppedIndexes(ctx, tx, cache.Dialect(), indexSet)
+				repaired, _, err := createMirrorDroppedIndexes(ctx, tx, cache.Dialect(), indexSet)
 				if err != nil {
 					return err
 				}
@@ -1911,6 +2454,11 @@ func finalizeSampleSyncState(ctx context.Context, cache Cache, highWater time.Ti
 				deferredIndexesDropped = !repaired
 			}
 		}
+		if !indexesDropped {
+			if err := rebuildCommonNameWordMirror(ctx, tx); err != nil {
+				return err
+			}
+		}
 
 		return writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableSample, highWater, nil, deferredIndexesDropped)
 	})
@@ -1927,7 +2475,10 @@ func rebuildSampleMirrorColdLoadIndexes(ctx context.Context, tx *sql.Tx, dialect
 	if err := rebuildSampleSearchTokenIndex(ctx, tx, dialect); err != nil {
 		return false, err
 	}
-	if err := createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
+	if _, err := createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
+		return false, err
+	}
+	if err := rebuildCommonNameWordMirror(ctx, tx); err != nil {
 		return false, err
 	}
 
@@ -2071,91 +2622,93 @@ func dropMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string,
 	return nil
 }
 
-func createSampleMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string) error {
+func createSampleMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string) (bool, error) {
 	return createMirrorSecondaryIndexes(ctx, tx, dialect, sampleMirrorIndexSet)
 }
 
-func createMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) error {
+func createMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (bool, error) {
 	existing, err := mirrorExistingIndexes(ctx, tx, dialect, indexSet)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	missing := missingMirrorSecondaryIndexes(existing, indexSet.Indexes)
 	if len(missing) == 0 {
-		return nil
+		return false, nil
 	}
 	if dialect == "mysql" {
 		if _, err = tx.ExecContext(ctx, buildMySQLCreateMirrorSecondaryIndexesStatement(indexSet.Table, missing)); err != nil {
-			return fmt.Errorf("mlwh: create %s indexes: %w", indexSet.Table, err)
+			return false, fmt.Errorf("mlwh: create %s indexes: %w", indexSet.Table, err)
 		}
 
-		return nil
+		return true, nil
 	}
 
 	for _, index := range missing {
 		stmt := fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s(%s)`, index.Name, indexSet.Table, index.Column)
 
 		if _, err = tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("mlwh: create %s index %s: %w", indexSet.Table, index.Name, err)
+			return false, fmt.Errorf("mlwh: create %s index %s: %w", indexSet.Table, index.Name, err)
 		}
 	}
 
-	return nil
+	return true, nil
 }
 
-func createMirrorDroppedIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (bool, error) {
+func createMirrorDroppedIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (bool, bool, error) {
 	if dialect == "mysql" {
-		repaired, err := createMySQLSparseMirrorReadIndexes(ctx, tx, dialect, indexSet)
+		repaired, createdIndexes, err := createMySQLSparseMirrorReadIndexes(ctx, tx, dialect, indexSet)
 		if repaired || err != nil {
-			return false, err
+			return false, createdIndexes, err
 		}
 	}
 	if dialect == "sqlite" {
 		rebuildInline, err := shouldRebuildSQLiteMirrorSecondaryIndexesInline(ctx, tx, indexSet)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if !rebuildInline {
 			if err := createSQLiteSparseMirrorReadIndexes(ctx, tx, dialect, indexSet); err != nil {
-				return false, err
+				return false, false, err
 			}
 
-			return false, nil
+			return false, false, nil
 		}
 	}
 
 	if dialect == "mysql" && indexSet.PrimaryKeyColumn != "" {
 		rebuildInline, err := shouldRebuildMySQLMirrorSecondaryIndexesInline(ctx, tx, indexSet)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if !rebuildInline {
-			return false, nil
+			return false, false, nil
 		}
 	}
 
 	if err := createMirrorPrimaryKey(ctx, tx, dialect, indexSet); err != nil {
-		return false, err
+		return false, false, err
 	}
-	if err := createMirrorSecondaryIndexes(ctx, tx, dialect, indexSet); err != nil {
-		return false, err
+	createdIndexes, err := createMirrorSecondaryIndexes(ctx, tx, dialect, indexSet)
+	if err != nil {
+		return false, false, err
 	}
 
-	return true, nil
+	return true, createdIndexes, nil
 }
 
-func createMySQLSparseMirrorReadIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (bool, error) {
+func createMySQLSparseMirrorReadIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (bool, bool, error) {
 	readIndexSet, ok := mySQLSparseMirrorReadIndexSet(indexSet)
 	if !ok {
-		return false, nil
+		return false, false, nil
 	}
 
-	if err := createMirrorSecondaryIndexes(ctx, tx, dialect, readIndexSet); err != nil {
-		return false, err
+	createdIndexes, err := createMirrorSecondaryIndexes(ctx, tx, dialect, readIndexSet)
+	if err != nil {
+		return false, false, err
 	}
 
-	return true, nil
+	return true, createdIndexes, nil
 }
 
 func createSQLiteSparseMirrorReadIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) error {
@@ -2164,7 +2717,9 @@ func createSQLiteSparseMirrorReadIndexes(ctx context.Context, tx *sql.Tx, dialec
 		return nil
 	}
 
-	return createMirrorSecondaryIndexes(ctx, tx, dialect, readIndexSet)
+	_, err := createMirrorSecondaryIndexes(ctx, tx, dialect, readIndexSet)
+
+	return err
 }
 
 func shouldRebuildSQLiteMirrorSecondaryIndexesInline(ctx context.Context, tx *sql.Tx, indexSet syncMirrorIndexSet) (bool, error) {
@@ -2178,10 +2733,22 @@ func shouldRebuildSQLiteMirrorSecondaryIndexesInline(ctx context.Context, tx *sq
 
 func mySQLSparseMirrorReadIndexSet(indexSet syncMirrorIndexSet) (syncMirrorIndexSet, bool) {
 	switch indexSet.Table {
+	case iseqFlowcellMirrorIndexSet.Table:
+		return syncMirrorIndexSet{Table: indexSet.Table, Indexes: iseqFlowcellMirrorReadIndexes}, true
 	case iseqProductMetricsMirrorIndexSet.Table:
 		return syncMirrorIndexSet{Table: indexSet.Table, Indexes: iseqProductMetricsMirrorReadIndexes}, true
 	case seqProductIRODSLocationsMirrorIndexSet.Table:
 		return syncMirrorIndexSet{Table: indexSet.Table, Indexes: seqProductIRODSLocationsMirrorReadIndexes}, true
+	case iseqRunStatusMirrorIndexSet.Table:
+		return syncMirrorIndexSet{Table: indexSet.Table, Indexes: iseqRunStatusMirrorReadIndexes}, true
+	case pacBioRunWellMetricsMirrorIndexSet.Table:
+		return syncMirrorIndexSet{Table: indexSet.Table, Indexes: pacBioRunWellMetricsMirrorReadIndexes}, true
+	case oseqFlowcellMirrorIndexSet.Table:
+		return syncMirrorIndexSet{Table: indexSet.Table, Indexes: oseqFlowcellMirrorReadIndexes}, true
+	case useqRunMetricsMirrorIndexSet.Table:
+		return syncMirrorIndexSet{Table: indexSet.Table, Indexes: useqRunMetricsMirrorReadIndexes}, true
+	case eseqRunLaneMetricsMirrorIndexSet.Table:
+		return syncMirrorIndexSet{Table: indexSet.Table, Indexes: eseqRunLaneMetricsMirrorReadIndexes}, true
 	default:
 		return syncMirrorIndexSet{}, false
 	}
@@ -2458,6 +3025,16 @@ func syncIseqProductMetricsTable(ctx context.Context, cache Cache, source Querie
 
 	rows, err := source.QueryContext(ctx, query, args...)
 	if err != nil {
+		if isUnsupportedCompositionQueryError(err) {
+			legacyQuery, legacyArgs, _, legacyErr := iseqProductMetricsLegacySyncQuery(state)
+			if legacyErr != nil {
+				return SyncReport{}, false, legacyErr
+			}
+
+			rows, err = source.QueryContext(ctx, legacyQuery, legacyArgs...)
+		}
+	}
+	if err != nil {
 		return SyncReport{}, false, fmt.Errorf("mlwh: query iseq_product_metrics sync source: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
@@ -2642,6 +3219,12 @@ type seqProductIRODSLocationsSyncRow struct {
 	LastUpdated           time.Time
 	Created               sql.NullTime
 	Platform              string
+	IDRun                 int64
+	Position              int64
+	TagIndex              int64
+	QC                    sql.NullInt64
+	IsDeliverable         sql.NullInt64
+	Merged                int64
 }
 
 func syncSeqProductIRODSLocationsTable(ctx context.Context, cache Cache, source Querier, state syncStateRecord) (SyncReport, bool, error) {
@@ -2686,6 +3269,9 @@ func syncSeqProductIRODSLocationsTable(ctx context.Context, cache Cache, source 
 		if coldIDSync {
 			batchHighWater = report.HighWater
 			resumeCursor = encodeAscendingIDResumeCursor(seqProductIRODSLocationsIDMode, batch[len(batch)-1].SourceRowID)
+		}
+		if enrichErr := enrichSeqProductIRODSLocationsExportFields(ctx, cache.DB(), batch); enrichErr != nil {
+			return enrichErr
 		}
 		result, applyErr := writeSeqProductIRODSLocationsBatch(ctx, cache, batch, batchHighWater, &resumeCursor, state.IndexesDropped, assumeInserted)
 		if applyErr != nil {
@@ -2853,6 +3439,12 @@ func seqProductIRODSLocationsMirrorRowArgs(row seqProductIRODSLocationsSyncRow) 
 		formatSyncTime(row.LastUpdated),
 		formatNullableSyncTime(row.Created),
 		row.Platform,
+		row.IDRun,
+		row.Position,
+		row.TagIndex,
+		row.QC,
+		row.IsDeliverable,
+		row.Merged,
 	}
 }
 
@@ -3080,16 +3672,20 @@ func upsertStudyMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, row
 }
 
 type flowcellSyncRow struct {
-	PipelineIDLims string
-	IDSampleTmp    int64
-	IDStudyLims    string
-	LibraryID      string
-	IDLibraryLims  string
-	LastUpdated    time.Time
+	IDIseqFlowcellTmp int64
+	EntityType        string
+	PipelineIDLims    string
+	IDSampleTmp       int64
+	IDStudyTmp        int64
+	IDStudyLims       string
+	LibraryID         string
+	IDLibraryLims     string
+	LastUpdated       time.Time
 }
 
 func scanFlowcellSyncRow(rows *sql.Rows) (flowcellSyncRow, error) {
 	var row flowcellSyncRow
+	var entityType sql.NullString
 	var pipelineIDLims sql.NullString
 	var studyLims sql.NullString
 	var libraryID sql.NullString
@@ -3104,12 +3700,15 @@ func scanFlowcellSyncRow(rows *sql.Rows) (flowcellSyncRow, error) {
 		err = rows.Scan(&pipelineIDLims, &row.IDSampleTmp, &studyLims, &lastUpdated)
 	case 6:
 		err = rows.Scan(&pipelineIDLims, &row.IDSampleTmp, &studyLims, &libraryID, &idLibraryLims, &lastUpdated)
+	case 9:
+		err = rows.Scan(&row.IDIseqFlowcellTmp, &entityType, &pipelineIDLims, &row.IDSampleTmp, &row.IDStudyTmp, &studyLims, &libraryID, &idLibraryLims, &lastUpdated)
 	default:
 		err = fmt.Errorf("unexpected column count %d", len(columns))
 	}
 	if err != nil {
 		return flowcellSyncRow{}, fmt.Errorf("mlwh: scan iseq_flowcell sync row: %w", err)
 	}
+	row.EntityType = nullStringValue(entityType)
 	row.PipelineIDLims = nullStringValue(pipelineIDLims)
 	row.IDStudyLims = nullStringValue(studyLims)
 	row.LibraryID = nullStringValue(libraryID)
@@ -3280,6 +3879,10 @@ func dedupeFlowcellBatch(rows []flowcellSyncRow) []flowcellSyncRow {
 	indices := make(map[string]int, len(rows))
 	deduped := make([]flowcellSyncRow, 0, len(rows))
 	for _, row := range rows {
+		if row.PipelineIDLims == "" {
+			continue
+		}
+
 		key := flowcellKey(row)
 		index, ok := indices[key]
 		if ok {
@@ -3479,8 +4082,9 @@ func writeStudyBatch(ctx context.Context, cache Cache, rows []studySyncRow, high
 }
 
 func writeFlowcellBatch(ctx context.Context, cache Cache, rows []flowcellSyncRow, highWater time.Time, resumeCursor *string, assumeInserted bool) (syncBatchResult, error) {
-	deduped := dedupeFlowcellBatch(rows)
-	if err := validateFlowcellBatch(deduped); err != nil {
+	libraryRows := dedupeFlowcellBatch(rows)
+	mirrorRows := dedupeIseqFlowcellMirrorBatch(rows)
+	if err := validateFlowcellBatch(libraryRows); err != nil {
 		return syncBatchResult{}, err
 	}
 
@@ -3489,17 +4093,20 @@ func writeFlowcellBatch(ctx context.Context, cache Cache, rows []flowcellSyncRow
 		existing := 0
 		if !assumeInserted {
 			var err error
-			existing, err = countExistingKeys(ctx, tx, "library_samples", []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims"}, flowcellBatchKeys(deduped))
+			existing, err = countExistingKeys(ctx, tx, "library_samples", []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims"}, flowcellBatchKeys(libraryRows))
 			if err != nil {
 				return err
 			}
 		}
-		if err := upsertLibrarySampleBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
+		if err := upsertLibrarySampleBatch(ctx, tx, cache.Dialect(), libraryRows); err != nil {
+			return err
+		}
+		if err := upsertIseqFlowcellMirrorBatch(ctx, tx, cache.Dialect(), mirrorRows); err != nil {
 			return err
 		}
 
 		result.Updated = existing
-		result.Inserted = len(deduped) - existing
+		result.Inserted = len(libraryRows) - existing
 		if err := writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableIseqFlowcell, highWater, resumeCursor, false); err != nil {
 			return err
 		}
