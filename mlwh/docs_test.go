@@ -373,6 +373,15 @@ func TestGlossaryDefinesPeopleAndProductExportConceptsG2(t *testing.T) {
 			convey.So(terms, convey.ShouldContainKey, "file-type filter (filename suffix)")
 		})
 
+		convey.Convey("it distinguishes product-export file_type from iRODS endpoint filtering", func() {
+			convey.So(glossary, convey.ShouldContainSubstring, "For run-, study- and sample-scoped iRODS endpoints")
+			convey.So(glossary, convey.ShouldContainSubstring, "A valid-but-unmatched suffix yields an EMPTY result")
+			convey.So(glossary, convey.ShouldContainSubstring, "the matching `/count` honours the same filter")
+			convey.So(glossary, convey.ShouldContainSubstring, "For product exports")
+			convey.So(glossary, convey.ShouldContainSubstring, "only restricts the attached `irods_path`")
+			convey.So(glossary, convey.ShouldContainSubstring, "does not filter product rows or change `Total`")
+		})
+
 		convey.Convey("it defines the remaining G2 study-metadata and people concepts", func() {
 			for _, want := range []string{
 				"faculty sponsor",

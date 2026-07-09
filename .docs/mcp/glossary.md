@@ -193,11 +193,13 @@ ordered by `(id_run, position, tag_index, name)` for determinism.
 When an `irods_path` column is requested, the export attaches a product's iRODS
 data object via a set-at-once LEFT JOIN on `id_iseq_product`, restricted by the
 [file-type filter](#file-type-filter-filename-suffix) when a suffix is given.
-The filter only affects the attached path, not the product row set: products
-with no matching iRODS object still appear with an empty `irods_path`, and
-`irods_unmatched` / `reason` can describe known gaps. Product exports are
-bounded-page/keyset-cursor results by default, and like all iRODS-bearing results
-are complete only up to the last sync (see `cache_synced_at` / `/freshness`).
+For product exports, `file_type` only restricts the attached `irods_path` value:
+it does not filter product rows or change `Total`. Products with no matching
+iRODS object for the requested suffix still appear with an empty `irods_path`,
+and `irods_unmatched` / `reason` can describe known gaps. Product exports are
+bounded-page/keyset-cursor results by default, and like all iRODS-bearing
+results are complete only up to the last sync (see `cache_synced_at` /
+`/freshness`).
 
 ### File-type filter (filename suffix)
 
@@ -205,12 +207,19 @@ A **file-type filter** is a filename-suffix match, not a real file-type column:
 `seq_product_irods_locations` has no file-type column, so the filter matches
 `irods_file_name LIKE '%.<token>'` case-insensitively, stripping a single leading
 `.` from the token. It is an OPEN suffix - any token is allowed (e.g. `cram`,
-`bam`, `bai`). A valid-but-unmatched suffix yields an EMPTY result, NOT an error,
-and the matching `/count` honours the same filter so an empty result is
-distinguishable from "no data". The filter is a 400-class bad request only when
-the value is empty/whitespace or contains `%`, `_`, or `/`. It applies to the
-run-, study- and sample-scoped iRODS endpoints and to
-[product export](#product-export) `irods_path` attachments.
+`bam`, `bai`). The filter is a 400-class bad request only when the value is
+empty/whitespace or contains `%`, `_`, or `/`.
+
+For run-, study- and sample-scoped iRODS endpoints, `file_type` filters the
+returned iRODS data-object rows.
+A valid-but-unmatched suffix yields an EMPTY result, NOT an error.
+For these iRODS endpoints, the matching `/count` honours the same filter so an
+empty result is distinguishable from "no data".
+
+For product exports, the same suffix rule is used only while attaching an
+optional `irods_path`: it only restricts the attached `irods_path`, does not
+filter product rows or change `Total`, and leaves the product row present with an
+empty `irods_path` when no object matches the suffix.
 
 ### Faculty sponsor
 
