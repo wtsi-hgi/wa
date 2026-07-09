@@ -194,6 +194,14 @@ func TestEndpointReferenceIncludesParamsDescriptionAndResponseG1(t *testing.T) {
 			convey.So(section, convey.ShouldContainSubstring, "for file exports, restricts exported file rows by filename suffix")
 			convey.So(section, convey.ShouldNotContainSubstring, "matching /count honours the same filter")
 		})
+
+		convey.Convey("the export endpoint documents products deliverables_only as a product-row filter", func() {
+			section := registryEntrySectionForTest(t, reference, "/export/:children/:parent_kind/:parent_id")
+			convey.So(section, convey.ShouldContainSubstring, "for products, filters product rows using Illumina `iseq_flowcell.entity_type IN ('library','library_indexed')`")
+			convey.So(section, convey.ShouldContainSubstring, "changes product rows and `Total` without depending on attached iRODS rows")
+			convey.So(section, convey.ShouldContainSubstring, "for file exports, restricts exported file rows to deliverable rows")
+			convey.So(section, convey.ShouldContainSubstring, "omit to use the relationship default, which is true for CRAM irods/files/sample-crams exports")
+		})
 	})
 }
 
