@@ -792,3 +792,69 @@ func TestMLWHExportServerFlagUsesRemoteClientD1b(t *testing.T) {
 		convey.So(stub.closed, convey.ShouldBeTrue)
 	})
 }
+
+func withFailingOpenMLWHExportClient(t *testing.T) *bool {
+	t.Helper()
+	t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(localhost:3306)/mlwarehouse")
+	t.Setenv("WA_MLWH_SERVER_URL", "")
+	t.Setenv("WA_MLWH_BACKEND_URL", "")
+	t.Setenv("WA_ENV", "")
+	t.Setenv("WA_TEST_SEQMETA_PORT", "")
+	t.Setenv("WA_DEV_SEQMETA_PORT", "")
+	t.Setenv("WA_PROD_SEQMETA_PORT", "")
+
+	opened := false
+	original := openMLWHExportClient
+	t.Cleanup(func() { openMLWHExportClient = original })
+	openMLWHExportClient = func(context.Context, mlwh.Config) (mlwhExportClient, error) {
+		opened = true
+
+		return &stubMLWHExportClient{
+			export: func(context.Context, mlwh.ExportRelationship, string, mlwh.ExportOptions) (mlwh.ExportResult, error) {
+				return mlwh.ExportResult{}, errors.New("export client should not be used")
+			},
+		}, nil
+	}
+
+	return &opened
+}
+
+func TestMLWHExportRejectsInvalidBoundedFlagsBeforeOpeningClient(t *testing.T) {
+	convey.Convey("Given products of study S1, when --limit is negative, then export rejects it before opening the client", t, func() {
+		opened := withFailingOpenMLWHExportClient(t)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "export", "products", "study", "S1", "--limit", "-1"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(*opened, convey.ShouldBeFalse)
+		convey.So(output, convey.ShouldContainSubstring, "--limit")
+		convey.So(output, convey.ShouldContainSubstring, "non-negative")
+		convey.So(output, convey.ShouldNotContainSubstring, "open mlwh client")
+	})
+
+	convey.Convey("Given products of study S1, when --cursor is supplied without --limit, then export asks for an explicit bounded page size before opening the client", t, func() {
+		opened := withFailingOpenMLWHExportClient(t)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "export", "products", "study", "S1", "--cursor", "cursor-1"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(*opened, convey.ShouldBeFalse)
+		convey.So(output, convey.ShouldContainSubstring, "--cursor")
+		convey.So(output, convey.ShouldContainSubstring, "--limit")
+		convey.So(output, convey.ShouldContainSubstring, "positive")
+		convey.So(output, convey.ShouldNotContainSubstring, "open mlwh client")
+	})
+
+	convey.Convey("Given products of study S1, when --cursor is supplied with a zero --limit, then export still asks for a positive bounded page size before opening the client", t, func() {
+		opened := withFailingOpenMLWHExportClient(t)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "export", "products", "study", "S1", "--cursor", "cursor-1", "--limit", "0"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(*opened, convey.ShouldBeFalse)
+		convey.So(output, convey.ShouldContainSubstring, "--cursor")
+		convey.So(output, convey.ShouldContainSubstring, "--limit")
+		convey.So(output, convey.ShouldContainSubstring, "positive")
+		convey.So(output, convey.ShouldNotContainSubstring, "open mlwh client")
+	})
+}

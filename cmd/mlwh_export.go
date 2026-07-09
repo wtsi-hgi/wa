@@ -412,6 +412,15 @@ func (f mlwhExportFlags) options(rel mlwh.ExportRelationship, cmd *cobra.Command
 		format = mlwhExportFormatJSON
 	}
 
+	limitChanged := cmd.Flags().Changed("limit")
+	cursorChanged := cmd.Flags().Changed("cursor")
+	if f.limit < 0 {
+		return mlwh.ExportOptions{}, errors.New("--limit must be non-negative")
+	}
+	if cursorChanged && (!limitChanged || f.limit <= 0) {
+		return mlwh.ExportOptions{}, errors.New("--cursor requires a positive explicit --limit to continue a bounded export")
+	}
+
 	opts := mlwh.ExportOptions{
 		Columns:          columns,
 		FileType:         mlwhExportFileTypeDefault(rel, f.fileType, cmd.Flags().Changed("file-type")),
