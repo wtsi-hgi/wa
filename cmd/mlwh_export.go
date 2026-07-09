@@ -66,7 +66,14 @@ const mlwhExportParentIDHelp = `Parent kinds and parent-id values:
 const mlwhExportOptionsHelp = `File exports:
   iRODS/files and sample-crams use --file-type as a filename suffix filter. A
   single leading dot is stripped, so cram, .cram and CRAM are equivalent. If no
-  --file-type is supplied, file exports default to cram.
+  --file-type is supplied, these file exports default to cram.
+
+Product exports:
+  Products are product-grained: one row per distinct id_run/lane/tag product,
+  including products with no iRODS object. For products, --file-type only
+  restricts the attached irods_path; there is no cram default and no forced
+  deliverables view. A blank irods_path is expected when no matching object is
+  attached; use irods_unmatched and reason for known gaps.
 
 Deliverables:
   CRAM file exports default to deliverables-only. In MLWH terms, deliverable uses
@@ -79,8 +86,8 @@ Deliverables:
 
 Filters:
   --qc pass|fail|pending, --library-type and --organism apply to sample-backed
-  iRODS/files, samples and sample-crams exports. --role narrows study_users-backed
-  studies/users exports.
+  iRODS/files, samples, sample-crams and products exports. --role narrows
+  study_users-backed studies/users exports.
 
 Sorting and date windows:
   --sort created-desc is the only supported explicit sort because the default
@@ -90,12 +97,15 @@ Sorting and date windows:
   2026-07-01T00:00:00Z.
 
 Completeness:
-  Exports include every matching row. There are no paging flags and no success
-  message is appended after the data.`
+  By default, exports include every matching row and append no success message
+  after the data. Use --limit to emit one bounded page and --cursor to continue
+  from a previous bounded iRODS/products page. Omit --limit to export
+  everything.`
 
 const mlwhExportExamplesHelp = `Examples:
   wa mlwh export sample-crams study 5901
   wa --env development mlwh export irods study 5901 --file-type cram
+  wa mlwh export products study 7568 --file-type cram --columns name,supplier_name,accession_number,sanger_sample_id,id_run,lane,tag_index,manual_qc,irods_path,irods_unmatched,reason
   wa mlwh export runs sample DN1234 --columns id_run,platform,run_date
   wa mlwh export irods study 5901 --sort created-desc --since 2026-07-01T00:00:00Z
   wa mlwh export irods study 5901 --server http://host:8091 --json`
@@ -186,7 +196,9 @@ func newMLWHExportCommand() *cobra.Command {
 	command.Flags().StringVar(&flags.columns, "columns", "", "ordered comma-separated columns to emit")
 	command.Flags().StringVar(&flags.format, "format", mlwhExportFormatTSV, "output format: tsv, csv or json")
 	command.Flags().BoolVar(&flags.jsonOut, "json", false, "emit JSON output (shorthand for --format json)")
-	command.Flags().StringVar(&flags.fileType, "file-type", "", "restrict file exports to data objects whose filename ends in this suffix; file exports default to cram")
+	command.Flags().IntVar(&flags.limit, "limit", 0, "emit one bounded page with at most this many rows; omit to export everything")
+	command.Flags().StringVar(&flags.cursor, "cursor", "", "resume a bounded iRODS/products export from this cursor")
+	command.Flags().StringVar(&flags.fileType, "file-type", "", "restrict file exports or products irods_path attachments to data objects whose filename ends in this suffix")
 	command.Flags().BoolVar(&flags.deliverablesOnly, "deliverables-only", false, "restrict cram file exports to deliverable rows")
 	command.Flags().BoolVar(&flags.includeControls, "include-controls", false, "include controls/sub-products in cram file exports")
 	command.Flags().StringVar(&flags.role, "role", "", "restrict study_users-backed exports to comma-separated roles")
@@ -306,6 +318,11 @@ func runMLWHExport(
 	if err != nil {
 		return fmt.Errorf("render export: %w", err)
 	}
+	if opts.Limit > 0 {
+		if err = writeMLWHExportBoundedPageStatus(statusOut, result); err != nil {
+			return fmt.Errorf("write bounded export status: %w", err)
+		}
+	}
 
 	return nil
 }
@@ -324,6 +341,20 @@ func writeMLWHExportCacheUnavailable(dataOut io.Writer, statusOut io.Writer, for
 
 func writeMLWHExportNotFound(out io.Writer, rel mlwh.ExportRelationship, parentID string) {
 	_, _ = fmt.Fprintf(out, "not found: %s %q for export %s\n", rel.ParentKind, parentID, rel.Children)
+}
+
+func writeMLWHExportBoundedPageStatus(out io.Writer, result mlwh.ExportResult) error {
+	parts := []string{"bounded page emitted", "omit --limit to export everything"}
+	if result.NextCursor != "" {
+		parts = append(parts, "continue with --cursor "+result.NextCursor)
+	}
+	if result.Complete {
+		parts = append(parts, "final page")
+	}
+
+	_, err := fmt.Fprintln(out, strings.Join(parts, "; "))
+
+	return err
 }
 
 type mlwhExportRemoteClient struct {
@@ -361,6 +392,8 @@ type mlwhExportFlags struct {
 	sort             string
 	since            string
 	until            string
+	limit            int
+	cursor           string
 }
 
 func (f mlwhExportFlags) options(rel mlwh.ExportRelationship, cmd *cobra.Command) (mlwh.ExportOptions, error) {
@@ -379,7 +412,7 @@ func (f mlwhExportFlags) options(rel mlwh.ExportRelationship, cmd *cobra.Command
 		format = mlwhExportFormatJSON
 	}
 
-	return mlwh.ExportOptions{
+	opts := mlwh.ExportOptions{
 		Columns:          columns,
 		FileType:         mlwhExportFileTypeDefault(rel, f.fileType, cmd.Flags().Changed("file-type")),
 		DeliverablesOnly: deliverablesOnly,
@@ -390,9 +423,16 @@ func (f mlwhExportFlags) options(rel mlwh.ExportRelationship, cmd *cobra.Command
 		Sort:             f.sort,
 		Since:            f.since,
 		Until:            f.until,
-		All:              true,
 		Format:           format,
-	}, nil
+	}
+	if f.limit > 0 {
+		opts.Limit = f.limit
+		opts.Cursor = f.cursor
+	} else {
+		opts.All = true
+	}
+
+	return opts, nil
 }
 
 func splitMLWHExportColumns(raw string) ([]string, error) {

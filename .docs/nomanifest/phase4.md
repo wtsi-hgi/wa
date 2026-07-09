@@ -50,5 +50,5 @@ assertion is realised once phase 6 removes the registration (covered
 there by G1.1's unknown-command check). Do NOT remove the manifest
 command in this phase.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

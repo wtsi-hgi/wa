@@ -26,6 +26,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -64,6 +65,7 @@ func TestMLWHExportHelpDocumentsGrammarVocabularyAndFilters(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh export <children> <parent-kind> <parent-id>")
 		convey.So(output, convey.ShouldNotContainSubstring, "Relationships include")
 		convey.So(output, convey.ShouldContainSubstring, "Children:")
+		convey.So(output, convey.ShouldContainSubstring, "  products: product-grained rows, one per distinct id_run/lane/tag, including products with no iRODS object; parent-kind: study")
 		convey.So(strings.Index(output, "  sample-crams:"), convey.ShouldBeLessThan, strings.Index(output, "  irods (alias: files)"))
 		convey.So(output, convey.ShouldContainSubstring, "  sample-crams")
 		convey.So(output, convey.ShouldContainSubstring, "  irods (alias: files)")
@@ -83,10 +85,20 @@ func TestMLWHExportHelpDocumentsGrammarVocabularyAndFilters(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "user: a study_users name, login or email substring")
 		convey.So(output, convey.ShouldContainSubstring, "programme: an exact programme value")
 		convey.So(output, convey.ShouldContainSubstring, "Columns:")
+		convey.So(output, convey.ShouldContainSubstring, "products:")
+		convey.So(output, convey.ShouldContainSubstring, "default: name, supplier_name, accession_number, sanger_sample_id, id_run, lane, tag_index, manual_qc")
+		convey.So(output, convey.ShouldContainSubstring, "available: name, supplier_name (alias: supplier_sample_name), accession_number, sanger_sample_id, id_run, lane (alias: position), tag_index, manual_qc, irods_path, irods_unmatched, reason, id_study_lims, study_accession_number")
 		convey.So(output, convey.ShouldContainSubstring, "irods/files")
 		convey.So(output, convey.ShouldContainSubstring, "supplier_name")
 		convey.So(output, convey.ShouldContainSubstring, "supplier_sample_name")
 		convey.So(output, convey.ShouldContainSubstring, "irods_path")
+		convey.So(output, convey.ShouldContainSubstring, "Product exports:")
+		convey.So(output, convey.ShouldContainSubstring, "Products are product-grained")
+		convey.So(output, convey.ShouldContainSubstring, "--file-type only")
+		convey.So(output, convey.ShouldContainSubstring, "restricts the attached irods_path")
+		convey.So(output, convey.ShouldContainSubstring, "blank irods_path is expected")
+		convey.So(output, convey.ShouldContainSubstring, "irods_unmatched")
+		convey.So(output, convey.ShouldContainSubstring, "reason")
 		convey.So(output, convey.ShouldContainSubstring, "sample-crams")
 		convey.So(output, convey.ShouldContainSubstring, "accession_number")
 		convey.So(output, convey.ShouldNotContainSubstring, "ega_id")
@@ -96,8 +108,10 @@ func TestMLWHExportHelpDocumentsGrammarVocabularyAndFilters(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "approximates iRODS target=1")
 		convey.So(output, convey.ShouldContainSubstring, "not is_spiked")
 		convey.So(output, convey.ShouldContainSubstring, "--sort created-desc is the only supported explicit sort")
-		convey.So(output, convey.ShouldContainSubstring, "Exports include every matching row")
-		convey.So(output, convey.ShouldContainSubstring, "There are no paging flags and no success")
+		convey.So(output, convey.ShouldContainSubstring, "By default, exports include every matching row")
+		convey.So(output, convey.ShouldContainSubstring, "append no success message")
+		convey.So(output, convey.ShouldContainSubstring, "Use --limit to emit one bounded page")
+		convey.So(output, convey.ShouldContainSubstring, "Omit --limit to export")
 		convey.So(output, convey.ShouldNotContainSubstring, "user-facing paging")
 		convey.So(output, convey.ShouldNotContainSubstring, "internal pages")
 		convey.So(output, convey.ShouldContainSubstring, "see `wa mlwh -h`")
@@ -106,19 +120,20 @@ func TestMLWHExportHelpDocumentsGrammarVocabularyAndFilters(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "RFC3339 timestamp such as")
 		convey.So(output, convey.ShouldContainSubstring, "2026-07-01T00:00:00Z")
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh export sample-crams study 5901")
+		convey.So(output, convey.ShouldContainSubstring, "wa mlwh export products study 7568 --file-type cram --columns name,supplier_name,accession_number,sanger_sample_id,id_run,lane,tag_index,manual_qc,irods_path,irods_unmatched,reason")
 		convey.So(output, convey.ShouldNotContainSubstring, "--all")
-		convey.So(output, convey.ShouldNotContainSubstring, "--limit")
-		convey.So(output, convey.ShouldNotContainSubstring, "--cursor")
+		convey.So(output, convey.ShouldContainSubstring, "--limit")
+		convey.So(output, convey.ShouldContainSubstring, "--cursor")
 		convey.So(output, convey.ShouldNotContainSubstring, "--offset")
 	})
 }
 
-func TestMLWHExportPagingFlagsAreNotUserFacing(t *testing.T) {
-	for _, flag := range []string{"--all", "--limit", "--cursor", "--offset"} {
+func TestMLWHExportUnsupportedPagingFlagsAreNotUserFacing(t *testing.T) {
+	for _, flag := range []string{"--all", "--offset"} {
 		flag := flag
 		convey.Convey("Given "+flag+" is supplied to wa mlwh export, then cobra rejects the removed paging flag", t, func() {
 			args := []string{"mlwh", "export", "irods", "study", "5901", flag}
-			if flag == "--limit" || flag == "--cursor" || flag == "--offset" {
+			if flag == "--offset" {
 				args = append(args, "1")
 			}
 
@@ -147,6 +162,232 @@ func (s *stubMLWHExportClient) Close() error {
 	s.closed = true
 
 	return nil
+}
+
+func TestMLWHExportProductsStudyRendersTSVThroughRenderPathI1(t *testing.T) {
+	convey.Convey("I1.1/I1.4: Given products of study S1, when default TSV export runs, then stdout is rectangular data and no bounded status is written", t, func() {
+		var capturedRel mlwh.ExportRelationship
+		var capturedParent string
+		var capturedOptions mlwh.ExportOptions
+		stub := &stubMLWHExportClient{
+			export: func(_ context.Context, rel mlwh.ExportRelationship, parentID string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
+				capturedRel = rel
+				capturedParent = parentID
+				capturedOptions = opts
+
+				return mlwhProductExportResultForTest(opts.Format), nil
+			},
+		}
+		withStubMLWHExportClient(t, stub)
+
+		stdout, stderr, err := executeRootCommandStreamsForTest(t, []string{
+			"mlwh", "export", "products", "study", "S1",
+			"--columns", strings.Join(mlwhProductExportColumnsForTest(), ","),
+			"--file-type", "cram",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(strings.TrimSpace(stdout), convey.ShouldEqual, strings.Join([]string{
+			"name\tsupplier_name\tid_run\tlane\ttag_index\tmanual_qc\tirods_path\tirods_unmatched\treason",
+			"S1-A\tsupplier-a\t61010\t1\t1\tpass\t/seq/S1-A.cram\tfalse\t",
+			"S1-B\tsupplier-b\t61011\t2\t0\tpending\t\ttrue\tmerged_cram_gap",
+		}, "\n"))
+		convey.So(stderr, convey.ShouldBeEmpty)
+		convey.So(stdout, convey.ShouldNotContainSubstring, "study_manifest")
+		convey.So(stdout, convey.ShouldNotContainSubstring, "success")
+		convey.So(capturedRel, convey.ShouldResemble, mlwh.ExportRelationship{Children: "products", ParentKind: "study"})
+		convey.So(capturedParent, convey.ShouldEqual, "S1")
+		convey.So(capturedOptions.Columns, convey.ShouldResemble, mlwhProductExportColumnsForTest())
+		convey.So(capturedOptions.FileType, convey.ShouldEqual, "cram")
+		convey.So(capturedOptions.Format, convey.ShouldEqual, "tsv")
+		convey.So(capturedOptions.All, convey.ShouldBeTrue)
+		convey.So(capturedOptions.Limit, convey.ShouldEqual, 0)
+		convey.So(capturedOptions.Cursor, convey.ShouldBeEmpty)
+		convey.So(stub.closed, convey.ShouldBeTrue)
+	})
+}
+
+func mlwhProductExportResultForTest(format string) mlwh.ExportResult {
+	return mlwh.ExportResult{
+		Columns: mlwhProductExportColumnsForTest(),
+		Rows: [][]string{
+			{"S1-A", "supplier-a", "61010", "1", "1", "pass", "/seq/S1-A.cram", "false", ""},
+			{"S1-B", "supplier-b", "61011", "2", "0", "pending", "", "true", "merged_cram_gap"},
+		},
+		Total:    2,
+		Complete: true,
+		Format:   format,
+	}
+}
+
+func mlwhProductExportColumnsForTest() []string {
+	return []string{
+		"name",
+		"supplier_name",
+		"id_run",
+		"lane",
+		"tag_index",
+		"manual_qc",
+		"irods_path",
+		"irods_unmatched",
+		"reason",
+	}
+}
+
+func executeRootCommandStreamsForTest(t *testing.T, args []string) (string, string, error) {
+	t.Helper()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	command := NewRootCommand()
+	command.SetOut(stdout)
+	command.SetErr(stderr)
+	command.SetArgs(args)
+
+	err := command.Execute()
+
+	return stdout.String(), stderr.String(), err
+}
+
+func TestMLWHExportProductsStudyRendersCSVAndJSONI1(t *testing.T) {
+	convey.Convey("I1.2: Given products of study S1, when CSV export runs, then stdout is the normal comma-delimited export", t, func() {
+		var capturedOptions mlwh.ExportOptions
+		stub := &stubMLWHExportClient{
+			export: func(_ context.Context, _ mlwh.ExportRelationship, _ string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
+				capturedOptions = opts
+
+				return mlwhProductExportResultForTest(opts.Format), nil
+			},
+		}
+		withStubMLWHExportClient(t, stub)
+
+		stdout, stderr, err := executeRootCommandStreamsForTest(t, []string{
+			"mlwh", "export", "products", "study", "S1",
+			"--columns", strings.Join(mlwhProductExportColumnsForTest(), ","),
+			"--file-type", "cram",
+			"--format", "csv",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(strings.TrimSpace(stdout), convey.ShouldEqual, strings.Join([]string{
+			"name,supplier_name,id_run,lane,tag_index,manual_qc,irods_path,irods_unmatched,reason",
+			"S1-A,supplier-a,61010,1,1,pass,/seq/S1-A.cram,false,",
+			"S1-B,supplier-b,61011,2,0,pending,,true,merged_cram_gap",
+		}, "\n"))
+		convey.So(stderr, convey.ShouldBeEmpty)
+		convey.So(capturedOptions.Format, convey.ShouldEqual, "csv")
+	})
+
+	convey.Convey("I1.2: Given products of study S1, when JSON export runs, then stdout is the normal row-array export", t, func() {
+		var capturedOptions mlwh.ExportOptions
+		stub := &stubMLWHExportClient{
+			export: func(_ context.Context, _ mlwh.ExportRelationship, _ string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
+				capturedOptions = opts
+
+				return mlwhProductExportResultForTest(opts.Format), nil
+			},
+		}
+		withStubMLWHExportClient(t, stub)
+
+		stdout, stderr, err := executeRootCommandStreamsForTest(t, []string{
+			"mlwh", "export", "products", "study", "S1",
+			"--columns", strings.Join(mlwhProductExportColumnsForTest(), ","),
+			"--file-type", "cram",
+			"--json",
+		})
+
+		var rows []map[string]string
+		decodeErr := json.Unmarshal([]byte(stdout), &rows)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(decodeErr, convey.ShouldBeNil)
+		convey.So(rows, convey.ShouldHaveLength, 2)
+		convey.So(rows[0]["name"], convey.ShouldEqual, "S1-A")
+		convey.So(rows[0]["irods_path"], convey.ShouldEqual, "/seq/S1-A.cram")
+		convey.So(rows[1]["irods_path"], convey.ShouldBeEmpty)
+		convey.So(rows[1]["irods_unmatched"], convey.ShouldEqual, "true")
+		convey.So(rows[1]["reason"], convey.ShouldEqual, "merged_cram_gap")
+		convey.So(stderr, convey.ShouldBeEmpty)
+		convey.So(capturedOptions.Format, convey.ShouldEqual, "json")
+	})
+}
+
+func TestMLWHExportBoundedProductsPageWritesStatusI1(t *testing.T) {
+	testCases := []struct {
+		name               string
+		nextCursor         string
+		complete           bool
+		args               []string
+		wantCursorHint     string
+		wantFinalStatement bool
+		wantCapturedCursor string
+	}{
+		{
+			name:               "with cursor continuation",
+			nextCursor:         "next-products-cursor",
+			args:               []string{"--cursor", "current-products-cursor"},
+			wantCursorHint:     "--cursor next-products-cursor",
+			wantCapturedCursor: "current-products-cursor",
+		},
+		{
+			name:               "final page",
+			complete:           true,
+			wantFinalStatement: true,
+		},
+		{
+			name: "without cursor continuation",
+		},
+	}
+
+	for _, testCase := range testCases {
+		testCase := testCase
+		convey.Convey("I1.3: Given a bounded products page "+testCase.name+", when --limit is used, then stderr states bounded-page mode", t, func() {
+			var capturedOptions mlwh.ExportOptions
+			stub := &stubMLWHExportClient{
+				export: func(_ context.Context, _ mlwh.ExportRelationship, _ string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
+					capturedOptions = opts
+					result := mlwhProductExportResultForTest(opts.Format)
+					result.Rows = result.Rows[:1]
+					result.NextCursor = testCase.nextCursor
+					result.Complete = testCase.complete
+
+					return result, nil
+				},
+			}
+			withStubMLWHExportClient(t, stub)
+
+			args := []string{
+				"mlwh", "export", "products", "study", "S1",
+				"--columns", strings.Join(mlwhProductExportColumnsForTest(), ","),
+				"--limit", "50",
+			}
+			args = append(args, testCase.args...)
+
+			stdout, stderr, err := executeRootCommandStreamsForTest(t, args)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(strings.TrimSpace(stdout), convey.ShouldEqual, strings.Join([]string{
+				"name\tsupplier_name\tid_run\tlane\ttag_index\tmanual_qc\tirods_path\tirods_unmatched\treason",
+				"S1-A\tsupplier-a\t61010\t1\t1\tpass\t/seq/S1-A.cram\tfalse",
+			}, "\n"))
+			convey.So(stderr, convey.ShouldContainSubstring, "bounded page emitted")
+			convey.So(stderr, convey.ShouldContainSubstring, "omit --limit to export everything")
+			convey.So(strings.Count(stderr, "\n"), convey.ShouldEqual, 1)
+			convey.So(capturedOptions.All, convey.ShouldBeFalse)
+			convey.So(capturedOptions.Limit, convey.ShouldEqual, 50)
+			convey.So(capturedOptions.Cursor, convey.ShouldEqual, testCase.wantCapturedCursor)
+			if testCase.wantCursorHint != "" {
+				convey.So(stderr, convey.ShouldContainSubstring, testCase.wantCursorHint)
+			} else {
+				convey.So(stderr, convey.ShouldNotContainSubstring, "--cursor")
+			}
+			if testCase.wantFinalStatement {
+				convey.So(stderr, convey.ShouldContainSubstring, "final page")
+			} else {
+				convey.So(stderr, convey.ShouldNotContainSubstring, "final page")
+			}
+		})
+	}
 }
 
 func TestMLWHExportIRODSStudyPrintsCompleteCramTSVOnlyD1b(t *testing.T) {
