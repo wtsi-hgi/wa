@@ -247,12 +247,12 @@ var (
 )
 
 func validateExportContinuationSupport(kind exportRelationshipKind, rel ExportRelationship, opts ExportOptions) error {
-	if kind == exportRelationshipIRODS {
+	if kind == exportRelationshipIRODS || kind == exportRelationshipProducts {
 		return nil
 	}
 	if strings.TrimSpace(opts.Cursor) != "" {
 		return fmt.Errorf(
-			"%w: cursor pagination is supported only for iRODS exports in D1a; use limit/offset for %s of %s",
+			"%w: cursor pagination is supported only for iRODS and products exports; use limit/offset for %s of %s",
 			ErrUnsupportedIdentifier,
 			rel.Children,
 			rel.ParentKind,
@@ -811,7 +811,7 @@ func newExportPlan(rel ExportRelationship, parentID string, opts ExportOptions) 
 		return exportPlan{}, err
 	}
 	cursor := exportCursor{}
-	if kind == exportRelationshipIRODS {
+	if kind == exportRelationshipIRODS || kind == exportRelationshipProducts {
 		cursor, err = decodeExportCursor(opts.Cursor)
 		if err != nil {
 			return exportPlan{}, err
@@ -1003,6 +1003,17 @@ func buildExportResult(plan exportPlan, rows [][]string, total int) ExportResult
 	}
 }
 
+func streamingExportResult(plan exportPlan, streamRows func(context.Context, func([]string) error) (int, error)) ExportResult {
+	return ExportResult{
+		Columns:    exportColumnNames(plan.columns),
+		Rows:       nil,
+		Total:      -1,
+		Complete:   true,
+		Format:     plan.format,
+		streamRows: streamRows,
+	}
+}
+
 // Render serialises the export result in its selected format.
 func (r ExportResult) Render() (string, error) {
 	return r.RenderAs(r.Format)
@@ -1120,8 +1131,11 @@ func (r ExportResult) renderJSONTo(ctx context.Context, writer io.Writer) (int, 
 }
 
 func (c *Client) exportAll(ctx context.Context, plan exportPlan, parent exportParent) (ExportResult, error) {
-	if plan.kind == exportRelationshipIRODS {
+	switch plan.kind {
+	case exportRelationshipIRODS:
 		return c.exportIRODS(ctx, plan, parent)
+	case exportRelationshipProducts:
+		return c.exportProducts(ctx, plan, parent)
 	}
 
 	return ExportResult{
@@ -1259,6 +1273,12 @@ func (c *Client) exportProducts(ctx context.Context, plan exportPlan, parent exp
 		return ExportResult{}, err
 	}
 	if plan.filters.Organism != "" && len(commonNames) == 0 {
+		if plan.all {
+			return streamingExportResult(plan, func(context.Context, func([]string) error) (int, error) {
+				return 0, nil
+			}), nil
+		}
+
 		return emptyExportResult(plan, 0), nil
 	}
 
@@ -1271,12 +1291,18 @@ func (c *Client) exportProducts(ctx context.Context, plan exportPlan, parent exp
 		organismCommonNames: commonNames,
 		limit:               plan.limit,
 		offset:              plan.offset,
+		cursor:              plan.cursor,
 	}
+	if plan.all {
+		return c.exportProductsAll(ctx, db, plan, input, parent)
+	}
+
 	total, err := c.exportProductTotal(ctx, input)
 	if err != nil {
 		return ExportResult{}, err
 	}
 
+	input.limit = plan.limit + 1
 	rows, err := c.queryExportProductRows(ctx, db, input, plan, parent)
 	if err != nil {
 		return ExportResult{}, err
@@ -1293,12 +1319,36 @@ func (c *Client) exportProducts(ctx context.Context, plan exportPlan, parent exp
 			return ExportResult{}, err
 		}
 	}
-	if len(rows) > 0 {
-		// Products already expose their keyset cursor shape; continuation is wired in a later phase.
-		_ = rows[len(rows)-1].cursor()
+
+	more := len(rows) > plan.limit
+	if more {
+		rows = rows[:plan.limit]
 	}
 
-	return buildExportResult(plan, projectExportProductRows(rows, plan.columns), total), nil
+	result := ExportResult{
+		Columns:  exportColumnNames(plan.columns),
+		Rows:     projectExportProductRows(rows, plan.columns),
+		Total:    total,
+		Complete: !more,
+		Format:   plan.format,
+	}
+	if more {
+		result.NextCursor = encodeExportCursor(rows[len(rows)-1].cursor())
+	}
+
+	return result, nil
+}
+
+func (c *Client) exportProductsAll(ctx context.Context, db *sql.DB, plan exportPlan, input exportProductQueryInput, parent exportParent) (ExportResult, error) {
+	if plan.needsIRODS {
+		if err := c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); err != nil {
+			return ExportResult{}, err
+		}
+	}
+
+	return streamingExportResult(plan, func(streamCtx context.Context, emit func([]string) error) (int, error) {
+		return c.streamExportProductsRows(streamCtx, db, plan, input, parent, emit)
+	}), nil
 }
 
 func (c *Client) exportSamples(ctx context.Context, plan exportPlan, parent exportParent) (ExportResult, error) {
@@ -1588,6 +1638,50 @@ func (c *Client) resolveExportParent(ctx context.Context, plan exportPlan, paren
 	}
 }
 
+func (c *Client) streamExportProductsRows(
+	ctx context.Context,
+	db *sql.DB,
+	plan exportPlan,
+	input exportProductQueryInput,
+	parent exportParent,
+	emit func([]string) error,
+) (int, error) {
+	count := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return count, err
+		}
+
+		input.limit = plan.limit
+		page, err := c.queryExportProductRows(ctx, db, input, plan, parent)
+		if err != nil {
+			return count, err
+		}
+		if len(page) == 0 {
+			if count == 0 {
+				if _, err = c.studyManifestForEmptyStudy(ctx, parent.Canonical, plan.needsIRODS); err != nil {
+					return count, err
+				}
+			}
+
+			return count, nil
+		}
+
+		for _, row := range projectExportProductRows(page, plan.columns) {
+			if err := emit(row); err != nil {
+				return count, err
+			}
+			count++
+		}
+		if len(page) < plan.limit {
+			return count, nil
+		}
+
+		input.cursor = page[len(page)-1].cursor()
+		input.offset = 0
+	}
+}
+
 func (c *Client) queryExportProductRows(
 	ctx context.Context,
 	db *sql.DB,
@@ -1640,13 +1734,21 @@ func exportProductListQuery(input exportProductQueryInput) (string, []any) {
 		}
 	}
 	args = append(args, whereArgs...)
-	query := selectClause + manifestListBaseFrom + join + where +
-		` GROUP BY ipm.id_run, ipm.position, ipm.tag_index`
+	query := selectClause + manifestListBaseFrom + join + where
+	if input.cursor.set {
+		query += ` AND (ipm.id_run, ipm.position, ipm.tag_index) > (?, ?, ?)`
+		args = append(args, input.cursor.IDRun, input.cursor.Position, input.cursor.TagIndex)
+	}
+	query += ` GROUP BY ipm.id_run, ipm.position, ipm.tag_index`
 	if having := exportProductQCHaving(input.filters.QC); having != "" {
 		query += ` HAVING ` + having
 	}
-	query += ` ORDER BY ipm.id_run, ipm.position, ipm.tag_index, MIN(sm.name) LIMIT ? OFFSET ?`
-	args = append(args, input.limit, input.offset)
+	query += ` ORDER BY ipm.id_run, ipm.position, ipm.tag_index, MIN(sm.name) LIMIT ?`
+	args = append(args, input.limit)
+	if input.offset > 0 && !input.cursor.set {
+		query += ` OFFSET ?`
+		args = append(args, input.offset)
+	}
 
 	return query, args
 }
@@ -2181,6 +2283,7 @@ type exportProductQueryInput struct {
 	organismCommonNames []string
 	limit               int
 	offset              int
+	cursor              exportCursor
 }
 
 func (c *Client) exportProductTotal(ctx context.Context, input exportProductQueryInput) (int, error) {

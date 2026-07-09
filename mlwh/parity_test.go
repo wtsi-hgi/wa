@@ -573,6 +573,32 @@ func TestRemoteClientClientParityB4(t *testing.T) {
 	})
 }
 
+func TestRemoteClientProductsExportParityF1(t *testing.T) {
+	convey.Convey("F1.4: Given local and remote clients over the same seeded cache", t, func() {
+		local := newParitySeededClient(t)
+		defer closeParityClientForTest(t, local)
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		opts := ExportOptions{
+			Columns:  []string{"name", "irods_path"},
+			FileType: "cram",
+			Limit:    100,
+		}
+		localResult, localErr := local.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, parityStudyID, opts)
+		remoteResult, remoteErr := remote.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, parityStudyID, opts)
+
+		convey.Convey("when products is exported through both clients, then the ExportResult round-trip is identical", func() {
+			convey.So(localErr, convey.ShouldBeNil)
+			convey.So(remoteErr, convey.ShouldBeNil)
+			convey.So(reflect.DeepEqual(localResult, remoteResult), convey.ShouldBeTrue)
+			convey.So(localResult.Columns, convey.ShouldResemble, []string{"name", "irods_path"})
+			convey.So(localResult.Rows, convey.ShouldHaveLength, 4)
+			convey.So(localResult.Total, convey.ShouldEqual, 4)
+		})
+	})
+}
+
 func TestRemoteClientClientOptionedParityJ(t *testing.T) {
 	convey.Convey("J: Given a seeded parity cache with option-sensitive search and iRODS rows served over HTTP", t, func() {
 		local := newParitySeededClient(t)

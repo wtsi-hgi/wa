@@ -38,8 +38,8 @@ Complete false; continuation -> remaining 47, Complete true, empty
 NextCursor; default request over 1500 -> 1000 rows, Total 1500, non
 -empty NextCursor, Complete false).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.2: D2 - --all streams the complete set, memory-bounded, no deep OFFSET
 
@@ -57,8 +57,8 @@ memory-bounded pattern; internal paging advances by
 `(id_run, position, tag_index) > last` with no growing OFFSET). Uses
 `seedLargeProductExportScenario`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.3: D3 - cursor accepted for products, still rejected for other bounded kinds
 
@@ -76,8 +76,8 @@ study` cursor still returns the "only for iRODS and products exports"
 `ErrUnsupportedIdentifier`; `Sort`/`Since`/`Until` on products return
 `ErrUnsupportedIdentifier`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.4: F1 - GET /export/products/study/:id serves bounded and complete responses
 
@@ -94,5 +94,5 @@ by `Cursor` (unsorted, `NextCursor` present) with no growing `OFFSET`.
 Covers all 5 acceptance tests F1.1-F1.5. Test files:
 `mlwh/server_test.go`, `mlwh/remote_test.go`, `mlwh/parity_test.go`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

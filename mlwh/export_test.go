@@ -30,13 +30,102 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/smartystreets/goconvey/convey"
 )
+
+func TestStreamExportProductsRowsUsesKeysetCursorWithoutOffsetD2(t *testing.T) {
+	convey.Convey("D2.2: Given a complete products stream with several internal pages", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		columns := []string{
+			"id_run", "position", "tag_index", "name", "supplier_name", "accession_number",
+			"sanger_sample_id", "product_count", "pending_qc", "min_qc",
+		}
+		firstQuery := manifestListSelectPrefix + manifestListBaseFrom + manifestListWhere +
+			` GROUP BY ipm.id_run, ipm.position, ipm.tag_index` +
+			` ORDER BY ipm.id_run, ipm.position, ipm.tag_index, MIN(sm.name) LIMIT ?`
+		secondQuery := manifestListSelectPrefix + manifestListBaseFrom + manifestListWhere +
+			` AND (ipm.id_run, ipm.position, ipm.tag_index) > (?, ?, ?)` +
+			` GROUP BY ipm.id_run, ipm.position, ipm.tag_index` +
+			` ORDER BY ipm.id_run, ipm.position, ipm.tag_index, MIN(sm.name) LIMIT ?`
+
+		mock.ExpectQuery("^"+regexp.QuoteMeta(firstQuery)+"$").
+			WithArgs("7799", 2).
+			WillReturnRows(sqlmock.NewRows(columns).
+				AddRow(10, 1, 1, "product-a", "supplier-a", "EGAN-a", "sanger-a", 1, 0, 1).
+				AddRow(10, 1, 2, "product-b", "supplier-b", "EGAN-b", "sanger-b", 1, 0, 1))
+		mock.ExpectQuery("^"+regexp.QuoteMeta(secondQuery)+"$").
+			WithArgs("7799", int64(10), int64(1), int64(2), 2).
+			WillReturnRows(sqlmock.NewRows(columns).
+				AddRow(10, 1, 3, "product-c", "supplier-c", "EGAN-c", "sanger-c", 1, 0, 1))
+
+		client := &Client{}
+		plan := exportPlan{
+			columns: []exportColumn{
+				{Name: "name", Supported: true},
+				{Name: "id_run", Supported: true},
+				{Name: "lane", Supported: true},
+				{Name: "tag_index", Supported: true},
+			},
+			limit: 2,
+		}
+		input := exportProductQueryInput{studyID: "7799"}
+		parent := exportParent{Canonical: "7799"}
+
+		var streamed [][]string
+		count, streamErr := client.streamExportProductsRows(context.Background(), db, plan, input, parent, func(row []string) error {
+			streamed = append(streamed, append([]string(nil), row...))
+
+			return nil
+		})
+
+		convey.Convey("when a full page is followed by another page, then the next query advances by tuple cursor and never OFFSET", func() {
+			convey.So(streamErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldEqual, 3)
+			convey.So(streamed, convey.ShouldResemble, [][]string{
+				{"product-a", "10", "1", "1"},
+				{"product-b", "10", "1", "2"},
+				{"product-c", "10", "1", "3"},
+			})
+			convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestExportStudyProductsRejectsCreatedDateOptionsD3(t *testing.T) {
+	convey.Convey("D3.3: Given a products export", t, func() {
+		client := &Client{}
+		relationship := ExportRelationship{Children: "products", ParentKind: "study"}
+		cases := []struct {
+			name string
+			opts ExportOptions
+		}{
+			{name: "created-desc sort", opts: ExportOptions{Sort: "created-desc"}},
+			{name: "since window", opts: ExportOptions{Since: "2026-07-01T00:00:00Z"}},
+			{name: "until window", opts: ExportOptions{Until: "2026-07-02T00:00:00Z"}},
+		}
+
+		for _, tc := range cases {
+			tc := tc
+			convey.Convey("when "+tc.name+" is supplied, then products keep created-date options iRODS-only", func() {
+				result, err := client.Export(context.Background(), relationship, "7568", tc.opts)
+
+				convey.So(errors.Is(err, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+				convey.So(err.Error(), convey.ShouldContainSubstring, "created-date export sorting/windows are supported only for iRODS exports")
+				convey.So(result.Rows, convey.ShouldBeNil)
+			})
+		}
+	})
+}
 
 type exportCountingWriter struct {
 	newlines int
@@ -159,6 +248,92 @@ func seedExportSyncState(t *testing.T, db *sql.DB) {
 	seedSyncStateRun(t, db, syncTableIseqFlowcell, highWater, highWater.Add(3*time.Hour))
 	seedSyncStateRun(t, db, syncTableIseqProductMetrics, highWater, highWater.Add(4*time.Hour))
 	seedSyncStateRun(t, db, syncTableSeqProductIRODSLocations, highWater, highWater.Add(5*time.Hour))
+}
+
+func TestExportStudyProductsAllStreamsCompleteSetMemoryBoundedD2(t *testing.T) {
+	convey.Convey("D2.1: Given a large study products export", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		const rows = 120_000
+		seedLargeProductExportScenario(t, client.cache.DB(), rows)
+
+		runtime.GC()
+		var before runtime.MemStats
+		runtime.ReadMemStats(&before)
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7799", ExportOptions{
+			All:   true,
+			Limit: 997,
+		})
+		counter := &exportCountingWriter{}
+		emittedRows, renderErr := result.RenderTo(context.Background(), counter)
+
+		runtime.GC()
+		var after runtime.MemStats
+		runtime.ReadMemStats(&after)
+		var growth uint64
+		if after.HeapInuse > before.HeapInuse {
+			growth = after.HeapInuse - before.HeapInuse
+		}
+
+		convey.Convey("when --all is rendered, then every product row streams with bounded heap growth", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(renderErr, convey.ShouldBeNil)
+			convey.So(emittedRows, convey.ShouldEqual, rows)
+			convey.So(counter.newlines, convey.ShouldEqual, rows+1)
+			convey.So(result.Rows, convey.ShouldBeNil)
+			convey.So(result.Total, convey.ShouldEqual, -1)
+			convey.So(result.NextCursor, convey.ShouldBeEmpty)
+			convey.So(result.Complete, convey.ShouldBeTrue)
+			convey.So(growth, convey.ShouldBeLessThan, uint64(20*1024*1024))
+		})
+	})
+}
+
+func seedLargeProductExportScenario(t *testing.T, db *sql.DB, rows int) {
+	t.Helper()
+
+	seedHierarchyStudy(t, db, 7799, "7799")
+	seedManifestSampleRow(t, db, 7799001, "large-product-sample", "large-product-supplier", "EGAN-large-products", "sanger-large-products")
+	seedLibrarySample(t, db, "Standard", 7799001, "7799")
+	seedExportSyncState(t, db)
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("seedLargeProductExportScenario begin: %v", err)
+	}
+	stmt, err := tx.Prepare(
+		`INSERT INTO iseq_product_metrics_mirror` +
+			`(id_iseq_product, id_iseq_flowcell_tmp, id_run, position, tag_index, id_sample_tmp, id_study_lims, qc, qc_lib, qc_seq, last_updated) ` +
+			`VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	)
+	if err != nil {
+		t.Fatalf("seedLargeProductExportScenario prepare: %v", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	lastUpdated := formatSyncTime(time.Date(2026, time.May, 6, 12, 10, 0, 0, time.UTC))
+	for i := range rows {
+		_, err = stmt.Exec(
+			int64(77_990_000+i),
+			int64(7_799_001),
+			90_000+i,
+			1,
+			1,
+			int64(7_799_001),
+			"7799",
+			1,
+			1,
+			1,
+			lastUpdated,
+		)
+		if err != nil {
+			t.Fatalf("seedLargeProductExportScenario row %d: %v", i, err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatalf("seedLargeProductExportScenario commit: %v", err)
+	}
 }
 
 type exportIRODSSeedRow struct {
@@ -1735,6 +1910,107 @@ func seedExportRunAggregationSyncState(t *testing.T, db *sql.DB) {
 	}
 }
 
+func TestExportStudyProductsBoundedPageTotalAndCursorD1(t *testing.T) {
+	convey.Convey("D1.1-D1.2: Given a 97-row study products export", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestStudy7568MergedCRAMScenario(t, client.cache.DB())
+
+		first, firstErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7568", ExportOptions{
+			Columns: []string{"name", "id_run", "lane", "tag_index"},
+			Limit:   50,
+		})
+		second, secondErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7568", ExportOptions{
+			Columns: []string{"name", "id_run", "lane", "tag_index"},
+			Cursor:  first.NextCursor,
+			Limit:   50,
+		})
+
+		convey.Convey("when the first bounded page is fetched, then it reports total size and a keyset cursor", func() {
+			convey.So(firstErr, convey.ShouldBeNil)
+			convey.So(first.Rows, convey.ShouldHaveLength, 50)
+			convey.So(first.Total, convey.ShouldEqual, 97)
+			convey.So(first.NextCursor, convey.ShouldNotBeEmpty)
+			convey.So(first.Complete, convey.ShouldBeFalse)
+		})
+
+		convey.Convey("when the cursor is supplied, then Export returns the remaining product triples", func() {
+			convey.So(secondErr, convey.ShouldBeNil)
+			convey.So(second.Rows, convey.ShouldHaveLength, 47)
+			convey.So(second.Total, convey.ShouldEqual, 97)
+			convey.So(second.Rows[0], convey.ShouldResemble, []string{"7568STDY7568002", "49348", "2", "3"})
+			convey.So(second.Rows[len(second.Rows)-1], convey.ShouldResemble, []string{"7568-direct-cram", "49348", "3", "99"})
+			convey.So(second.NextCursor, convey.ShouldBeEmpty)
+			convey.So(second.Complete, convey.ShouldBeTrue)
+		})
+	})
+}
+
+func TestExportStudyProductsCursorAcceptedD3(t *testing.T) {
+	convey.Convey("D3.1: Given a NextCursor from a prior products page", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestStudy7568MergedCRAMScenario(t, client.cache.DB())
+
+		first, firstErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7568", ExportOptions{
+			Columns: []string{"name", "id_run", "lane", "tag_index"},
+			Limit:   50,
+		})
+		second, secondErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7568", ExportOptions{
+			Columns: []string{"name", "id_run", "lane", "tag_index"},
+			Cursor:  first.NextCursor,
+			Limit:   50,
+		})
+
+		convey.Convey("when the cursor is supplied, then the products export succeeds by keyset continuation", func() {
+			convey.So(firstErr, convey.ShouldBeNil)
+			convey.So(first.NextCursor, convey.ShouldNotBeEmpty)
+			convey.So(secondErr, convey.ShouldBeNil)
+			convey.So(second.Rows, convey.ShouldHaveLength, 47)
+			convey.So(second.Complete, convey.ShouldBeTrue)
+			convey.So(second.NextCursor, convey.ShouldBeEmpty)
+		})
+	})
+}
+
+func TestExportStudySamplesCursorStillRejectedD3(t *testing.T) {
+	convey.Convey("D3.2: Given a samples of study export", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedExportFilterScenario(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "samples", ParentKind: "study"}, "FILTER", ExportOptions{
+			Columns: []string{"name"},
+			Cursor:  "cursor-from-products",
+			Limit:   2,
+		})
+
+		convey.Convey("when a cursor is supplied, then the offset-backed export still rejects cursor continuation", func() {
+			convey.So(errors.Is(err, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "cursor pagination is supported only for iRODS and products exports")
+			convey.So(result.Rows, convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestExportStudyProductsDefaultRequestUsesBoundedPageD1(t *testing.T) {
+	convey.Convey("D1.3: Given a large study products export", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedLargeProductExportScenario(t, client.cache.DB(), 1500)
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7799", ExportOptions{})
+
+		convey.Convey("when the default request is fetched, then it returns the default bounded page with a continuation cursor", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldHaveLength, defaultExportAllLimit)
+			convey.So(result.Total, convey.ShouldEqual, 1500)
+			convey.So(result.NextCursor, convey.ShouldNotBeEmpty)
+			convey.So(result.Complete, convey.ShouldBeFalse)
+		})
+	})
+}
+
 func TestExportStudyIRODSBoundedPageTotalAndCursorD1a(t *testing.T) {
 	convey.Convey("D1a.5: Given a bounded study iRODS export page", t, func() {
 		client, cleanup := newExportTestClient(t)
@@ -1806,7 +2082,7 @@ func TestExportNonIRODSPaginationDoesNotAdvertiseInvalidCursorD1a(t *testing.T) 
 
 		convey.Convey("when Cursor is requested, then Export rejects the unsupported continuation mode before emitting rows", func() {
 			convey.So(errors.Is(cursorErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
-			convey.So(cursorErr.Error(), convey.ShouldContainSubstring, "cursor pagination is supported only for iRODS exports")
+			convey.So(cursorErr.Error(), convey.ShouldContainSubstring, "cursor pagination is supported only for iRODS and products exports")
 			convey.So(cursorResult.Rows, convey.ShouldBeNil)
 		})
 

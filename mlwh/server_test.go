@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -1566,6 +1567,76 @@ func TestServerIRODSFileTypeDispatchB2(t *testing.T) {
 			convey.So(queryer.studyListFileType, convey.ShouldBeEmpty)
 		})
 	})
+}
+
+func TestServerExportProductsStudyServesBoundedAndAllResponsesF1(t *testing.T) {
+	convey.Convey("F1.1-F1.3: Given a server over a seeded cache with 97 study products", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestStudy7568MergedCRAMScenario(t, client.cache.DB())
+
+		firstPath := "/export/products/study/7568?columns=name,irods_path,irods_unmatched,reason&file_type=cram&limit=50"
+		firstResponse := performMLWHRequestForTest(t, client, http.MethodGet, firstPath)
+		var first ExportResult
+		decodeMLWHJSONResponseForTest(t, firstResponse, &first)
+
+		convey.Convey("when a bounded page is requested, then the generic Export endpoint returns the existing ExportResult wire shape and cursor metadata", func() {
+			convey.So(firstResponse.Code, convey.ShouldEqual, http.StatusOK)
+			assertExportResultWireFieldsForTest(t, firstResponse)
+			convey.So(first.Columns, convey.ShouldResemble, []string{"name", "irods_path", "irods_unmatched", "reason"})
+			convey.So(first.Rows, convey.ShouldHaveLength, 50)
+			convey.So(first.Total, convey.ShouldEqual, 97)
+			convey.So(first.NextCursor, convey.ShouldNotBeEmpty)
+			convey.So(first.Complete, convey.ShouldBeFalse)
+			convey.So(first.Format, convey.ShouldEqual, exportFormatTSV)
+		})
+
+		convey.Convey("when the returned cursor is supplied, then the next bounded page returns the remaining products", func() {
+			secondValues := url.Values{}
+			secondValues.Set("columns", "name,irods_path,irods_unmatched,reason")
+			secondValues.Set("file_type", "cram")
+			secondValues.Set("limit", "50")
+			secondValues.Set("cursor", first.NextCursor)
+			secondResponse := performMLWHRequestForTest(t, client, http.MethodGet, "/export/products/study/7568?"+secondValues.Encode())
+			var second ExportResult
+			decodeMLWHJSONResponseForTest(t, secondResponse, &second)
+
+			convey.So(secondResponse.Code, convey.ShouldEqual, http.StatusOK)
+			convey.So(second.Rows, convey.ShouldHaveLength, 47)
+			convey.So(second.Total, convey.ShouldEqual, 97)
+			convey.So(second.NextCursor, convey.ShouldBeEmpty)
+			convey.So(second.Complete, convey.ShouldBeTrue)
+		})
+
+		convey.Convey("when all=true is requested, then materialization drains the complete products stream into JSON rows", func() {
+			allResponse := performMLWHRequestForTest(
+				t,
+				client,
+				http.MethodGet,
+				"/export/products/study/7568?columns=name,irods_path,irods_unmatched,reason&file_type=cram&all=true",
+			)
+			var all ExportResult
+			decodeMLWHJSONResponseForTest(t, allResponse, &all)
+
+			convey.So(allResponse.Code, convey.ShouldEqual, http.StatusOK)
+			convey.So(all.Rows, convey.ShouldHaveLength, 97)
+			convey.So(all.Total, convey.ShouldEqual, -1)
+			convey.So(all.NextCursor, convey.ShouldBeEmpty)
+			convey.So(all.Complete, convey.ShouldBeTrue)
+			convey.So(all.Format, convey.ShouldEqual, exportFormatTSV)
+		})
+	})
+}
+
+func assertExportResultWireFieldsForTest(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+
+	var body map[string]json.RawMessage
+	decodeMLWHJSONResponseForTest(t, response, &body)
+	for _, field := range []string{"Columns", "Rows", "Total", "NextCursor", "Complete", "Format"} {
+		_, ok := body[field]
+		convey.So(ok, convey.ShouldBeTrue)
+	}
 }
 
 func TestServerUnauthenticatedReachabilityG3(t *testing.T) {
