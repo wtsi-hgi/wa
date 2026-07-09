@@ -624,6 +624,24 @@ func runDevSeedFixtureCountForTest(t *testing.T, repoRoot string) int {
 	return len(fixtures)
 }
 
+func runDevBuiltBinaryPathForTest(t *testing.T, repoRoot string, process *runDevProcess) string {
+	t.Helper()
+
+	prefix := "Building Go binary at "
+	for _, line := range strings.Split(process.stdout.String(), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			path := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			convey.So(path, convey.ShouldStartWith, filepath.Join(repoRoot, ".tmp")+string(os.PathSeparator)+"wa-run-dev-")
+
+			return path
+		}
+	}
+
+	t.Fatalf("did not find run-dev build path in stdout:\n%s", process.stdout.String())
+
+	return ""
+}
+
 func TestRunDevAutoManagedMLWHBackendFailsFastOnColdCacheWithoutDSN(t *testing.T) {
 	convey.Convey("run-dev.sh fails fast when the MLWH cache is never-synced and no WA_MLWH_DSN can populate it", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
@@ -1846,7 +1864,8 @@ func TestRunDevScript(t *testing.T) {
 		resultsList := waitForSeededResultsForTest(t, resultsPort, expectedFixtureCount)
 		fixtureSummary := summarizeRunDevFixturesForTest(t, repoRoot, resultsPort, resultsList)
 
-		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, ".tmp", "wa")), convey.ShouldBeTrue)
+		binaryPath := runDevBuiltBinaryPathForTest(t, repoRoot, process)
+		convey.So(runDevPathExistsForTest(binaryPath), convey.ShouldBeTrue)
 		convey.So(resultsList, convey.ShouldHaveLength, expectedFixtureCount)
 		convey.So(fixtureSummary.nestedDirectoryCount, convey.ShouldBeGreaterThanOrEqualTo, 3)
 		convey.So(fixtureSummary.hasSiblingDirectories, convey.ShouldBeTrue)
@@ -1870,6 +1889,7 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
 		convey.So(runDevPathExistsForTest(snapshot.ResultsDBPath), convey.ShouldBeFalse)
+		convey.So(runDevPathExistsForTest(binaryPath), convey.ShouldBeFalse)
 	})
 
 	convey.Convey("R1.4: run-dev.sh starts MLWH and exports WA_MLWH_BACKEND_URL when an explicit MLWH command is set", t, func() {
@@ -2180,7 +2200,7 @@ exec %q "$@"
 
 		_ = waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
-		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, ".tmp", "wa")), convey.ShouldBeTrue)
+		convey.So(runDevPathExistsForTest(runDevBuiltBinaryPathForTest(t, repoRoot, process)), convey.ShouldBeTrue)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)

@@ -396,7 +396,7 @@ WA_DEV_ALLOWED_ORIGINS="$(collect_dev_origins)"
 export WA_DEV_ALLOWED_ORIGINS
 
 TMP_DIR="$REPO_ROOT/.tmp"
-BIN_PATH="$TMP_DIR/wa"
+BIN_PATH="$TMP_DIR/wa-run-dev-$$"
 LOG_DIR="$REPO_ROOT/logs"
 SEED_PATH="$REPO_ROOT/.docs/results-web/fixtures/seed.json"
 FRONTEND_DIR="${WA_RUN_DEV_FRONTEND_CWD:-$REPO_ROOT/frontend}"
@@ -875,6 +875,8 @@ cleanup() {
   if (( MLWH_CACHE_EPHEMERAL )) && [[ -n "$MLWH_CACHE_PATH" ]]; then
     rm -f "$MLWH_CACHE_PATH"
   fi
+
+  rm -f "$BIN_PATH"
 
   return "$exit_code"
 }

@@ -1312,10 +1312,6 @@ func TestExportStudySampleCramsBackedByIRODSMirrorD1a(t *testing.T) {
 			},
 			Limit: 1,
 		})
-		aliasResult, aliasErr := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "CRAMS", ExportOptions{
-			Columns: []string{"ega_id", "irods_cram_path"},
-			Limit:   1,
-		})
 		includeControls := false
 		includeControlsResult, includeControlsErr := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "CRAMS", ExportOptions{
 			DeliverablesOnly: &includeControls,
@@ -1379,13 +1375,20 @@ func TestExportStudySampleCramsBackedByIRODSMirrorD1a(t *testing.T) {
 			convey.So(projectedResult.Total, convey.ShouldEqual, 3)
 		})
 
-		convey.Convey("when legacy sample-crams column aliases are selected, then they resolve to canonical export column names", func() {
-			convey.So(aliasErr, convey.ShouldBeNil)
-			convey.So(aliasResult.Columns, convey.ShouldResemble, []string{"accession_number", "irods_path"})
-			convey.So(aliasResult.Rows, convey.ShouldResemble, [][]string{{
-				"EGAN-merged",
-				"/seq/crams/merged/49348_1-2#1.cram",
-			}})
+		convey.Convey("when removed hidden sample-crams column aliases are selected, then Export rejects them and lists canonical names", func() {
+			for _, alias := range []string{"ega_id", "irods_cram_path"} {
+				aliasResult, aliasErr := client.Export(context.Background(), ExportRelationship{Children: "sample-crams", ParentKind: "study"}, "CRAMS", ExportOptions{
+					Columns: []string{alias},
+					Limit:   1,
+				})
+
+				convey.So(errors.Is(aliasErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+				convey.So(aliasErr.Error(), convey.ShouldContainSubstring, `unknown export column "`+alias+`"`)
+				convey.So(aliasErr.Error(), convey.ShouldContainSubstring, "accession_number")
+				convey.So(aliasErr.Error(), convey.ShouldContainSubstring, "irods_path")
+				convey.So(aliasResult.Columns, convey.ShouldBeNil)
+				convey.So(aliasResult.Rows, convey.ShouldBeNil)
+			}
 		})
 
 		convey.Convey("when controls are explicitly included, then the non-deliverable-only CRAM is restored", func() {

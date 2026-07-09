@@ -289,6 +289,42 @@ func TestOpenAPISchemaUsesDocTagDescriptionsC2(t *testing.T) {
 	})
 }
 
+func TestOpenAPISchemaExplainsEGAAccessionTerminologyC2(t *testing.T) {
+	convey.Convey("Given the generated OpenAPI schemas, then every accession-number property explains EGA terminology and the canonical field name", t, func() {
+		doc := decodedOpenAPIDocForTest(t)
+		schemas := openAPISchemas(t, doc)
+		checked := 0
+
+		for _, rawSchema := range schemas {
+			schema, ok := rawSchema.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			properties, ok := schema["properties"].(map[string]any)
+			if !ok {
+				continue
+			}
+
+			for _, fieldName := range []string{"accession_number", "study_accession_number"} {
+				property, ok := properties[fieldName].(map[string]any)
+				if !ok {
+					continue
+				}
+
+				description, ok := property["description"].(string)
+				convey.So(ok, convey.ShouldBeTrue)
+				convey.So(description, convey.ShouldContainSubstring, "EGA ID")
+				convey.So(description, convey.ShouldContainSubstring, "EGA accession")
+				convey.So(description, convey.ShouldContainSubstring, fieldName)
+				checked++
+			}
+		}
+
+		convey.So(checked, convey.ShouldBeGreaterThan, 3)
+	})
+}
+
 func TestOpenAPISchemaRequiredHonoursOmitemptyC2(t *testing.T) {
 	// Pointer / omitempty fields must not be required; plain value fields must
 	// be (C2: "Handle ... omitempty correctly (omitempty / pointer => not
@@ -427,16 +463,23 @@ func openAPISchemaProperties(t *testing.T, doc map[string]any, name string) map[
 func openAPISchema(t *testing.T, doc map[string]any, name string) map[string]any {
 	t.Helper()
 
+	schemas := openAPISchemas(t, doc)
+	schema, ok := schemas[name].(map[string]any)
+	convey.So(ok, convey.ShouldBeTrue)
+
+	return schema
+}
+
+func openAPISchemas(t *testing.T, doc map[string]any) map[string]any {
+	t.Helper()
+
 	components, ok := doc["components"].(map[string]any)
 	convey.So(ok, convey.ShouldBeTrue)
 
 	schemas, ok := components["schemas"].(map[string]any)
 	convey.So(ok, convey.ShouldBeTrue)
 
-	schema, ok := schemas[name].(map[string]any)
-	convey.So(ok, convey.ShouldBeTrue)
-
-	return schema
+	return schemas
 }
 
 // openAPIDocumentedErrorCodes walks every operation's error responses and maps

@@ -123,7 +123,6 @@ var exportRelationshipSpecs = []exportRelationshipSpec{
 type exportColumn struct {
 	Name          string
 	Aliases       []string
-	HiddenAliases []string
 	NeedsSample   bool
 	NeedsStudy    bool
 	Supported     bool
@@ -137,7 +136,7 @@ type exportVocabulary struct {
 
 var (
 	irodsExportVocabulary = exportVocabulary{
-		Columns: fileExportColumns(nil),
+		Columns: fileExportColumns(),
 		Default: []string{"supplier_name", "sanger_sample_id", "manual_qc", "irods_path"},
 	}
 	sampleExportVocabulary = exportVocabulary{
@@ -208,10 +207,7 @@ var (
 		Default: []string{"role", "name", "login", "email"},
 	}
 	sampleCRAMExportVocabulary = exportVocabulary{
-		Columns: fileExportColumns(map[string][]string{
-			"accession_number": {"ega_id"},
-			"irods_path":       {"irods_cram_path"},
-		}),
+		Columns: fileExportColumns(),
 		Default: []string{"name", "accession_number", "irods_path", "merged"},
 	}
 )
@@ -310,8 +306,8 @@ func exportRelationshipSpecMatchesChildren(spec exportRelationshipSpec, children
 	return false
 }
 
-func fileExportColumns(hiddenAliases map[string][]string) []exportColumn {
-	columns := []exportColumn{
+func fileExportColumns() []exportColumn {
+	return []exportColumn{
 		{Name: "supplier_name", Aliases: []string{"supplier_sample_name"}, NeedsSample: true, Supported: true},
 		{Name: "sanger_sample_id", NeedsSample: true, Supported: true},
 		{Name: "name", NeedsSample: true, Supported: true},
@@ -332,13 +328,6 @@ func fileExportColumns(hiddenAliases map[string][]string) []exportColumn {
 		{Name: "collection", Supported: true},
 		{Name: "data_object", Supported: true},
 	}
-	for index := range columns {
-		if aliases := hiddenAliases[columns[index].Name]; len(aliases) > 0 {
-			columns[index].HiddenAliases = append([]string(nil), aliases...)
-		}
-	}
-
-	return columns
 }
 
 func resolveExportColumns(rel ExportRelationship, vocab exportVocabulary, requested []string) ([]exportColumn, error) {
@@ -372,9 +361,6 @@ func exportColumnLookup(columns []exportColumn) map[string]exportColumn {
 		for _, alias := range column.Aliases {
 			lookup[alias] = column
 		}
-		for _, alias := range column.HiddenAliases {
-			lookup[alias] = column
-		}
 	}
 
 	return lookup
@@ -396,7 +382,6 @@ func validExportColumnNames(columns []exportColumn) []string {
 	for _, column := range columns {
 		names = append(names, column.Name)
 		names = append(names, column.Aliases...)
-		names = append(names, column.HiddenAliases...)
 	}
 
 	return names

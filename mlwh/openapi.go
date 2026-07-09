@@ -195,7 +195,7 @@ func (c *openAPISchemaCollector) registerStruct(typ reflect.Type) {
 			continue
 		}
 
-		properties[jsonName] = c.schemaForField(field)
+		properties[jsonName] = c.schemaForField(field, jsonName)
 
 		if !omitempty && field.Type.Kind() != reflect.Pointer {
 			required = append(required, jsonName)
@@ -233,11 +233,11 @@ func openAPIJSONFieldName(field reflect.StructField) (string, bool, bool) {
 }
 
 // schemaForField returns the schema for a struct field, attaching the doc: tag
-// as the field description where one is present.
-func (c *openAPISchemaCollector) schemaForField(field reflect.StructField) map[string]any {
+// and generated canonical-field terminology as the field description.
+func (c *openAPISchemaCollector) schemaForField(field reflect.StructField, jsonName string) map[string]any {
 	schema := c.schemaForType(field.Type)
 
-	doc := strings.TrimSpace(field.Tag.Get("doc"))
+	doc := openAPIFieldDescription(field, jsonName)
 	if doc == "" {
 		return schema
 	}
@@ -254,6 +254,19 @@ func (c *openAPISchemaCollector) schemaForField(field reflect.StructField) map[s
 	schema["description"] = doc
 
 	return schema
+}
+
+func openAPIFieldDescription(field reflect.StructField, jsonName string) string {
+	doc := strings.TrimSpace(field.Tag.Get("doc"))
+	if note := openAPIAccessionTerminologyNote(jsonName); note != "" {
+		if doc == "" {
+			return note
+		}
+
+		return doc + " " + note
+	}
+
+	return doc
 }
 
 // OpenAPIDocument assembles the OpenAPI 3.1.0 document describing the served
@@ -442,6 +455,15 @@ func addOpenAPIHealthPath(paths map[string]any, _ *openAPISchemaCollector) {
 	}
 
 	addOpenAPIOperation(paths, "/health", strings.ToLower(http.MethodGet), operation)
+}
+
+func openAPIAccessionTerminologyNote(jsonName string) string {
+	switch jsonName {
+	case "accession_number", "study_accession_number":
+		return "EGA ID and EGA accession terminology map to the canonical " + jsonName + " field."
+	default:
+		return ""
+	}
 }
 
 // slicesContainsCSV reports whether a comma-separated option list contains opt.
