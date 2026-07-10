@@ -28,6 +28,7 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -184,6 +185,24 @@ func TestClientSyncPacBioRunWellMetricsWholesaleReplace(t *testing.T) {
 	})
 }
 
+func isTrackingMirrorMutationForTest(statement recordedSQLStatement) bool {
+	normalized := normalizeSQL(statement.Query)
+
+	return strings.HasPrefix(normalized, "INSERT INTO seq_ops_tracking_per_sample_mirror") ||
+		strings.HasPrefix(normalized, "UPDATE seq_ops_tracking_per_sample_mirror") ||
+		strings.HasPrefix(normalized, "DELETE FROM seq_ops_tracking_per_sample_mirror")
+}
+
+func isSyncStateWriteForTest(statement recordedSQLStatement) bool {
+	return strings.HasPrefix(normalizeSQL(statement.Query), "INSERT INTO sync_state")
+}
+
+func isTrackingMirrorReadForTest(statement recordedSQLStatement) bool {
+	normalized := normalizeSQL(statement.Query)
+
+	return strings.HasPrefix(normalized, "SELECT ") && strings.Contains(normalized, "FROM seq_ops_tracking_per_sample_mirror")
+}
+
 // recordingOrderSource wraps a real SQLite source and reports the ascending-id
 // paging cursor (the value bound to "id_run_status > ?") of each iseq_run_status
 // source query, so a test can assert the ascending read order from the cursor
@@ -273,6 +292,207 @@ func seedRealMLWHIseqRunStatusRow(t *testing.T, db *sql.DB, idRunStatus, idRun, 
 	}
 }
 
+func TestClientSyncIseqRunStatusWarmSyncStartsAtRetainedWatermark(t *testing.T) {
+	convey.Convey("C1: Given iseq_run_status rows cold-synced through id M and P newer source rows", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.July, 1, 9, 0, 0, 0, time.UTC)
+		seedIseqRunStatusSourceRange(t, source, 1, 3, base)
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		var cursors []int64
+		client := &Client{
+			cache:           cache,
+			cacheReader:     cacheReadDB(cache),
+			syncSource:      recordingOrderSource{db: source, observe: func(cursor int64) { cursors = append(cursors, cursor) }},
+			disableSyncLock: true,
+		}
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqRunStatus)
+		convey.So(err, convey.ShouldBeNil)
+
+		seedIseqRunStatusSourceRange(t, source, 4, 5, base)
+		cursors = nil
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqRunStatus)
+
+		convey.Convey("when warm-synced, then paging starts at M and only the P new rows are inserted", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(cursors, convey.ShouldNotBeEmpty)
+			convey.So(cursors[0], convey.ShouldEqual, int64(3))
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 2)
+			convey.So(reports[0].Updated, convey.ShouldEqual, 0)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_run_status_mirror`), convey.ShouldEqual, 5)
+
+			resumeID, valid := readIseqRunStatusResumeID(t, cache.DB())
+			convey.So(valid, convey.ShouldBeTrue)
+			convey.So(resumeID, convey.ShouldEqual, int64(5))
+		})
+	})
+}
+
+func seedIseqRunStatusSourceRange(t *testing.T, db *sql.DB, startID, endID int64, base time.Time) {
+	t.Helper()
+
+	for offset := range endID - startID + 1 {
+		id := startID + offset
+		seedRealMLWHIseqRunStatusRow(t, db, id, 52553, id, base.Add(time.Duration(id-1)*time.Hour), 0)
+	}
+}
+
+func readIseqRunStatusResumeID(t *testing.T, db *sql.DB) (int64, bool) {
+	t.Helper()
+
+	var raw sql.NullString
+	if err := db.QueryRow(`SELECT resume_cursor FROM sync_state WHERE table_name = ?`, syncTableIseqRunStatus).Scan(&raw); err != nil {
+		t.Fatalf("read iseq_run_status resume cursor: %v", err)
+	}
+	if !raw.Valid {
+		return 0, false
+	}
+
+	id, ok, err := parseAscendingIDResumeCursor(raw.String, iseqRunStatusIDResumeMode)
+	if err != nil {
+		t.Fatalf("parse iseq_run_status resume cursor: %v", err)
+	}
+
+	return id, ok
+}
+
+func TestClientSyncIseqRunStatusNullCursorUpgradeRereadsOnce(t *testing.T) {
+	convey.Convey("C2: Given an existing iseq_run_status mirror with a NULL resume cursor", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.July, 3, 9, 0, 0, 0, time.UTC)
+		seedIseqRunStatusSourceRange(t, source, 1, 3, base)
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedIseqRunStatusMirrorRange(t, cache.DB(), 1, 3, base)
+		seedNullCursorIseqRunStatusState(t, cache.DB(), base)
+
+		var cursors []int64
+		client := &Client{
+			cache:           cache,
+			cacheReader:     cacheReadDB(cache),
+			syncSource:      recordingOrderSource{db: source, observe: func(cursor int64) { cursors = append(cursors, cursor) }},
+			disableSyncLock: true,
+		}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqRunStatus)
+
+		convey.Convey("when warm-synced, then it rereads from zero once, updates existing rows, and establishes the watermark", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(cursors, convey.ShouldNotBeEmpty)
+			convey.So(cursors[0], convey.ShouldEqual, int64(0))
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 0)
+			convey.So(reports[0].Updated, convey.ShouldEqual, 3)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_run_status_mirror`), convey.ShouldEqual, 3)
+
+			resumeID, valid := readIseqRunStatusResumeID(t, cache.DB())
+			convey.So(valid, convey.ShouldBeTrue)
+			convey.So(resumeID, convey.ShouldEqual, int64(3))
+		})
+	})
+}
+
+func seedIseqRunStatusMirrorRange(t *testing.T, db *sql.DB, startID, endID int64, base time.Time) {
+	t.Helper()
+
+	for offset := range endID - startID + 1 {
+		id := startID + offset
+		date := base.Add(time.Duration(id-1) * time.Hour)
+		if _, err := db.Exec(
+			`INSERT INTO iseq_run_status_mirror(id_run_status, id_run, date, id_run_status_dict, iscurrent, normalised_date) VALUES (?, ?, ?, ?, ?, ?)`,
+			id, 52553, formatSyncTime(date), id, 0, formatSyncDate(date),
+		); err != nil {
+			t.Fatalf("seed iseq_run_status_mirror row %d: %v", id, err)
+		}
+	}
+}
+
+func seedNullCursorIseqRunStatusState(t *testing.T, db *sql.DB, lastRun time.Time) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, NULL, 0)`,
+		syncTableIseqRunStatus, formatSyncTime(time.Time{}), formatSyncTime(lastRun),
+	); err != nil {
+		t.Fatalf("seed NULL-cursor iseq_run_status sync state: %v", err)
+	}
+}
+
+func TestClientSyncIseqRunStatusAfterNullCursorUpgradeUsesRetainedWatermark(t *testing.T) {
+	convey.Convey("C2: Given an upgraded iseq_run_status mirror after its one-time full reread", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.July, 4, 9, 0, 0, 0, time.UTC)
+		seedIseqRunStatusSourceRange(t, source, 1, 3, base)
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedIseqRunStatusMirrorRange(t, cache.DB(), 1, 3, base)
+		seedNullCursorIseqRunStatusState(t, cache.DB(), base)
+
+		var cursors []int64
+		client := &Client{
+			cache:           cache,
+			cacheReader:     cacheReadDB(cache),
+			syncSource:      recordingOrderSource{db: source, observe: func(cursor int64) { cursors = append(cursors, cursor) }},
+			disableSyncLock: true,
+		}
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqRunStatus)
+		convey.So(err, convey.ShouldBeNil)
+		cursors = nil
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqRunStatus)
+
+		convey.Convey("when warm-synced again, then it pages from M and reads no rows", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(cursors, convey.ShouldResemble, []int64{3})
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 0)
+			convey.So(reports[0].Updated, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestClientSyncIseqRunStatusNoopPreservesRetainedWatermark(t *testing.T) {
+	convey.Convey("C1: Given an iseq_run_status mirror whose retained watermark is M+P", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.July, 2, 9, 0, 0, 0, time.UTC)
+		seedIseqRunStatusSourceRange(t, source, 1, 3, base)
+
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqRunStatus)
+		convey.So(err, convey.ShouldBeNil)
+
+		seedIseqRunStatusSourceRange(t, source, 4, 5, base)
+		_, err = syncSelectedTablesForTest(context.Background(), client, syncTableIseqRunStatus)
+		convey.So(err, convey.ShouldBeNil)
+		observer.Reset()
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqRunStatus)
+
+		convey.Convey("when warm-synced with no newer rows, then no mirror row is written and the watermark remains non-NULL", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 0)
+			convey.So(reports[0].Updated, convey.ShouldEqual, 0)
+
+			mirrorWrites := filterRecordedStatements(observer.Statements(), func(statement recordedSQLStatement) bool {
+				return strings.Contains(statement.Query, "iseq_run_status_mirror")
+			})
+			convey.So(mirrorWrites, convey.ShouldBeEmpty)
+
+			resumeID, valid := readIseqRunStatusResumeID(t, cache.DB())
+			convey.So(valid, convey.ShouldBeTrue)
+			convey.So(resumeID, convey.ShouldEqual, int64(5))
+			convey.So(readSyncHighWater(t, cache.DB(), syncTableIseqRunStatus).IsZero(), convey.ShouldBeTrue)
+		})
+	})
+}
+
 // TestClientSyncEseqProductMetricsIncrementalAdvancesOnSecondSync covers the
 // per-platform product-metrics incremental strategy for a three-QC-column table
 // (eseq): the qc/qc_seq/qc_lib columns mirror NULL-preservingly, and a second
@@ -346,10 +566,10 @@ func seedRealMLWHEseqProductMetricRow(t *testing.T, db *sql.DB, idProduct string
 	}
 }
 
-// TestClientSyncSeqOpsTrackingPerSampleFullRefreshReplacesSnapshot covers A5.2:
-// the tracking-table full-refresh sync replaces the whole mirror with the new
-// source snapshot (old rows gone), and the swap is atomic.
-func TestClientSyncSeqOpsTrackingPerSampleFullRefreshReplacesSnapshot(t *testing.T) {
+// TestClientSyncSeqOpsTrackingPerSampleDiffApplyReplacesSnapshot covers A5.2:
+// the tracking-table diff/apply makes the mirror equal the new source snapshot
+// by deleting absent rows and inserting new rows atomically.
+func TestClientSyncSeqOpsTrackingPerSampleDiffApplyReplacesSnapshot(t *testing.T) {
 	convey.Convey("A5.2: Given an existing populated seq_ops_tracking_per_sample_mirror and a fresh source snapshot", t, func() {
 		source := openRealMLWHSchemaSource(t)
 		base := time.Date(2026, time.June, 11, 9, 0, 0, 0, time.UTC)
@@ -357,7 +577,7 @@ func TestClientSyncSeqOpsTrackingPerSampleFullRefreshReplacesSnapshot(t *testing
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		// Pre-populate the mirror with stale rows that must be gone after refresh.
+		// Pre-populate the mirror with stale rows that the diff must delete.
 		seedTrackingMirrorRowForTest(t, cache.DB(), "OLD-1", "S-OLD", base)
 		seedTrackingMirrorRowForTest(t, cache.DB(), "OLD-2", "S-OLD", base)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_ops_tracking_per_sample_mirror`), convey.ShouldEqual, 2)
@@ -371,7 +591,7 @@ func TestClientSyncSeqOpsTrackingPerSampleFullRefreshReplacesSnapshot(t *testing
 
 		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqOpsTrackingPerSample)
 
-		convey.Convey("when the full-refresh sync runs, then the mirror equals the new snapshot (old rows gone)", func() {
+		convey.Convey("when the diff/apply sync runs, then the mirror equals the new snapshot (old rows gone)", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(reports, convey.ShouldHaveLength, 1)
 
@@ -383,12 +603,12 @@ func TestClientSyncSeqOpsTrackingPerSampleFullRefreshReplacesSnapshot(t *testing
 }
 
 // TestClientSyncSeqOpsTrackingPerSampleSwapIsAtomic covers A5.2's atomicity
-// clause: the build-and-swap happens inside a single transaction, so a reader can
+// clause: the diff/apply happens inside a single transaction, so a reader can
 // never observe a partial table (a row count between the old and new snapshots).
 //
 // It proves this two ways. First, deterministically via WAL snapshot isolation: a
-// read transaction opened on the independent read-only connection BEFORE the swap
-// keeps seeing the whole old snapshot (2) for its entire life even after the swap
+// read transaction opened on the independent read-only connection BEFORE apply
+// keeps seeing the whole old snapshot (2) for its entire life even after apply
 // commits, while a fresh read afterwards sees the whole new snapshot (3) -- a
 // reader is therefore never exposed to an in-between (DELETE-but-not-yet-inserted)
 // state, which is only possible if the swap is one transaction. Second, a
@@ -444,7 +664,7 @@ func TestClientSyncSeqOpsTrackingPerSampleSwapIsAtomic(t *testing.T) {
 		}()
 
 		refreshTime := time.Now().UTC()
-		swapErr := writeSeqOpsTrackingPerSampleFullRefresh(context.Background(), cache, newRows, refreshTime)
+		_, swapErr := writeSeqOpsTrackingPerSampleDiffApply(context.Background(), cache, newRows, refreshTime)
 		close(stop)
 		wg.Wait()
 
@@ -473,10 +693,233 @@ func seedTrackingMirrorRowForTest(t *testing.T, db *sql.DB, idSampleLims, studyI
 	t.Helper()
 
 	row := newTrackingSyncRowForTest(idSampleLims, studyID, manifestCreated)
-	stmt := buildBulkInsertStatement("seq_ops_tracking_per_sample_mirror", seqOpsTrackingPerSampleMirrorColumns, 1)
-	if _, err := db.Exec(stmt, seqOpsTrackingPerSampleMirrorRowArgs(row)...); err != nil {
-		t.Fatalf("seedTrackingMirrorRowForTest: %v", err)
-	}
+	seedTrackingMirrorRowsForTest(t, db, []seqOpsTrackingPerSampleSyncRow{row})
+}
+
+func TestClientSyncSeqOpsTrackingPerSampleDiffApplyMixedChanges(t *testing.T) {
+	convey.Convey("D1.1: Given tracking mirror rows A/B/C/D and a source snapshot with unchanged A, changed B, and new E", t, func() {
+		base := time.Date(2026, time.July, 1, 9, 0, 0, 0, time.UTC)
+		rowA := newTrackingSyncRowForTest("A", "study-A", base)
+		rowB := newTrackingSyncRowForTest("B", "study-B", base)
+		rowC := newTrackingSyncRowForTest("C", "study-C", base)
+		rowD := newTrackingSyncRowForTest("D", "study-D", base)
+		changedB := newTrackingSyncRowForTest("B", "study-B", base.Add(time.Hour))
+		rowE := newTrackingSyncRowForTest("E", "study-E", base.Add(2*time.Hour))
+
+		source := openRealMLWHSchemaSource(t)
+		seedTrackingSourceRowsForTest(t, source, []seqOpsTrackingPerSampleSyncRow{rowE, changedB, rowA})
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedTrackingMirrorRowsForTest(t, cache.DB(), []seqOpsTrackingPerSampleSyncRow{rowA, rowB, rowC, rowD})
+		seedSyncState(t, cache.DB(), syncTableSeqOpsTrackingPerSample, base.Add(-time.Hour))
+		observer.Reset()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqOpsTrackingPerSample)
+
+		convey.Convey("when synced, then only E inserts and B updates while C/D disappear and every surviving column matches the snapshot", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 1)
+			convey.So(reports[0].Updated, convey.ShouldEqual, 1)
+			convey.So(readTrackingMirrorRowsForTest(t, cacheReadDB(cache)), convey.ShouldResemble, []seqOpsTrackingPerSampleSyncRow{rowA, changedB, rowE})
+
+			mutations := filterRecordedStatements(observer.Statements(), isTrackingMirrorMutationForTest)
+			convey.So(mutations, convey.ShouldHaveLength, 4)
+		})
+	})
+}
+
+func TestClientSyncSeqOpsTrackingPerSampleDiffApplyUsesOneTransaction(t *testing.T) {
+	convey.Convey("D1.2: Given a tracking diff containing an insert, update, and deletes", t, func() {
+		base := time.Date(2026, time.July, 1, 10, 0, 0, 0, time.UTC)
+		rowA := newTrackingSyncRowForTest("A", "study-A", base)
+		rowB := newTrackingSyncRowForTest("B", "study-B", base)
+		changedB := newTrackingSyncRowForTest("B", "study-B", base.Add(time.Hour))
+
+		source := openRealMLWHSchemaSource(t)
+		seedTrackingSourceRowsForTest(t, source, []seqOpsTrackingPerSampleSyncRow{rowA, changedB, newTrackingSyncRowForTest("E", "study-E", base)})
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedTrackingMirrorRowsForTest(t, cache.DB(), []seqOpsTrackingPerSampleSyncRow{
+			rowA,
+			rowB,
+			newTrackingSyncRowForTest("C", "study-C", base),
+			newTrackingSyncRowForTest("D", "study-D", base),
+		})
+		observer.Reset()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqOpsTrackingPerSample)
+
+		convey.Convey("when synced, then the ordered diff-read is fully drained before all changes and sync_state commit in exactly one transaction", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(observer.BeginCount(), convey.ShouldEqual, 1)
+			convey.So(observer.CommitCount(), convey.ShouldEqual, 1)
+			convey.So(observer.WriteWhileTrackingReadCount(), convey.ShouldEqual, 0)
+			convey.So(filterRecordedStatements(observer.Statements(), isTrackingMirrorMutationForTest), convey.ShouldHaveLength, 4)
+		})
+	})
+}
+
+func TestClientSyncSeqOpsTrackingPerSampleNullMilestonesCompareEqual(t *testing.T) {
+	convey.Convey("D1.3: Given equal tracking rows whose manifest and other milestones are NULL on both sides", t, func() {
+		row := newTrackingSyncRowForTest("NULL-MILESTONES", "study-null", time.Time{})
+		row.ManifestCreated = sql.NullString{}
+
+		source := openRealMLWHSchemaSource(t)
+		seedTrackingSourceRowsForTest(t, source, []seqOpsTrackingPerSampleSyncRow{row})
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedTrackingMirrorRowsForTest(t, cache.DB(), []seqOpsTrackingPerSampleSyncRow{row})
+		observer.Reset()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqOpsTrackingPerSample)
+
+		convey.Convey("when synced, then NULL-vs-NULL equality produces no update", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Updated, convey.ShouldEqual, 0)
+			convey.So(filterRecordedStatements(observer.Statements(), isTrackingMirrorMutationForTest), convey.ShouldBeEmpty)
+		})
+	})
+}
+
+func TestClientSyncSeqOpsTrackingPerSampleCaseVariantsUseByteOrder(t *testing.T) {
+	convey.Convey("D1.4: Given equal tracking rows with case-variant ids whose NOCASE and byte-wise orders differ", t, func() {
+		base := time.Date(2026, time.July, 1, 11, 0, 0, 0, time.UTC)
+		rows := []seqOpsTrackingPerSampleSyncRow{
+			newTrackingSyncRowForTest("A", "study-A", base),
+			newTrackingSyncRowForTest("a", "study-a", base),
+			newTrackingSyncRowForTest("B", "study-B", base),
+			newTrackingSyncRowForTest("b", "study-b", base),
+		}
+
+		source := openRealMLWHSchemaSource(t)
+		seedTrackingSourceRowsForTest(t, source, rows)
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedTrackingMirrorRowsForTest(t, cache.DB(), rows)
+		observer.Reset()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqOpsTrackingPerSample)
+
+		convey.Convey("when synced, then the equal byte-ordered sets need no writes and remain unchanged", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 0)
+			convey.So(reports[0].Updated, convey.ShouldEqual, 0)
+			convey.So(filterRecordedStatements(observer.Statements(), isTrackingMirrorMutationForTest), convey.ShouldBeEmpty)
+			convey.So(readTrackingMirrorRowsForTest(t, cacheReadDB(cache)), convey.ShouldResemble, []seqOpsTrackingPerSampleSyncRow{rows[0], rows[2], rows[1], rows[3]})
+		})
+	})
+}
+
+func TestClientSyncSeqOpsTrackingPerSampleUnchangedWritesOnlySyncState(t *testing.T) {
+	convey.Convey("D2.1: Given an unchanged tracking mirror/source snapshot and an old refresh watermark", t, func() {
+		oldRefresh := time.Date(2026, time.July, 1, 8, 0, 0, 0, time.UTC)
+		rows := []seqOpsTrackingPerSampleSyncRow{
+			newTrackingSyncRowForTest("same-1", "study-1", oldRefresh),
+			newTrackingSyncRowForTest("same-2", "study-2", oldRefresh),
+		}
+
+		source := openRealMLWHSchemaSource(t)
+		seedTrackingSourceRowsForTest(t, source, rows)
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedTrackingMirrorRowsForTest(t, cache.DB(), rows)
+		seedSyncState(t, cache.DB(), syncTableSeqOpsTrackingPerSample, oldRefresh)
+		observer.Reset()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqOpsTrackingPerSample)
+
+		convey.Convey("when synced, then only sync_state is written in one commit while high_water and last_run advance", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 0)
+			convey.So(reports[0].Updated, convey.ShouldEqual, 0)
+			convey.So(filterRecordedStatements(observer.Statements(), isTrackingMirrorMutationForTest), convey.ShouldBeEmpty)
+			convey.So(filterRecordedStatements(observer.Statements(), isSyncStateWriteForTest), convey.ShouldHaveLength, 1)
+			convey.So(observer.BeginCount(), convey.ShouldEqual, 1)
+			convey.So(observer.CommitCount(), convey.ShouldEqual, 1)
+			convey.So(readTrackingMirrorRowsForTest(t, cacheReadDB(cache)), convey.ShouldResemble, rows)
+			convey.So(readSyncStateColumnTime(t, cacheReadDB(cache), syncTableSeqOpsTrackingPerSample, "high_water").After(oldRefresh), convey.ShouldBeTrue)
+			convey.So(readSyncStateColumnTime(t, cacheReadDB(cache), syncTableSeqOpsTrackingPerSample, "last_run").After(oldRefresh), convey.ShouldBeTrue)
+		})
+	})
+}
+
+func TestClientSyncSeqOpsTrackingPerSampleRecordsOrderedDiffRead(t *testing.T) {
+	convey.Convey("D2.2: Given an unchanged tracking snapshot on the recording cache", t, func() {
+		row := newTrackingSyncRowForTest("ordered", "study-ordered", time.Date(2026, time.July, 1, 12, 0, 0, 0, time.UTC))
+		source := openRealMLWHSchemaSource(t)
+		seedTrackingSourceRowsForTest(t, source, []seqOpsTrackingPerSampleSyncRow{row})
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedTrackingMirrorRowsForTest(t, cache.DB(), []seqOpsTrackingPerSampleSyncRow{row})
+		observer.Reset()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqOpsTrackingPerSample)
+		mirrorReads := filterRecordedStatements(observer.Statements(), isTrackingMirrorReadForTest)
+
+		convey.Convey("when synced, then exactly one real mirror SELECT is recorded and it explicitly orders by SQLite BINARY collation", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(mirrorReads, convey.ShouldHaveLength, 1)
+			convey.So(normalizeSQL(mirrorReads[0].Query), convey.ShouldContainSubstring, "ORDER BY id_sample_lims COLLATE BINARY")
+			convey.So(observer.RecordedUnorderedTrackingReadCount(), convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestClientSyncSeqOpsTrackingPerSampleStreamsMirrorWithConstantResidency(t *testing.T) {
+	convey.Convey("D2.3: Given 10000 equal tracking rows in the source and mirror", t, func() {
+		const rowCount = 10000
+		base := time.Date(2026, time.July, 1, 13, 0, 0, 0, time.UTC)
+		rows := make([]seqOpsTrackingPerSampleSyncRow, 0, rowCount)
+		for id := range rowCount {
+			rows = append(rows, newTrackingSyncRowForTest(fmt.Sprintf("%05d", id), "study-stream", base))
+		}
+
+		source := openRealMLWHSchemaSource(t)
+		seedTrackingSourceRowsForTest(t, source, rows)
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedTrackingMirrorRowsForTest(t, cache.DB(), rows)
+		observer.Reset()
+
+		peak := 0
+		currentResidency := 0
+		acquiredRows := 0
+		releasedRows := 0
+		withSyncTrackingResidencyHookForTest(t, func(residentMirrorRows int) {
+			if residentMirrorRows > peak {
+				peak = residentMirrorRows
+			}
+			if residentMirrorRows > currentResidency {
+				acquiredRows += residentMirrorRows - currentResidency
+			} else {
+				releasedRows += currentResidency - residentMirrorRows
+			}
+			currentResidency = residentMirrorRows
+		})
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqOpsTrackingPerSample)
+
+		convey.Convey("when the diff traverses the mirror, then every acquired row is released and its true mirror-side resident peak is exactly one row", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 0)
+			convey.So(reports[0].Updated, convey.ShouldEqual, 0)
+			convey.So(acquiredRows, convey.ShouldEqual, rowCount)
+			convey.So(releasedRows, convey.ShouldEqual, rowCount)
+			convey.So(currentResidency, convey.ShouldEqual, 0)
+			convey.So(peak, convey.ShouldEqual, 1)
+		})
+	})
 }
 
 func newTrackingSyncRowForTest(idSampleLims, studyID string, manifestCreated time.Time) seqOpsTrackingPerSampleSyncRow {
@@ -491,6 +934,76 @@ func newTrackingSyncRowForTest(idSampleLims, studyID string, manifestCreated tim
 		Platform:         "Illumina",
 		ManifestCreated:  sql.NullString{String: formatSyncTime(manifestCreated), Valid: true},
 	}
+}
+
+func seedTrackingSourceRowsForTest(t *testing.T, db *sql.DB, rows []seqOpsTrackingPerSampleSyncRow) {
+	t.Helper()
+
+	seedTrackingRowsIntoTableForTest(t, db, "seq_ops_tracking_per_sample", rows)
+}
+
+func seedTrackingMirrorRowsForTest(t *testing.T, db *sql.DB, rows []seqOpsTrackingPerSampleSyncRow) {
+	t.Helper()
+
+	seedTrackingRowsIntoTableForTest(t, db, "seq_ops_tracking_per_sample_mirror", rows)
+}
+
+func seedTrackingRowsIntoTableForTest(t *testing.T, db *sql.DB, table string, rows []seqOpsTrackingPerSampleSyncRow) {
+	t.Helper()
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("seedTrackingRowsIntoTableForTest begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(buildBulkInsertStatement(table, seqOpsTrackingPerSampleMirrorColumns, 1))
+	if err != nil {
+		t.Fatalf("seedTrackingRowsIntoTableForTest prepare: %v", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for _, row := range rows {
+		if _, err = stmt.Exec(seqOpsTrackingPerSampleMirrorRowArgs(row)...); err != nil {
+			t.Fatalf("seedTrackingRowsIntoTableForTest exec: %v", err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatalf("seedTrackingRowsIntoTableForTest commit: %v", err)
+	}
+}
+
+func withSyncTrackingResidencyHookForTest(t *testing.T, hook func(int)) {
+	t.Helper()
+
+	original := syncTrackingMirrorResidencyHook
+	syncTrackingMirrorResidencyHook = hook
+	t.Cleanup(func() { syncTrackingMirrorResidencyHook = original })
+}
+
+func readTrackingMirrorRowsForTest(t *testing.T, db *sql.DB) []seqOpsTrackingPerSampleSyncRow {
+	t.Helper()
+
+	rows, err := db.Query(`SELECT ` + strings.Join(seqOpsTrackingPerSampleMirrorColumns, ", ") + ` FROM seq_ops_tracking_per_sample_mirror ORDER BY id_sample_lims COLLATE BINARY`)
+	if err != nil {
+		t.Fatalf("readTrackingMirrorRowsForTest query: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make([]seqOpsTrackingPerSampleSyncRow, 0)
+	for rows.Next() {
+		row, scanErr := scanSeqOpsTrackingPerSampleSyncRow(rows)
+		if scanErr != nil {
+			t.Fatalf("readTrackingMirrorRowsForTest scan: %v", scanErr)
+		}
+
+		result = append(result, row)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatalf("readTrackingMirrorRowsForTest rows: %v", err)
+	}
+
+	return result
 }
 
 // TestClientSyncSeqOpsTrackingPerSampleSetsRefreshAndSyncTimes covers A5.3: the

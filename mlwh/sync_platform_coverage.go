@@ -26,10 +26,13 @@
 package mlwh
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -48,9 +51,8 @@ import (
 //     eseq_run, eseq_run_lane_metrics, useq_run_metrics) are mirrored wholesale:
 //     each run replaces the whole small table inside one transaction.
 //   - seq_ops_tracking_per_sample mutates in place with no last_changed and is
-//     mirrored by a full-table refresh that builds the new snapshot and swaps it
-//     in atomically inside one transaction; its high_water is the refresh time
-//     and last_run the sync time.
+//     mirrored by byte-ordered diff/apply inside one transaction; its high_water
+//     is the refresh time and last_run the sync time.
 
 // ---------------------------------------------------------------------------
 // Per-platform product-metrics incremental syncs (last_changed precedent).
@@ -454,13 +456,22 @@ func syncIseqRunStatusTable(ctx context.Context, cache Cache, source Querier, st
 	}
 
 	if sawRows || state.Exists {
-		// high_water stays empty for the ascending-id table; only last_run advances.
-		if err = finalizeSyncState(ctx, cache, syncTableIseqRunStatus, time.Time{}); err != nil {
+		if err = finalizeIseqRunStatusSyncState(ctx, cache, lastID); err != nil {
 			return report, false, err
 		}
 	}
 
 	return report, sawRows, nil
+}
+
+func finalizeIseqRunStatusSyncState(ctx context.Context, cache Cache, lastID int64) error {
+	resumeCursor := encodeAscendingIDResumeCursor(iseqRunStatusIDResumeMode, lastID)
+
+	return withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
+		// high_water stays empty for the ascending-id table; the completed
+		// watermark and last_run both survive successful finalization.
+		return writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableIseqRunStatus, time.Time{}, &resumeCursor, false)
+	})
 }
 
 func iseqRunStatusResumeID(state syncStateRecord) (int64, error) {
@@ -917,8 +928,10 @@ func insertWholesaleMirrorRows(ctx context.Context, tx *sql.Tx, spec wholesaleMi
 }
 
 // ---------------------------------------------------------------------------
-// seq_ops_tracking_per_sample full-table refresh with atomic swap.
+// seq_ops_tracking_per_sample full snapshot diff/apply.
 // ---------------------------------------------------------------------------
+
+var syncTrackingMirrorResidencyHook func(residentMirrorRows int)
 
 var seqOpsTrackingPerSampleMirrorColumns = []string{
 	"id_sample_lims",
@@ -995,12 +1008,11 @@ func seqOpsTrackingPerSampleMirrorRowArgs(row seqOpsTrackingPerSampleSyncRow) []
 // "converting NULL to string is unsupported".
 const seqOpsTrackingPerSampleSourceQuery = `SELECT id_sample_lims, COALESCE(sanger_sample_id, '') AS sanger_sample_id, COALESCE(sanger_sample_name, '') AS sanger_sample_name, COALESCE(study_id, '') AS study_id, COALESCE(programme, '') AS programme, COALESCE(faculty_sponsor, '') AS faculty_sponsor, COALESCE(library_type, '') AS library_type, COALESCE(platform, '') AS platform, manifest_created, manifest_uploaded, labware_received, order_made, working_dilution, library_start, library_complete, sequencing_run_start, sequencing_qc_complete FROM mlwh_reporting.seq_ops_tracking_per_sample`
 
-// syncSeqOpsTrackingPerSampleTable mirrors the tracking table by a full-table
-// refresh: it captures the refresh time, reads the whole source snapshot, and
-// builds-and-swaps it into the mirror atomically. The tracking table has no
+// syncSeqOpsTrackingPerSampleTable mirrors the tracking table by reading its
+// full source snapshot and atomically applying only differences. The table has no
 // last_changed and mutates in place (and ~55% of rows have NULL manifest_created),
 // so a GREATEST(milestones) watermark would miss in-place and backfilled fills; a
-// full refresh is honest and its lag is surfaced via the freshness caveat. Its
+// full snapshot read is honest and its lag is surfaced via the freshness caveat. Its
 // high_water is the refresh time and last_run the sync time.
 func syncSeqOpsTrackingPerSampleTable(ctx context.Context, cache Cache, source Querier, state syncStateRecord) (SyncReport, bool, error) {
 	refreshTime := time.Now().UTC()
@@ -1011,11 +1023,13 @@ func syncSeqOpsTrackingPerSampleTable(ctx context.Context, cache Cache, source Q
 	}
 
 	report := SyncReport{Table: syncTableSeqOpsTrackingPerSample, HighWater: refreshTime}
-	if err = writeSeqOpsTrackingPerSampleFullRefresh(ctx, cache, snapshot, refreshTime); err != nil {
+	result, err := writeSeqOpsTrackingPerSampleDiffApply(ctx, cache, snapshot, refreshTime)
+	if err != nil {
 		return report, false, err
 	}
 
-	report.Inserted = len(snapshot)
+	report.Inserted = result.Inserted
+	report.Updated = result.Updated
 
 	return report, true, nil
 }
@@ -1070,23 +1084,169 @@ func scanSeqOpsTrackingPerSampleSyncRow(rows *sql.Rows) (seqOpsTrackingPerSample
 	return row, nil
 }
 
-// writeSeqOpsTrackingPerSampleFullRefresh clears the tracking mirror and inserts
-// the new snapshot inside a single transaction, so the build-and-swap is atomic:
-// a concurrent reader on another connection sees either the whole old snapshot or
-// the whole new one, never a partial table. It writes high_water = refreshTime and
-// last_run = sync time.
-func writeSeqOpsTrackingPerSampleFullRefresh(ctx context.Context, cache Cache, rows []seqOpsTrackingPerSampleSyncRow, refreshTime time.Time) error {
-	return withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM seq_ops_tracking_per_sample_mirror`); err != nil {
-			return fmt.Errorf("mlwh: clear seq_ops_tracking_per_sample_mirror before refresh: %w", err)
-		}
+type seqOpsTrackingPerSampleDiffPlan struct {
+	inserts []seqOpsTrackingPerSampleSyncRow
+	updates []seqOpsTrackingPerSampleSyncRow
+	deletes []string
+}
 
-		if err := insertSeqOpsTrackingPerSampleRows(ctx, tx, rows); err != nil {
+type seqOpsTrackingMirrorResidency struct {
+	retainedRows int
+}
+
+func (r *seqOpsTrackingMirrorResidency) acquire() {
+	r.retainedRows++
+	r.notify()
+}
+
+func (r *seqOpsTrackingMirrorResidency) release() {
+	r.retainedRows--
+	r.notify()
+}
+
+func (r *seqOpsTrackingMirrorResidency) notify() {
+	if syncTrackingMirrorResidencyHook != nil {
+		syncTrackingMirrorResidencyHook(r.retainedRows)
+	}
+}
+
+// writeSeqOpsTrackingPerSampleDiffApply streams the current mirror into a
+// change-count-bounded plan, closes that read, then applies the whole plan and
+// sync_state atomically in the same transaction.
+func writeSeqOpsTrackingPerSampleDiffApply(ctx context.Context, cache Cache, snapshot []seqOpsTrackingPerSampleSyncRow, refreshTime time.Time) (syncBatchResult, error) {
+	slices.SortFunc(snapshot, func(a, b seqOpsTrackingPerSampleSyncRow) int {
+		return cmp.Compare(a.IDSampleLims, b.IDSampleLims)
+	})
+
+	var result syncBatchResult
+	err := withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
+		plan, err := planSeqOpsTrackingPerSampleDiff(ctx, tx, cache.Dialect(), snapshot)
+		if err != nil {
 			return err
 		}
 
+		if err = applySeqOpsTrackingPerSampleDiff(ctx, tx, cache.Dialect(), plan); err != nil {
+			return err
+		}
+
+		result = syncBatchResult{Inserted: len(plan.inserts), Updated: len(plan.updates)}
+
 		return writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableSeqOpsTrackingPerSample, refreshTime, nil, false)
 	})
+
+	return result, err
+}
+
+func planSeqOpsTrackingPerSampleDiff(ctx context.Context, tx *sql.Tx, dialect string, snapshot []seqOpsTrackingPerSampleSyncRow) (seqOpsTrackingPerSampleDiffPlan, error) {
+	rows, err := tx.QueryContext(ctx, seqOpsTrackingPerSampleMirrorDiffQuery(dialect))
+	if err != nil {
+		return seqOpsTrackingPerSampleDiffPlan{}, fmt.Errorf("mlwh: query seq_ops_tracking_per_sample mirror for diff: %w", err)
+	}
+
+	plan, planErr := mergeSeqOpsTrackingPerSampleDiff(rows, snapshot)
+	closeErr := rows.Close()
+	if planErr != nil {
+		return seqOpsTrackingPerSampleDiffPlan{}, planErr
+	}
+	if closeErr != nil {
+		return seqOpsTrackingPerSampleDiffPlan{}, fmt.Errorf("mlwh: close seq_ops_tracking_per_sample mirror diff read: %w", closeErr)
+	}
+
+	return plan, nil
+}
+
+func mergeSeqOpsTrackingPerSampleDiff(rows *sql.Rows, snapshot []seqOpsTrackingPerSampleSyncRow) (seqOpsTrackingPerSampleDiffPlan, error) {
+	plan := seqOpsTrackingPerSampleDiffPlan{}
+	residency := seqOpsTrackingMirrorResidency{}
+	snapshotIndex := 0
+	mirrorRow, hasMirrorRow, err := nextSeqOpsTrackingPerSampleMirrorRow(rows, &residency)
+
+	for err == nil && (hasMirrorRow || snapshotIndex < len(snapshot)) {
+		if !hasMirrorRow {
+			plan.inserts = append(plan.inserts, snapshot[snapshotIndex])
+			snapshotIndex++
+
+			continue
+		}
+		if snapshotIndex == len(snapshot) {
+			plan.deletes = append(plan.deletes, mirrorRow.IDSampleLims)
+			mirrorRow, hasMirrorRow, err = advanceSeqOpsTrackingPerSampleMirrorRow(rows, &residency)
+
+			continue
+		}
+
+		snapshotRow := snapshot[snapshotIndex]
+		if snapshotRow.IDSampleLims < mirrorRow.IDSampleLims {
+			plan.inserts = append(plan.inserts, snapshotRow)
+			snapshotIndex++
+
+			continue
+		}
+		if mirrorRow.IDSampleLims < snapshotRow.IDSampleLims {
+			plan.deletes = append(plan.deletes, mirrorRow.IDSampleLims)
+			mirrorRow, hasMirrorRow, err = advanceSeqOpsTrackingPerSampleMirrorRow(rows, &residency)
+
+			continue
+		}
+		if mirrorRow != snapshotRow {
+			plan.updates = append(plan.updates, snapshotRow)
+		}
+
+		snapshotIndex++
+		mirrorRow, hasMirrorRow, err = advanceSeqOpsTrackingPerSampleMirrorRow(rows, &residency)
+	}
+	if err != nil {
+		return seqOpsTrackingPerSampleDiffPlan{}, err
+	}
+	if err = rows.Err(); err != nil {
+		return seqOpsTrackingPerSampleDiffPlan{}, fmt.Errorf("mlwh: read seq_ops_tracking_per_sample mirror for diff: %w", err)
+	}
+
+	return plan, nil
+}
+
+func nextSeqOpsTrackingPerSampleMirrorRow(rows *sql.Rows, residency *seqOpsTrackingMirrorResidency) (seqOpsTrackingPerSampleSyncRow, bool, error) {
+	if !rows.Next() {
+		return seqOpsTrackingPerSampleSyncRow{}, false, nil
+	}
+
+	row, err := scanSeqOpsTrackingPerSampleSyncRow(rows)
+	if err != nil {
+		return seqOpsTrackingPerSampleSyncRow{}, false, err
+	}
+	residency.acquire()
+
+	return row, true, nil
+}
+
+func advanceSeqOpsTrackingPerSampleMirrorRow(rows *sql.Rows, residency *seqOpsTrackingMirrorResidency) (seqOpsTrackingPerSampleSyncRow, bool, error) {
+	residency.release()
+
+	return nextSeqOpsTrackingPerSampleMirrorRow(rows, residency)
+}
+
+func seqOpsTrackingPerSampleMirrorDiffQuery(dialect string) string {
+	return `SELECT ` + strings.Join(seqOpsTrackingPerSampleMirrorColumns, ", ") +
+		` FROM seq_ops_tracking_per_sample_mirror ORDER BY id_sample_lims COLLATE ` + trackingBinaryCollation(dialect)
+}
+
+func trackingBinaryCollation(dialect string) string {
+	if dialect == "sqlite" {
+		return "BINARY"
+	}
+
+	return "utf8mb4_bin"
+}
+
+func applySeqOpsTrackingPerSampleDiff(ctx context.Context, tx *sql.Tx, dialect string, plan seqOpsTrackingPerSampleDiffPlan) error {
+	if err := insertSeqOpsTrackingPerSampleRows(ctx, tx, plan.inserts); err != nil {
+		return err
+	}
+	if err := updateSeqOpsTrackingPerSampleRows(ctx, tx, dialect, plan.updates); err != nil {
+		return err
+	}
+
+	return deleteSeqOpsTrackingPerSampleRows(ctx, tx, dialect, plan.deletes)
 }
 
 func insertSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, rows []seqOpsTrackingPerSampleSyncRow) error {
@@ -1102,4 +1262,33 @@ func insertSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, rows []s
 
 		return nil
 	})
+}
+
+func updateSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, dialect string, rows []seqOpsTrackingPerSampleSyncRow) error {
+	assignments := make([]string, 0, len(seqOpsTrackingPerSampleMirrorColumns)-1)
+	for _, column := range seqOpsTrackingPerSampleMirrorColumns[1:] {
+		assignments = append(assignments, column+" = ?")
+	}
+	query := `UPDATE seq_ops_tracking_per_sample_mirror SET ` + strings.Join(assignments, ", ") +
+		` WHERE id_sample_lims COLLATE ` + trackingBinaryCollation(dialect) + ` = ?`
+
+	for _, row := range rows {
+		args := seqOpsTrackingPerSampleMirrorRowArgs(row)
+		if _, err := tx.ExecContext(ctx, query, append(args[1:], row.IDSampleLims)...); err != nil {
+			return fmt.Errorf("mlwh: update seq_ops_tracking_per_sample mirror row: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func deleteSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, dialect string, ids []string) error {
+	query := `DELETE FROM seq_ops_tracking_per_sample_mirror WHERE id_sample_lims COLLATE ` + trackingBinaryCollation(dialect) + ` = ?`
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, query, id); err != nil {
+			return fmt.Errorf("mlwh: delete seq_ops_tracking_per_sample mirror row: %w", err)
+		}
+	}
+
+	return nil
 }

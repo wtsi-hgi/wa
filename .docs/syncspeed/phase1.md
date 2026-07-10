@@ -80,8 +80,8 @@ assert cursor progression via the existing recording source and no-op
 writes via `openRecordingSQLiteSyncTestCache`. C revises no existing test
 (spec E2, verified).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.2: D - seq_ops_tracking_per_sample diff/apply [parallel with 1.1]
 
@@ -157,8 +157,8 @@ compiles and their intent is preserved:
   rename and recomment it to diff/apply semantics (no wholesale
   full-refresh claim).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item. Launch review
 subagents using the `go-reviewer` skill (review both items in the batch

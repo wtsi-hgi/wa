@@ -1114,6 +1114,80 @@ func TestClientSyncIseqFlowcellMirrorsA1EntityTypeRows(t *testing.T) {
 	})
 }
 
+func (o *sqliteSyncSQLObserver) BeginTrackingRead(query string, args []driver.NamedValue) bool {
+	if !isTrackingMirrorSelect(query) {
+		return false
+	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	copyArgs := make([]driver.NamedValue, len(args))
+	copy(copyArgs, args)
+	o.statements = append(o.statements, recordedSQLStatement{Query: query, Args: copyArgs})
+	o.activeTrackingReads++
+	if !strings.Contains(normalizeSQL(query), "ORDER BY id_sample_lims COLLATE BINARY") {
+		o.recordedUnorderedTrackingReads++
+	}
+
+	return true
+}
+
+func isTrackingMirrorSelect(query string) bool {
+	normalized := normalizeSQL(query)
+
+	return strings.HasPrefix(normalized, "SELECT ") && strings.Contains(normalized, "FROM seq_ops_tracking_per_sample_mirror")
+}
+
+func (o *sqliteSyncSQLObserver) EndTrackingRead() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.activeTrackingReads > 0 {
+		o.activeTrackingReads--
+	}
+}
+
+func (o *sqliteSyncSQLObserver) RejectWriteDuringTrackingRead() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.activeTrackingReads == 0 {
+		return false
+	}
+
+	o.writesWhileTrackingRead++
+
+	return true
+}
+
+func (o *sqliteSyncSQLObserver) WriteWhileTrackingReadCount() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	return o.writesWhileTrackingRead
+}
+
+func (o *sqliteSyncSQLObserver) RecordedUnorderedTrackingReadCount() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	return o.recordedUnorderedTrackingReads
+}
+
+type recordingSQLiteRows struct {
+	driver.Rows
+	observer *sqliteSyncSQLObserver
+	close    sync.Once
+}
+
+func (r *recordingSQLiteRows) Close() error {
+	err := r.Rows.Close()
+	r.close.Do(r.observer.EndTrackingRead)
+
+	return err
+}
+
 func TestClientSyncRunDateMirrorsA6RunIdentityAndNormalisedDates(t *testing.T) {
 	convey.Convey("A6: Given ONT and platform run-date source rows", t, func() {
 		source := openRealMLWHSchemaSource(t)
@@ -4354,10 +4428,13 @@ type recordedSQLStatement struct {
 }
 
 type sqliteSyncSQLObserver struct {
-	mu         sync.Mutex
-	begins     int
-	statements []recordedSQLStatement
-	commits    int
+	mu                             sync.Mutex
+	begins                         int
+	statements                     []recordedSQLStatement
+	commits                        int
+	activeTrackingReads            int
+	writesWhileTrackingRead        int
+	recordedUnorderedTrackingReads int
 }
 
 func (o *sqliteSyncSQLObserver) Record(query string, args []driver.NamedValue) {
@@ -4414,6 +4491,9 @@ func (o *sqliteSyncSQLObserver) Reset() {
 	o.begins = 0
 	o.statements = nil
 	o.commits = 0
+	o.activeTrackingReads = 0
+	o.writesWhileTrackingRead = 0
+	o.recordedUnorderedTrackingReads = 0
 }
 
 type recordingSQLiteDriver struct {
@@ -4475,6 +4555,9 @@ func (c *recordingSQLiteConn) ExecContext(ctx context.Context, query string, arg
 		return nil, driver.ErrSkip
 	}
 	if c.observer != nil {
+		if c.observer.RejectWriteDuringTrackingRead() {
+			return nil, errors.New("recording sqlite: cache write attempted before tracking diff-read was closed")
+		}
 		c.observer.Record(query, args)
 	}
 
@@ -4487,7 +4570,12 @@ func (c *recordingSQLiteConn) QueryContext(ctx context.Context, query string, ar
 		return nil, driver.ErrSkip
 	}
 
-	return queryer.QueryContext(ctx, query, args)
+	rows, err := queryer.QueryContext(ctx, query, args)
+	if err != nil || c.observer == nil || !c.observer.BeginTrackingRead(query, args) {
+		return rows, err
+	}
+
+	return &recordingSQLiteRows{Rows: rows, observer: c.observer}, nil
 }
 
 func (c *recordingSQLiteConn) Ping(ctx context.Context) error {
