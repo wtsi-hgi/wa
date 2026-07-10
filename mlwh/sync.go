@@ -1152,7 +1152,7 @@ func syncIseqProductMetricsWarmTable(ctx context.Context, cache Cache, source Qu
 	slices.SortFunc(outputRows, compareIseqProductMetricsSyncRows)
 
 	if len(outputRows) > 0 {
-		resumeCursor := encodeIseqProductMetricsResumeCursor(outputRows[len(outputRows)-1])
+		resumeCursor := encodeIseqProductMetricsChangedResumeCursor(changedRows[len(changedRows)-1])
 		result, writeErr := writeIseqProductMetricsBatch(ctx, cache, outputRows, report.HighWater, &resumeCursor, state.IndexesDropped, false)
 		if writeErr != nil {
 			return report, false, writeErr
@@ -1392,6 +1392,10 @@ func queryIseqProductMetricsCompositeRows(ctx context.Context, source Querier, c
 	})
 
 	return compositeRows, err
+}
+
+func encodeIseqProductMetricsChangedResumeCursor(row iseqProductMetricsChangedRow) string {
+	return formatSyncTime(row.LastUpdated) + "\t" + strconv.FormatInt(row.SourceRowID, 10)
 }
 
 func enrichSeqProductIRODSLocationsExportFields(ctx context.Context, db *sql.DB, rows []seqProductIRODSLocationsSyncRow) error {

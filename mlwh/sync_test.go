@@ -1223,6 +1223,55 @@ func readSyncLastRun(t *testing.T, db *sql.DB, table string) time.Time {
 	return mustParseSyncTime(t, raw)
 }
 
+func TestIseqProductMetricsWarmSyncKeepsResumeCursorAtChangedRowFrontier(t *testing.T) {
+	convey.Convey("Given phase-one observes a composite at T1 and phase-two recovers it after a concurrent change at T3", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		t0 := time.Date(2026, time.July, 10, 8, 0, 0, 0, time.UTC)
+		t1 := t0.Add(time.Minute)
+		t3 := t0.Add(3 * time.Minute)
+		seedSyncState(t, cache.DB(), syncTableIseqProductMetrics, t0)
+		_, err := cache.DB().Exec(`CREATE TRIGGER fail_iseq_product_metrics_finalize
+			BEFORE INSERT ON sync_state
+			WHEN NEW.table_name = 'iseq_product_metrics' AND NEW.resume_cursor IS NULL
+			BEGIN SELECT RAISE(FAIL, 'forced sync_state failure'); END`)
+		convey.So(err, convey.ShouldBeNil)
+
+		source, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = source.Close() }()
+
+		phaseOneQuery := "SELECT phase_one_composite"
+		changedColumns := append(append([]string(nil), iseqProductMetricsSyncSourceColumns...), "iseq_composition_tmp")
+		mock.ExpectQuery(regexp.QuoteMeta(phaseOneQuery)).
+			WillReturnRows(sqlmock.NewRows(changedColumns).AddRow(
+				"composite-product", int64(101), int64(201), int64(301), int64(0), int64(0), int64(401), "study-1",
+				int64(1), int64(1), int64(1), formatSyncTime(t1),
+				`{"components":[{"id_run":301,"position":1,"tag_index":1},{"id_run":301,"position":2,"tag_index":1}]}`,
+			))
+		mock.ExpectQuery(regexp.QuoteMeta(iseqProductMetricsCompositeRecoverySourceQuery(1))).
+			WithArgs("composite-product").
+			WillReturnRows(sqlmock.NewRows(iseqProductMetricsSyncSourceColumns).AddRow(
+				"composite-product", int64(101), int64(201), int64(301), int64(0), int64(0), int64(401), "study-1",
+				int64(1), int64(1), int64(1), formatSyncTime(t3),
+			))
+
+		report, sawRows, err := syncIseqProductMetricsWarmTable(
+			context.Background(), cache, source,
+			syncStateRecord{HighWater: t0, Exists: true}, phaseOneQuery, nil,
+		)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "forced sync_state failure")
+		convey.So(sawRows, convey.ShouldBeFalse)
+		convey.So(report.HighWater, convey.ShouldHappenOnOrBetween, t1, t1)
+		convey.So(readSyncHighWater(t, cache.DB(), syncTableIseqProductMetrics), convey.ShouldHappenOnOrBetween, t1, t1)
+		convey.So(readSyncResumeCursor(t, cache.DB(), syncTableIseqProductMetrics), convey.ShouldEqual, formatSyncTime(t1)+"\t101")
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
 func TestClientSyncIseqFlowcellMirrorsA1EntityTypeRows(t *testing.T) {
 	convey.Convey("A1.2: Given source iseq_flowcell rows for each deliverable entity_type discriminator", t, func() {
 		cache := openSQLiteSyncTestCache(t)
