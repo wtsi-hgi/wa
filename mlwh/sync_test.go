@@ -1272,6 +1272,43 @@ func TestIseqProductMetricsWarmSyncKeepsResumeCursorAtChangedRowFrontier(t *test
 	})
 }
 
+func TestClientSyncIseqProductMetricsWarmRemovesNewlyIneligibleRow(t *testing.T) {
+	convey.Convey("Given a mirrored product whose source row loses its eligible flowcell linkage", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.July, 10, 10, 0, 0, 0, time.UTC)
+		next := base.Add(time.Minute)
+		const productID = 7001
+
+		seedRealMLWHStudyRow(t, source, 501, "SQSCP", "study-501", "study-uuid-501", "Study 501", "study-accession-501", base)
+		seedRealMLWHFlowcellRow(t, source, 601, "Standard", 701, 501, base)
+		seedRealMLWHProductMetricRow(t, source, productID, 601, 801, 1, 1, 1, 1, 1, base)
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`, "product-7001"), convey.ShouldEqual, 1)
+
+		_, err = source.Exec(
+			`UPDATE iseq_product_metrics SET id_iseq_flowcell_tmp = NULL, last_changed = ? WHERE id_iseq_product = ?`,
+			formatSyncTime(next),
+			"product-7001",
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+
+		convey.Convey("when warm sync observes the changed row, then it removes the stale mirror row and advances the watermark", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`, "product-7001"), convey.ShouldEqual, 0)
+			convey.So(readSyncHighWater(t, cache.DB(), syncTableIseqProductMetrics), convey.ShouldHappenOnOrBetween, next, next)
+		})
+	})
+}
+
 func TestClientSyncIseqFlowcellMirrorsA1EntityTypeRows(t *testing.T) {
 	convey.Convey("A1.2: Given source iseq_flowcell rows for each deliverable entity_type discriminator", t, func() {
 		cache := openSQLiteSyncTestCache(t)

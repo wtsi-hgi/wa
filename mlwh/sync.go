@@ -1151,9 +1151,9 @@ func syncIseqProductMetricsWarmTable(ctx context.Context, cache Cache, source Qu
 	outputRows = append(outputRows, compositeRows...)
 	slices.SortFunc(outputRows, compareIseqProductMetricsSyncRows)
 
-	if len(outputRows) > 0 {
+	if len(changedRows) > 0 {
 		resumeCursor := encodeIseqProductMetricsChangedResumeCursor(changedRows[len(changedRows)-1])
-		result, writeErr := writeIseqProductMetricsBatch(ctx, cache, outputRows, report.HighWater, &resumeCursor, state.IndexesDropped, false)
+		result, writeErr := writeIseqProductMetricsChangedBatch(ctx, cache, changedRows, outputRows, report.HighWater, &resumeCursor, state.IndexesDropped)
 		if writeErr != nil {
 			return report, false, writeErr
 		}
@@ -1396,6 +1396,50 @@ func queryIseqProductMetricsCompositeRows(ctx context.Context, source Querier, c
 
 func encodeIseqProductMetricsChangedResumeCursor(row iseqProductMetricsChangedRow) string {
 	return formatSyncTime(row.LastUpdated) + "\t" + strconv.FormatInt(row.SourceRowID, 10)
+}
+
+func writeIseqProductMetricsChangedBatch(ctx context.Context, cache Cache, changedRows []iseqProductMetricsChangedRow, outputRows []iseqProductMetricsSyncRow, highWater time.Time, resumeCursor *string, indexesDropped bool) (syncBatchResult, error) {
+	deduped := dedupeIseqProductMetricsBatch(outputRows)
+	if err := validateIseqProductMetricsBatch(deduped); err != nil {
+		return syncBatchResult{}, err
+	}
+
+	changedKeys := iseqProductMetricsChangedBatchKeys(changedRows)
+	var result syncBatchResult
+	err := withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
+		existing, err := countExistingKeys(ctx, tx, "iseq_product_metrics_mirror", []string{"id_iseq_product"}, iseqProductMetricsBatchKeys(deduped))
+		if err != nil {
+			return err
+		}
+		if err = deleteExistingKeys(ctx, tx, "iseq_product_metrics_mirror", []string{"id_iseq_product"}, changedKeys); err != nil {
+			return err
+		}
+		if err = insertIseqProductMetricsMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
+			return err
+		}
+
+		result.Updated = existing
+		result.Inserted = len(deduped) - existing
+
+		return writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableIseqProductMetrics, highWater, resumeCursor, indexesDropped)
+	})
+
+	return result, err
+}
+
+func iseqProductMetricsChangedBatchKeys(rows []iseqProductMetricsChangedRow) [][]any {
+	seen := make(map[string]struct{}, len(rows))
+	keys := make([][]any, 0, len(rows))
+	for _, row := range rows {
+		if _, ok := seen[row.IDIseqProduct]; ok {
+			continue
+		}
+
+		seen[row.IDIseqProduct] = struct{}{}
+		keys = append(keys, []any{row.IDIseqProduct})
+	}
+
+	return keys
 }
 
 func enrichSeqProductIRODSLocationsExportFields(ctx context.Context, db *sql.DB, rows []seqProductIRODSLocationsSyncRow) error {
