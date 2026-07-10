@@ -46,8 +46,8 @@ every registered query prepares with its `ArgCount` placeholders. Covering
 both acceptance tests from E1. Test file:
 `mlwh/sync_source_integration_test.go`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.2: E2 - full-sync + legacy fallback [parallel with 4.1]
 
@@ -72,8 +72,8 @@ len(supportedSyncTables)`) still pass unchanged. Test files:
 `mlwh/sync_real_schema_test.go`, `mlwh/sync_test.go`,
 `mlwh/sync_a5_test.go`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item. Launch review
 subagents using the `go-reviewer` skill (review both items in the batch
