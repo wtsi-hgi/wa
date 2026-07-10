@@ -461,7 +461,7 @@ Extend `validateExportFilterSupport` so `products` supports `qc`,
 
 - `deliverables_only` for products MUST use the product's own deliverable
   discriminator (Illumina `iseq_flowcell.entity_type IN ('library',
-  'library_indexed')`, Element/Ultima `is_sequencing_control=0`, pass-through
+'library_indexed')`, Element/Ultima `is_sequencing_control=0`, pass-through
   for PacBio/ONT — the same per-product `deliverable` definition already
   documented for `/study/:id/irods`), NOT the iRODS `is_deliverable` flag. It
   must never drop a product that has no iRODS object.

@@ -107,12 +107,13 @@ gated to `file_type` unset-or-`cram`; a merely objectless product leaves
 never copied onto single-lane rows. Ensure `ExportResult` carries no
 `products_without_irods` or envelope gap summary (the rows are the
 source of truth). Covers all 4 acceptance tests B2.1-B2.4 (96 unmatched
-+ 1 direct under `cram`; objectless S1 rows all false/blank; `bam`
-flags nothing with `Total` 97; no envelope gap field). Reuse
-`seedManifestS1Scenario` and `seedManifestStudy7568MergedCRAMScenario`.
 
-- [x] implemented
-- [x] reviewed
+- 1 direct under `cram`; objectless S1 rows all false/blank; `bam`
+  flags nothing with `Total` 97; no envelope gap field). Reuse
+  `seedManifestS1Scenario` and `seedManifestStudy7568MergedCRAMScenario`.
+
+* [x] implemented
+* [x] reviewed
 
 ### Item 1.5: E1 - Products signal unknown, never-synced, synced-empty studies
 
@@ -126,14 +127,15 @@ first page reuse the manifest's product-metrics sync gating
 `cacheStudyExists`, `requiredSyncStateSummary`, `neverSyncedReadErr`).
 Covers all 5 acceptance tests E1.1-E1.5 (synced study, no products ->
 `emptyExportResult(plan, 0)`; never-synced cache -> joined `ErrNotFound`
-+ `ErrCacheNeverSynced` for a resolvable id; unknown id -> `ErrNotFound`
-only; product-metrics never synced -> joined never-synced sentinel;
-`needsIRODS` with the iRODS locations mirror never synced ->
-cache-never-synced before attaching, matching `sample-crams`). Reuse
-`seedManifestS1Scenario`.
 
-- [x] implemented
-- [x] reviewed
+- `ErrCacheNeverSynced` for a resolvable id; unknown id -> `ErrNotFound`
+  only; product-metrics never synced -> joined never-synced sentinel;
+  `needsIRODS` with the iRODS locations mirror never synced ->
+  cache-never-synced before attaching, matching `sample-crams`). Reuse
+  `seedManifestS1Scenario`.
+
+* [x] implemented
+* [x] reviewed
 
 ### Item 1.6: J1 - irods and sample-crams behaviour is preserved (regression)
 

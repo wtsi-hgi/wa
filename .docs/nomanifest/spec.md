@@ -90,21 +90,21 @@ vocabularies. All columns `Supported: true`.
 
 Required selectable columns (11) and product-safe extras (2):
 
-| column | alias | notes |
-|--------|-------|-------|
-| name | | Sanger sample name |
-| supplier_name | supplier_sample_name | |
-| accession_number | | sample accession |
-| sanger_sample_id | | |
-| id_run | | integer triple field |
-| lane | position | integer triple field |
-| tag_index | | integer triple field |
-| manual_qc | | product QC roll-up: pass/fail/pending |
-| irods_path | | blank when no matching object |
-| irods_unmatched | | true only for merged_multilane gap |
-| reason | | merged_multilane, else blank |
-| id_study_lims | | study-constant; from resolved parent |
-| study_accession_number | | study-constant; from resolved parent |
+| column                 | alias                | notes                                 |
+| ---------------------- | -------------------- | ------------------------------------- |
+| name                   |                      | Sanger sample name                    |
+| supplier_name          | supplier_sample_name |                                       |
+| accession_number       |                      | sample accession                      |
+| sanger_sample_id       |                      |                                       |
+| id_run                 |                      | integer triple field                  |
+| lane                   | position             | integer triple field                  |
+| tag_index              |                      | integer triple field                  |
+| manual_qc              |                      | product QC roll-up: pass/fail/pending |
+| irods_path             |                      | blank when no matching object         |
+| irods_unmatched        |                      | true only for merged_multilane gap    |
+| reason                 |                      | merged_multilane, else blank          |
+| id_study_lims          |                      | study-constant; from resolved parent  |
+| study_accession_number |                      | study-constant; from resolved parent  |
 
 Default projection = the first 8 names:
 `name, supplier_name, accession_number, sanger_sample_id, id_run, lane,
@@ -145,7 +145,7 @@ as `"true"`/`"false"`, `reason` as `merged_multilane`/`""`, and `id_study_lims`/
 ### Row grain, ordering, keyset cursor
 
 - Grain = the manifest grain: reuse `GROUP BY ipm.id_run, ipm.position,
-  ipm.tag_index`, which collapses the sample/iRODS fan-out and composite/merged
+ipm.tag_index`, which collapses the sample/iRODS fan-out and composite/merged
   products sharing a triple. Do NOT switch to an `id_iseq_product` grain: it
   would change `Total` and break the reused fixtures.
 - Order `ORDER BY ipm.id_run, ipm.position, ipm.tag_index, MIN(sm.name)`;
@@ -174,7 +174,7 @@ as `"true"`/`"false"`, `reason` as `merged_multilane`/`""`, and `id_study_lims`/
 - Selecting any of `irods_path`, `irods_unmatched`, `reason` sets an internal
   `needsIRODS` flag that adds the set-at-once ranked iRODS LEFT JOIN (reused
   from `manifest.go`: derived table ranked by `ROW_NUMBER() OVER (PARTITION BY
-  id_iseq_product ...)` joined on shared `id_iseq_product` + `id_study_lims`,
+id_iseq_product ...)` joined on shared `id_iseq_product` + `id_study_lims`,
   path assembled in Go). A product with no matching object keeps its row with
   blank `irods_path`.
 - `irods_unmatched=true` / `reason=merged_multilane` is emitted ONLY for the
@@ -216,7 +216,7 @@ applied identically to the page query and the total count so
 - `deliverables_only` -> the product's OWN deliverable discriminator, NOT the
   iRODS `is_deliverable` flag. For the Illumina product grain this is an EXISTS/
   join on the product's flowcell: `iseq_flowcell.entity_type IN ('library',
-  'library_indexed')` (the documented per-product `deliverable` definition). It
+'library_indexed')` (the documented per-product `deliverable` definition). It
   must never drop a product that lacks an iRODS object.
 
 `Total` reflects the filtered product-row count. `file_type` NEVER changes
@@ -239,8 +239,8 @@ ipm.id_run, ipm.position, ipm.tag_index HAVING <qc>`), NOT the `SELECT DISTINCT`
 
 - Bounded page (`exportPage` -> new `exportProducts`): compute the filtered
   `Total`, query `limit + 1` product rows with the keyset, set `more =
-  len > limit`, trim, `Complete = !more`, and `NextCursor =
-  encodeExportCursor(lastRow.cursor())` when `more`. Mirror `exportIRODS`.
+len > limit`, trim, `Complete = !more`, and `NextCursor =
+encodeExportCursor(lastRow.cursor())` when `more`. Mirror `exportIRODS`.
 - Complete stream (`exportAll` -> new `exportProductsAll`): return a
   `streamRows` closure (`Total: -1`, `Complete: true`, `Rows: nil`) paged by
   keyset via a new `streamExportProductsRows` (mirror `streamExportIRODSRows`,
@@ -333,7 +333,7 @@ needs a stated bounded-page mode ("no silent truncation"):
   relationship); when `--limit > 0`, set `All: false`, `Limit`, and `Cursor`,
   and after the data write one status line to stderr stating a bounded page was
   emitted (and that omitting `--limit` exports everything); include a `--cursor
-  <NextCursor>` continuation hint ONLY when `NextCursor` is non-empty, so a
+<NextCursor>` continuation hint ONLY when `NextCursor` is non-empty, so a
   limit/offset relationship (empty `NextCursor`) never prints an empty
   `--cursor`; if `Complete`, state it was the final page. The default (no
   `--limit`) path emits nothing extra.
@@ -351,7 +351,7 @@ needs a stated bounded-page mode ("no silent truncation"):
 
 - `mlwhInfoClient` (cmd/mlwh_info.go ~60): replace the `StudyManifest(...)`
   method (line 81) with `Export(ctx, rel mlwh.ExportRelationship, parentID
-  string, opts mlwh.ExportOptions) (mlwh.ExportResult, error)`.
+string, opts mlwh.ExportOptions) (mlwh.ExportResult, error)`.
 - The Products call site (~1357): fetch a bounded page of `infoMaxRelated` (50)
   rows with the default 8 product columns and `Limit: infoMaxRelated`; do NOT
   request `irods_path` (info uses the non-iRODS view, matching today's
@@ -366,7 +366,7 @@ needs a stated bounded-page mode ("no silent truncation"):
   the existing "shown of total" path, instead of always "Products (N)". (The
   "iRODS paths" section's identical `total = 0` at ~954 is out of scope.)
 - `wa mlwh info --json` (infoReport ~1436): remove the `StudyManifest
-  *mlwh.StudyManifest json:"study_manifest,omitempty"` field (line 1452) and add
+*mlwh.StudyManifest json:"study_manifest,omitempty"` field (line 1452) and add
   a `products` typed array (a `cmd`-local `infoProductRow` with the 8 default
   fields, mapped from the `ExportResult` rows by column), consistent with the
   sibling `samples`/`runs`/`lanes`/`irods_paths` typed arrays. This is a
@@ -412,18 +412,18 @@ format / invalid file_type), `ErrNotFound`, and `ErrCacheNeverSynced`
 As an API user, I want `export products study <id>` to return one row per
 product with the default columns, so objectless products still appear.
 
-**Package:** `mlwh/`  **File:** `mlwh/export.go`, `mlwh/manifest.go`
+**Package:** `mlwh/` **File:** `mlwh/export.go`, `mlwh/manifest.go`
 **Test file:** `mlwh/export_test.go` (reuse `seedManifestS1Scenario`)
 
 **Acceptance tests:**
 
 1. Given `seedManifestS1Scenario` (study "S1", 3 products across 2 samples, no
    iRODS objects) and a synced cache, when `Export(ctx,
-   ExportRelationship{Children:"products", ParentKind:"study"}, "S1",
-   ExportOptions{})` runs, then `Columns` equals `["name","supplier_name",
-   "accession_number","sanger_sample_id","id_run","lane","tag_index",
-   "manual_qc"]`, `Rows` has length 3 ordered by `(id_run, position, tag_index,
-   name)`, `Total` is 3, `Complete` is true, and `NextCursor` is empty.
+ExportRelationship{Children:"products", ParentKind:"study"}, "S1",
+ExportOptions{})` runs, then `Columns` equals `["name","supplier_name",
+"accession_number","sanger_sample_id","id_run","lane","tag_index",
+"manual_qc"]`, `Rows` has length 3 ordered by `(id_run, position, tag_index,
+name)`, `Total` is 3, `Complete` is true, and `NextCursor` is empty.
 2. Given the same, when it runs, then all 3 products appear even though none has
    an iRODS object (product grain, not iRODS grain).
 3. Given the same, when `Columns:["position","supplier_sample_name"]` is
@@ -431,7 +431,7 @@ product with the default columns, so objectless products still appear.
    `["lane","supplier_name"]` (aliases resolve).
 4. Given the same, when `Columns:["not_a_column"]` is requested, then Export
    returns an `ErrUnsupportedIdentifier` error whose message contains `unknown
-   export column "not_a_column"` and `valid columns:`.
+export column "not_a_column"` and `valid columns:`.
 5. Given a study with products whose `iseq_product_metrics_mirror.qc` is 1, 0,
    and NULL respectively, when default columns are exported, then those rows'
    `manual_qc` cells are `pass`, `fail`, `pending` (reuse `qcRollupString`).
@@ -455,7 +455,7 @@ As an API user, I want `id_study_lims` and `study_accession_number` selectable.
 As an API user, I want `irods_path` attached per product by file-type without
 losing objectless products, so a CRAM view still lists every product.
 
-**Package:** `mlwh/`  **File:** `mlwh/export.go`
+**Package:** `mlwh/` **File:** `mlwh/export.go`
 **Test file:** `mlwh/export_test.go` (reuse
 `seedManifestStudy7568MergedCRAMScenario`, study "7568", 97 rows = 96 merged
 single-lane + 1 direct)
@@ -505,7 +505,7 @@ single-lane + 1 direct)
 As an API user, I want `qc`/`organism`/`library_type` to filter product rows, so
 `Total` reflects the filtered set.
 
-**Package:** `mlwh/`  **File:** `mlwh/export.go`
+**Package:** `mlwh/` **File:** `mlwh/export.go`
 **Test file:** `mlwh/export_test.go`
 
 **Acceptance tests:**
@@ -549,7 +549,7 @@ product's own deliverable discriminator and never drop objectless products.
 
 As an MCP/API client, I want bounded keyset pages.
 
-**Package:** `mlwh/`  **File:** `mlwh/export.go`
+**Package:** `mlwh/` **File:** `mlwh/export.go`
 **Test file:** `mlwh/export_test.go`
 
 **Acceptance tests:**
@@ -559,11 +559,11 @@ As an MCP/API client, I want bounded keyset pages.
    `Rows` has length 50, `Total` is 97, `NextCursor` is non-empty, and
    `Complete` is false.
 2. Given the first page's `NextCursor`, when `ExportOptions{Cursor: nextCursor,
-   Limit: 50}` runs, then `Rows` has length 47 (the remaining products in
+Limit: 50}` runs, then `Rows` has length 47 (the remaining products in
    `(id_run, position, tag_index)` order after the cursor triple), `Complete` is
    true, and `NextCursor` is empty.
 3. Given a large product study (helper `seedLargeProductExportScenario(t, db,
-   1500)`, 1500 distinct triples) and a default request `ExportOptions{}` (no
+1500)`, 1500 distinct triples) and a default request `ExportOptions{}` (no
    `Limit`, no `All`), when it runs, then `Rows` has length 1000
    (`defaultExportAllLimit`), `Total` is 1500, `NextCursor` is non-empty, and
    `Complete` is false (the default HTTP response is a bounded page, NOT the
@@ -574,7 +574,7 @@ As an MCP/API client, I want bounded keyset pages.
 **Acceptance tests:**
 
 1. Given `seedLargeProductExportScenario(t, db, 120000)`, when `Export(...
-   "products" ..., ExportOptions{All: true, Limit: 997})` runs and the result is
+"products" ..., ExportOptions{All: true, Limit: 997})` runs and the result is
    rendered with `RenderTo(ctx, writer)`, then all 120000 data rows are emitted,
    `result.Rows` is nil (not materialised), `result.Total` is -1,
    `result.NextCursor` is empty, `result.Complete` is true, and heap growth
@@ -609,7 +609,7 @@ As an MCP/API client, I want bounded keyset pages.
 As a CLI/API user, I want products to signal unknown, never-synced, and
 synced-empty studies as the manifest did, so callers degrade cleanly.
 
-**Package:** `mlwh/`  **File:** `mlwh/export.go`
+**Package:** `mlwh/` **File:** `mlwh/export.go`
 **Test file:** `mlwh/export_test.go`
 
 **Acceptance tests:**
@@ -633,7 +633,7 @@ synced-empty studies as the manifest did, so callers degrade cleanly.
    mirror that has NEVER synced, when products are exported with an
    iRODS-attachment column (`irods_path`/`irods_unmatched`/`reason`) selected,
    then Export surfaces the cache-never-synced signal (`errors.Is(err,
-   ErrCacheNeverSynced)`) rather than attaching blank paths, mirroring how
+ErrCacheNeverSynced)`) rather than attaching blank paths, mirroring how
    `sample-crams` gates on `syncTableSeqProductIRODSLocations`; without an
    iRODS-attachment column the iRODS mirror sync state is not required.
 
@@ -644,19 +644,19 @@ synced-empty studies as the manifest did, so callers degrade cleanly.
 As an HTTP/MCP client, I want the endpoint to serve bounded and complete
 responses with local/remote parity, so I can page or fetch everything.
 
-**Package:** `mlwh/`  **File:** `mlwh/server.go`, `mlwh/remote.go`
+**Package:** `mlwh/` **File:** `mlwh/server.go`, `mlwh/remote.go`
 **Test file:** `mlwh/server_test.go`, `mlwh/remote_test.go`,
 `mlwh/parity_test.go`
 
 **Acceptance tests:**
 
 1. Given a running test server over a seeded cache (97 products), when `GET
-   /export/products/study/7568?columns=name,irods_path,irods_unmatched,reason&
-   file_type=cram&limit=50` is issued, then the JSON body has fields `Columns`,
+/export/products/study/7568?columns=name,irods_path,irods_unmatched,reason&
+file_type=cram&limit=50` is issued, then the JSON body has fields `Columns`,
    `Rows` (length 50), `Total` 97, `NextCursor` non-empty, `Complete` false, and
    `Format`.
 2. Given the returned `NextCursor`, when `GET
-   /export/products/study/7568?...&limit=50&cursor=<NextCursor>` is issued, then
+/export/products/study/7568?...&limit=50&cursor=<NextCursor>` is issued, then
    `Rows` has length 47, `Complete` is true, and `NextCursor` is empty.
 3. Given `all=true`, when `GET /export/products/study/7568?...&all=true` is
    issued, then the body carries all 97 rows and `Complete` true (the server
@@ -686,7 +686,7 @@ export model and no dead endpoints or metadata.
 1. Given the built CLI, when `wa mlwh manifest 7568` runs, then it exits with a
    cobra unknown-command error (no manifest subcommand is registered).
 2. Given a running test server, when `GET /study/S1/manifest` and `GET
-   /study/S1/manifest/count` are issued, then both return HTTP 404.
+/study/S1/manifest/count` are issued, then both return HTTP 404.
 3. Given the registry, when it is enumerated, then it contains no entry with
    `Method` `StudyManifest` or `CountStudyManifest`.
 4. Given the generated OpenAPI document, when its paths are inspected, then
@@ -703,7 +703,7 @@ export model and no dead endpoints or metadata.
 As a `wa mlwh info` user, I want the Products section fed by the products export
 with an accurate heading, so truncation past 50 rows is visible.
 
-**Package:** `cmd/`  **File:** `cmd/mlwh_info.go`
+**Package:** `cmd/` **File:** `cmd/mlwh_info.go`
 **Test file:** `cmd/mlwh_info_test.go`
 
 **Acceptance tests:**
@@ -732,14 +732,14 @@ with an accurate heading, so truncation past 50 rows is visible.
 As a CLI user, I want `export products` to render like other exports and to
 announce bounded pages, so nothing is silently truncated.
 
-**Package:** `cmd/`  **File:** `cmd/mlwh_export.go`
+**Package:** `cmd/` **File:** `cmd/mlwh_export.go`
 **Test file:** `cmd/mlwh_export_test.go`
 
 **Acceptance tests:**
 
 1. Given a stub export client returning a known products `ExportResult`, when
    `wa mlwh export products study S1 --columns name,supplier_name,id_run,lane,
-   tag_index,manual_qc,irods_path,irods_unmatched,reason --file-type cram` runs
+tag_index,manual_qc,irods_path,irods_unmatched,reason --file-type cram` runs
    with default format, then stdout is the TSV header row followed by one line
    per row (no `study_manifest` object, no trailing success message).
 2. Given the same, when `--format csv` and `--format json` (or `--json`) are
@@ -769,7 +769,7 @@ announce bounded pages, so nothing is silently truncated.
 As an existing user, I want `irods` and `sample-crams` exports unchanged, so
 this feature is non-breaking for them.
 
-**Package:** `mlwh/`  **File:** `mlwh/export.go`
+**Package:** `mlwh/` **File:** `mlwh/export.go`
 **Test file:** `mlwh/export_test.go`
 
 **Acceptance tests:**
@@ -812,8 +812,8 @@ guidance matches the code.
    edit, then it no longer requires the removed `"data manifest"` term and
    instead asserts the new product-export concept heading K1 adds (e.g. term
    `"product export"`), keeping the existing `"file-type filter (filename
-   suffix)"`, `"faculty sponsor"`, `"study_users / role membership"`, `"manual
-   qc"`, and `"data access group"` assertions. The test may be renamed to
+suffix)"`, `"faculty sponsor"`, `"study_users / role membership"`, `"manual
+qc"`, and `"data access group"` assertions. The test may be renamed to
    reflect product export.
 
 ## Implementation Order
@@ -869,7 +869,7 @@ breaks).
   recomputed COUNT per page. Reusing the iRODS keyset machinery avoids deep
   OFFSET and keeps `--all` memory-bounded.
 - **Manifest grain preserved.** Row identity is the distinct `(id_run, position,
-  tag_index)` triple from the manifest `GROUP BY`; no `id_iseq_product`
+tag_index)` triple from the manifest `GROUP BY`; no `id_iseq_product`
   tiebreaker. This keeps `Total` and the reused fixture counts stable (study
   "S1" = 3, study "7568" fixture = 97) and reuses the int64 `exportCursor`
   (4th field 0).
