@@ -28,10 +28,12 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -73,6 +75,8 @@ const (
 )
 
 var syncColdBatchSize = 50000
+
+var iseqProductMetricsCompositeRecoveryChunkSize = syncStatementRowLimit(1)
 
 // sampleSearchTokenReadPageSize is the number of sample_mirror rows the cold-load
 // token rebuild reads per id-range page. Each page's rows are fully scanned and
@@ -683,6 +687,10 @@ func insertCommonNameWordMirrorRows(ctx context.Context, tx *sql.Tx, rows []comm
 	})
 }
 
+func iseqProductMetricsChangedSourceSelect(whereClause string) string {
+	return `SELECT ipm.id_iseq_product, ipm.id_iseq_pr_metrics_tmp, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ifc.id_sample_tmp, study.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_changed, COALESCE(ipm.iseq_composition_tmp, '{"components":[]}') FROM iseq_product_metrics ipm LEFT JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp LEFT JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE (` + whereClause + `) ORDER BY ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`
+}
+
 func iseqProductMetricsSourceQuery(directHint, directWhere, compositeWhere, orderBy string) string {
 	return `SELECT ` + iseqProductMetricsSelectColumns + ` FROM (` +
 		iseqProductMetricsDirectSourceSelect(directHint, directWhere) +
@@ -706,6 +714,11 @@ func iseqProductMetricsDirectSourceSelectWithWhere(hint, whereClause, extraWhere
 
 func iseqProductMetricsCompositeSourceSelect(whereClause string) string {
 	return `SELECT path_ipm.id_iseq_product, path_ipm.id_iseq_pr_metrics_tmp, COALESCE(path_ipm.id_iseq_flowcell_tmp, MIN(ipm.id_iseq_flowcell_tmp)) AS id_iseq_flowcell_tmp, CASE WHEN MIN(component.component_run) = MAX(component.component_run) THEN MIN(component.component_run) ELSE 0 END AS id_run, 0 AS position, 0 AS tag_index, MIN(ifc.id_sample_tmp) AS id_sample_tmp, MIN(study.id_study_lims) AS id_study_lims, path_ipm.qc, path_ipm.qc_lib, path_ipm.qc_seq, path_ipm.last_changed FROM iseq_product_metrics path_ipm INNER JOIN JSON_TABLE(path_ipm.iseq_composition_tmp, '$.components[*]' COLUMNS(component_run INT PATH '$.id_run', component_position INT PATH '$.position', component_tag_index INT PATH '$.tag_index')) component ON TRUE INNER JOIN iseq_product_metrics ipm ON ipm.id_run = component.component_run AND ipm.position = component.component_position AND ipm.tag_index = component.component_tag_index INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE (` + whereClause + `) AND EXISTS (SELECT 1 FROM seq_product_irods_locations spi WHERE spi.id_product = path_ipm.id_iseq_product AND LOWER(spi.seq_platform_name) = 'illumina') GROUP BY path_ipm.id_iseq_product, path_ipm.id_iseq_pr_metrics_tmp, path_ipm.id_iseq_flowcell_tmp, path_ipm.qc, path_ipm.qc_lib, path_ipm.qc_seq, path_ipm.last_changed HAVING COUNT(*) > 1`
+}
+
+func iseqProductMetricsCompositeRecoverySourceQuery(candidateCount int) string {
+	return iseqProductMetricsCompositeSourceSelect(`path_ipm.id_iseq_product IN (`+sqlPlaceholders(candidateCount)+`)`) +
+		` ORDER BY path_ipm.last_changed, path_ipm.id_iseq_pr_metrics_tmp`
 }
 
 func iseqProductMetricsLegacySyncSourceQuery() string {
@@ -975,7 +988,7 @@ func flowcellSyncSourceQueryFromCursor() string {
 }
 
 func iseqProductMetricsSyncSourceQuery() string {
-	return iseqProductMetricsSourceQuery("", `ipm.last_changed >= ?`, `path_ipm.last_changed >= ?`, `ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`)
+	return iseqProductMetricsChangedSourceSelect(`ipm.last_changed >= ?`)
 }
 
 func iseqProductMetricsColdSyncSourceQuery() string {
@@ -983,7 +996,7 @@ func iseqProductMetricsColdSyncSourceQuery() string {
 }
 
 func iseqProductMetricsSyncSourceQueryFromCursor() string {
-	return iseqProductMetricsSourceQuery("", `(ipm.last_changed > ?) OR (ipm.last_changed = ? AND ipm.id_iseq_pr_metrics_tmp > ?)`, `(path_ipm.last_changed > ?) OR (path_ipm.last_changed = ? AND path_ipm.id_iseq_pr_metrics_tmp > ?)`, `ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`)
+	return iseqProductMetricsChangedSourceSelect(`(ipm.last_changed > ?) OR (ipm.last_changed = ? AND ipm.id_iseq_pr_metrics_tmp > ?)`)
 }
 
 func seqProductIRODSLocationsSyncSourceQuery() string {
@@ -1037,9 +1050,10 @@ func AllSyncSourceQueries() []SyncSourceQuery {
 		{Name: "sample from cursor", Query: sampleSyncSourceQueryFromCursor(), ArgCount: 3},
 		{Name: "iseq_flowcell incremental", Query: flowcellSyncSourceQuery(), ArgCount: 1},
 		{Name: "iseq_flowcell from cursor", Query: flowcellSyncSourceQueryFromCursor(), ArgCount: 5},
-		{Name: "iseq_product_metrics incremental", Query: iseqProductMetricsSyncSourceQuery(), ArgCount: 2},
+		{Name: "iseq_product_metrics incremental", Query: iseqProductMetricsSyncSourceQuery(), ArgCount: 1},
 		{Name: "iseq_product_metrics cold", Query: iseqProductMetricsColdSyncSourceQuery(), ArgCount: 2},
-		{Name: "iseq_product_metrics from cursor", Query: iseqProductMetricsSyncSourceQueryFromCursor(), ArgCount: 6},
+		{Name: "iseq_product_metrics from cursor", Query: iseqProductMetricsSyncSourceQueryFromCursor(), ArgCount: 3},
+		{Name: "iseq_product_metrics composite recovery", Query: iseqProductMetricsCompositeRecoverySourceQuery(1), ArgCount: 1},
 		{Name: "iseq_product_metrics legacy incremental", Query: iseqProductMetricsLegacySyncSourceQuery(), ArgCount: 1},
 		{Name: "iseq_product_metrics legacy cold", Query: iseqProductMetricsLegacyColdSyncSourceQuery(), ArgCount: 1},
 		{Name: "iseq_product_metrics legacy from cursor", Query: iseqProductMetricsLegacySyncSourceQueryFromCursor(), ArgCount: 3},
@@ -1108,6 +1122,276 @@ func upsertIseqFlowcellMirrorBatch(ctx context.Context, tx *sql.Tx, dialect stri
 
 		return nil
 	})
+}
+
+func syncIseqProductMetricsWarmTable(ctx context.Context, cache Cache, source Querier, state syncStateRecord, query string, args []any) (SyncReport, bool, error) {
+	changedRows, err := queryIseqProductMetricsChangedRows(ctx, source, query, args)
+	if err != nil {
+		if isUnsupportedCompositionQueryError(err) {
+			return syncIseqProductMetricsLegacyTable(ctx, cache, source, state)
+		}
+
+		return SyncReport{}, false, fmt.Errorf("mlwh: query iseq_product_metrics changed rows: %w", err)
+	}
+
+	report := SyncReport{Table: syncTableIseqProductMetrics, HighWater: state.HighWater}
+	outputRows, compositeIDs, err := classifyIseqProductMetricsChangedRows(changedRows, &report)
+	if err != nil {
+		return report, false, err
+	}
+
+	compositeRows, err := queryIseqProductMetricsCompositeRows(ctx, source, compositeIDs)
+	if err != nil {
+		if isUnsupportedCompositionQueryError(err) {
+			return syncIseqProductMetricsLegacyTable(ctx, cache, source, state)
+		}
+
+		return report, false, err
+	}
+	outputRows = append(outputRows, compositeRows...)
+	slices.SortFunc(outputRows, compareIseqProductMetricsSyncRows)
+
+	if len(outputRows) > 0 {
+		resumeCursor := encodeIseqProductMetricsResumeCursor(outputRows[len(outputRows)-1])
+		result, writeErr := writeIseqProductMetricsBatch(ctx, cache, outputRows, report.HighWater, &resumeCursor, state.IndexesDropped, false)
+		if writeErr != nil {
+			return report, false, writeErr
+		}
+		report.Inserted = result.Inserted
+		report.Updated = result.Updated
+	}
+
+	sawRows := len(changedRows) > 0
+	if sawRows || state.Exists {
+		if err = finalizeMirrorSyncState(ctx, cache, iseqProductMetricsMirrorIndexSet, report.HighWater, state.IndexesDropped); err != nil {
+			return report, false, err
+		}
+	}
+
+	return report, sawRows, nil
+}
+
+func queryIseqProductMetricsChangedRows(ctx context.Context, source Querier, query string, args []any) ([]iseqProductMetricsChangedRow, error) {
+	rows, err := source.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("mlwh: inspect iseq_product_metrics changed-row columns: %w", err)
+	}
+
+	changedRows := []iseqProductMetricsChangedRow{}
+	for rows.Next() {
+		row, scanErr := scanIseqProductMetricsChangedRow(rows, len(columns))
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		changedRows = append(changedRows, row)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("mlwh: read iseq_product_metrics changed rows: %w", err)
+	}
+
+	return changedRows, nil
+}
+
+func scanIseqProductMetricsChangedRow(rows *sql.Rows, columnCount int) (iseqProductMetricsChangedRow, error) {
+	var row iseqProductMetricsChangedRow
+	var lastUpdated any
+	destinations := []any{
+		&row.IDIseqProduct, &row.SourceRowID, &row.IDIseqFlowcellTmp, &row.IDRun,
+		&row.Position, &row.TagIndex, &row.IDSampleTmp, &row.IDStudyLims,
+		&row.QC, &row.QCLib, &row.QCSeq, &lastUpdated,
+	}
+	if columnCount == len(destinations)+1 {
+		destinations = append(destinations, &row.IseqCompositionTmp)
+	} else {
+		row.IseqCompositionTmp = `{"components":[]}`
+	}
+	if err := rows.Scan(destinations...); err != nil {
+		return iseqProductMetricsChangedRow{}, fmt.Errorf("mlwh: scan iseq_product_metrics changed row: %w", err)
+	}
+
+	parsed, err := parseSyncTimeValue(lastUpdated)
+	if err != nil {
+		return iseqProductMetricsChangedRow{}, fmt.Errorf("mlwh: parse iseq_product_metrics changed-row last_updated: %w", err)
+	}
+	row.LastUpdated = parsed
+
+	return row, nil
+}
+
+func syncIseqProductMetricsLegacyTable(ctx context.Context, cache Cache, source Querier, state syncStateRecord) (SyncReport, bool, error) {
+	query, args, coldIDSync, err := iseqProductMetricsLegacySyncQuery(state)
+	if err != nil {
+		return SyncReport{}, false, err
+	}
+
+	return syncIseqProductMetricsStreamingQuery(ctx, cache, source, state, query, args, coldIDSync)
+}
+
+func syncIseqProductMetricsStreamingQuery(ctx context.Context, cache Cache, source Querier, state syncStateRecord, query string, args []any, coldIDSync bool) (SyncReport, bool, error) {
+	rows, err := source.QueryContext(ctx, query, args...)
+	if err != nil {
+		if isUnsupportedCompositionQueryError(err) {
+			legacyQuery, legacyArgs, _, legacyErr := iseqProductMetricsLegacySyncQuery(state)
+			if legacyErr != nil {
+				return SyncReport{}, false, legacyErr
+			}
+
+			rows, err = source.QueryContext(ctx, legacyQuery, legacyArgs...)
+		}
+	}
+	if err != nil {
+		return SyncReport{}, false, fmt.Errorf("mlwh: query iseq_product_metrics sync source: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	report := SyncReport{Table: syncTableIseqProductMetrics, HighWater: state.HighWater}
+	sawRows := false
+	batchSize := syncBatchSizeForState(state)
+	assumeInserted := productMirrorSyncCanAssumeInserted(state, coldIDSync, iseqProductMetricsIDResumeMode)
+	batch := make([]iseqProductMetricsSyncRow, 0, batchSize)
+	flushBatch := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+
+		batchHighWater := batch[len(batch)-1].LastUpdated
+		resumeCursor := encodeIseqProductMetricsResumeCursor(batch[len(batch)-1])
+		if coldIDSync {
+			batchHighWater = report.HighWater
+			resumeCursor = encodeAscendingIDResumeCursor(iseqProductMetricsIDResumeMode, batch[len(batch)-1].SourceRowID)
+		}
+		result, applyErr := writeIseqProductMetricsBatch(ctx, cache, batch, batchHighWater, &resumeCursor, state.IndexesDropped, assumeInserted)
+		if applyErr != nil {
+			return applyErr
+		}
+
+		report.Inserted += result.Inserted
+		report.Updated += result.Updated
+		report.HighWater = batchHighWater
+		batch = batch[:0]
+
+		return nil
+	}
+
+	for rows.Next() {
+		row, scanErr := scanIseqProductMetricsSyncRow(rows)
+		if scanErr != nil {
+			return report, false, scanErr
+		}
+
+		sawRows = true
+		if row.LastUpdated.After(report.HighWater) {
+			report.HighWater = row.LastUpdated
+		}
+
+		batch = append(batch, row)
+		if len(batch) == batchSize {
+			if err = flushBatch(); err != nil {
+				return report, false, err
+			}
+		}
+	}
+
+	if err = rows.Err(); err != nil {
+		return report, false, fmt.Errorf("mlwh: read iseq_product_metrics sync source: %w", err)
+	}
+	if err = flushBatch(); err != nil {
+		return report, false, err
+	}
+	if sawRows || state.Exists {
+		if err = finalizeMirrorSyncState(ctx, cache, iseqProductMetricsMirrorIndexSet, report.HighWater, state.IndexesDropped); err != nil {
+			return report, false, err
+		}
+	}
+
+	return report, sawRows, nil
+}
+
+func classifyIseqProductMetricsChangedRows(changedRows []iseqProductMetricsChangedRow, report *SyncReport) ([]iseqProductMetricsSyncRow, []string, error) {
+	directRows := make([]iseqProductMetricsSyncRow, 0, len(changedRows))
+	compositeIDs := make([]string, 0, len(changedRows))
+	for _, row := range changedRows {
+		if row.LastUpdated.After(report.HighWater) {
+			report.HighWater = row.LastUpdated
+		}
+
+		componentCount, err := iseqProductMetricsComponentCount(row.IseqCompositionTmp)
+		if err != nil {
+			return nil, nil, fmt.Errorf("mlwh: parse iseq_product_metrics composition for %q: %w", row.IDIseqProduct, err)
+		}
+		if componentCount > 1 {
+			compositeIDs = append(compositeIDs, row.IDIseqProduct)
+
+			continue
+		}
+		if directRow, ok := iseqProductMetricsDirectOutputRow(row); ok {
+			directRows = append(directRows, directRow)
+		}
+	}
+
+	return directRows, compositeIDs, nil
+}
+
+func iseqProductMetricsComponentCount(raw string) (int, error) {
+	composition := struct {
+		Components []json.RawMessage `json:"components"`
+	}{}
+	if err := json.Unmarshal([]byte(raw), &composition); err != nil {
+		return 0, err
+	}
+
+	return len(composition.Components), nil
+}
+
+func iseqProductMetricsDirectOutputRow(row iseqProductMetricsChangedRow) (iseqProductMetricsSyncRow, bool) {
+	if !row.IDIseqFlowcellTmp.Valid || !row.IDSampleTmp.Valid || !row.IDStudyLims.Valid {
+		return iseqProductMetricsSyncRow{}, false
+	}
+
+	return iseqProductMetricsSyncRow{
+		IDIseqProduct: row.IDIseqProduct, SourceRowID: row.SourceRowID,
+		IDIseqFlowcellTmp: row.IDIseqFlowcellTmp.Int64, IDRun: nullIntValue(row.IDRun),
+		Position: nullIntValue(row.Position), TagIndex: nullIntValue(row.TagIndex),
+		IDSampleTmp: row.IDSampleTmp.Int64, IDStudyLims: row.IDStudyLims.String,
+		QC: row.QC, QCLib: row.QCLib, QCSeq: row.QCSeq, LastUpdated: row.LastUpdated,
+	}, true
+}
+
+func queryIseqProductMetricsCompositeRows(ctx context.Context, source Querier, candidateIDs []string) ([]iseqProductMetricsSyncRow, error) {
+	compositeRows := []iseqProductMetricsSyncRow{}
+	err := forEachRowChunk(candidateIDs, iseqProductMetricsCompositeRecoveryChunkSize, func(chunk []string) error {
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+
+		rows, err := source.QueryContext(ctx, iseqProductMetricsCompositeRecoverySourceQuery(len(chunk)), args...)
+		if err != nil {
+			return fmt.Errorf("mlwh: query iseq_product_metrics composite recovery: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+
+		for rows.Next() {
+			row, scanErr := scanIseqProductMetricsSyncRow(rows)
+			if scanErr != nil {
+				return scanErr
+			}
+			compositeRows = append(compositeRows, row)
+		}
+		if err = rows.Err(); err != nil {
+			return fmt.Errorf("mlwh: read iseq_product_metrics composite recovery: %w", err)
+		}
+
+		return nil
+	})
+
+	return compositeRows, err
 }
 
 func enrichSeqProductIRODSLocationsExportFields(ctx context.Context, db *sql.DB, rows []seqProductIRODSLocationsSyncRow) error {
@@ -2044,6 +2328,33 @@ type seqProductIRODSLocationsExportFields struct {
 	Merged        int64
 }
 
+type iseqProductMetricsChangedRow struct {
+	IDIseqProduct      string
+	SourceRowID        int64
+	IDIseqFlowcellTmp  sql.NullInt64
+	IDRun              sql.NullInt64
+	Position           sql.NullInt64
+	TagIndex           sql.NullInt64
+	IDSampleTmp        sql.NullInt64
+	IDStudyLims        sql.NullString
+	QC                 sql.NullInt64
+	QCLib              sql.NullInt64
+	QCSeq              sql.NullInt64
+	LastUpdated        time.Time
+	IseqCompositionTmp string
+}
+
+func compareIseqProductMetricsSyncRows(left, right iseqProductMetricsSyncRow) int {
+	if left.LastUpdated.Before(right.LastUpdated) {
+		return -1
+	}
+	if left.LastUpdated.After(right.LastUpdated) {
+		return 1
+	}
+
+	return int(left.SourceRowID - right.SourceRowID)
+}
+
 func normalisedDateFromNullableTime(value sql.NullString) string {
 	if !value.Valid || value.String == "" {
 		return ""
@@ -2349,7 +2660,7 @@ func iseqProductMetricsSyncQuery(state syncStateRecord) (string, []any, bool, er
 	if state.ResumeCursor == nil {
 		highWater := formatSyncTime(state.HighWater)
 
-		return iseqProductMetricsSyncSourceQuery(), []any{highWater, highWater}, false, nil
+		return iseqProductMetricsSyncSourceQuery(), []any{highWater}, false, nil
 	}
 
 	lastUpdated, idIseqProduct, err := parseTwoPartResumeCursor(*state.ResumeCursor)
@@ -2359,7 +2670,7 @@ func iseqProductMetricsSyncQuery(state syncStateRecord) (string, []any, bool, er
 
 	formattedLastUpdated := formatSyncTime(lastUpdated)
 
-	return iseqProductMetricsSyncSourceQueryFromCursor(), []any{formattedLastUpdated, formattedLastUpdated, idIseqProduct, formattedLastUpdated, formattedLastUpdated, idIseqProduct}, false, nil
+	return iseqProductMetricsSyncSourceQueryFromCursor(), []any{formattedLastUpdated, formattedLastUpdated, idIseqProduct}, false, nil
 }
 
 func seqProductIRODSLocationsSyncQuery(state syncStateRecord) (string, []any, bool, error) {
@@ -3047,89 +3358,15 @@ func syncIseqProductMetricsTable(ctx context.Context, cache Cache, source Querie
 	if err != nil {
 		return SyncReport{}, false, err
 	}
-	if coldIDSync {
-		if err = prepareMirrorIndexesForColdSync(ctx, cache, &state, iseqProductMetricsMirrorIndexSet); err != nil {
-			return SyncReport{}, false, err
-		}
+	if !coldIDSync {
+		return syncIseqProductMetricsWarmTable(ctx, cache, source, state, query, args)
 	}
 
-	rows, err := source.QueryContext(ctx, query, args...)
-	if err != nil {
-		if isUnsupportedCompositionQueryError(err) {
-			legacyQuery, legacyArgs, _, legacyErr := iseqProductMetricsLegacySyncQuery(state)
-			if legacyErr != nil {
-				return SyncReport{}, false, legacyErr
-			}
-
-			rows, err = source.QueryContext(ctx, legacyQuery, legacyArgs...)
-		}
-	}
-	if err != nil {
-		return SyncReport{}, false, fmt.Errorf("mlwh: query iseq_product_metrics sync source: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	report := SyncReport{Table: syncTableIseqProductMetrics, HighWater: state.HighWater}
-	sawRows := false
-	batchSize := syncBatchSizeForState(state)
-	assumeInserted := productMirrorSyncCanAssumeInserted(state, coldIDSync, iseqProductMetricsIDResumeMode)
-	batch := make([]iseqProductMetricsSyncRow, 0, batchSize)
-	flushBatch := func() error {
-		if len(batch) == 0 {
-			return nil
-		}
-
-		batchHighWater := batch[len(batch)-1].LastUpdated
-		resumeCursor := encodeIseqProductMetricsResumeCursor(batch[len(batch)-1])
-		if coldIDSync {
-			batchHighWater = report.HighWater
-			resumeCursor = encodeAscendingIDResumeCursor(iseqProductMetricsIDResumeMode, batch[len(batch)-1].SourceRowID)
-		}
-		result, applyErr := writeIseqProductMetricsBatch(ctx, cache, batch, batchHighWater, &resumeCursor, state.IndexesDropped, assumeInserted)
-		if applyErr != nil {
-			return applyErr
-		}
-
-		report.Inserted += result.Inserted
-		report.Updated += result.Updated
-		report.HighWater = batchHighWater
-		batch = batch[:0]
-
-		return nil
+	if err = prepareMirrorIndexesForColdSync(ctx, cache, &state, iseqProductMetricsMirrorIndexSet); err != nil {
+		return SyncReport{}, false, err
 	}
 
-	for rows.Next() {
-		row, scanErr := scanIseqProductMetricsSyncRow(rows)
-		if scanErr != nil {
-			return report, false, scanErr
-		}
-
-		sawRows = true
-		if row.LastUpdated.After(report.HighWater) {
-			report.HighWater = row.LastUpdated
-		}
-
-		batch = append(batch, row)
-		if len(batch) == batchSize {
-			if err = flushBatch(); err != nil {
-				return report, false, err
-			}
-		}
-	}
-
-	if err = rows.Err(); err != nil {
-		return report, false, fmt.Errorf("mlwh: read iseq_product_metrics sync source: %w", err)
-	}
-	if err = flushBatch(); err != nil {
-		return report, false, err
-	}
-	if sawRows || state.Exists {
-		if err = finalizeMirrorSyncState(ctx, cache, iseqProductMetricsMirrorIndexSet, report.HighWater, state.IndexesDropped); err != nil {
-			return report, false, err
-		}
-	}
-
-	return report, sawRows, nil
+	return syncIseqProductMetricsStreamingQuery(ctx, cache, source, state, query, args, true)
 }
 
 func scanIseqProductMetricsSyncRow(rows *sql.Rows) (iseqProductMetricsSyncRow, error) {

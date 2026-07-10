@@ -276,23 +276,35 @@ func TestRealworldA3IseqProductMetricsSourceQueryIncludesCompositeProducts(t *te
 			queries[query.Name] = query
 		}
 
+		composite := queries["iseq_product_metrics composite recovery"]
+		convey.So(composite.Query, convey.ShouldContainSubstring, "JSON_TABLE(path_ipm.iseq_composition_tmp")
+		convey.So(composite.Query, convey.ShouldContainSubstring, "seq_product_irods_locations spi")
+		convey.So(composite.Query, convey.ShouldContainSubstring, "LOWER(spi.seq_platform_name) = 'illumina'")
+		convey.So(composite.Query, convey.ShouldContainSubstring, "CASE WHEN MIN(component.component_run) = MAX(component.component_run)")
+		convey.So(composite.ArgCount, convey.ShouldEqual, 1)
+
 		for _, name := range []string{
 			"iseq_product_metrics incremental",
-			"iseq_product_metrics cold",
 			"iseq_product_metrics from cursor",
 		} {
 			query := queries[name]
 
-			convey.So(query.Query, convey.ShouldContainSubstring, "JSON_TABLE(path_ipm.iseq_composition_tmp")
-			convey.So(query.Query, convey.ShouldContainSubstring, "NOT EXISTS (SELECT 1 FROM JSON_TABLE(COALESCE(ipm.iseq_composition_tmp")
-			convey.So(query.Query, convey.ShouldContainSubstring, "seq_product_irods_locations spi")
+			convey.So(query.Query, convey.ShouldNotContainSubstring, "JSON_TABLE(path_ipm.iseq_composition_tmp")
+			convey.So(query.Query, convey.ShouldNotContainSubstring, "NOT EXISTS (SELECT 1 FROM JSON_TABLE(COALESCE(ipm.iseq_composition_tmp")
+			convey.So(query.Query, convey.ShouldNotContainSubstring, "seq_product_irods_locations spi")
 			convey.So(query.Query, convey.ShouldContainSubstring, "study.id_lims = 'SQSCP'")
-			convey.So(query.Query, convey.ShouldContainSubstring, "CASE WHEN MIN(component.component_run) = MAX(component.component_run)")
 		}
 
-		convey.So(queries["iseq_product_metrics incremental"].ArgCount, convey.ShouldEqual, 2)
+		cold := queries["iseq_product_metrics cold"]
+		convey.So(cold.Query, convey.ShouldContainSubstring, "JSON_TABLE(path_ipm.iseq_composition_tmp")
+		convey.So(cold.Query, convey.ShouldContainSubstring, "NOT EXISTS (SELECT 1 FROM JSON_TABLE(COALESCE(ipm.iseq_composition_tmp")
+		convey.So(cold.Query, convey.ShouldContainSubstring, "seq_product_irods_locations spi")
+		convey.So(cold.Query, convey.ShouldContainSubstring, "study.id_lims = 'SQSCP'")
+		convey.So(cold.Query, convey.ShouldContainSubstring, "CASE WHEN MIN(component.component_run) = MAX(component.component_run)")
+
+		convey.So(queries["iseq_product_metrics incremental"].ArgCount, convey.ShouldEqual, 1)
 		convey.So(queries["iseq_product_metrics cold"].ArgCount, convey.ShouldEqual, 2)
-		convey.So(queries["iseq_product_metrics from cursor"].ArgCount, convey.ShouldEqual, 6)
+		convey.So(queries["iseq_product_metrics from cursor"].ArgCount, convey.ShouldEqual, 3)
 
 		for _, name := range []string{
 			"iseq_product_metrics legacy incremental",
@@ -311,6 +323,16 @@ func withSampleSearchTokenReadPageSizeForTest(t *testing.T, size int) {
 	sampleSearchTokenReadPageSize = size
 	t.Cleanup(func() {
 		sampleSearchTokenReadPageSize = original
+	})
+}
+
+func withSyncCompositeRecoveryChunkSizeForTest(t *testing.T, size int) {
+	t.Helper()
+
+	original := iseqProductMetricsCompositeRecoveryChunkSize
+	iseqProductMetricsCompositeRecoveryChunkSize = size
+	t.Cleanup(func() {
+		iseqProductMetricsCompositeRecoveryChunkSize = original
 	})
 }
 
@@ -1144,6 +1166,61 @@ func TestSeqProductIRODSLocationsWarmZeroChangeAdvancesLastRun(t *testing.T) {
 		convey.So(lastRun, convey.ShouldHappenOnOrBetween, runStarted, runFinished)
 		convey.So(readSyncHighWater(t, cache.DB(), syncTableSeqProductIRODSLocations), convey.ShouldHappenOnOrBetween, highWater, highWater)
 	})
+}
+
+func TestB2IseqProductMetricsWarmZeroChangeWritesOnlySyncState(t *testing.T) {
+	convey.Convey("B2.4: Given existing product-metrics sync state and no source rows at or after its watermark", t, func() {
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		highWater := time.Date(2026, time.July, 10, 9, 0, 0, 0, time.UTC)
+		previousLastRun := highWater.Add(-time.Hour)
+		seedSyncState(t, cache.DB(), syncTableIseqProductMetrics, highWater)
+		_, err := cache.DB().Exec(
+			`UPDATE sync_state SET last_run = ? WHERE table_name = ?`,
+			formatSyncTime(previousLastRun),
+			syncTableIseqProductMetrics,
+		)
+		convey.So(err, convey.ShouldBeNil)
+		observer.Reset()
+
+		sourceDB := openRealMLWHSchemaSource(t)
+		source := &recordingSource{source: sqliteJSONTableSource{db: sourceDB}}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+		runStarted := time.Now().UTC()
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+		runFinished := time.Now().UTC()
+
+		mirrorWrites := filterRecordedStatements(observer.Statements(), func(statement recordedSQLStatement) bool {
+			return strings.Contains(normalizeSQL(statement.Query), "iseq_product_metrics_mirror")
+		})
+		syncStateUpserts := filterRecordedStatements(observer.Statements(), func(statement recordedSQLStatement) bool {
+			return normalizeSQL(statement.Query) == normalizeSQL(buildUpsertStatement("sqlite", "sync_state", syncStateColumns, []string{"table_name"}))
+		})
+		lastRun := readSyncLastRun(t, cache.DB(), syncTableIseqProductMetrics)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(reports[0].Inserted, convey.ShouldEqual, 0)
+		convey.So(reports[0].Updated, convey.ShouldEqual, 0)
+		convey.So(reports[0].HighWater, convey.ShouldHappenOnOrBetween, highWater, highWater)
+		convey.So(mirrorWrites, convey.ShouldBeEmpty)
+		convey.So(syncStateUpserts, convey.ShouldHaveLength, 1)
+		convey.So(readSyncHighWater(t, cache.DB(), syncTableIseqProductMetrics), convey.ShouldHappenOnOrBetween, highWater, highWater)
+		convey.So(lastRun.After(previousLastRun), convey.ShouldBeTrue)
+		convey.So(lastRun, convey.ShouldHappenOnOrBetween, runStarted, runFinished)
+	})
+}
+
+func readSyncLastRun(t *testing.T, db *sql.DB, table string) time.Time {
+	t.Helper()
+
+	var raw string
+	if err := db.QueryRow(`SELECT last_run FROM sync_state WHERE table_name = ?`, table).Scan(&raw); err != nil {
+		t.Fatalf("readSyncLastRun(%s): %v", table, err)
+	}
+
+	return mustParseSyncTime(t, raw)
 }
 
 func TestClientSyncIseqFlowcellMirrorsA1EntityTypeRows(t *testing.T) {

@@ -117,8 +117,8 @@ and non-SQSCP direct rows are absent, matching cold). Test file:
 planned-row mock - see the test-routing CAUTION). Depends on Phase 2
 harness.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.2: B2 - composite-recovery scoping efficiency and no-op
 
@@ -140,8 +140,8 @@ issues NO composite-recovery query at all; a zero-row warm window on
 `high_water` preserved, `last_run` advanced). Test files:
 `mlwh/sync_test.go`, `mlwh/sync_real_schema_test.go`. Depends on 3.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For these sequential items, a single review pass after each item is
 acceptable; the reviewer must confirm Phase 1 scans the NULLABLE fetch
