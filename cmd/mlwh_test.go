@@ -123,6 +123,26 @@ func TestMLWHSyncHelpRendersConfigurationDetails(t *testing.T) {
 	})
 }
 
+func TestMLWHSyncHelpAvoidsStaleTableCountAndList(t *testing.T) {
+	convey.Convey("Given wa mlwh --help, then sync has clear short help without a stale table count", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "--help"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "Sync supported MLWH metadata and data into the local cache")
+		convey.So(output, convey.ShouldNotContainSubstring, "Sync the five mirrored MLWH tables into the local cache")
+		convey.So(output, convey.ShouldNotContainSubstring, "five mirrored MLWH tables")
+	})
+
+	convey.Convey("Given wa mlwh sync --help, then long help describes supported data without an incomplete table list", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "sync", "--help"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "supported MLWH metadata and data into the local cache")
+		convey.So(output, convey.ShouldNotContainSubstring, "study, sample, iseq_flowcell")
+		convey.So(output, convey.ShouldNotContainSubstring, "iseq_product_metrics and seq_product_irods_locations")
+	})
+}
+
 func TestMLWHHelpExposesKCommandsWithoutIrods(t *testing.T) {
 	convey.Convey("K acceptance 1: Given wa mlwh --help, then the K commands are listed and the removed irods command is not advertised", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "--help"})
@@ -133,6 +153,16 @@ func TestMLWHHelpExposesKCommandsWithoutIrods(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "latest")
 		convey.So(output, convey.ShouldContainSubstring, "programmes")
 		convey.So(output, convey.ShouldNotContainSubstring, "irods")
+	})
+}
+
+func TestMLWHManifestCommandRemovedG1(t *testing.T) {
+	convey.Convey("G1.1: Given the built CLI, when wa mlwh manifest runs, then Cobra reports an unknown command", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "manifest", "7568"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "unknown command")
+		convey.So(output, convey.ShouldContainSubstring, "manifest")
 	})
 }
 
@@ -888,7 +918,6 @@ func TestMLWHKCommandsDegradeGracefullyOnNeverSyncedCache(t *testing.T) {
 		},
 		{name: "studies by programme", args: []string{"mlwh", "studies", "--programme", "Human Genetics"}},
 		{name: "programmes", args: []string{"mlwh", "programmes"}},
-		{name: "manifest products", args: []string{"mlwh", "manifest", "5901", "--with-irods", "--file-type", "cram"}},
 		{name: "info study", args: []string{"mlwh", "info", "5901", "--type", "study"}},
 	}
 

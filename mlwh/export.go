@@ -58,6 +58,7 @@ const (
 	exportRelationshipStudies     exportRelationshipKind = "studies"
 	exportRelationshipUsers       exportRelationshipKind = "users"
 	exportRelationshipSampleCRAMs exportRelationshipKind = "sample-crams"
+	exportRelationshipProducts    exportRelationshipKind = "products"
 )
 
 type exportRelationshipSpec struct {
@@ -69,6 +70,12 @@ type exportRelationshipSpec struct {
 }
 
 var exportRelationshipSpecs = []exportRelationshipSpec{
+	{
+		Children:    "products",
+		ParentKinds: []string{"study"},
+		Description: "product-grained rows, one per distinct id_run/lane/tag, including products with no iRODS object",
+		Kind:        exportRelationshipProducts,
+	},
 	{
 		Children:    "sample-crams",
 		ParentKinds: []string{"study"},
@@ -210,15 +217,42 @@ var (
 		Columns: fileExportColumns(),
 		Default: []string{"name", "accession_number", "irods_path", "merged"},
 	}
+	productExportVocabulary = exportVocabulary{
+		Columns: []exportColumn{
+			{Name: "name", Supported: true},
+			{Name: "supplier_name", Aliases: []string{"supplier_sample_name"}, Supported: true},
+			{Name: "accession_number", Supported: true},
+			{Name: "sanger_sample_id", Supported: true},
+			{Name: "id_run", Supported: true},
+			{Name: "lane", Aliases: []string{"position"}, Supported: true},
+			{Name: "tag_index", Supported: true},
+			{Name: "manual_qc", Supported: true},
+			{Name: "irods_path", Supported: true},
+			{Name: "irods_unmatched", Supported: true},
+			{Name: "reason", Supported: true},
+			{Name: "id_study_lims", Supported: true},
+			{Name: "study_accession_number", Supported: true},
+		},
+		Default: []string{
+			"name",
+			"supplier_name",
+			"accession_number",
+			"sanger_sample_id",
+			"id_run",
+			"lane",
+			"tag_index",
+			"manual_qc",
+		},
+	}
 )
 
 func validateExportContinuationSupport(kind exportRelationshipKind, rel ExportRelationship, opts ExportOptions) error {
-	if kind == exportRelationshipIRODS {
+	if kind == exportRelationshipIRODS || kind == exportRelationshipProducts {
 		return nil
 	}
 	if strings.TrimSpace(opts.Cursor) != "" {
 		return fmt.Errorf(
-			"%w: cursor pagination is supported only for iRODS exports in D1a; use limit/offset for %s of %s",
+			"%w: cursor pagination is supported only for iRODS and products exports; use limit/offset for %s of %s",
 			ErrUnsupportedIdentifier,
 			rel.Children,
 			rel.ParentKind,
@@ -245,8 +279,8 @@ func normaliseExportCreatedWindow(kind exportRelationshipKind, since, until stri
 }
 
 func exportFileFilters(kind exportRelationshipKind, opts ExportOptions) (string, bool, error) {
-	if !exportRelationshipUsesFileType(kind) && strings.TrimSpace(opts.FileType) != "" {
-		return "", false, fmt.Errorf("%w: --file-type applies only to file exports", ErrUnsupportedIdentifier)
+	if !exportRelationshipUsesFileType(kind) && !exportRelationshipAttachesFileType(kind) && strings.TrimSpace(opts.FileType) != "" {
+		return "", false, fmt.Errorf("%w: --file-type applies only to file exports or product iRODS attachments", ErrUnsupportedIdentifier)
 	}
 
 	fileType := opts.FileType
@@ -273,16 +307,21 @@ func exportRelationshipUsesFileType(kind exportRelationshipKind) bool {
 	return kind == exportRelationshipIRODS || kind == exportRelationshipSampleCRAMs
 }
 
+func exportRelationshipAttachesFileType(kind exportRelationshipKind) bool {
+	return kind == exportRelationshipProducts
+}
+
 func validateExportFilterSupport(kind exportRelationshipKind, rel ExportRelationship, filters exportFilters, deliverablesOnly bool) error {
 	if !exportUsesSharedSampleFilters(filters, deliverablesOnly) {
 		return nil
 	}
-	if kind == exportRelationshipIRODS || kind == exportRelationshipSamples || kind == exportRelationshipSampleCRAMs {
+	switch kind {
+	case exportRelationshipIRODS, exportRelationshipSamples, exportRelationshipSampleCRAMs, exportRelationshipProducts:
 		return nil
 	}
 
 	return fmt.Errorf(
-		"%w: shared sample export filters are backed for iRODS/files, samples, and sample-crams exports in D1a; %s of %s is not filter-backed yet",
+		"%w: shared sample export filters are backed for iRODS/files, samples, sample-crams, and products exports; %s of %s is not filter-backed yet",
 		ErrUnsupportedIdentifier,
 		rel.Children,
 		rel.ParentKind,
@@ -408,6 +447,18 @@ func projectExportIRODSRows(rows []exportIRODSRow, columns []exportColumn) [][]s
 	return projected
 }
 
+func projectExportProductRows(rows []exportProductRow, columns []exportColumn) [][]string {
+	projected := make([][]string, len(rows))
+	for rowIndex, row := range rows {
+		projected[rowIndex] = make([]string, len(columns))
+		for columnIndex, column := range columns {
+			projected[rowIndex][columnIndex] = row.cell(column.Name)
+		}
+	}
+
+	return projected
+}
+
 func projectSamples(samples []Sample, columns []exportColumn) [][]string {
 	rows := make([][]string, len(samples))
 	for rowIndex, sample := range samples {
@@ -491,6 +542,17 @@ func exportColumnsNeedSample(columns []exportColumn) bool {
 func exportColumnsNeedStudy(columns []exportColumn) bool {
 	for _, column := range columns {
 		if column.NeedsStudy {
+			return true
+		}
+	}
+
+	return false
+}
+
+func exportColumnsNeedIRODSAttachment(columns []exportColumn) bool {
+	for _, column := range columns {
+		switch column.Name {
+		case "irods_path", "irods_unmatched", "reason":
 			return true
 		}
 	}
@@ -623,6 +685,8 @@ func vocabularyForExportKind(kind exportRelationshipKind) exportVocabulary {
 		return userExportVocabulary
 	case exportRelationshipSampleCRAMs:
 		return sampleCRAMExportVocabulary
+	case exportRelationshipProducts:
+		return productExportVocabulary
 	default:
 		return exportVocabulary{}
 	}
@@ -747,7 +811,7 @@ func newExportPlan(rel ExportRelationship, parentID string, opts ExportOptions) 
 		return exportPlan{}, err
 	}
 	cursor := exportCursor{}
-	if kind == exportRelationshipIRODS {
+	if kind == exportRelationshipIRODS || kind == exportRelationshipProducts {
 		cursor, err = decodeExportCursor(opts.Cursor)
 		if err != nil {
 			return exportPlan{}, err
@@ -759,6 +823,7 @@ func newExportPlan(rel ExportRelationship, parentID string, opts ExportOptions) 
 		kind:              kind,
 		columns:           columns,
 		format:            format,
+		needsIRODS:        kind == exportRelationshipProducts && exportColumnsNeedIRODSAttachment(columns),
 		normalisedFile:    normalisedFile,
 		deliverablesOnly:  deliverablesOnly,
 		role:              opts.Role,
@@ -938,6 +1003,17 @@ func buildExportResult(plan exportPlan, rows [][]string, total int) ExportResult
 	}
 }
 
+func streamingExportResult(plan exportPlan, streamRows func(context.Context, func([]string) error) (int, error)) ExportResult {
+	return ExportResult{
+		Columns:    exportColumnNames(plan.columns),
+		Rows:       nil,
+		Total:      -1,
+		Complete:   true,
+		Format:     plan.format,
+		streamRows: streamRows,
+	}
+}
+
 // Render serialises the export result in its selected format.
 func (r ExportResult) Render() (string, error) {
 	return r.RenderAs(r.Format)
@@ -1001,13 +1077,26 @@ func (r ExportResult) RenderAsTo(ctx context.Context, writer io.Writer, format s
 func (r ExportResult) renderDelimitedTo(ctx context.Context, writer io.Writer, comma rune) (int, error) {
 	csvWriter := csv.NewWriter(writer)
 	csvWriter.Comma = comma
-	if err := csvWriter.Write(r.Columns); err != nil {
-		return 0, err
-	}
+	wroteHeader := false
 
 	count, err := r.ForEachRow(ctx, func(row []string) error {
+		if !wroteHeader {
+			if writeErr := csvWriter.Write(r.Columns); writeErr != nil {
+				return writeErr
+			}
+			wroteHeader = true
+		}
+
 		return csvWriter.Write(row)
 	})
+	if err != nil && !wroteHeader {
+		return count, err
+	}
+	if !wroteHeader {
+		if writeErr := csvWriter.Write(r.Columns); writeErr != nil {
+			return count, writeErr
+		}
+	}
 	csvWriter.Flush()
 	if writerErr := csvWriter.Error(); writerErr != nil {
 		return count, writerErr
@@ -1017,18 +1106,18 @@ func (r ExportResult) renderDelimitedTo(ctx context.Context, writer io.Writer, c
 }
 
 func (r ExportResult) renderJSONTo(ctx context.Context, writer io.Writer) (int, error) {
-	if _, err := io.WriteString(writer, "["); err != nil {
-		return 0, err
-	}
-
-	first := true
+	wroteStart := false
 	count, err := r.ForEachRow(ctx, func(row []string) error {
-		if !first {
+		if !wroteStart {
+			if _, writeErr := io.WriteString(writer, "["); writeErr != nil {
+				return writeErr
+			}
+			wroteStart = true
+		} else {
 			if _, writeErr := io.WriteString(writer, ","); writeErr != nil {
 				return writeErr
 			}
 		}
-		first = false
 
 		object := make(map[string]string, len(r.Columns))
 		for columnIndex, column := range r.Columns {
@@ -1047,6 +1136,13 @@ func (r ExportResult) renderJSONTo(ctx context.Context, writer io.Writer) (int, 
 	if err != nil {
 		return count, err
 	}
+	if !wroteStart {
+		if _, err = io.WriteString(writer, "[]\n"); err != nil {
+			return count, err
+		}
+
+		return count, nil
+	}
 	if _, err = io.WriteString(writer, "]\n"); err != nil {
 		return count, err
 	}
@@ -1055,8 +1151,11 @@ func (r ExportResult) renderJSONTo(ctx context.Context, writer io.Writer) (int, 
 }
 
 func (c *Client) exportAll(ctx context.Context, plan exportPlan, parent exportParent) (ExportResult, error) {
-	if plan.kind == exportRelationshipIRODS {
+	switch plan.kind {
+	case exportRelationshipIRODS:
 		return c.exportIRODS(ctx, plan, parent)
+	case exportRelationshipProducts:
+		return c.exportProducts(ctx, plan, parent)
 	}
 
 	return ExportResult{
@@ -1075,6 +1174,8 @@ func (c *Client) exportPage(ctx context.Context, plan exportPlan, parent exportP
 	switch plan.kind {
 	case exportRelationshipIRODS:
 		return c.exportIRODS(ctx, plan, parent)
+	case exportRelationshipProducts:
+		return c.exportProducts(ctx, plan, parent)
 	case exportRelationshipSamples:
 		return c.exportSamples(ctx, plan, parent)
 	case exportRelationshipRuns:
@@ -1179,6 +1280,95 @@ func (c *Client) exportIRODSAll(ctx context.Context, db *sql.DB, plan exportPlan
 			return c.streamExportIRODSRows(streamCtx, db, plan, input, emit)
 		},
 	}, nil
+}
+
+func (c *Client) exportProducts(ctx context.Context, plan exportPlan, parent exportParent) (ExportResult, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return ExportResult{}, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	commonNames, err := c.exportOrganismCommonNames(ctx, db, plan.filters.Organism)
+	if err != nil {
+		return ExportResult{}, err
+	}
+	if plan.filters.Organism != "" && len(commonNames) == 0 {
+		if plan.all {
+			return streamingExportResult(plan, func(context.Context, func([]string) error) (int, error) {
+				return 0, nil
+			}), nil
+		}
+
+		return emptyExportResult(plan, 0), nil
+	}
+
+	input := exportProductQueryInput{
+		studyID:             parent.Canonical,
+		needsIRODS:          plan.needsIRODS,
+		normalisedFile:      plan.normalisedFile,
+		deliverablesOnly:    plan.deliverablesOnly,
+		filters:             plan.filters,
+		organismCommonNames: commonNames,
+		limit:               plan.limit,
+		offset:              plan.offset,
+		cursor:              plan.cursor,
+	}
+	if plan.all {
+		return c.exportProductsAll(ctx, db, plan, input, parent)
+	}
+
+	total, err := c.exportProductTotal(ctx, input)
+	if err != nil {
+		return ExportResult{}, err
+	}
+
+	input.limit = plan.limit + 1
+	rows, err := c.queryExportProductRows(ctx, db, input, plan, parent)
+	if err != nil {
+		return ExportResult{}, err
+	}
+	if total == 0 && len(rows) == 0 {
+		if err = c.requireStudyProductExportEmpty(ctx, parent.Canonical, plan.needsIRODS); err != nil {
+			return ExportResult{}, err
+		}
+
+		return emptyExportResult(plan, 0), nil
+	}
+	if plan.needsIRODS {
+		if err = c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); err != nil {
+			return ExportResult{}, err
+		}
+	}
+
+	more := len(rows) > plan.limit
+	if more {
+		rows = rows[:plan.limit]
+	}
+
+	result := ExportResult{
+		Columns:  exportColumnNames(plan.columns),
+		Rows:     projectExportProductRows(rows, plan.columns),
+		Total:    total,
+		Complete: !more,
+		Format:   plan.format,
+	}
+	if more {
+		result.NextCursor = encodeExportCursor(rows[len(rows)-1].cursor())
+	}
+
+	return result, nil
+}
+
+func (c *Client) exportProductsAll(ctx context.Context, db *sql.DB, plan exportPlan, input exportProductQueryInput, parent exportParent) (ExportResult, error) {
+	if plan.needsIRODS {
+		if err := c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); err != nil {
+			return ExportResult{}, err
+		}
+	}
+
+	return streamingExportResult(plan, func(streamCtx context.Context, emit func([]string) error) (int, error) {
+		return c.streamExportProductsRows(streamCtx, db, plan, input, parent, emit)
+	}), nil
 }
 
 func (c *Client) exportSamples(ctx context.Context, plan exportPlan, parent exportParent) (ExportResult, error) {
@@ -1466,6 +1656,216 @@ func (c *Client) resolveExportParent(ctx context.Context, plan exportPlan, paren
 	default:
 		return exportParent{Value: parentID, Canonical: parentID}, nil
 	}
+}
+
+func (c *Client) streamExportProductsRows(
+	ctx context.Context,
+	db *sql.DB,
+	plan exportPlan,
+	input exportProductQueryInput,
+	parent exportParent,
+	emit func([]string) error,
+) (int, error) {
+	count := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return count, err
+		}
+
+		input.limit = plan.limit
+		page, err := c.queryExportProductRows(ctx, db, input, plan, parent)
+		if err != nil {
+			return count, err
+		}
+		if len(page) == 0 {
+			if count == 0 {
+				if err = c.requireStudyProductExportEmpty(ctx, parent.Canonical, plan.needsIRODS); err != nil {
+					return count, err
+				}
+			}
+
+			return count, nil
+		}
+
+		for _, row := range projectExportProductRows(page, plan.columns) {
+			if err := emit(row); err != nil {
+				return count, err
+			}
+			count++
+		}
+		if len(page) < plan.limit {
+			return count, nil
+		}
+
+		input.cursor = page[len(page)-1].cursor()
+		input.offset = 0
+	}
+}
+
+func (c *Client) queryExportProductRows(
+	ctx context.Context,
+	db *sql.DB,
+	input exportProductQueryInput,
+	plan exportPlan,
+	parent exportParent,
+) ([]exportProductRow, error) {
+	query, args := exportProductListQuery(input)
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: query export products: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	products := make([]exportProductRow, 0)
+	for rows.Next() {
+		row, scanErr := scanExportProductRow(rows.Scan, plan.needsIRODS)
+		if scanErr != nil {
+			return nil, fmt.Errorf("%w: scan export product row: %w", ErrUpstreamImpaired, scanErr)
+		}
+		row.IDStudyLims = parent.Canonical
+		if parent.Study != nil {
+			row.StudyAccessionNumber = parent.Study.AccessionNumber
+		}
+
+		products = append(products, row)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: query export products: %w", ErrUpstreamImpaired, err)
+	}
+
+	return products, nil
+}
+
+func exportProductListQuery(input exportProductQueryInput) (string, []any) {
+	where, whereArgs := exportProductWhere(input)
+	selectClause := manifestListSelectPrefix
+	join := ""
+	args := make([]any, 0)
+
+	if input.needsIRODS {
+		irodsJoin, joinArgs, detectMergedCRAMGap := manifestIRODSJoin(input.studyID, input.normalisedFile)
+		join = irodsJoin
+		args = append(args, joinArgs...)
+		selectClause += manifestListIRODSSelect
+		if detectMergedCRAMGap {
+			selectClause += manifestListIRODSUnmatchedSelect
+		} else {
+			selectClause += manifestListIRODSNoUnmatchedSelect
+		}
+	}
+	args = append(args, whereArgs...)
+	query := selectClause + manifestListBaseFrom + join + where
+	if input.cursor.set {
+		query += ` AND (ipm.id_run, ipm.position, ipm.tag_index) > (?, ?, ?)`
+		args = append(args, input.cursor.IDRun, input.cursor.Position, input.cursor.TagIndex)
+	}
+	query += ` GROUP BY ipm.id_run, ipm.position, ipm.tag_index`
+	if having := exportProductQCHaving(input.filters.QC); having != "" {
+		query += ` HAVING ` + having
+	}
+	query += ` ORDER BY ipm.id_run, ipm.position, ipm.tag_index, MIN(sm.name) LIMIT ?`
+	args = append(args, input.limit)
+	if input.offset > 0 && !input.cursor.set {
+		query += ` OFFSET ?`
+		args = append(args, input.offset)
+	}
+
+	return query, args
+}
+
+func exportProductWhere(input exportProductQueryInput) (string, []any) {
+	query := ` WHERE ipm.id_study_lims = ?`
+	args := []any{input.studyID}
+
+	if input.filters.LibraryType != "" {
+		query += ` AND EXISTS (` +
+			`SELECT 1 FROM library_samples ls ` +
+			`WHERE ls.id_sample_tmp = ipm.id_sample_tmp ` +
+			`AND ls.id_study_lims = ipm.id_study_lims ` +
+			`AND ls.pipeline_id_lims = ?` +
+			`)`
+		args = append(args, input.filters.LibraryType)
+	}
+	if len(input.organismCommonNames) > 0 {
+		query += ` AND sm.common_name IN (` + placeholders(len(input.organismCommonNames)) + `)`
+		for _, commonName := range input.organismCommonNames {
+			args = append(args, commonName)
+		}
+	}
+	if input.deliverablesOnly {
+		query += ` AND EXISTS (` +
+			`SELECT 1 FROM iseq_flowcell_mirror ifc ` +
+			`WHERE ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp ` +
+			`AND ifc.entity_type IN ('library', 'library_indexed')` +
+			`)`
+	}
+
+	return query, args
+}
+
+func exportProductQCHaving(qc string) string {
+	pendingCount := `SUM(CASE WHEN ipm.qc IS NULL THEN 1 ELSE 0 END)`
+
+	switch qc {
+	case qcFail:
+		return `MIN(ipm.qc) = 0`
+	case qcPending:
+		return `(MIN(ipm.qc) IS NULL OR MIN(ipm.qc) <> 0) AND ` + pendingCount + ` > 0`
+	case qcPass:
+		return `MIN(ipm.qc) = 1 AND ` + pendingCount + ` = 0`
+	default:
+		return ""
+	}
+}
+
+func scanExportProductRow(scan func(dest ...any) error, withIRODS bool) (exportProductRow, error) {
+	var (
+		row             exportProductRow
+		name            sql.NullString
+		supplierName    sql.NullString
+		accessionNumber sql.NullString
+		sangerSampleID  sql.NullString
+		productCount    int
+		pendingQC       sql.NullInt64
+		minQC           sql.NullInt64
+		collection      sql.NullString
+		fileName        sql.NullString
+		unmatched       int
+	)
+
+	dest := []any{
+		&row.IDRun,
+		&row.Position,
+		&row.TagIndex,
+		&name,
+		&supplierName,
+		&accessionNumber,
+		&sangerSampleID,
+		&productCount,
+		&pendingQC,
+		&minQC,
+	}
+	if withIRODS {
+		dest = append(dest, &collection, &fileName, &unmatched)
+	}
+	if err := scan(dest...); err != nil {
+		return exportProductRow{}, err
+	}
+
+	row.Name = nullStringValue(name)
+	row.SupplierName = nullStringValue(supplierName)
+	row.AccessionNumber = nullStringValue(accessionNumber)
+	row.SangerSampleID = nullStringValue(sangerSampleID)
+	row.ManualQC = qcRollupString(productCount, pendingQC, minQC)
+	if withIRODS && collection.Valid && fileName.Valid {
+		row.IRODSPath = strings.TrimRight(collection.String, "/") + "/" + fileName.String
+	}
+	if withIRODS && unmatched != 0 {
+		row.IRODSUnmatched = true
+		row.Reason = manifestUnmatchedReasonMergedMultilane
+	}
+
+	return row, nil
 }
 
 func (c *Client) samplesForExport(ctx context.Context, plan exportPlan, parent exportParent) ([]Sample, int, error) {
@@ -1894,11 +2294,55 @@ type exportCursor struct {
 	set                  bool
 }
 
+type exportProductQueryInput struct {
+	studyID             string
+	needsIRODS          bool
+	normalisedFile      string
+	deliverablesOnly    bool
+	filters             exportFilters
+	organismCommonNames []string
+	limit               int
+	offset              int
+	cursor              exportCursor
+}
+
+func (c *Client) exportProductTotal(ctx context.Context, input exportProductQueryInput) (int, error) {
+	if input.filters == (exportFilters{}) && !input.deliverablesOnly && len(input.organismCommonNames) == 0 {
+		return c.countStudyManifestProducts(ctx, input.studyID)
+	}
+
+	query, args := exportProductCountQuery(input)
+
+	return c.queryCount(ctx, query, "count export products", args...)
+}
+
+func exportProductCountQuery(input exportProductQueryInput) (string, []any) {
+	where, args := exportProductWhere(input)
+	groupBy := ` GROUP BY ipm.id_run, ipm.position, ipm.tag_index`
+
+	if having := exportProductQCHaving(input.filters.QC); having != "" {
+		query := `SELECT COUNT(*) FROM (` +
+			`SELECT ipm.id_run, ipm.position, ipm.tag_index` +
+			manifestListBaseFrom + where + groupBy + ` HAVING ` + having +
+			`) AS export_products`
+
+		return query, args
+	}
+
+	query := `SELECT COUNT(*) FROM (` +
+		`SELECT DISTINCT ipm.id_run, ipm.position, ipm.tag_index` +
+		manifestListBaseFrom + where +
+		`) AS export_products`
+
+	return query, args
+}
+
 type exportPlan struct {
 	rel               ExportRelationship
 	kind              exportRelationshipKind
 	columns           []exportColumn
 	format            string
+	needsIRODS        bool
 	normalisedFile    string
 	deliverablesOnly  bool
 	role              string
@@ -2366,6 +2810,60 @@ func (row exportIRODSRow) cursor() exportCursor {
 		Position:             row.Position,
 		TagIndex:             row.TagIndex,
 		IDSeqProductLocation: row.IDSeqProductLocation,
+		set:                  true,
+	}
+}
+
+type exportProductRow struct {
+	IDRun, Position, TagIndex         int
+	Name, SupplierName                string
+	AccessionNumber, SangerSampleID   string
+	ManualQC                          string
+	IRODSPath                         string
+	IRODSUnmatched                    bool
+	Reason                            string
+	IDStudyLims, StudyAccessionNumber string
+}
+
+func (row exportProductRow) cell(column string) string {
+	switch column {
+	case "name":
+		return row.Name
+	case "supplier_name":
+		return row.SupplierName
+	case "accession_number":
+		return row.AccessionNumber
+	case "sanger_sample_id":
+		return row.SangerSampleID
+	case "id_run":
+		return strconv.Itoa(row.IDRun)
+	case "lane":
+		return strconv.Itoa(row.Position)
+	case "tag_index":
+		return strconv.Itoa(row.TagIndex)
+	case "manual_qc":
+		return row.ManualQC
+	case "irods_path":
+		return row.IRODSPath
+	case "irods_unmatched":
+		return strconv.FormatBool(row.IRODSUnmatched)
+	case "reason":
+		return row.Reason
+	case "id_study_lims":
+		return row.IDStudyLims
+	case "study_accession_number":
+		return row.StudyAccessionNumber
+	default:
+		return ""
+	}
+}
+
+func (row exportProductRow) cursor() exportCursor {
+	return exportCursor{
+		IDRun:                int64(row.IDRun),
+		Position:             int64(row.Position),
+		TagIndex:             int64(row.TagIndex),
+		IDSeqProductLocation: 0,
 		set:                  true,
 	}
 }

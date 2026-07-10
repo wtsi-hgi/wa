@@ -93,7 +93,7 @@ type stubMLWHInfoClient struct {
 	samplesForLibrary   func(ctx context.Context, pipelineID, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
 
 	studyOverview          func(ctx context.Context, id string) (mlwh.StudyOverview, error)
-	studyManifest          func(ctx context.Context, id, fileType string, withIRODS bool, limit, offset int) (mlwh.StudyManifest, error)
+	export                 func(ctx context.Context, rel mlwh.ExportRelationship, parentID string, opts mlwh.ExportOptions) (mlwh.ExportResult, error)
 	statusBreakdown        func(ctx context.Context, id string) (mlwh.StatusBreakdown, error)
 	countSamplesWithData   func(ctx context.Context, id string) (mlwh.Count, error)
 	countSamplesWithDataAt func(ctx context.Context, id, since, until string) (mlwh.Count, error)
@@ -105,6 +105,30 @@ type stubMLWHInfoClient struct {
 	closed bool
 }
 
+func stubMLWHInfoStudyProducts(export func(context.Context, mlwh.ExportRelationship, string, mlwh.ExportOptions) (mlwh.ExportResult, error)) *stubMLWHInfoClient {
+	return &stubMLWHInfoClient{
+		resolveStudy: func(_ context.Context, raw string) (mlwh.Match, error) {
+			return mlwh.Match{
+				Kind:      mlwh.KindStudyLimsID,
+				Canonical: raw,
+				Study: &mlwh.Study{
+					IDStudyLims: raw,
+					Name:        "Product QC study",
+				},
+			}, nil
+		},
+		studyOverview: func(_ context.Context, id string) (mlwh.StudyOverview, error) {
+			return mlwh.StudyOverview{
+				IDStudyLims: id,
+				Programme:   "Human Genetics",
+				Runs:        2,
+				Libraries:   1,
+			}, nil
+		},
+		export: export,
+	}
+}
+
 func (s *stubMLWHInfoClient) StudyOverview(ctx context.Context, id string) (mlwh.StudyOverview, error) {
 	if s.studyOverview != nil {
 		return s.studyOverview(ctx, id)
@@ -113,12 +137,12 @@ func (s *stubMLWHInfoClient) StudyOverview(ctx context.Context, id string) (mlwh
 	return mlwh.StudyOverview{IDStudyLims: id}, nil
 }
 
-func (s *stubMLWHInfoClient) StudyManifest(ctx context.Context, id, fileType string, withIRODS bool, limit, offset int) (mlwh.StudyManifest, error) {
-	if s.studyManifest != nil {
-		return s.studyManifest(ctx, id, fileType, withIRODS, limit, offset)
+func (s *stubMLWHInfoClient) Export(ctx context.Context, rel mlwh.ExportRelationship, parentID string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
+	if s.export != nil {
+		return s.export(ctx, rel, parentID, opts)
 	}
 
-	return mlwh.StudyManifest{}, nil
+	return mlwh.ExportResult{}, nil
 }
 
 func (s *stubMLWHInfoClient) StatusBreakdown(ctx context.Context, id string) (mlwh.StatusBreakdown, error) {
@@ -813,49 +837,22 @@ func TestMLWHInfoStudyOverviewMetadata(t *testing.T) {
 	})
 }
 
-func TestMLWHInfoStudyShowsProgrammeAndManualQCProducts(t *testing.T) {
-	convey.Convey("K acceptance 3: Given a study with sequenced products, when wa mlwh info <study> runs, then programme and non-blank manual_qc product values render, including a non-Illumina row", t, func() {
-		stub := &stubMLWHInfoClient{
-			resolveStudy: func(_ context.Context, raw string) (mlwh.Match, error) {
-				return mlwh.Match{
-					Kind:      mlwh.KindStudyLimsID,
-					Canonical: raw,
-					Study: &mlwh.Study{
-						IDStudyLims: raw,
-						Name:        "Product QC study",
-					},
-				}, nil
-			},
-			studyOverview: func(_ context.Context, id string) (mlwh.StudyOverview, error) {
-				return mlwh.StudyOverview{
-					IDStudyLims: id,
-					Programme:   "Human Genetics",
-					Runs:        2,
-					Libraries:   1,
-				}, nil
-			},
-			studyManifest: func(_ context.Context, id, fileType string, withIRODS bool, limit, offset int) (mlwh.StudyManifest, error) {
-				convey.So(id, convey.ShouldEqual, "5901")
-				convey.So(fileType, convey.ShouldEqual, "")
-				convey.So(withIRODS, convey.ShouldBeFalse)
-				convey.So(limit, convey.ShouldEqual, infoMaxRelated)
-				convey.So(offset, convey.ShouldEqual, 0)
+func TestMLWHInfoStudyProductsUseProductsExportH1(t *testing.T) {
+	convey.Convey("H1.1: Given a study with product export rows, when wa mlwh info <study> runs, then text renders products from the bounded products-of-study export", t, func() {
+		called := false
+		stub := stubMLWHInfoStudyProducts(func(_ context.Context, rel mlwh.ExportRelationship, parentID string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
+			called = true
+			assertMLWHInfoProductsExportRequest(rel, parentID, opts)
 
-				return mlwh.StudyManifest{
-					IDStudyLims: id,
-					Rows: []mlwh.ManifestRow{
-						{Name: "illumina-sample", IDRun: 52553, Position: 1, TagIndex: 1, ManualQC: "pass"},
-						{Name: "pacbio-sample", IDRun: 0, Position: 0, TagIndex: 0, ManualQC: "pending"},
-					},
-				}, nil
-			},
-		}
+			return mlwhInfoProductsExportResult(2), nil
+		})
 
 		withStubMLWHInfoClient(t, stub)
 
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901", "--type", "study"})
 
 		convey.So(err, convey.ShouldBeNil)
+		convey.So(called, convey.ShouldBeTrue)
 		convey.So(output, convey.ShouldContainSubstring, "Programme")
 		convey.So(output, convey.ShouldContainSubstring, "Human Genetics")
 		convey.So(output, convey.ShouldContainSubstring, "Products (2)")
@@ -864,6 +861,84 @@ func TestMLWHInfoStudyShowsProgrammeAndManualQCProducts(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "pacbio-sample")
 		convey.So(output, convey.ShouldContainSubstring, "manual_qc=pending")
 	})
+
+	convey.Convey("H1.2: Given a products export page with a larger Total, when wa mlwh info <study> runs, then the Products heading shows shown of total", t, func() {
+		stub := stubMLWHInfoStudyProducts(func(_ context.Context, rel mlwh.ExportRelationship, parentID string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
+			assertMLWHInfoProductsExportRequest(rel, parentID, opts)
+
+			return mlwhInfoProductsExportResult(780), nil
+		})
+
+		withStubMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901", "--type", "study"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "Products (2 of 780)")
+	})
+
+	convey.Convey("H1.3: Given a products export page, when wa mlwh info <study> --json runs, then JSON contains typed products and no study_manifest field", t, func() {
+		stub := stubMLWHInfoStudyProducts(func(_ context.Context, rel mlwh.ExportRelationship, parentID string, opts mlwh.ExportOptions) (mlwh.ExportResult, error) {
+			assertMLWHInfoProductsExportRequest(rel, parentID, opts)
+
+			return mlwhInfoProductsExportResult(780), nil
+		})
+
+		withStubMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901", "--type", "study", "--json"})
+
+		convey.So(err, convey.ShouldBeNil)
+
+		var decoded map[string]any
+		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
+		convey.So(decoded, convey.ShouldNotContainKey, "study_manifest")
+
+		products, ok := decoded["products"].([]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(products, convey.ShouldHaveLength, 2)
+
+		first, ok := products[0].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(first["name"], convey.ShouldEqual, "illumina-sample")
+		convey.So(first["supplier_name"], convey.ShouldEqual, "supplier-a")
+		convey.So(first["accession_number"], convey.ShouldEqual, "EGAS00001005678")
+		convey.So(first["sanger_sample_id"], convey.ShouldEqual, "SANGER-1")
+		convey.So(first["id_run"], convey.ShouldEqual, float64(52553))
+		convey.So(first["lane"], convey.ShouldEqual, float64(1))
+		convey.So(first["tag_index"], convey.ShouldEqual, float64(1))
+		convey.So(first["manual_qc"], convey.ShouldEqual, "pass")
+
+		second, ok := products[1].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(second["name"], convey.ShouldEqual, "pacbio-sample")
+		convey.So(second["manual_qc"], convey.ShouldEqual, "pending")
+		convey.So(second["id_run"], convey.ShouldEqual, float64(0))
+	})
+}
+
+func assertMLWHInfoProductsExportRequest(rel mlwh.ExportRelationship, parentID string, opts mlwh.ExportOptions) {
+	convey.So(rel, convey.ShouldResemble, mlwh.ExportRelationship{Children: "products", ParentKind: "study"})
+	convey.So(parentID, convey.ShouldEqual, "5901")
+	convey.So(opts.Columns, convey.ShouldResemble, mlwhInfoProductColumnsForTest())
+	convey.So(strings.Join(opts.Columns, ","), convey.ShouldNotContainSubstring, "irods_path")
+	convey.So(opts.Limit, convey.ShouldEqual, infoMaxRelated)
+	convey.So(opts.Offset, convey.ShouldEqual, 0)
+}
+
+func mlwhInfoProductColumnsForTest() []string {
+	return []string{"name", "supplier_name", "accession_number", "sanger_sample_id", "id_run", "lane", "tag_index", "manual_qc"}
+}
+
+func mlwhInfoProductsExportResult(total int) mlwh.ExportResult {
+	return mlwh.ExportResult{
+		Columns: mlwhInfoProductColumnsForTest(),
+		Rows: [][]string{
+			{"illumina-sample", "supplier-a", "EGAS00001005678", "SANGER-1", "52553", "1", "1", "pass"},
+			{"pacbio-sample", "supplier-b", "", "SANGER-2", "0", "0", "0", "pending"},
+		},
+		Total: total,
+	}
 }
 
 func TestMLWHInfoStudyMetadataFallsBackToBaseStudyDataAccess(t *testing.T) {

@@ -172,23 +172,90 @@ func TestEndpointReferenceIncludesParamsDescriptionAndResponseG1(t *testing.T) {
 			convey.So(section, convey.ShouldNotContainSubstring, "ega_id")
 			convey.So(section, convey.ShouldNotContainSubstring, "irods_cram_path")
 		})
+
+		convey.Convey("the export endpoint documents products paging semantics", func() {
+			section := registryEntrySectionForTest(t, reference, "/export/:children/:parent_kind/:parent_id")
+			convey.So(section, convey.ShouldContainSubstring, "products are product-grained, one row per distinct `(id_run, position, tag_index)`, including products with no iRODS object")
+			convey.So(section, convey.ShouldContainSubstring, "products are keyset-cursor paginated")
+			convey.So(section, convey.ShouldContainSubstring, "default products response is a bounded page up to the internal 1000 default carrying Total, NextCursor and Complete")
+			convey.So(section, convey.ShouldContainSubstring, "use cursor to continue products")
+			convey.So(section, convey.ShouldContainSubstring, "use all=true for the complete products set")
+			convey.So(section, convey.ShouldContainSubstring, "file_type only restricts the attached irods_path for products and does not drop product rows")
+			convey.So(section, convey.ShouldContainSubstring, "maximum rows for a bounded export page; defaults to the internal 1000-row bounded page; use all=true for the complete matching set")
+			convey.So(section, convey.ShouldContainSubstring, "number of leading rows to skip for offset-backed export relationships; defaults to 0")
+			convey.So(section, convey.ShouldContainSubstring, "cursor for iRODS/products keyset pagination")
+			convey.So(section, convey.ShouldContainSubstring, "previous iRODS or products export page")
+			convey.So(section, convey.ShouldNotContainSubstring, "defaults to a fetch-all page that returns every matching row")
+		})
+
+		convey.Convey("the export endpoint documents products file_type as attachment-only", func() {
+			section := registryEntrySectionForTest(t, reference, "/export/:children/:parent_kind/:parent_id")
+			convey.So(section, convey.ShouldContainSubstring, "for products, only restricts the attached `irods_path` value and does not filter product rows or change `Total`")
+			convey.So(section, convey.ShouldContainSubstring, "for file exports, restricts exported file rows by filename suffix")
+			convey.So(section, convey.ShouldContainSubstring, "when omitted, file exports use the relationship default, currently CRAM for irods/files/sample-crams exports")
+			convey.So(section, convey.ShouldContainSubstring, "when omitted for products, any file type can attach when an iRODS path column is requested")
+			convey.So(section, convey.ShouldNotContainSubstring, "matching /count honours the same filter")
+			convey.So(section, convey.ShouldNotContainSubstring, "omit to return all file types or attach any file type")
+		})
+
+		convey.Convey("the export endpoint documents products deliverables_only as a product-row filter", func() {
+			section := registryEntrySectionForTest(t, reference, "/export/:children/:parent_kind/:parent_id")
+			convey.So(section, convey.ShouldContainSubstring, "for products, filters product rows using Illumina `iseq_flowcell.entity_type IN ('library','library_indexed')`")
+			convey.So(section, convey.ShouldContainSubstring, "changes product rows and `Total` without depending on attached iRODS rows")
+			convey.So(section, convey.ShouldContainSubstring, "for file exports, restricts exported file rows to deliverable rows")
+			convey.So(section, convey.ShouldContainSubstring, "omit to use the relationship default, which is true for CRAM irods/files/sample-crams exports")
+		})
 	})
 }
 
 func TestEndpointReferenceEscapesMarkdownControlCharactersG1(t *testing.T) {
-	// Registry descriptions include source identifiers and literal Markdown
-	// control characters that are plain prose, not emphasis. The generated
-	// reference preserves identifier underscores, escapes ambiguous controls, and
-	// leaves inline code spans as source text so formatters cannot reinterpret the
+	// Registry descriptions include source identifiers and Markdown control
+	// characters that are plain prose, not emphasis. The generated reference
+	// preserves identifier underscores, escapes ambiguous controls, and leaves
+	// inline code spans as source text so formatters cannot reinterpret the
 	// document and make the committed golden file drift.
 	convey.Convey("Given descriptions with underscores and stars, when the endpoint reference is generated, then prose is escaped and code spans stay literal", t, func() {
 		reference := EndpointReference()
 
 		convey.So(reference, convey.ShouldContainSubstring, "Set file_type to restrict")
-		convey.So(reference, convey.ShouldContainSubstring, "COUNT(\\*) over that same SELECT")
+		convey.So(endpointReferenceMarkdownText("COUNT(*) over that same SELECT"), convey.ShouldEqual, "COUNT(\\*) over that same SELECT")
 		convey.So(reference, convey.ShouldContainSubstring, "containing '%', '\\_' or '/'")
 		convey.So(reference, convey.ShouldContainSubstring, "`.<file_type>`")
 		convey.So(reference, convey.ShouldNotContainSubstring, "Set file*type to restrict")
+	})
+}
+
+func TestEndpointReferenceLatestDataUsesDataObjectVocabulary(t *testing.T) {
+	// Latest-data endpoints expose raw iRODS data-object membership. Guard their
+	// public Registry descriptions and rendered reference sections against stale
+	// manifest-surface wording while leaving tracking milestone names elsewhere
+	// alone.
+	convey.Convey("Given latest-data public docs, when inspected, then they use data-object vocabulary", t, func() {
+		reference := EndpointReference()
+		staleTerms := []string{"study manifest/product grain", "manifest/product count", "data manifest"}
+
+		for _, method := range []string{"LatestDataForStudy", "CountLatestDataForStudy"} {
+			entry, ok := registryEntryByMethod(method)
+			convey.So(ok, convey.ShouldBeTrue)
+
+			for _, stale := range staleTerms {
+				convey.So(entry.Description, convey.ShouldNotContainSubstring, stale)
+			}
+
+			convey.So(entry.Description, convey.ShouldContainSubstring, "raw")
+			convey.So(entry.Description, convey.ShouldContainSubstring, "data-object")
+			convey.So(entry.Description, convey.ShouldContainSubstring, "not a product-export")
+		}
+
+		for _, path := range []string{"/study/:id/latest-data", "/study/:id/latest-data/count"} {
+			section := registryEntrySectionForTest(t, reference, path)
+			for _, stale := range staleTerms {
+				convey.So(section, convey.ShouldNotContainSubstring, stale)
+			}
+
+			convey.So(section, convey.ShouldContainSubstring, "data-object")
+			convey.So(section, convey.ShouldContainSubstring, "not a product-export")
+		}
 	})
 }
 
@@ -290,20 +357,29 @@ func TestGlossaryDefinesAvailabilityConceptsG2(t *testing.T) {
 	})
 }
 
-func TestGlossaryDefinesPeopleAndManifestConceptsG2(t *testing.T) {
-	// G2 acceptance test 3: the glossary defines the study-metadata, manifest,
-	// file-type, QC and people concepts introduced by this feature - "data
-	// manifest" and "file-type filter" are called out by the spec, plus "faculty
-	// sponsor", "study_users / role membership", "manual QC", and "data access
-	// group". Each must be a genuine glossary term (a heading), not a passing
-	// mention, so the document truly defines them.
-	convey.Convey("Given the glossary document, when read, then it defines the manifest, file-type, QC and people concepts", t, func() {
+func TestGlossaryDefinesPeopleAndProductExportConceptsG2(t *testing.T) {
+	// G2 acceptance test 3: the glossary defines the study-metadata,
+	// product-export, file-type, QC and people concepts introduced by this feature
+	// - "product export" and "file-type filter" are called out by the spec, plus
+	// "faculty sponsor", "study_users / role membership", "manual QC", and "data
+	// access group". Each must be a genuine glossary term (a heading), not a
+	// passing mention, so the document truly defines them.
+	convey.Convey("Given the glossary document, when read, then it defines the product-export, file-type, QC and people concepts", t, func() {
 		glossary := readGlossaryForTest(t)
 		terms := glossaryTermsForTest(glossary)
 
-		convey.Convey("it defines data manifest and file-type filter (the spec's named terms)", func() {
-			convey.So(terms, convey.ShouldContainKey, "data manifest")
+		convey.Convey("it defines product export and file-type filter (the spec's named terms)", func() {
+			convey.So(terms, convey.ShouldContainKey, "product export")
 			convey.So(terms, convey.ShouldContainKey, "file-type filter (filename suffix)")
+		})
+
+		convey.Convey("it distinguishes product-export file_type from iRODS endpoint filtering", func() {
+			convey.So(glossary, convey.ShouldContainSubstring, "For run-, study- and sample-scoped iRODS endpoints")
+			convey.So(glossary, convey.ShouldContainSubstring, "A valid-but-unmatched suffix yields an EMPTY result")
+			convey.So(glossary, convey.ShouldContainSubstring, "the matching `/count` honours the same filter")
+			convey.So(glossary, convey.ShouldContainSubstring, "For product exports")
+			convey.So(glossary, convey.ShouldContainSubstring, "only restricts the attached `irods_path`")
+			convey.So(glossary, convey.ShouldContainSubstring, "does not filter product rows or change `Total`")
 		})
 
 		convey.Convey("it defines the remaining G2 study-metadata and people concepts", func() {

@@ -171,33 +171,35 @@ reported as `not_tracked`, its availability is reported by listing the sample
 among samples-without-data with platform `["ONT"]`, and its within-sequencing
 status is simply absent (sample progress returns empty `runs` for ONT).
 
-## Study metadata, manifests, QC and people
+## Study metadata, product exports, QC and people
 
-These are the domain concepts the study-metadata, manifest, run-iRODS, QC and
-people-to-studies endpoints (`/study/:id/manifest`, `/study/:id/overview`,
-`/study/:id/status-breakdown`, `/run/:id/irods`, `/studies/faculty-sponsor/:name`,
-`/studies/user/:person`, `/resolve-person/:term`, and their `/count`
-counterparts) report on. They explain _what those answers mean_, not the wire
-format.
+These are the domain concepts the study-metadata, product export, run-iRODS, QC
+and people-to-studies endpoints (`/export/:children/:parent_kind/:parent_id`,
+`/study/:id/overview`, `/study/:id/status-breakdown`, `/run/:id/irods`,
+`/studies/faculty-sponsor/:name`, `/studies/user/:person`,
+`/resolve-person/:term`, and their `/count` counterparts) report on. They
+explain _what those answers mean_, not the wire format.
 
-### Data manifest
+### Product export
 
-A **data manifest** is one bounded, pageable table of a study's sequencing
-products: the study-level metadata carried once in the envelope, plus a page of
-rows with one row per sequencing product. The row grain is one product per
-`(id_run, position, tag_index)` from `iseq_product_metrics_mirror`, joined to its
-sample's identity in `sample_mirror` (`name`, `supplier_name`,
-`accession_number`, `sanger_sample_id`) and scoped by the product-metrics
-`id_study_lims`; rows are ordered by `(id_run, position, tag_index, name)` for
-determinism. The study `name` / `accession_number` / `faculty_sponsor` /
-`data_access_group` live in the envelope ONCE (from `study_mirror`), not on every
-row. When `with_irods` is set, each row also carries an optional `irods_path` -
-the product's iRODS data object via a set-at-once LEFT JOIN on `id_iseq_product`,
-restricted by the [file-type filter](#file-type-filter-filename-suffix) when a
-suffix is given, and empty when the product has no matching object; the row count
-is unchanged (the manifest is product-grained, not iRODS-grained). It is
-bounded-by-default and pageable, and like all iRODS-bearing results is complete
-only up to the last sync (see `cache_synced_at` / `/freshness`).
+A **product export** is the `products` relationship on the generic export
+surface, for example `wa mlwh export products study <id>` or
+`GET /export/products/study/:id`. It is product-grained: one row per distinct
+`(id_run, position, tag_index)` from `iseq_product_metrics_mirror`, joined to the
+sample identity in `sample_mirror` (`name`, `supplier_name`, `accession_number`,
+`sanger_sample_id`) and scoped by the product-metrics `id_study_lims`. Rows are
+ordered by `(id_run, position, tag_index, name)` for determinism.
+
+When an `irods_path` column is requested, the export attaches a product's iRODS
+data object via a set-at-once LEFT JOIN on `id_iseq_product`, restricted by the
+[file-type filter](#file-type-filter-filename-suffix) when a suffix is given.
+For product exports, `file_type` only restricts the attached `irods_path` value:
+it does not filter product rows or change `Total`. Products with no matching
+iRODS object for the requested suffix still appear with an empty `irods_path`,
+and `irods_unmatched` / `reason` can describe known gaps. Product exports are
+bounded-page/keyset-cursor results by default, and like all iRODS-bearing
+results are complete only up to the last sync (see `cache_synced_at` /
+`/freshness`).
 
 ### File-type filter (filename suffix)
 
@@ -205,12 +207,19 @@ A **file-type filter** is a filename-suffix match, not a real file-type column:
 `seq_product_irods_locations` has no file-type column, so the filter matches
 `irods_file_name LIKE '%.<token>'` case-insensitively, stripping a single leading
 `.` from the token. It is an OPEN suffix - any token is allowed (e.g. `cram`,
-`bam`, `bai`). A valid-but-unmatched suffix yields an EMPTY result, NOT an error,
-and the matching `/count` honours the same filter so an empty result is
-distinguishable from "no data". The filter is a 400-class bad request only when
-the value is empty/whitespace or contains `%`, `_`, or `/`. It applies to the
-run-, study- and sample-scoped iRODS endpoints and to the
-[data manifest](#data-manifest)'s optional `irods_path`.
+`bam`, `bai`). The filter is a 400-class bad request only when the value is
+empty/whitespace or contains `%`, `_`, or `/`.
+
+For run-, study- and sample-scoped iRODS endpoints, `file_type` filters the
+returned iRODS data-object rows.
+A valid-but-unmatched suffix yields an EMPTY result, NOT an error.
+For these iRODS endpoints, the matching `/count` honours the same filter so an
+empty result is distinguishable from "no data".
+
+For product exports, the same suffix rule is used only while attaching an
+optional `irods_path`: it only restricts the attached `irods_path`, does not
+filter product rows or change `Total`, and leaves the product row present with an
+empty `irods_path` when no object matches the suffix.
 
 ### Faculty sponsor
 
@@ -219,9 +228,9 @@ stored free-text in `study.faculty_sponsor` (mirrored to `study_mirror`). A
 person-NAME query maps to the faculty sponsor (e.g.
 `/studies/faculty-sponsor/:name`), which is distinct from
 [study_users role membership](#study_users--role-membership): the two return
-different sets of studies. The faculty sponsor also appears on the study overview
-and in the manifest envelope, and a `faculty_sponsor` substring is one of the
-fields study search matches.
+different sets of studies. The faculty sponsor also appears on the study
+overview, and a `faculty_sponsor` substring is one of the fields study search
+matches.
 
 ### study_users / role membership
 
@@ -250,10 +259,9 @@ products, including ONT) are NOT sequenced and are excluded.
 
 A **data access group** is the group recorded in `study.data_access_group`
 (mirrored to `study_mirror`) that governs who may access a study's data. It is
-now surfaced on the study overview (alongside `name` / `accession_number` /
+surfaced on the study overview (alongside `name` / `accession_number` /
 `faculty_sponsor`) so "the data access group(s) for study X" is one small call
-without fetching the giant `/study/:id/detail`, and it is also carried once in the
-[data manifest](#data-manifest) envelope.
+without fetching the giant `/study/:id/detail`.
 
 ## Identifier kinds
 

@@ -375,7 +375,6 @@ func newMLWHCommand() *cobra.Command {
 	command.AddCommand(newMLWHInfoCommand())
 	command.AddCommand(newMLWHSearchCommand())
 	command.AddCommand(newMLWHExportCommand())
-	command.AddCommand(newMLWHManifestCommand())
 	command.AddCommand(newMLWHLatestCommand())
 	command.AddCommand(newMLWHRunsCommand())
 	command.AddCommand(newMLWHStudiesCommand())
@@ -389,20 +388,20 @@ func newMLWHCommand() *cobra.Command {
 func newMLWHSyncCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:           "sync",
-		Short:         "Sync the five mirrored MLWH tables into the local cache",
+		Short:         "Sync supported MLWH metadata and data into the local cache",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Long: strings.Join([]string{
-			"Sync rows from the upstream Sanger MLWH MySQL database into the",
-			"local mirrored cache used by other wa subcommands.",
+			"Sync supported MLWH metadata and data into the local cache used",
+			"by other wa subcommands.",
 			"",
 			"Run this command to (re)populate the cache before commands that",
 			"resolve sample, study, run or library lookups, or on a schedule",
 			"to keep the cache fresh. Each run incrementally pulls new and",
-			"updated rows for study, sample, iseq_flowcell,",
-			"iseq_product_metrics and seq_product_irods_locations, and",
-			"prints an inserted/updated/high-water summary per table. The first",
-			"run can be slow because it cold-loads the full table set.",
+			"updated rows from the upstream Sanger MLWH MySQL database and",
+			"prints an inserted/updated/high-water summary per synced source.",
+			"The first run can be slow because it cold-loads the supported",
+			"source set.",
 			"",
 			"Configuration is read from the environment. Use the persistent",
 			"--env flag (or WA_ENV=development|test|production) to load matching",
@@ -423,7 +422,7 @@ func newMLWHSyncCommand() *cobra.Command {
 			"                          the local cache when set.",
 			"",
 			"Examples:",
-			"  # Full incremental sync of all supported MLWH tables",
+			"  # Full incremental sync of supported MLWH cache data",
 			"  WA_MLWH_DSN='mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse' \\",
 			"  WA_MLWH_PASSWORD='secret' \\",
 			"      wa --env development mlwh sync",

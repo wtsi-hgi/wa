@@ -243,52 +243,6 @@ type SampleSearchOptions struct {
 	DeliverablesOnly bool
 }
 
-// ManifestRow is one row of a study's data manifest: one sequencing product
-// (run x position x tag) joined to its sample's identity, plus the study-level
-// metadata carried once in the envelope (not per row). When the file-type / iRODS
-// path is requested, IRODSPath is the data object for that product matching the
-// suffix filter (empty string when the product has no matching iRODS object).
-// IRODSUnmatched/Reason make known merge-driven gaps explicit without copying a
-// composite CRAM path onto each single-lane row.
-type ManifestRow struct {
-	Name            string `json:"name" doc:"Sanger sample name"`
-	SupplierName    string `json:"supplier_name" doc:"supplier-given sample name"`
-	AccessionNumber string `json:"accession_number" doc:"sample public archive accession number"`
-	SangerSampleID  string `json:"sanger_sample_id" doc:"Sanger sample id"`
-	IDRun           int    `json:"id_run" doc:"Illumina NPG run id of the product"`
-	Position        int    `json:"lane" doc:"lane position of the product"`
-	TagIndex        int    `json:"tag_index" doc:"multiplexing tag index of the product"`
-	ManualQC        string `json:"manual_qc" doc:"per-product QC roll-up pass|fail|pending from the product qc"`
-	IRODSPath       string `json:"irods_path,omitempty" doc:"iRODS path of the product's data object matching the file-type filter; present only when with_irods is set"`
-	IRODSUnmatched  bool   `json:"irods_unmatched,omitempty" doc:"true when the product has no direct iRODS match because its CRAM is represented by a merged composite object"`
-	Reason          string `json:"reason,omitempty" doc:"reason for irods_unmatched; currently merged_multilane"`
-}
-
-// StudyManifest is the manifest response body: the study-level metadata once,
-// plus the page of product rows. The page is bounded/pageable; remote callers use
-// PagedStudyManifest when they also need the X-Total-Count / X-Next-Offset
-// sizing headers. The study fields answer Q3's "study details" without
-// repeating per row (D2/D5).
-type StudyManifest struct {
-	IDStudyLims          string        `json:"id_study_lims" doc:"LIMS study id"`
-	Name                 string        `json:"name" doc:"study name"`
-	AccessionNumber      string        `json:"accession_number" doc:"study accession number"`
-	FacultySponsor       string        `json:"faculty_sponsor" doc:"study faculty sponsor"`
-	DataAccessGroup      string        `json:"data_access_group" doc:"study data access group"`
-	ProductsWithoutIRODS int           `json:"products_without_irods" doc:"full unpaginated count of product rows whose iRODS path is absent for a known reason such as merged multi-lane CRAM in the requested with_irods/file_type scope"`
-	Rows                 []ManifestRow `json:"rows" doc:"page of per-product manifest rows"`
-	CacheSyncedAt        string        `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
-}
-
-// PagedStudyManifest is the header-aware remote result for StudyManifest. It
-// keeps the manifest body unchanged and adds Total and NextOffset from the
-// X-Total-Count and X-Next-Offset response headers.
-type PagedStudyManifest struct {
-	StudyManifest StudyManifest `json:"study_manifest" doc:"study manifest response body"`
-	Total         int           `json:"total" doc:"total number of matching manifest rows"`
-	NextOffset    int           `json:"next_offset" doc:"offset of the next page, or -1 on the last page"`
-}
-
 // SampleWithData is the enriched list row for the samples-with-data and
 // samples-without-data partitions. It carries the platforms the sample has
 // products on so every entry is platform-qualified rather than a bare "no data":

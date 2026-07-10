@@ -770,6 +770,71 @@ func TestRemoteClientExportRoundTripsThroughServerD1b(t *testing.T) {
 	})
 }
 
+func TestRemoteClientProductsExportAllStreamsByCursorF1(t *testing.T) {
+	convey.Convey("F1.5: Given a RemoteClient products export over a study larger than one remote page", t, func() {
+		local, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedLargeProductExportScenario(t, local.cache.DB(), 3)
+
+		convey.So(remoteExportCanPageAll(ExportRelationship{Children: "products", ParentKind: "study"}), convey.ShouldBeTrue)
+
+		requestURIs := make(chan string, 4)
+		gin.SetMode(gin.TestMode)
+		router := gin.New()
+		NewServer(local).RegisterRoutes(router, nil)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestURIs <- r.URL.RequestURI()
+			router.ServeHTTP(w, r)
+		}))
+		defer server.Close()
+
+		remote := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, remote)
+
+		result, err := remote.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7799", ExportOptions{
+			Columns: []string{"name", "id_run"},
+			All:     true,
+			Limit:   2,
+		})
+		rows := make([][]string, 0)
+		count, renderErr := result.ForEachRow(context.Background(), func(row []string) error {
+			rows = append(rows, append([]string(nil), row...))
+
+			return nil
+		})
+		firstURI := receiveRemoteClientTestValue(t, requestURIs, "first products export page URI")
+		secondURI := receiveRemoteClientTestValue(t, requestURIs, "second products export page URI")
+		firstURL, firstParseErr := url.Parse(firstURI)
+		secondURL, secondParseErr := url.Parse(secondURI)
+
+		convey.Convey("when the stream is rendered, then it emits every row and continues by cursor without OFFSET", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(renderErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldEqual, 3)
+			convey.So(rows, convey.ShouldHaveLength, 3)
+			convey.So(result.Rows, convey.ShouldBeNil)
+			convey.So(result.Total, convey.ShouldEqual, -1)
+			convey.So(result.Complete, convey.ShouldBeTrue)
+			convey.So(firstParseErr, convey.ShouldBeNil)
+			convey.So(secondParseErr, convey.ShouldBeNil)
+			convey.So(firstURL.Path, convey.ShouldEqual, "/export/products/study/7799")
+			convey.So(firstURL.Query().Get("columns"), convey.ShouldEqual, "name,id_run")
+			convey.So(firstURL.Query().Get("limit"), convey.ShouldEqual, "2")
+			convey.So(firstURL.Query().Get("all"), convey.ShouldBeEmpty)
+			convey.So(firstURL.Query().Get("cursor"), convey.ShouldBeEmpty)
+			convey.So(firstURL.Query().Get("offset"), convey.ShouldBeEmpty)
+			convey.So(secondURL.Path, convey.ShouldEqual, "/export/products/study/7799")
+			convey.So(secondURL.Query().Get("columns"), convey.ShouldEqual, "name,id_run")
+			convey.So(secondURL.Query().Get("limit"), convey.ShouldEqual, "2")
+			convey.So(secondURL.Query().Get("cursor"), convey.ShouldNotBeEmpty)
+			convey.So(secondURL.Query().Get("all"), convey.ShouldBeEmpty)
+			convey.So(secondURL.Query().Get("offset"), convey.ShouldBeEmpty)
+			convey.So(secondURL.Query().Get("sort"), convey.ShouldBeEmpty)
+			convey.So(len(requestURIs), convey.ShouldEqual, 0)
+		})
+	})
+}
+
 func TestRemoteClientExportRejectsInvalidPagingBeforeRequest(t *testing.T) {
 	convey.Convey("Given a RemoteClient with invalid bounded export pagination", t, func() {
 		cases := []struct {

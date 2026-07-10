@@ -171,9 +171,6 @@ func parityQueryCases() []parityQueryCase {
 		{name: "IRODSPathsForRun", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.IRODSPathsForRun(ctx, parityRunID, "", 100, 0)
 		}},
-		{name: "StudyManifest", call: func(ctx context.Context, q Queryer) (any, error) {
-			return q.StudyManifest(ctx, parityStudyID, "", false, 100, 0)
-		}},
 		{name: "StudiesForSample", call: func(ctx context.Context, q Queryer) (any, error) { return q.StudiesForSample(ctx, paritySampleName) }},
 		{name: "CountStudiesForSample", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountStudiesForSample(ctx, paritySampleName)
@@ -304,9 +301,6 @@ func parityQueryCases() []parityQueryCase {
 		}},
 		{name: "CountRunListing", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountRunListing(ctx, RunAggregationOptions{Platforms: []string{platformIllumina}})
-		}},
-		{name: "CountStudyManifest", call: func(ctx context.Context, q Queryer) (any, error) {
-			return q.CountStudyManifest(ctx, parityStudyID)
 		}},
 		{name: "CountLibrariesForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.CountLibrariesForStudy(ctx, parityStudyID)
@@ -569,6 +563,32 @@ func TestRemoteClientClientParityB4(t *testing.T) {
 			convey.So(len(cases), convey.ShouldEqual, queryerMethodCount())
 			convey.So(checked, convey.ShouldEqual, queryerMethodCount())
 			convey.So(failures, convey.ShouldHaveLength, 0)
+		})
+	})
+}
+
+func TestRemoteClientProductsExportParityF1(t *testing.T) {
+	convey.Convey("F1.4: Given local and remote clients over the same seeded cache", t, func() {
+		local := newParitySeededClient(t)
+		defer closeParityClientForTest(t, local)
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		opts := ExportOptions{
+			Columns:  []string{"name", "irods_path"},
+			FileType: "cram",
+			Limit:    100,
+		}
+		localResult, localErr := local.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, parityStudyID, opts)
+		remoteResult, remoteErr := remote.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, parityStudyID, opts)
+
+		convey.Convey("when products is exported through both clients, then the ExportResult round-trip is identical", func() {
+			convey.So(localErr, convey.ShouldBeNil)
+			convey.So(remoteErr, convey.ShouldBeNil)
+			convey.So(reflect.DeepEqual(localResult, remoteResult), convey.ShouldBeTrue)
+			convey.So(localResult.Columns, convey.ShouldResemble, []string{"name", "irods_path"})
+			convey.So(localResult.Rows, convey.ShouldHaveLength, 4)
+			convey.So(localResult.Total, convey.ShouldEqual, 4)
 		})
 	})
 }

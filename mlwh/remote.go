@@ -587,52 +587,6 @@ func (rc *RemoteClient) IRODSPathsForRunPage(ctx context.Context, idRun string, 
 	return remoteCallPage[IRODSPath](rc, ctx, "IRODSPathsForRun", []string{idRun}, remotePagination(limit, offset))
 }
 
-// StudyManifest returns a study's product manifest envelope through the remote
-// server. The body is an object envelope, not a bare slice, so this body-only
-// method returns StudyManifest directly and ignores any sizing headers. Use
-// StudyManifestPage when X-Total-Count and X-Next-Offset are needed.
-//
-// The query sends limit/offset plus optional with_irods and file_type filters.
-// Empty optional values are omitted, and the server validates file_type.
-func (rc *RemoteClient) StudyManifest(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (StudyManifest, error) {
-	return remoteCall[StudyManifest](rc, ctx, "StudyManifest", []string{studyLimsID}, remoteManifestQuery(limit, offset, withIRODS, fileType))
-}
-
-// remoteManifestQuery builds the query values for the study manifest list: the
-// limit/offset pagination controls plus the optional with_irods flag (set only
-// when true) and file_type filter (set only when non-empty), matching the
-// bare/with-irods/filtered call forms.
-func remoteManifestQuery(limit, offset int, withIRODS bool, fileType string) url.Values {
-	values := remotePaginationWithFileType(limit, offset, fileType)
-	if withIRODS {
-		values.Set("with_irods", "true")
-	}
-
-	return values
-}
-
-// StudyManifestPage returns a study's product manifest envelope plus
-// list-sizing metadata from the X-Total-Count and X-Next-Offset response
-// headers. It sends the same query values as StudyManifest.
-func (rc *RemoteClient) StudyManifestPage(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (PagedStudyManifest, error) {
-	manifest, total, nextOffset, err := remoteCallEnvelopePage[StudyManifest](
-		rc,
-		ctx,
-		"StudyManifest",
-		[]string{studyLimsID},
-		remoteManifestQuery(limit, offset, withIRODS, fileType),
-	)
-	if err != nil {
-		return PagedStudyManifest{}, err
-	}
-
-	return PagedStudyManifest{
-		StudyManifest: manifest,
-		Total:         total,
-		NextOffset:    nextOffset,
-	}, nil
-}
-
 // StudiesForSample lists studies for a sample through the remote server.
 func (rc *RemoteClient) StudiesForSample(ctx context.Context, sangerName string) ([]Study, error) {
 	return remoteCall[[]Study](rc, ctx, "StudiesForSample", []string{sangerName}, nil)
@@ -1113,15 +1067,6 @@ func (rc *RemoteClient) CountRunsForSample(ctx context.Context, sangerName strin
 // CountRunListing counts global run listing rows through the remote server.
 func (rc *RemoteClient) CountRunListing(ctx context.Context, opts RunAggregationOptions) (Count, error) {
 	return remoteCall[Count](rc, ctx, "CountRunListing", nil, remoteRunAggregationOptions(opts))
-}
-
-// CountStudyManifest counts the distinct products in a study's manifest through
-// the remote server (spec C2), the count counterpart of StudyManifest. It is a
-// plain remoteCall returning the Count envelope; the figure is product-grained
-// (unaffected by the manifest's with_irods / file_type options, which this
-// endpoint does not take), so it equals the manifest list's row count.
-func (rc *RemoteClient) CountStudyManifest(ctx context.Context, studyLimsID string) (Count, error) {
-	return remoteCall[Count](rc, ctx, "CountStudyManifest", []string{studyLimsID}, nil)
 }
 
 // CountLibrariesForStudy counts the distinct libraries for a study through the remote server.

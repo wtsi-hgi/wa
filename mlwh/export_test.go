@@ -30,13 +30,102 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/smartystreets/goconvey/convey"
 )
+
+func TestStreamExportProductsRowsUsesKeysetCursorWithoutOffsetD2(t *testing.T) {
+	convey.Convey("D2.2: Given a complete products stream with several internal pages", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		columns := []string{
+			"id_run", "position", "tag_index", "name", "supplier_name", "accession_number",
+			"sanger_sample_id", "product_count", "pending_qc", "min_qc",
+		}
+		firstQuery := manifestListSelectPrefix + manifestListBaseFrom + manifestListWhere +
+			` GROUP BY ipm.id_run, ipm.position, ipm.tag_index` +
+			` ORDER BY ipm.id_run, ipm.position, ipm.tag_index, MIN(sm.name) LIMIT ?`
+		secondQuery := manifestListSelectPrefix + manifestListBaseFrom + manifestListWhere +
+			` AND (ipm.id_run, ipm.position, ipm.tag_index) > (?, ?, ?)` +
+			` GROUP BY ipm.id_run, ipm.position, ipm.tag_index` +
+			` ORDER BY ipm.id_run, ipm.position, ipm.tag_index, MIN(sm.name) LIMIT ?`
+
+		mock.ExpectQuery("^"+regexp.QuoteMeta(firstQuery)+"$").
+			WithArgs("7799", 2).
+			WillReturnRows(sqlmock.NewRows(columns).
+				AddRow(10, 1, 1, "product-a", "supplier-a", "EGAN-a", "sanger-a", 1, 0, 1).
+				AddRow(10, 1, 2, "product-b", "supplier-b", "EGAN-b", "sanger-b", 1, 0, 1))
+		mock.ExpectQuery("^"+regexp.QuoteMeta(secondQuery)+"$").
+			WithArgs("7799", int64(10), int64(1), int64(2), 2).
+			WillReturnRows(sqlmock.NewRows(columns).
+				AddRow(10, 1, 3, "product-c", "supplier-c", "EGAN-c", "sanger-c", 1, 0, 1))
+
+		client := &Client{}
+		plan := exportPlan{
+			columns: []exportColumn{
+				{Name: "name", Supported: true},
+				{Name: "id_run", Supported: true},
+				{Name: "lane", Supported: true},
+				{Name: "tag_index", Supported: true},
+			},
+			limit: 2,
+		}
+		input := exportProductQueryInput{studyID: "7799"}
+		parent := exportParent{Canonical: "7799"}
+
+		var streamed [][]string
+		count, streamErr := client.streamExportProductsRows(context.Background(), db, plan, input, parent, func(row []string) error {
+			streamed = append(streamed, append([]string(nil), row...))
+
+			return nil
+		})
+
+		convey.Convey("when a full page is followed by another page, then the next query advances by tuple cursor and never OFFSET", func() {
+			convey.So(streamErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldEqual, 3)
+			convey.So(streamed, convey.ShouldResemble, [][]string{
+				{"product-a", "10", "1", "1"},
+				{"product-b", "10", "1", "2"},
+				{"product-c", "10", "1", "3"},
+			})
+			convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestExportStudyProductsRejectsCreatedDateOptionsD3(t *testing.T) {
+	convey.Convey("D3.3: Given a products export", t, func() {
+		client := &Client{}
+		relationship := ExportRelationship{Children: "products", ParentKind: "study"}
+		cases := []struct {
+			name string
+			opts ExportOptions
+		}{
+			{name: "created-desc sort", opts: ExportOptions{Sort: "created-desc"}},
+			{name: "since window", opts: ExportOptions{Since: "2026-07-01T00:00:00Z"}},
+			{name: "until window", opts: ExportOptions{Until: "2026-07-02T00:00:00Z"}},
+		}
+
+		for _, tc := range cases {
+			tc := tc
+			convey.Convey("when "+tc.name+" is supplied, then products keep created-date options iRODS-only", func() {
+				result, err := client.Export(context.Background(), relationship, "7568", tc.opts)
+
+				convey.So(errors.Is(err, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+				convey.So(err.Error(), convey.ShouldContainSubstring, "created-date export sorting/windows are supported only for iRODS exports")
+				convey.So(result.Rows, convey.ShouldBeNil)
+			})
+		}
+	})
+}
 
 type exportCountingWriter struct {
 	newlines int
@@ -159,6 +248,92 @@ func seedExportSyncState(t *testing.T, db *sql.DB) {
 	seedSyncStateRun(t, db, syncTableIseqFlowcell, highWater, highWater.Add(3*time.Hour))
 	seedSyncStateRun(t, db, syncTableIseqProductMetrics, highWater, highWater.Add(4*time.Hour))
 	seedSyncStateRun(t, db, syncTableSeqProductIRODSLocations, highWater, highWater.Add(5*time.Hour))
+}
+
+func TestExportStudyProductsAllStreamsCompleteSetMemoryBoundedD2(t *testing.T) {
+	convey.Convey("D2.1: Given a large study products export", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		const rows = 120_000
+		seedLargeProductExportScenario(t, client.cache.DB(), rows)
+
+		runtime.GC()
+		var before runtime.MemStats
+		runtime.ReadMemStats(&before)
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7799", ExportOptions{
+			All:   true,
+			Limit: 997,
+		})
+		counter := &exportCountingWriter{}
+		emittedRows, renderErr := result.RenderTo(context.Background(), counter)
+
+		runtime.GC()
+		var after runtime.MemStats
+		runtime.ReadMemStats(&after)
+		var growth uint64
+		if after.HeapInuse > before.HeapInuse {
+			growth = after.HeapInuse - before.HeapInuse
+		}
+
+		convey.Convey("when --all is rendered, then every product row streams with bounded heap growth", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(renderErr, convey.ShouldBeNil)
+			convey.So(emittedRows, convey.ShouldEqual, rows)
+			convey.So(counter.newlines, convey.ShouldEqual, rows+1)
+			convey.So(result.Rows, convey.ShouldBeNil)
+			convey.So(result.Total, convey.ShouldEqual, -1)
+			convey.So(result.NextCursor, convey.ShouldBeEmpty)
+			convey.So(result.Complete, convey.ShouldBeTrue)
+			convey.So(growth, convey.ShouldBeLessThan, uint64(20*1024*1024))
+		})
+	})
+}
+
+func seedLargeProductExportScenario(t *testing.T, db *sql.DB, rows int) {
+	t.Helper()
+
+	seedHierarchyStudy(t, db, 7799, "7799")
+	seedManifestSampleRow(t, db, 7799001, "large-product-sample", "large-product-supplier", "EGAN-large-products", "sanger-large-products")
+	seedLibrarySample(t, db, "Standard", 7799001, "7799")
+	seedExportSyncState(t, db)
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("seedLargeProductExportScenario begin: %v", err)
+	}
+	stmt, err := tx.Prepare(
+		`INSERT INTO iseq_product_metrics_mirror` +
+			`(id_iseq_product, id_iseq_flowcell_tmp, id_run, position, tag_index, id_sample_tmp, id_study_lims, qc, qc_lib, qc_seq, last_updated) ` +
+			`VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	)
+	if err != nil {
+		t.Fatalf("seedLargeProductExportScenario prepare: %v", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	lastUpdated := formatSyncTime(time.Date(2026, time.May, 6, 12, 10, 0, 0, time.UTC))
+	for i := range rows {
+		_, err = stmt.Exec(
+			int64(77_990_000+i),
+			int64(7_799_001),
+			90_000+i,
+			1,
+			1,
+			int64(7_799_001),
+			"7799",
+			1,
+			1,
+			1,
+			lastUpdated,
+		)
+		if err != nil {
+			t.Fatalf("seedLargeProductExportScenario row %d: %v", i, err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatalf("seedLargeProductExportScenario commit: %v", err)
+	}
 }
 
 type exportIRODSSeedRow struct {
@@ -512,6 +687,50 @@ func seedExportRun49348MergedCompositeScenario(t *testing.T, db *sql.DB) {
 	}
 }
 
+func seedProductDeliverablesScenario(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedHierarchyStudy(t, db, 601, "DELIV")
+	seedManifestSampleRow(t, db, 31, "deliverable-with-nondeliverable-irods", "supplier-deliv-1", "EGAN-deliv-1", "sanger-deliv-1")
+	seedManifestSampleRow(t, db, 32, "deliverable-objectless", "supplier-deliv-2", "EGAN-deliv-2", "sanger-deliv-2")
+	seedManifestSampleRow(t, db, 33, "control-with-deliverable-irods", "supplier-control", "EGAN-control", "sanger-control")
+	for _, sampleID := range []int64{31, 32, 33} {
+		seedLibrarySample(t, db, "Standard", sampleID, "DELIV")
+	}
+	seedIseqFlowcellMirrorSearchRow(t, db, 31, 31, "library")
+	seedIseqFlowcellMirrorSearchRow(t, db, 32, 32, "library_indexed")
+	seedIseqFlowcellMirrorSearchRow(t, db, 33, 33, "library_control")
+	seedIseqProductMetricsMirrorRow(t, db, 3101, 31, 61010, 1, 1, "DELIV")
+	seedIseqProductMetricsMirrorRow(t, db, 3202, 32, 61010, 1, 2, "DELIV")
+	seedIseqProductMetricsMirrorRow(t, db, 3303, 33, 61010, 1, 3, "DELIV")
+	seedExportSyncState(t, db)
+
+	seedExportIRODSRow(t, db, exportIRODSSeedRow{
+		IDSeqProductLocation: 3101,
+		IDProduct:            "3101",
+		Collection:           "/seq/deliverables",
+		FileName:             "61010_1#1.cram",
+		IDSampleTmp:          31,
+		StudyID:              "DELIV",
+		IDRun:                61010,
+		Position:             1,
+		TagIndex:             1,
+		IsDeliverable:        sql.NullInt64{Int64: 0, Valid: true},
+	})
+	seedExportIRODSRow(t, db, exportIRODSSeedRow{
+		IDSeqProductLocation: 3303,
+		IDProduct:            "3303",
+		Collection:           "/seq/deliverables",
+		FileName:             "61010_1#3.cram",
+		IDSampleTmp:          33,
+		StudyID:              "DELIV",
+		IDRun:                61010,
+		Position:             1,
+		TagIndex:             3,
+		IsDeliverable:        sql.NullInt64{Int64: 1, Valid: true},
+	})
+}
+
 func seedExportIRODSRow(t *testing.T, db *sql.DB, row exportIRODSSeedRow) {
 	t.Helper()
 
@@ -549,6 +768,543 @@ func seedExportIRODSRow(t *testing.T, db *sql.DB, row exportIRODSSeedRow) {
 	if err != nil {
 		t.Fatalf("seedExportIRODSRow(): %v", err)
 	}
+}
+
+func TestExportStudyProductsDefaultColumnsAndProductGrainA1(t *testing.T) {
+	convey.Convey("A1: Given study S1 with 3 product-metrics rows and no iRODS objects", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestS1Scenario(t, client.cache.DB())
+		setIseqProductMetricsMirrorQC(t, client.cache.DB(), 2102, sql.NullInt64{Int64: 0, Valid: true})
+		setIseqProductMetricsMirrorQC(t, client.cache.DB(), 2203, sql.NullInt64{})
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{})
+		aliasResult, aliasErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{
+			Columns: []string{"position", "supplier_sample_name"},
+		})
+		unknownResult, unknownErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{
+			Columns: []string{"not_a_column"},
+		})
+
+		convey.Convey("when products are exported with default columns, then rows are product-grained, objectless, ordered, and QC rolled up", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Columns, convey.ShouldResemble, []string{
+				"name",
+				"supplier_name",
+				"accession_number",
+				"sanger_sample_id",
+				"id_run",
+				"lane",
+				"tag_index",
+				"manual_qc",
+			})
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"S1-sample-alpha", "supplier-alpha", "EGAN-alpha", "sanger-alpha", "52553", "1", "1", "pass"},
+				{"S1-sample-alpha", "supplier-alpha", "EGAN-alpha", "sanger-alpha", "52553", "1", "2", "fail"},
+				{"S1-sample-beta", "supplier-beta", "EGAN-beta", "sanger-beta", "52554", "2", "3", "pending"},
+			})
+			convey.So(result.Total, convey.ShouldEqual, 3)
+			convey.So(result.Complete, convey.ShouldBeTrue)
+			convey.So(result.NextCursor, convey.ShouldBeEmpty)
+		})
+
+		convey.Convey("when alias columns are requested, then the projection uses canonical column names", func() {
+			convey.So(aliasErr, convey.ShouldBeNil)
+			convey.So(aliasResult.Columns, convey.ShouldResemble, []string{"lane", "supplier_name"})
+			convey.So(aliasResult.Rows, convey.ShouldResemble, [][]string{
+				{"1", "supplier-alpha"},
+				{"1", "supplier-alpha"},
+				{"2", "supplier-beta"},
+			})
+		})
+
+		convey.Convey("when an unknown product column is requested, then the error lists the valid product vocabulary", func() {
+			convey.So(errors.Is(unknownErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+			convey.So(unknownErr.Error(), convey.ShouldContainSubstring, `unknown export column "not_a_column"`)
+			convey.So(unknownErr.Error(), convey.ShouldContainSubstring, "valid columns:")
+			convey.So(unknownErr.Error(), convey.ShouldContainSubstring, "irods_unmatched")
+			convey.So(unknownResult.Rows, convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestExportStudyProductsStudyConstantsA2(t *testing.T) {
+	convey.Convey("A2.1: Given study S1 with product-metrics rows", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestS1Scenario(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{
+			Columns: []string{"name", "id_study_lims", "study_accession_number"},
+		})
+
+		convey.Convey("when study-constant extras are selected, then every product row uses the resolved parent study values", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Columns, convey.ShouldResemble, []string{"name", "id_study_lims", "study_accession_number"})
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"S1-sample-alpha", "S1", "EGAS0000S1"},
+				{"S1-sample-alpha", "S1", "EGAS0000S1"},
+				{"S1-sample-beta", "S1", "EGAS0000S1"},
+			})
+			convey.So(result.Total, convey.ShouldEqual, 3)
+		})
+	})
+}
+
+func TestExportStudyProductsAttachesIRODSPathWithoutChangingProductGrainB1(t *testing.T) {
+	convey.Convey("B1: Given study 7568 with 96 merged-gap products and 1 direct CRAM product", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestStudy7568MergedCRAMScenario(t, client.cache.DB())
+
+		columns := []string{"name", "id_run", "lane", "tag_index", "irods_path"}
+		cramResult, cramErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7568", ExportOptions{
+			Columns:  columns,
+			FileType: "cram",
+			Limit:    manifestAllRows,
+		})
+		allTypesResult, allTypesErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7568", ExportOptions{
+			Columns: columns,
+			Limit:   manifestAllRows,
+		})
+		bamResult, bamErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7568", ExportOptions{
+			Columns:  columns,
+			FileType: "bam",
+			Limit:    manifestAllRows,
+		})
+
+		convey.Convey("when file_type=cram is requested, then all product rows remain and only the direct CRAM path attaches", func() {
+			nonEmpty, blank, directPath := countExportColumnValues(cramResult.Rows, 4, h4Study7568DirectCramPath)
+
+			convey.So(cramErr, convey.ShouldBeNil)
+			convey.So(cramResult.Columns, convey.ShouldResemble, columns)
+			convey.So(cramResult.Rows, convey.ShouldHaveLength, h4Study7568MergedSingleLaneProducts+1)
+			convey.So(cramResult.Total, convey.ShouldEqual, h4Study7568MergedSingleLaneProducts+1)
+			convey.So(nonEmpty, convey.ShouldEqual, 1)
+			convey.So(directPath, convey.ShouldEqual, 1)
+			convey.So(blank, convey.ShouldEqual, h4Study7568MergedSingleLaneProducts)
+		})
+
+		convey.Convey("when file_type is unset, then product export still attaches the direct path without a CRAM default filter", func() {
+			nonEmpty, _, directPath := countExportColumnValues(allTypesResult.Rows, 4, h4Study7568DirectCramPath)
+
+			convey.So(allTypesErr, convey.ShouldBeNil)
+			convey.So(allTypesResult.Rows, convey.ShouldHaveLength, h4Study7568MergedSingleLaneProducts+1)
+			convey.So(allTypesResult.Total, convey.ShouldEqual, h4Study7568MergedSingleLaneProducts+1)
+			convey.So(nonEmpty, convey.ShouldEqual, 1)
+			convey.So(directPath, convey.ShouldEqual, 1)
+		})
+
+		convey.Convey("when file_type=bam is requested, then the product total is unchanged and no CRAM path attaches", func() {
+			nonEmpty, blank, _ := countExportColumnValues(bamResult.Rows, 4, h4Study7568DirectCramPath)
+
+			convey.So(bamErr, convey.ShouldBeNil)
+			convey.So(bamResult.Rows, convey.ShouldHaveLength, h4Study7568MergedSingleLaneProducts+1)
+			convey.So(bamResult.Total, convey.ShouldEqual, h4Study7568MergedSingleLaneProducts+1)
+			convey.So(nonEmpty, convey.ShouldEqual, 0)
+			convey.So(blank, convey.ShouldEqual, h4Study7568MergedSingleLaneProducts+1)
+		})
+	})
+}
+
+func countExportColumnValues(rows [][]string, columnIndex int, target string) (int, int, int) {
+	nonEmpty := 0
+	blank := 0
+	targetMatches := 0
+	for _, row := range rows {
+		value := row[columnIndex]
+		if value == "" {
+			blank++
+			continue
+		}
+		nonEmpty++
+		if value == target {
+			targetMatches++
+		}
+	}
+
+	return nonEmpty, blank, targetMatches
+}
+
+func TestExportStudyProductsFlagsOnlyMergedMultilaneIRODSGapsB2(t *testing.T) {
+	convey.Convey("B2.1: Given study 7568 with merged CRAM composites and one direct CRAM product", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestStudy7568MergedCRAMScenario(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7568", ExportOptions{
+			Columns:  []string{"irods_path", "irods_unmatched", "reason"},
+			FileType: "cram",
+			Limit:    manifestAllRows,
+		})
+
+		convey.Convey("when CRAM iRODS columns are exported, then only merged multi-lane gaps are flagged and no composite path is copied", func() {
+			unmatchedRows := 0
+			wrongReasonRows := 0
+			unmatchedRowsWithPath := 0
+			directRows := 0
+			directRowsWithReason := 0
+			rowsDuplicatingMergedPath := 0
+			for _, row := range result.Rows {
+				switch {
+				case row[1] == "true":
+					unmatchedRows++
+					if row[0] != "" {
+						unmatchedRowsWithPath++
+					}
+					if row[2] != h4MergedMultilaneReason {
+						wrongReasonRows++
+					}
+				case row[0] != "":
+					directRows++
+					if row[2] != "" {
+						directRowsWithReason++
+					}
+				}
+				if row[0] == h4Study7568MergedCramPathForFixture {
+					rowsDuplicatingMergedPath++
+				}
+			}
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldHaveLength, h4Study7568MergedSingleLaneProducts+1)
+			convey.So(result.Total, convey.ShouldEqual, h4Study7568MergedSingleLaneProducts+1)
+			convey.So(unmatchedRows, convey.ShouldEqual, h4Study7568MergedSingleLaneProducts)
+			convey.So(wrongReasonRows, convey.ShouldEqual, 0)
+			convey.So(unmatchedRowsWithPath, convey.ShouldEqual, 0)
+			convey.So(directRows, convey.ShouldEqual, 1)
+			convey.So(directRowsWithReason, convey.ShouldEqual, 0)
+			convey.So(rowsDuplicatingMergedPath, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestExportStudyProductsDoNotFlagObjectlessProductsB2(t *testing.T) {
+	convey.Convey("B2.2: Given study S1 has objectless products and no merged CRAM composite", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestS1Scenario(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{
+			Columns: []string{"irods_path", "irods_unmatched", "reason"},
+		})
+
+		convey.Convey("when iRODS columns are exported without a file type, then objectless products remain unflagged", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldHaveLength, 3)
+			convey.So(result.Total, convey.ShouldEqual, 3)
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"", "false", ""},
+				{"", "false", ""},
+				{"", "false", ""},
+			})
+		})
+	})
+}
+
+func TestExportStudyProductsMergedGapDetectionIsCRAMOnlyB2(t *testing.T) {
+	convey.Convey("B2.3: Given study 7568 has merged CRAM composites", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestStudy7568MergedCRAMScenario(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7568", ExportOptions{
+			Columns:  []string{"irods_unmatched"},
+			FileType: "bam",
+			Limit:    manifestAllRows,
+		})
+
+		convey.Convey("when file_type is not CRAM, then no merged-gap rows are flagged and total remains product-grained", func() {
+			unmatchedRows := 0
+			for _, row := range result.Rows {
+				if row[0] == "true" {
+					unmatchedRows++
+				}
+			}
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldHaveLength, h4Study7568MergedSingleLaneProducts+1)
+			convey.So(result.Total, convey.ShouldEqual, h4Study7568MergedSingleLaneProducts+1)
+			convey.So(unmatchedRows, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestExportStudyProductsResultHasNoEnvelopeGapSummaryB2(t *testing.T) {
+	convey.Convey("B2.4: Given a product export result", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestS1Scenario(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{})
+		payload, marshalErr := json.Marshal(result)
+
+		convey.Convey("when the result is marshalled, then product rows are the only gap-reporting surface", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(marshalErr, convey.ShouldBeNil)
+			convey.So(string(payload), convey.ShouldNotContainSubstring, "products_without_irods")
+			convey.So(string(payload), convey.ShouldNotContainSubstring, "ProductsWithoutIRODS")
+		})
+	})
+}
+
+func TestExportStudyProductsQCFilterReducesTotalC1(t *testing.T) {
+	convey.Convey("C1.1-C1.2: Given study S1 has pass, fail, and pending products", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestS1Scenario(t, client.cache.DB())
+		setIseqProductMetricsMirrorQC(t, client.cache.DB(), 2102, sql.NullInt64{Int64: 0, Valid: true})
+		setIseqProductMetricsMirrorQC(t, client.cache.DB(), 2203, sql.NullInt64{})
+
+		unfiltered, unfilteredErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{})
+		qcCases := []struct {
+			filter string
+			row    []string
+		}{
+			{filter: qcFail, row: []string{"S1-sample-alpha", "supplier-alpha", "EGAN-alpha", "sanger-alpha", "52553", "1", "2", "fail"}},
+			{filter: qcPending, row: []string{"S1-sample-beta", "supplier-beta", "EGAN-beta", "sanger-beta", "52554", "2", "3", "pending"}},
+			{filter: qcPass, row: []string{"S1-sample-alpha", "supplier-alpha", "EGAN-alpha", "sanger-alpha", "52553", "1", "1", "pass"}},
+		}
+		filteredTotal := 0
+
+		convey.Convey("when each QC verdict is exported, then each filter returns only its rolled-up product row", func() {
+			convey.So(unfilteredErr, convey.ShouldBeNil)
+			convey.So(unfiltered.Total, convey.ShouldEqual, 3)
+
+			for _, testCase := range qcCases {
+				result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{
+					QC: testCase.filter,
+				})
+
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(result.Rows, convey.ShouldResemble, [][]string{testCase.row})
+				convey.So(result.Total, convey.ShouldEqual, 1)
+				filteredTotal += result.Total
+			}
+			convey.So(filteredTotal, convey.ShouldEqual, unfiltered.Total)
+		})
+	})
+}
+
+func TestExportStudyProductsOrganismFilterReducesTotalC1(t *testing.T) {
+	convey.Convey("C1.3: Given study S1 products span two organisms and have no iRODS objects", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestS1Scenario(t, client.cache.DB())
+		setManifestSampleCommonName(t, client.cache.DB(), 21, "Mus Musculus")
+		setManifestSampleCommonName(t, client.cache.DB(), 22, "Homo sapiens")
+		seedCommonNameWords(t, client.cache.DB(), "musculus", "Mus Musculus")
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{
+			Columns:  []string{"name", "manual_qc", "irods_path"},
+			Organism: "musculus",
+		})
+
+		convey.Convey("when one organism is exported, then Total and rows include only that organism's objectless products", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"S1-sample-alpha", "pass", ""},
+				{"S1-sample-alpha", "pass", ""},
+			})
+			convey.So(result.Total, convey.ShouldEqual, 2)
+			convey.So(result.Complete, convey.ShouldBeTrue)
+		})
+	})
+}
+
+func setManifestSampleCommonName(t *testing.T, db *sql.DB, idSampleTmp int64, commonName string) {
+	t.Helper()
+
+	_, err := db.Exec(`UPDATE sample_mirror SET common_name = ? WHERE id_sample_tmp = ?`, commonName, idSampleTmp)
+	if err != nil {
+		t.Fatalf("setManifestSampleCommonName(): %v", err)
+	}
+}
+
+func TestExportStudyProductsLibraryTypeFilterReducesTotalC1(t *testing.T) {
+	convey.Convey("C1.4: Given study S1 products span two library types", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestS1Scenario(t, client.cache.DB())
+		seedLibrarySample(t, client.cache.DB(), "Standard", 21, "S1")
+		seedLibrarySample(t, client.cache.DB(), "Bespoke", 22, "S1")
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{
+			Columns:     []string{"name", "id_run", "lane", "tag_index"},
+			LibraryType: "Standard",
+		})
+
+		convey.Convey("when one library type is exported, then Total and rows include only that type's products", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"S1-sample-alpha", "52553", "1", "1"},
+				{"S1-sample-alpha", "52553", "1", "2"},
+			})
+			convey.So(result.Total, convey.ShouldEqual, 2)
+		})
+	})
+}
+
+func TestExportStudyProductsDeliverablesOnlyUsesFlowcellEntityTypeC2(t *testing.T) {
+	convey.Convey("C2.1: Given study DELIV has deliverable and control products by flowcell entity_type", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedProductDeliverablesScenario(t, client.cache.DB())
+		deliverablesOnly := true
+
+		unfiltered, unfilteredErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "DELIV", ExportOptions{})
+		filtered, filteredErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "DELIV", ExportOptions{
+			Columns:          []string{"name", "lane", "tag_index", "irods_path"},
+			DeliverablesOnly: &deliverablesOnly,
+		})
+
+		convey.Convey("when deliverables_only is nil then all products remain, and when true only entity_type deliverables remain", func() {
+			convey.So(unfilteredErr, convey.ShouldBeNil)
+			convey.So(unfiltered.Total, convey.ShouldEqual, 3)
+			convey.So(filteredErr, convey.ShouldBeNil)
+			convey.So(filtered.Rows, convey.ShouldResemble, [][]string{
+				{"deliverable-with-nondeliverable-irods", "1", "1", "/seq/deliverables/61010_1#1.cram"},
+				{"deliverable-objectless", "1", "2", ""},
+			})
+			convey.So(filtered.Total, convey.ShouldEqual, 2)
+		})
+	})
+}
+
+func TestExportStudyProductsDeliverablesOnlyWithFileTypeKeepsProductTotalC2(t *testing.T) {
+	convey.Convey("C2.2: Given study DELIV has a deliverable product without an iRODS object", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedProductDeliverablesScenario(t, client.cache.DB())
+		deliverablesOnly := true
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "DELIV", ExportOptions{
+			Columns:          []string{"name", "lane", "tag_index", "irods_path"},
+			DeliverablesOnly: &deliverablesOnly,
+			FileType:         "cram",
+		})
+
+		convey.Convey("when file_type=cram is also set, then only attached paths change and Total still counts both deliverable products", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"deliverable-with-nondeliverable-irods", "1", "1", "/seq/deliverables/61010_1#1.cram"},
+				{"deliverable-objectless", "1", "2", ""},
+			})
+			convey.So(result.Total, convey.ShouldEqual, 2)
+		})
+	})
+}
+
+func TestExportStudyProductsSyncedStudyWithNoProductsReturnsEmptyE1(t *testing.T) {
+	convey.Convey("E1.1: Given a synced study S1 with metadata but no products", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedHierarchyStudy(t, client.cache.DB(), 211, "S1")
+		seedManifestSyncState(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{})
+
+		convey.Convey("when products are exported, then Export returns a complete empty result with no error", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldBeEmpty)
+			convey.So(result.Total, convey.ShouldEqual, 0)
+			convey.So(result.Complete, convey.ShouldBeTrue)
+			convey.So(result.NextCursor, convey.ShouldBeEmpty)
+		})
+	})
+}
+
+func TestExportStudyProductsNeverSyncedAndUnknownStudySentinelsE1(t *testing.T) {
+	convey.Convey("E1.2: Given a never-synced cache", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{})
+
+		convey.Convey("when products are exported for a name-like id, then parent resolution returns both sentinels", func() {
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(result, convey.ShouldResemble, ExportResult{})
+		})
+	})
+
+	convey.Convey("E1.3: Given a synced cache with no matching study", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestSyncState(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "NOPE", ExportOptions{})
+
+		convey.Convey("when products are exported for an unknown name-like id, then Export returns ErrNotFound only", func() {
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeFalse)
+			convey.So(result, convey.ShouldResemble, ExportResult{})
+		})
+	})
+}
+
+func TestExportStudyProductsEmptyStudyRequiresProductMetricsSyncE1(t *testing.T) {
+	convey.Convey("E1.4: Given study S1 with metadata and identity sync but product metrics never synced", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedHierarchyStudy(t, client.cache.DB(), 211, "S1")
+		seedManifestIdentitySyncState(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{})
+
+		convey.Convey("when products are exported, then Export reports the product-metrics source as never synced", func() {
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(result, convey.ShouldResemble, ExportResult{})
+		})
+	})
+}
+
+func TestExportStudyProductsIRODSAttachmentRequiresIRODSSyncE1(t *testing.T) {
+	convey.Convey("E1.5: Given study S1 has product metrics but the iRODS locations mirror never synced", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedHierarchyStudy(t, client.cache.DB(), 211, "S1")
+		seedManifestSampleRow(t, client.cache.DB(), 21, "S1-sample-alpha", "supplier-alpha", "EGAN-alpha", "sanger-alpha")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 2101, 21, 52553, 1, 1, "S1")
+		seedManifestSyncStateWithoutIRODS(t, client.cache.DB())
+
+		plainResult, plainErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{})
+		irodsResult, irodsErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{
+			Columns: []string{"name", "irods_path"},
+		})
+
+		convey.Convey("when no iRODS attachment column is selected, then the product row still exports", func() {
+			convey.So(plainErr, convey.ShouldBeNil)
+			convey.So(plainResult.Rows, convey.ShouldHaveLength, 1)
+			convey.So(plainResult.Total, convey.ShouldEqual, 1)
+		})
+
+		convey.Convey("when an iRODS attachment column is selected, then Export reports the iRODS source as never synced", func() {
+			convey.So(errors.Is(irodsErr, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(errors.Is(irodsErr, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(irodsResult, convey.ShouldResemble, ExportResult{})
+		})
+	})
+}
+
+func TestExportStudyProductsEmptyIRODSAttachmentRequiresIRODSSyncE1(t *testing.T) {
+	convey.Convey("E1.5: Given synced study S1 has no products and the iRODS locations mirror never synced", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedHierarchyStudy(t, client.cache.DB(), 211, "S1")
+		seedManifestSyncStateWithoutIRODS(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "S1", ExportOptions{
+			Columns: []string{"irods_path"},
+		})
+
+		convey.Convey("when the first product page is empty but needs iRODS, then Export reports the iRODS source as never synced", func() {
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(result, convey.ShouldResemble, ExportResult{})
+		})
+	})
 }
 
 func TestExportStudyIRODSCramColumnsAliasAndDeliverablesD1a(t *testing.T) {
@@ -726,6 +1482,40 @@ func TestExportUnknownColumnListsVocabularyD1a(t *testing.T) {
 			convey.So(err.Error(), convey.ShouldContainSubstring, "irods_path")
 			convey.So(result.Rows, convey.ShouldBeNil)
 		})
+	})
+}
+
+func TestExportFileVocabulariesRejectProductOnlyColumnsJ1(t *testing.T) {
+	convey.Convey("J1.3: Given iRODS and sample-crams exports", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedExport7556Scenario(t, client.cache.DB())
+
+		testCases := []struct {
+			rel      ExportRelationship
+			parentID string
+			column   string
+		}{
+			{rel: ExportRelationship{Children: "irods", ParentKind: "study"}, parentID: "7556", column: "irods_unmatched"},
+			{rel: ExportRelationship{Children: "irods", ParentKind: "study"}, parentID: "7556", column: "reason"},
+			{rel: ExportRelationship{Children: "sample-crams", ParentKind: "study"}, parentID: "7556", column: "irods_unmatched"},
+			{rel: ExportRelationship{Children: "sample-crams", ParentKind: "study"}, parentID: "7556", column: "reason"},
+		}
+
+		for _, testCase := range testCases {
+			testCase := testCase
+			convey.Convey("when "+testCase.rel.Children+" requests product-only column "+testCase.column, func() {
+				result, err := client.Export(context.Background(), testCase.rel, testCase.parentID, ExportOptions{
+					Columns: []string{testCase.column},
+				})
+
+				convey.So(errors.Is(err, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+				convey.So(err.Error(), convey.ShouldContainSubstring, "unknown export column")
+				convey.So(err.Error(), convey.ShouldContainSubstring, `"`+testCase.column+`"`)
+				convey.So(result.Columns, convey.ShouldBeNil)
+				convey.So(result.Rows, convey.ShouldBeNil)
+			})
+		}
 	})
 }
 
@@ -1042,7 +1832,7 @@ func TestExportNonSampleRelationshipsRejectSharedFiltersD1aC4(t *testing.T) {
 
 		convey.Convey("when a shared sample filter is requested, then the relationship is rejected with an actionable unsupported error", func() {
 			convey.So(errors.Is(err, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
-			convey.So(err.Error(), convey.ShouldContainSubstring, "shared sample export filters are backed for iRODS/files, samples, and sample-crams exports")
+			convey.So(err.Error(), convey.ShouldContainSubstring, "shared sample export filters are backed for iRODS/files, samples, sample-crams, and products exports")
 			convey.So(err.Error(), convey.ShouldContainSubstring, "runs of study")
 			convey.So(result.Rows, convey.ShouldBeNil)
 		})
@@ -1120,6 +1910,107 @@ func seedExportRunAggregationSyncState(t *testing.T, db *sql.DB) {
 	}
 }
 
+func TestExportStudyProductsBoundedPageTotalAndCursorD1(t *testing.T) {
+	convey.Convey("D1.1-D1.2: Given a 97-row study products export", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestStudy7568MergedCRAMScenario(t, client.cache.DB())
+
+		first, firstErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7568", ExportOptions{
+			Columns: []string{"name", "id_run", "lane", "tag_index"},
+			Limit:   50,
+		})
+		second, secondErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7568", ExportOptions{
+			Columns: []string{"name", "id_run", "lane", "tag_index"},
+			Cursor:  first.NextCursor,
+			Limit:   50,
+		})
+
+		convey.Convey("when the first bounded page is fetched, then it reports total size and a keyset cursor", func() {
+			convey.So(firstErr, convey.ShouldBeNil)
+			convey.So(first.Rows, convey.ShouldHaveLength, 50)
+			convey.So(first.Total, convey.ShouldEqual, 97)
+			convey.So(first.NextCursor, convey.ShouldNotBeEmpty)
+			convey.So(first.Complete, convey.ShouldBeFalse)
+		})
+
+		convey.Convey("when the cursor is supplied, then Export returns the remaining product triples", func() {
+			convey.So(secondErr, convey.ShouldBeNil)
+			convey.So(second.Rows, convey.ShouldHaveLength, 47)
+			convey.So(second.Total, convey.ShouldEqual, 97)
+			convey.So(second.Rows[0], convey.ShouldResemble, []string{"7568STDY7568002", "49348", "2", "3"})
+			convey.So(second.Rows[len(second.Rows)-1], convey.ShouldResemble, []string{"7568-direct-cram", "49348", "3", "99"})
+			convey.So(second.NextCursor, convey.ShouldBeEmpty)
+			convey.So(second.Complete, convey.ShouldBeTrue)
+		})
+	})
+}
+
+func TestExportStudyProductsCursorAcceptedD3(t *testing.T) {
+	convey.Convey("D3.1: Given a NextCursor from a prior products page", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestStudy7568MergedCRAMScenario(t, client.cache.DB())
+
+		first, firstErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7568", ExportOptions{
+			Columns: []string{"name", "id_run", "lane", "tag_index"},
+			Limit:   50,
+		})
+		second, secondErr := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7568", ExportOptions{
+			Columns: []string{"name", "id_run", "lane", "tag_index"},
+			Cursor:  first.NextCursor,
+			Limit:   50,
+		})
+
+		convey.Convey("when the cursor is supplied, then the products export succeeds by keyset continuation", func() {
+			convey.So(firstErr, convey.ShouldBeNil)
+			convey.So(first.NextCursor, convey.ShouldNotBeEmpty)
+			convey.So(secondErr, convey.ShouldBeNil)
+			convey.So(second.Rows, convey.ShouldHaveLength, 47)
+			convey.So(second.Complete, convey.ShouldBeTrue)
+			convey.So(second.NextCursor, convey.ShouldBeEmpty)
+		})
+	})
+}
+
+func TestExportStudySamplesCursorStillRejectedD3(t *testing.T) {
+	convey.Convey("D3.2: Given a samples of study export", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedExportFilterScenario(t, client.cache.DB())
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "samples", ParentKind: "study"}, "FILTER", ExportOptions{
+			Columns: []string{"name"},
+			Cursor:  "cursor-from-products",
+			Limit:   2,
+		})
+
+		convey.Convey("when a cursor is supplied, then the offset-backed export still rejects cursor continuation", func() {
+			convey.So(errors.Is(err, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "cursor pagination is supported only for iRODS and products exports")
+			convey.So(result.Rows, convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestExportStudyProductsDefaultRequestUsesBoundedPageD1(t *testing.T) {
+	convey.Convey("D1.3: Given a large study products export", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedLargeProductExportScenario(t, client.cache.DB(), 1500)
+
+		result, err := client.Export(context.Background(), ExportRelationship{Children: "products", ParentKind: "study"}, "7799", ExportOptions{})
+
+		convey.Convey("when the default request is fetched, then it returns the default bounded page with a continuation cursor", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldHaveLength, defaultExportAllLimit)
+			convey.So(result.Total, convey.ShouldEqual, 1500)
+			convey.So(result.NextCursor, convey.ShouldNotBeEmpty)
+			convey.So(result.Complete, convey.ShouldBeFalse)
+		})
+	})
+}
+
 func TestExportStudyIRODSBoundedPageTotalAndCursorD1a(t *testing.T) {
 	convey.Convey("D1a.5: Given a bounded study iRODS export page", t, func() {
 		client, cleanup := newExportTestClient(t)
@@ -1191,7 +2082,7 @@ func TestExportNonIRODSPaginationDoesNotAdvertiseInvalidCursorD1a(t *testing.T) 
 
 		convey.Convey("when Cursor is requested, then Export rejects the unsupported continuation mode before emitting rows", func() {
 			convey.So(errors.Is(cursorErr, ErrUnsupportedIdentifier), convey.ShouldBeTrue)
-			convey.So(cursorErr.Error(), convey.ShouldContainSubstring, "cursor pagination is supported only for iRODS exports")
+			convey.So(cursorErr.Error(), convey.ShouldContainSubstring, "cursor pagination is supported only for iRODS and products exports")
 			convey.So(cursorResult.Rows, convey.ShouldBeNil)
 		})
 

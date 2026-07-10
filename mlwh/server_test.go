@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -58,7 +59,6 @@ type serverFakeQueryer struct {
 	classifyIdentifierFunc    func(context.Context, string) (Match, error)
 	resolveStudyFunc          func(context.Context, string) (Match, error)
 	samplesForStudyFunc       func(context.Context, string, int, int) ([]Sample, error)
-	studyManifestFunc         func(context.Context, string, string, bool, int, int) (StudyManifest, error)
 	enrichFunc                func(context.Context, string) (EnrichmentResult, error)
 	expandIdentifierFunc      func(context.Context, IdentifierKind, string) ([]TaggedID, error)
 	searchStudiesFunc         func(context.Context, string, int, int) ([]Study, error)
@@ -70,7 +70,6 @@ type serverFakeQueryer struct {
 	countSampleSearchFunc     func(context.Context, string) (Count, error)
 	countSampleWithOptsFunc   func(context.Context, string, SampleSearchOptions) (Count, error)
 	countStudiesFunc          func(context.Context) (Count, error)
-	countStudyManifestFunc    func(context.Context, string) (Count, error)
 	countSamplesForStudyFunc  func(context.Context, string) (Count, error)
 	countSamplesWithDataFunc  func(context.Context, string) (Count, error)
 	countLatestDataStudyFunc  func(context.Context, string, string) (Count, error)
@@ -103,14 +102,6 @@ type serverFakeQueryer struct {
 	irodsOptionsCall struct {
 		studyLimsID string
 		opts        IRODSPathOptions
-		limit       int
-		offset      int
-	}
-
-	studyManifestCall struct {
-		studyLimsID string
-		fileType    string
-		withIRODS   bool
 		limit       int
 		offset      int
 	}
@@ -287,20 +278,6 @@ func (q *serverFakeQueryer) IRODSPathsForStudy(_ context.Context, _ string, _ in
 
 func (q *serverFakeQueryer) IRODSPathsForRun(_ context.Context, _ string, _ string, _ int, _ int) ([]IRODSPath, error) {
 	panic("unexpected IRODSPathsForRun call")
-}
-
-func (q *serverFakeQueryer) StudyManifest(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (StudyManifest, error) {
-	if q.studyManifestFunc == nil {
-		panic("unexpected StudyManifest call")
-	}
-
-	q.studyManifestCall.studyLimsID = studyLimsID
-	q.studyManifestCall.fileType = fileType
-	q.studyManifestCall.withIRODS = withIRODS
-	q.studyManifestCall.limit = limit
-	q.studyManifestCall.offset = offset
-
-	return q.studyManifestFunc(ctx, studyLimsID, fileType, withIRODS, limit, offset)
 }
 
 func (q *serverFakeQueryer) StudiesForSample(_ context.Context, _ string) ([]Study, error) {
@@ -595,16 +572,6 @@ func (q *serverFakeQueryer) CountStudiesForProgramme(_ context.Context, _ string
 
 func (q *serverFakeQueryer) Programmes(_ context.Context) ([]Programme, error) {
 	panic("unexpected Programmes call")
-}
-
-func (q *serverFakeQueryer) CountStudyManifest(ctx context.Context, studyLimsID string) (Count, error) {
-	q.countCall.studyLimsID = studyLimsID
-
-	if q.countStudyManifestFunc == nil {
-		return Count{}, nil
-	}
-
-	return q.countStudyManifestFunc(ctx, studyLimsID)
 }
 
 func (q *serverFakeQueryer) CountLibrariesForStudy(_ context.Context, _ string) (Count, error) {
@@ -1198,6 +1165,23 @@ func TestServerIRODSFileTypeBadRequestGuardB2(t *testing.T) {
 	}
 }
 
+func TestServerExportFileTypeBadRequestGuard(t *testing.T) {
+	endpoints := []string{
+		"/export/products/study/7568?file_type=",
+		"/export/irods/study/7568?file_type=%20",
+	}
+
+	for _, endpoint := range endpoints {
+		convey.Convey("Given GET "+endpoint+", then status is 400 bad_request and Export is not reached", t, func() {
+			queryer := &serverFakeQueryer{}
+
+			response := performMLWHRequestForTest(t, queryer, http.MethodGet, endpoint)
+
+			assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		})
+	}
+}
+
 func TestServerFetchAllPaginationGuard(t *testing.T) {
 	convey.Convey("Given GET /study/SZ/detail?offset=-1, then status is 400 with code bad_request (not a 500/panic)", t, func() {
 		client := newListSizingClientForTest(t, "SZ", 5)
@@ -1348,38 +1332,15 @@ func TestServerCountEndpointsF3(t *testing.T) {
 	})
 }
 
-func TestServerStudyManifestPaginationHeadersUseQueryerCount(t *testing.T) {
-	convey.Convey("Given a server over a fake Queryer whose manifest page has 2 rows and CountStudyManifest returns 3", t, func() {
-		queryer := &serverFakeQueryer{
-			studyManifestFunc: func(_ context.Context, studyLimsID, _ string, _ bool, limit, offset int) (StudyManifest, error) {
-				convey.So(studyLimsID, convey.ShouldEqual, "S1")
-				convey.So(limit, convey.ShouldEqual, 2)
-				convey.So(offset, convey.ShouldEqual, 0)
+func TestServerManifestRoutesRemovedG1(t *testing.T) {
+	convey.Convey("G1.2: Given a running test server, when manifest paths are requested, then both return 404", t, func() {
+		queryer := &serverFakeQueryer{}
 
-				return StudyManifest{
-					IDStudyLims: studyLimsID,
-					Rows: []ManifestRow{
-						{Name: "sample-1", IDRun: 52553, Position: 1, TagIndex: 1},
-						{Name: "sample-2", IDRun: 52553, Position: 1, TagIndex: 2},
-					},
-				}, nil
-			},
-			countStudyManifestFunc: func(_ context.Context, studyLimsID string) (Count, error) {
-				convey.So(studyLimsID, convey.ShouldEqual, "S1")
+		manifest := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/S1/manifest")
+		count := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/S1/manifest/count")
 
-				return Count{Count: 3}, nil
-			},
-		}
-
-		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/S1/manifest?limit=2&offset=0")
-
-		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
-
-		var manifest StudyManifest
-		decodeMLWHJSONResponseForTest(t, response, &manifest)
-		convey.So(manifest.Rows, convey.ShouldHaveLength, 2)
-		convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "3")
-		convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "2")
+		convey.So(manifest.Code, convey.ShouldEqual, http.StatusNotFound)
+		convey.So(count.Code, convey.ShouldEqual, http.StatusNotFound)
 	})
 }
 
@@ -1566,6 +1527,76 @@ func TestServerIRODSFileTypeDispatchB2(t *testing.T) {
 			convey.So(queryer.studyListFileType, convey.ShouldBeEmpty)
 		})
 	})
+}
+
+func TestServerExportProductsStudyServesBoundedAndAllResponsesF1(t *testing.T) {
+	convey.Convey("F1.1-F1.3: Given a server over a seeded cache with 97 study products", t, func() {
+		client, cleanup := newExportTestClient(t)
+		defer cleanup()
+		seedManifestStudy7568MergedCRAMScenario(t, client.cache.DB())
+
+		firstPath := "/export/products/study/7568?columns=name,irods_path,irods_unmatched,reason&file_type=cram&limit=50"
+		firstResponse := performMLWHRequestForTest(t, client, http.MethodGet, firstPath)
+		var first ExportResult
+		decodeMLWHJSONResponseForTest(t, firstResponse, &first)
+
+		convey.Convey("when a bounded page is requested, then the generic Export endpoint returns the existing ExportResult wire shape and cursor metadata", func() {
+			convey.So(firstResponse.Code, convey.ShouldEqual, http.StatusOK)
+			assertExportResultWireFieldsForTest(t, firstResponse)
+			convey.So(first.Columns, convey.ShouldResemble, []string{"name", "irods_path", "irods_unmatched", "reason"})
+			convey.So(first.Rows, convey.ShouldHaveLength, 50)
+			convey.So(first.Total, convey.ShouldEqual, 97)
+			convey.So(first.NextCursor, convey.ShouldNotBeEmpty)
+			convey.So(first.Complete, convey.ShouldBeFalse)
+			convey.So(first.Format, convey.ShouldEqual, exportFormatTSV)
+		})
+
+		convey.Convey("when the returned cursor is supplied, then the next bounded page returns the remaining products", func() {
+			secondValues := url.Values{}
+			secondValues.Set("columns", "name,irods_path,irods_unmatched,reason")
+			secondValues.Set("file_type", "cram")
+			secondValues.Set("limit", "50")
+			secondValues.Set("cursor", first.NextCursor)
+			secondResponse := performMLWHRequestForTest(t, client, http.MethodGet, "/export/products/study/7568?"+secondValues.Encode())
+			var second ExportResult
+			decodeMLWHJSONResponseForTest(t, secondResponse, &second)
+
+			convey.So(secondResponse.Code, convey.ShouldEqual, http.StatusOK)
+			convey.So(second.Rows, convey.ShouldHaveLength, 47)
+			convey.So(second.Total, convey.ShouldEqual, 97)
+			convey.So(second.NextCursor, convey.ShouldBeEmpty)
+			convey.So(second.Complete, convey.ShouldBeTrue)
+		})
+
+		convey.Convey("when all=true is requested, then materialization drains the complete products stream into JSON rows", func() {
+			allResponse := performMLWHRequestForTest(
+				t,
+				client,
+				http.MethodGet,
+				"/export/products/study/7568?columns=name,irods_path,irods_unmatched,reason&file_type=cram&all=true",
+			)
+			var all ExportResult
+			decodeMLWHJSONResponseForTest(t, allResponse, &all)
+
+			convey.So(allResponse.Code, convey.ShouldEqual, http.StatusOK)
+			convey.So(all.Rows, convey.ShouldHaveLength, 97)
+			convey.So(all.Total, convey.ShouldEqual, -1)
+			convey.So(all.NextCursor, convey.ShouldBeEmpty)
+			convey.So(all.Complete, convey.ShouldBeTrue)
+			convey.So(all.Format, convey.ShouldEqual, exportFormatTSV)
+		})
+	})
+}
+
+func assertExportResultWireFieldsForTest(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+
+	var body map[string]json.RawMessage
+	decodeMLWHJSONResponseForTest(t, response, &body)
+	for _, field := range []string{"Columns", "Rows", "Total", "NextCursor", "Complete", "Format"} {
+		_, ok := body[field]
+		convey.So(ok, convey.ShouldBeTrue)
+	}
 }
 
 func TestServerUnauthenticatedReachabilityG3(t *testing.T) {

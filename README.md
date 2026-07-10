@@ -6,12 +6,12 @@ REST APIs and CLIs, and a Next.js web UI for browsing results.
 
 ## Current Sub-Products
 
-| Sub-product     | What it does                                                                                                                                                                                       |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **results**     | REST API + CLI for registering, searching, and browsing pipeline output files. Deterministic IDs, file previews, aggregate stats.                                                                  |
-| **mlwh**        | Go client library, cache sync CLI, current-state REST query server, and reporting commands for MLWH-backed studies, samples, libraries, runs, iRODS paths, manifests, latest data, and programmes. |
-| **mlwhdiff**    | Hash-based MLWH change detection with watermarks in SQLite, a REST polling API, and a CLI for ad-hoc diffs.                                                                                        |
-| **results-web** | Next.js web UI for the results API - searchable table, file browser with inline preview, dashboard stats, and study-based search via the MLWH server.                                              |
+| Sub-product     | What it does                                                                                                                                                                                             |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **results**     | REST API + CLI for registering, searching, and browsing pipeline output files. Deterministic IDs, file previews, aggregate stats.                                                                        |
+| **mlwh**        | Go client library, cache sync CLI, current-state REST query server, and reporting commands for MLWH-backed studies, samples, libraries, runs, iRODS paths, product exports, latest data, and programmes. |
+| **mlwhdiff**    | Hash-based MLWH change detection with watermarks in SQLite, a REST polling API, and a CLI for ad-hoc diffs.                                                                                              |
+| **results-web** | Next.js web UI for the results API - searchable table, file browser with inline preview, dashboard stats, and study-based search via the MLWH server.                                                    |
 
 Planned sub-products (notify, jobrun, watchtower, samplepicker) are described
 in [.docs/proposal.md](.docs/proposal.md).
@@ -173,7 +173,7 @@ default MLWH server is plain HTTP, so publish an `https://` URL only when
 Normal CLI users can query that server without local MLWH database or cache
 credentials. The MLWH CLI covers identifier summaries, sample/study search,
 relationship exports, latest data, run aggregation, study-owner/programme
-lookups, and product manifests:
+lookups, and product-grained exports:
 
 ```bash
 export WA_MLWH_SERVER_URL=http://host:8091
@@ -182,22 +182,25 @@ wa mlwh info 5901 --type study --json
 wa mlwh search hek_r --type sample --library-type Standard --organism "Homo sapiens"
 wa mlwh export irods study 5901 --file-type cram --columns supplier_name,manual_qc,irods_path
 wa mlwh export sample-crams study 7568 --json
+wa mlwh export products study 7568 --file-type cram --columns name,supplier_name,accession_number,sanger_sample_id,id_run,lane,tag_index,manual_qc,irods_path,irods_unmatched,reason
 wa mlwh latest 5901 --file-type cram
 wa mlwh runs --monthly --group-by platform,programme --since 2024-01-01
 wa mlwh studies --programme "Human Genetics"
 wa mlwh programmes
-wa mlwh manifest 7568 --with-irods --file-type cram
 ```
 
 When using the local development scenario, `wa --env development mlwh info
 DN1234` defaults to the MLWH API port from the scenario env file.
-Use `wa mlwh export irods ...` for iRODS path exports; the older standalone
-`wa mlwh irods` command has been replaced by the generic export surface.
-`wa mlwh manifest` is deliberately separate from `export`: it returns study
-metadata once, one row per sequencing product, and a full-scope
-`products_without_irods` count. `export irods` and `export sample-crams` are
-file/path views, so they cannot represent products that have no matching iRODS
-object.
+Use `wa mlwh export products study <id>` when you need one row per sequencing
+product. It is product-grained, keyed by run/lane/tag, and includes products
+with no matching iRODS path; those rows keep `irods_path` blank and can explain
+known gaps with `irods_unmatched` and `reason`.
+
+Use `wa mlwh export irods ...` for file-object-grained exports: each row is one
+iRODS data object/path. The older standalone `wa mlwh irods` command has been
+replaced by the generic export surface. Use `wa mlwh export sample-crams ...`
+for sample-grained CRAM exports: each row is one selected, merged-aware CRAM for
+a sample.
 
 ### Poll for metadata changes
 

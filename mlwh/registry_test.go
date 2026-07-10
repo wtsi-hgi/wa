@@ -85,6 +85,18 @@ func TestRegistryEntriesAreDocumented(t *testing.T) {
 	})
 }
 
+func TestRegistryOmitsManifestSurfaceG1(t *testing.T) {
+	convey.Convey("G1.3: Given the Registry, when iterated, then no manifest methods remain", t, func() {
+		methods := []string{}
+		for _, entry := range Registry {
+			methods = append(methods, entry.Method)
+		}
+
+		convey.So(methods, convey.ShouldNotContain, "StudyManifest")
+		convey.So(methods, convey.ShouldNotContain, "CountStudyManifest")
+	})
+}
+
 func TestAddMLWHQueryDocumentation(t *testing.T) {
 	convey.Convey("Given DEVELOPING.md", t, func() {
 		developing := readRepoRootFile(t, "DEVELOPING.md")
@@ -276,8 +288,8 @@ func TestRegistryNewEndpointsAreFullyDocumentedG1(t *testing.T) {
 
 // newAvailabilityRecencyProgressMethods is the closed set of Queryer methods
 // added across Phases 2-5 (the availability / recency / run-overview / budget
-// /count / progress surface, plus the Phase 2/3/5 run-iRODS, study-manifest and
-// people endpoints). G1's wiring assertions are stated explicitly over this set
+// /count / progress surface, plus the Phase 2/3/5 run-iRODS and people
+// endpoints). G1's wiring assertions are stated explicitly over this set
 // so a new endpoint that is wired into the Queryer/Registry but left without a
 // Summary, a Description or (when paginated) limit/offset QueryParams fails here.
 // newMethodsExistInRegistry guards that the set is not vacuous: each name must be
@@ -311,11 +323,9 @@ func newAvailabilityRecencyProgressMethods() []string {
 		"RunStatus",
 		"SampleProgress",
 		"StatusBreakdown",
-		// Phases 2/3/5: run-iRODS, study-manifest and people endpoints (G1).
+		// Phases 2/3/5: run-iRODS and people endpoints (G1).
 		"IRODSPathsForRun",
 		"CountIRODSPathsForRun",
-		"StudyManifest",
-		"CountStudyManifest",
 		"StudiesForFacultySponsor",
 		"CountStudiesForFacultySponsor",
 		"StudiesForUser",
@@ -413,10 +423,6 @@ func TestRegistryPhase10DefinitionsJ(t *testing.T) {
 			"CountIRODSPathsForRun": {
 				"same run scope as the list", "denormalized id_run", "product-metrics recovery",
 				"single-run merged composites", "Public merged rows on the list report id_run=0",
-			},
-			"StudyManifest": {
-				"manual_qc", "qc.go", "filename-suffix", "merged multi-lane CRAM", "products_without_irods",
-				"irods_unmatched", "reason=merged_multilane", "cache_synced_at", "/freshness",
 			},
 			"SearchSamples": {
 				"literal whole-value prefix", "name, supplier_name, common_name, donor_id", "words", "word-prefix",

@@ -367,7 +367,7 @@ var Registry = []Endpoint{
 		Paginated:   true,
 		NewResult:   newSliceResult[RecentDataRow],
 		Summary:     "List newest data objects for a study",
-		Description: "Returns a bounded, pageable newest-first page of raw iRODS data-object rows for the given study. Rows are ordered by iRODS created DESC (created is data added, never last_changed), with ties by (id_run, id_product); this is a page, NOT an unbounded MAX(created) tie set. Membership is a raw seq_product_irods_locations_mirror scan scoped by (id_study_lims, created), not the study manifest/product grain, so the first row's created timestamp reconciles with StudyOverview.newest_data_added. Each row carries the full irods_path, study id/name, sample name and supplier_name, id_run, lane, tag_index, platform, and merged flag. Set file_type to restrict rows to data objects whose iRODS file name ends in `.<file_type>` using the filename-suffix rule, matched case-insensitively with one leading dot stripped. Defaults to 10 rows, maximum 1000; use limit/offset to page. The rows are read from cache mirrors; freshness is reported by cache_synced_at on related aggregates and by /freshness.",
+		Description: "Returns a bounded, pageable newest-first page of raw iRODS data-object rows for the given study. Rows are ordered by iRODS created DESC (created is data added, never last_changed), with ties by (id_run, id_product); this is a page, NOT an unbounded MAX(created) tie set. Membership is the raw seq_product_irods_locations_mirror data-object row set scoped by (id_study_lims, created), not a product-export row set, so the first row's created timestamp reconciles with StudyOverview.newest_data_added. Each row carries the full irods_path, study id/name, sample name and supplier_name, id_run, lane, tag_index, platform, and merged flag. Set file_type to restrict rows to data objects whose iRODS file name ends in `.<file_type>` using the filename-suffix rule, matched case-insensitively with one leading dot stripped. Defaults to 10 rows, maximum 1000; use limit/offset to page. The rows are read from cache mirrors; freshness is reported by cache_synced_at on related aggregates and by /freshness.",
 		QueryParams: latestDataPaginationParams(),
 	},
 	{
@@ -429,28 +429,6 @@ var Registry = []Endpoint{
 		Summary:     "List iRODS paths for a run",
 		Description: "Lists the iRODS data objects on the given run by reading seq_product_irods_locations_mirror rows whose denormalized id_run equals the requested run, plus rows recovered through iseq_product_metrics_mirror for single-run merged composites when the mirror row's id_run is 0, one row per data object. Rows expose created (iRODS created time: data added, never last_changed), id_run, lane, tag_index, manual_qc (qc.go roll-up fail>pending>pass, empty when no product metrics), deliverable, merged, sample identity fields (id_sample_tmp, name, supplier_name, sanger_sample_id, accession_number) and study identity fields (id_study_lims, study_accession_number); merged=true marks merged multi-lane composite CRAM attribution and public merged rows report id_run=0, lane=0, tag_index=0 even when product-metrics recovery made them visible to the run. deliverable uses iseq_flowcell.entity_type IN ('library','library_indexed') or Element/Ultima is_sequencing_control=0, approximates iRODS target=1, is NOT is_spiked, and is pass-through for PacBio/ONT. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. Defaults to returning all data objects; use limit/offset to page, and it is bounded and paginated like /study/:id/irods and /sample/:id/irods, setting the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /run/:id/irods/count and the two cannot drift). Set file_type to restrict the list to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty list (not an error), and the matching /count honours the same filter. Set deliverables_only=true to apply the deliverable filter where a discriminator exists. An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. The list is read from the cache mirrors, so it is complete only up to their sync state (see /freshness).",
 		QueryParams: fetchAllPaginationWithFileTypeParams("run-scoped iRODS data objects added to iRODS"),
-	},
-	{
-		Method:      "StudyManifest",
-		Verb:        registryVerbGet,
-		Path:        "/study/:id/manifest",
-		PathParams:  []string{"id"},
-		Query:       []string{"with_irods", "file_type"},
-		Paginated:   true,
-		NewResult:   newResult[StudyManifest],
-		Summary:     "Get a study's product manifest",
-		Description: "Returns one bounded, pageable manifest of the given study's sequencing products, so a study's samples-and-data table is one server-side join rather than N per-sample calls. The row grain is ONE row per sequencing product: a distinct (id_run, position, tag_index) from iseq_product_metrics_mirror scoped by the product-metrics id_study_lims, joined to its sample's identity in sample_mirror, so each row carries name, supplier_name, accession_number, sanger_sample_id, id_run, lane (= position), tag_index and manual_qc. manual_qc is the per-product qc.go roll-up string (pass|fail|pending; fail>pending>pass). Rows are ordered by (id_run, position, tag_index, name) for determinism. The study-level metadata (id_study_lims, name, accession_number, faculty_sponsor, data_access_group) is carried ONCE in the envelope (read from study_mirror), NOT repeated per row. Set with_irods=true to also carry irods_path on each row: the product's iRODS data object via a set-at-once LEFT JOIN to the iRODS locations mirror on the shared id_iseq_product (and id_study_lims) with GROUP BY product, so the row count stays product-grained (3 products give 3 rows) however many iRODS objects a product has, and a product with no matching iRODS object has irods_path empty. A common cause of empty irods_path for CRAM manifests is a merged multi-lane CRAM: the product rows stay empty rather than copying one composite path onto each single-lane product, each known gap has irods_unmatched=true with reason=merged_multilane, and products_without_irods counts those rows over the full unpaginated manifest for the requested with_irods/file_type scope, not just the returned page; use sample-crams or export irods for the merged-aware path view. Set file_type to restrict that joined object to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (so `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix leaves irods_path empty (not an error). with_irods WITHOUT a file_type returns any one object for the product (it does NOT default to cram). An empty/whitespace file_type or one containing '%', '_' or '/' is rejected with a 400 bad_request. Defaults to returning all products; use limit/offset to page, and it sets the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /study/:id/manifest/count and the two cannot drift; the count is product-grained, unaffected by with_irods / file_type). The never-synced / unknown-study / synced-empty cascade matches /study/:id/samples: an unknown study yields not_found, a never-synced cache yields not_found together with a cache-never-synced signal, and a synced study with no products yields an envelope with the study metadata, an empty rows and a populated cache_synced_at. cache_synced_at is the oldest last_run across the feeding tables (study, sample, the Illumina product-metrics mirror and the iRODS locations mirror), distinct from any data timestamp; every value is read from the cache mirrors, so the manifest is complete only up to that sync (see /freshness).",
-		QueryParams: manifestQueryParams(),
-	},
-	{
-		Method:      "CountStudyManifest",
-		Verb:        registryVerbGet,
-		Path:        "/study/:id/manifest/count",
-		PathParams:  []string{"id"},
-		Query:       []string{},
-		NewResult:   newResult[Count],
-		Summary:     "Count a study's product manifest rows",
-		Description: "Returns the number of distinct sequencing products in the given study, the count counterpart of /study/:id/manifest used to size the manifest before transfer (count == the length of that list's rows when all are fetched, so X-Total-Count on /study/:id/manifest equals this count and the two cannot drift). It counts the DISTINCT (id_run, position, tag_index) products in iseq_product_metrics_mirror scoped by the product-metrics id_study_lims -- exactly the manifest's row grain (one row per product) -- via COUNT(*) over that same SELECT DISTINCT with no LIMIT. The count is product-grained, so it is unaffected by the manifest's with_irods / file_type options (which this endpoint does not take): a product with no matching iRODS object is still one row, so adding with_irods or a file_type never changes this figure. The never-synced / unknown-study / synced-empty cascade matches /study/:id/samples/count: an unknown study yields not_found, a never-synced cache yields not_found together with a cache-never-synced signal, and a synced study with no products yields 0 (not an error). The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).",
 	},
 	{
 		Method:      "StudiesForSample",
@@ -557,7 +535,7 @@ var Registry = []Endpoint{
 		Query:       []string{"columns", "file_type", "deliverables_only", "role", "qc", "library_type", "organism", "sort", "order_by", "since", "until", "all", "cursor", "format"},
 		NewResult:   newResult[ExportResult],
 		Summary:     "Export relationship rows",
-		Description: "Projects one supported MLWH export relationship into ordered string rows for the selected columns, matching the relationship grammar used by `wa mlwh export <children> <parent-kind> <parent-id>`. The response body carries Columns, Rows, Total, NextCursor, Complete and Format. HTTP query parameters support columns as an ordered comma-separated projection; file_type to restrict file exports by filename suffix; deliverables_only for CRAM irods/files/sample-crams exports, whose default excludes controls/sub-products; qc, library_type and organism for shared export filters where supported; limit/offset for bounded pages; all for the complete matching set; cursor for iRODS keyset pagination; and format as tsv, csv or json metadata for callers that render the result. A never-synced cache returns cache_never_synced so CLIs can degrade cleanly.",
+		Description: "Projects one supported MLWH export relationship into ordered string rows for the selected columns, matching the relationship grammar used by `wa mlwh export <children> <parent-kind> <parent-id>`. The response body carries Columns, Rows, Total, NextCursor, Complete and Format. HTTP query parameters support columns as an ordered comma-separated projection; file_type to restrict file exports by filename suffix; deliverables_only for file exports and product exports: file exports restrict to deliverable rows (the CRAM irods/files/sample-crams default excludes controls/sub-products), while products filter product rows using Illumina `iseq_flowcell.entity_type IN ('library','library_indexed')` and can change product rows/Total without depending on attached iRODS rows; qc, library_type and organism for shared export filters where supported; limit/offset for bounded pages; all for the complete matching set; cursor for iRODS/products keyset pagination; and format as tsv, csv or json metadata for callers that render the result. For products, products are product-grained, one row per distinct `(id_run, position, tag_index)`, including products with no iRODS object; products are keyset-cursor paginated; the default products response is a bounded page up to the internal 1000 default carrying Total, NextCursor and Complete; use cursor to continue products; use all=true for the complete products set; file_type only restricts the attached irods_path for products and does not drop product rows. A never-synced cache returns cache_never_synced so CLIs can degrade cleanly.",
 		QueryParams: exportQueryParams(),
 	},
 	{
@@ -842,7 +820,7 @@ var Registry = []Endpoint{
 		Query:       []string{"file_type"},
 		NewResult:   newResult[Count],
 		Summary:     "Count newest data rows for a study",
-		Description: "Returns the number of raw seq_product_irods_locations_mirror rows for the given study, optionally restricted by file_type using the filename-suffix rule, so X-Total-Count on /study/:id/latest-data sizes the same raw iRODS-location membership used by the list. This is a raw data-object count over iRODS created (created is data added, never last_changed), not a manifest/product count. The count is read from cache mirrors; freshness is reported by cache_synced_at on related aggregates and by /freshness.",
+		Description: "Returns the number of raw seq_product_irods_locations_mirror rows for the given study, optionally restricted by file_type using the filename-suffix rule, so X-Total-Count on /study/:id/latest-data sizes the same raw iRODS-location membership used by the list. This is a raw data-object count over iRODS created (created is data added, never last_changed), not a product-export count. The count is read from cache mirrors; freshness is reported by cache_synced_at on related aggregates and by /freshness.",
 		QueryParams: []QueryParam{fileTypeQueryParam()},
 	},
 	{
@@ -1100,6 +1078,15 @@ func studyUsersRoleQueryParam() QueryParam {
 	}
 }
 
+func exportFileTypeQueryParam() QueryParam {
+	return QueryParam{
+		Name:        "file_type",
+		Type:        "string",
+		Required:    false,
+		Description: "when set, for file exports, restricts exported file rows by filename suffix on data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); a valid but unmatched suffix yields no file export rows; when set for products, only restricts the attached `irods_path` value and does not filter product rows or change `Total`; it is a filename-suffix match, not a real file-type column; an empty/whitespace value or one containing '%', '_' or '/' is rejected with a 400 bad_request; when omitted, file exports use the relationship default, currently CRAM for irods/files/sample-crams exports; when omitted for products, any file type can attach when an iRODS path column is requested",
+	}
+}
+
 // searchPaginationWithRoleParams are the QueryParams for the /studies/user list
 // endpoint: the search-style limit/offset pagination controls (default 100,
 // maximum 1000) plus the optional role override filter. The list shares its single
@@ -1180,23 +1167,6 @@ func irodsCountQueryParams(scope string) []QueryParam {
 	return params
 }
 
-// manifestQueryParams are the QueryParams for the study manifest list endpoint:
-// the fetch-all limit/offset pagination controls plus the optional with_irods
-// boolean (which adds the per-product iRODS-path column) and the optional
-// file_type filter (which, only meaningful with with_irods, narrows that column
-// to a filename suffix). Both non-pagination params are also listed in the
-// endpoint's Query so the structured params and the Query list agree.
-func manifestQueryParams() []QueryParam {
-	params := append(fetchAllPaginationParams(), QueryParam{
-		Name:        "with_irods",
-		Type:        "boolean",
-		Required:    false,
-		Description: "when true, adds irods_path to each product row via a set-at-once LEFT JOIN to the iRODS locations mirror on the shared id_iseq_product (GROUP BY product, so the row count stays product-grained); a product with no matching iRODS object has irods_path empty, with merged multi-lane CRAM gaps flagged by irods_unmatched/reason and counted in products_without_irods over the full unpaginated manifest scope; with_irods without a file_type returns any one object for the product (it does NOT default to cram); defaults to false",
-	})
-
-	return append(params, fileTypeQueryParam())
-}
-
 func runListingQueryParams() []QueryParam {
 	params := append([]QueryParam{}, monthlyRunQueryParams()...)
 	params = append(params,
@@ -1226,11 +1196,11 @@ func sequencingAggregateQueryParams() []QueryParam {
 }
 
 func exportQueryParams() []QueryParam {
-	params := fetchAllPaginationParams()
+	params := exportPaginationParams()
 	params = append(params,
 		QueryParam{Name: "columns", Type: "string", Description: exportColumnsQueryParamDescription()},
-		fileTypeQueryParam(),
-		QueryParam{Name: "deliverables_only", Type: "boolean", Description: "when true, restricts supported file exports to deliverable rows; when false, includes controls/sub-products; omit to use the relationship default, which is true for CRAM irods/files/sample-crams exports"},
+		exportFileTypeQueryParam(),
+		QueryParam{Name: "deliverables_only", Type: "boolean", Description: "when true, for file exports, restricts exported file rows to deliverable rows; for products, filters product rows using Illumina `iseq_flowcell.entity_type IN ('library','library_indexed')` and changes product rows and `Total` without depending on attached iRODS rows; when false, includes controls/sub-products; omit to use the relationship default, which is true for CRAM irods/files/sample-crams exports"},
 		QueryParam{Name: "role", Type: "string", Description: "optional comma-separated study_users role filter for study_users-backed exports; users-of-study omits to return all roles present, studies-of-user omits to use owner, manager and data_access_contact"},
 		QueryParam{Name: "qc", Type: "string", Description: "optional QC filter for product-backed exports: pass, fail, or pending"},
 		QueryParam{Name: "library_type", Type: "string", Description: "optional exact library type filter for sample-backed exports"},
@@ -1240,7 +1210,7 @@ func exportQueryParams() []QueryParam {
 		QueryParam{Name: "since", Type: "string", Description: "RFC3339 lower bound for iRODS created-date exports (created >= since); supported for iRODS exports"},
 		QueryParam{Name: "until", Type: "string", Description: "RFC3339 upper bound for iRODS created-date exports (created < until); requires since"},
 		QueryParam{Name: "all", Type: "boolean", Description: "when true, emits the complete matching set rather than a bounded page"},
-		QueryParam{Name: "cursor", Type: "string", Description: "opaque keyset cursor returned by a previous iRODS export page"},
+		QueryParam{Name: "cursor", Type: "string", Description: "opaque keyset cursor returned by a previous iRODS or products export page"},
 		QueryParam{Name: "format", Type: "string", Description: "output rendering format metadata: tsv, csv or json; defaults to tsv"},
 	)
 
@@ -1300,6 +1270,26 @@ func fetchAllPaginationParams() []QueryParam {
 			Type:        "integer",
 			Required:    false,
 			Description: "number of leading rows to skip before returning results; defaults to 0",
+		},
+	}
+}
+
+// exportPaginationParams are the limit/offset QueryParams for the generic export
+// endpoint, whose default response is a bounded internal page rather than the
+// fetch-all behaviour used by many list endpoints.
+func exportPaginationParams() []QueryParam {
+	return []QueryParam{
+		{
+			Name:        "limit",
+			Type:        "integer",
+			Required:    false,
+			Description: "maximum rows for a bounded export page; defaults to the internal 1000-row bounded page; use all=true for the complete matching set",
+		},
+		{
+			Name:        "offset",
+			Type:        "integer",
+			Required:    false,
+			Description: "number of leading rows to skip for offset-backed export relationships; defaults to 0; use cursor to continue keyset-backed iRODS/products pages",
 		},
 	}
 }

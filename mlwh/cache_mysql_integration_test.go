@@ -2835,12 +2835,12 @@ func execA6MonthlyRunCountPlanSeed(t *testing.T, db *sql.DB, query string, args 
 // build-tagged) integration test against the REAL MySQL cache server configured in
 // .env.development.local (WA_MLWH_CACHE_PATH / WA_MLWH_CACHE_PASSWORD). It is the
 // durable MySQL-only guard for the new query paths (D1 run-scoped iRODS + file-type
-// filter, D2 study manifest, D3 status-breakdown QC, E faculty-sponsor / user /
+// filter, D2 product export, D3 status-breakdown QC, E faculty-sponsor / user /
 // resolve-person) added since the original cache read paths: it builds the cache
 // schema in a UNIQUE throwaway database, seeds the shared J1 scenario, asserts each
 // new path returns the SAME counts/rows the SQLite-backed hermetic tests pin (with
 // the count == len(list) cross-check), and asserts via EXPLAIN that the run-scoped
-// iRODS query, the manifest query and the file-type-filtered study iRODS query are
+// iRODS query, the product export query and the file-type-filtered study iRODS query are
 // index-served (a real key, type != ALL, no full scan of the ~9M-row iRODS or
 // product-metrics mirrors) and that the /studies/user query is served by a
 // study_users_mirror lookup index, not a full scan. The throwaway db is dropped in
@@ -2868,7 +2868,7 @@ func TestRealMySQLNewQueryPathsExecuteAndIndexesApplied(t *testing.T) {
 	convey.Convey("Given the J1 scenario in a throwaway MySQL database", t, func() {
 		convey.Convey("I1.1: each new query path returns the SQLite counts/rows on MySQL", func() {
 			assertJ1RunIRODSOnMySQL(ctx, t, cache)
-			assertJ1ManifestOnMySQL(ctx, t, cache)
+			assertJ1ProductExportOnMySQL(ctx, t, cache)
 			assertJ1SampleIRODSOnMySQL(ctx, t, cache)
 			assertJ1FileTypeStudyIRODSOnMySQL(ctx, t, cache)
 			assertJ1IDRun0OnMySQL(ctx, t, cache)
@@ -2876,9 +2876,9 @@ func TestRealMySQLNewQueryPathsExecuteAndIndexesApplied(t *testing.T) {
 			assertJ1PeopleOnMySQL(ctx, t, cache)
 		})
 
-		convey.Convey("I1.2: the run-scoped iRODS, manifest and file-type study iRODS queries are index-served (real key, not a full scan)", func() {
+		convey.Convey("I1.2: the run-scoped iRODS, product export and file-type study iRODS queries are index-served (real key, not a full scan)", func() {
 			assertJ1RunIRODSIndexServed(t, writeDB)
-			assertJ1ManifestIndexServed(t, writeDB)
+			assertJ1ProductExportIndexServed(t, writeDB)
 			assertJ1SampleIRODSIndexServed(t, writeDB)
 			assertJ1FileTypeStudyIRODSIndexServed(t, writeDB)
 		})
@@ -2918,13 +2918,12 @@ func seedJ1ScenarioMySQL(t *testing.T, db *sql.DB) {
 	seedJ1FillerAndSyncStateMySQL(t, db)
 }
 
-// seedJ1ManifestStudyMySQL seeds the manifest + file-type study-iRODS scope
+// seedJ1ManifestStudyMySQL seeds the product-export + file-type study-iRODS scope
 // (j1ManifestStudyLims): 3 Illumina products across 2 samples on distinct
-// (id_run, position, tag_index) triples (so StudyManifest lists 3 product rows
-// with full study metadata), plus .cram iRODS objects for 2 of the 3 products and
+// (id_run, position, tag_index) triples, plus .cram iRODS objects for 2 of the 3 products and
 // a .crai on one of them (so file_type=cram returns exactly the 2 .cram products
-// and the manifest with_irods+cram path is exercised). It mirrors
-// seedManifestS1Scenario + TestStudyManifestWithIRODSCramAddsPathPerProductC1.
+// and the product export CRAM path attachment is exercised). It mirrors
+// seedManifestS1Scenario and the product export CRAM-path tests.
 func seedJ1ManifestStudyMySQL(t *testing.T, db *sql.DB) {
 	t.Helper()
 
@@ -3199,34 +3198,32 @@ func assertJ1RunIRODSOnMySQL(ctx context.Context, t *testing.T, cache *Client) {
 	convey.So(cramCount.Count, convey.ShouldEqual, len(cram))
 }
 
-// assertJ1ManifestOnMySQL asserts StudyManifest / CountStudyManifest on MySQL,
-// with and without with_irods+file_type, return the same rows/counts the SQLite C1
-// tests pin (one row per product, study metadata once, the .cram path on the two
-// covered products), with the count == len(list) cross-check.
-func assertJ1ManifestOnMySQL(ctx context.Context, t *testing.T, cache *Client) {
+// assertJ1ProductExportOnMySQL asserts products-of-study export on MySQL,
+// with and without file_type, returns one row per product and attaches .cram
+// paths to the two covered products.
+func assertJ1ProductExportOnMySQL(ctx context.Context, t *testing.T, cache *Client) {
 	t.Helper()
 
-	manifest, err := cache.StudyManifest(ctx, j1ManifestStudyLims, "", false, manifestAllRows, 0)
+	products, err := cache.Export(ctx, ExportRelationship{Children: "products", ParentKind: "study"}, j1ManifestStudyLims, ExportOptions{
+		Limit: manifestAllRows,
+	})
 	convey.So(err, convey.ShouldBeNil)
-	convey.So(manifest.IDStudyLims, convey.ShouldEqual, j1ManifestStudyLims)
-	convey.So(manifest.Name, convey.ShouldEqual, "Study "+j1ManifestStudyLims)
-	convey.So(manifest.Rows, convey.ShouldHaveLength, 3)
-	convey.So(manifest.Rows[0].IRODSPath, convey.ShouldEqual, "")
+	convey.So(products.Rows, convey.ShouldHaveLength, 3)
+	convey.So(products.Total, convey.ShouldEqual, len(products.Rows))
+	convey.So(products.Rows[0][0], convey.ShouldEqual, "S1-sample-alpha")
 
-	count, err := cache.CountStudyManifest(ctx, j1ManifestStudyLims)
+	withIRODS, err := cache.Export(ctx, ExportRelationship{Children: "products", ParentKind: "study"}, j1ManifestStudyLims, ExportOptions{
+		Columns:  []string{"name", "irods_path"},
+		FileType: "cram",
+		Limit:    manifestAllRows,
+	})
 	convey.So(err, convey.ShouldBeNil)
-	convey.So(count.Count, convey.ShouldEqual, len(manifest.Rows))
-
-	withIRODS, err := cache.StudyManifest(ctx, j1ManifestStudyLims, "cram", true, manifestAllRows, 0)
-	convey.So(err, convey.ShouldBeNil)
-	convey.So(withIRODS.Rows, convey.ShouldHaveLength, 3)
-	convey.So(withIRODS.Rows[0].IRODSPath, convey.ShouldEqual, "/seq/52553/52553_1#1.cram")
-	convey.So(withIRODS.Rows[1].IRODSPath, convey.ShouldEqual, "/seq/52553/52553_1#2.cram")
-	convey.So(withIRODS.Rows[2].IRODSPath, convey.ShouldEqual, "")
-
-	withIRODSCount, err := cache.CountStudyManifest(ctx, j1ManifestStudyLims)
-	convey.So(err, convey.ShouldBeNil)
-	convey.So(withIRODSCount.Count, convey.ShouldEqual, len(withIRODS.Rows))
+	convey.So(withIRODS.Rows, convey.ShouldResemble, [][]string{
+		{"S1-sample-alpha", "/seq/52553/52553_1#1.cram"},
+		{"S1-sample-alpha", "/seq/52553/52553_1#2.cram"},
+		{"S1-sample-beta", ""},
+	})
+	convey.So(withIRODS.Total, convey.ShouldEqual, len(withIRODS.Rows))
 }
 
 // assertJ1SampleIRODSOnMySQL asserts IRODSPathsForSample /
@@ -3427,10 +3424,10 @@ func assertJ1RunIRODSIndexServed(t *testing.T, db *sql.DB) {
 	assertMirrorIndexServed(plans, "spi")
 }
 
-// assertJ1ManifestIndexServed asserts EXPLAIN of the with_irods+file_type manifest
-// query serves the product-metrics mirror (alias ipm, scoped by id_study_lims) and
-// the iRODS-locations mirror by a real index with no full scan and no per-row
-// dependent subquery. The iRODS pick is now a set-at-once LEFT JOIN to a DERIVED
+// assertJ1ProductExportIndexServed asserts EXPLAIN of the file_type product
+// export query serves the product-metrics mirror (alias ipm, scoped by
+// id_study_lims) and the iRODS-locations mirror by a real index with no full
+// scan and no per-row dependent subquery. The iRODS pick is a set-at-once LEFT JOIN to a DERIVED
 // TABLE that picks one coherent object per product via a window function; a window
 // function blocks derived-table merging, so MySQL materialises it and reports the
 // outer reference under a synthetic <derivedN> alias (NOT "spi"). The real
@@ -3441,10 +3438,15 @@ func assertJ1RunIRODSIndexServed(t *testing.T, db *sql.DB) {
 // file-type bound parameters, never an outer ipm column), so its select_type is
 // the set-at-once DERIVED, never the per-row DEPENDENT SUBQUERY / DEPENDENT DERIVED
 // (the correlated-subquery perf trap), which the loop asserts.
-func assertJ1ManifestIndexServed(t *testing.T, db *sql.DB) {
+func assertJ1ProductExportIndexServed(t *testing.T, db *sql.DB) {
 	t.Helper()
 
-	query, args := manifestListQuery(j1ManifestStudyLims, true, "cram", manifestAllRows, 0)
+	query, args := exportProductListQuery(exportProductQueryInput{
+		studyID:        j1ManifestStudyLims,
+		needsIRODS:     true,
+		normalisedFile: "cram",
+		limit:          manifestAllRows,
+	})
 	plans := explainPlanRows(t, db, query, args...)
 	for _, plan := range plans {
 		convey.So(strings.ToUpper(plan.selectType), convey.ShouldNotContainSubstring, "DEPENDENT SUBQUERY")

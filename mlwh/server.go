@@ -947,26 +947,6 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 				return countValue(queryer.CountIRODSPathsForRun(ctx, id, opts.FileType))
 			})
 		}
-	case "StudyManifest":
-		return func(c *gin.Context) {
-			id, pagination, ok := mlwhIDAndPagination(c)
-			if !ok {
-				return
-			}
-			fileType, ok := mlwhFileTypeFromQuery(c)
-			if !ok {
-				return
-			}
-			withIRODS, ok := mlwhQueryBool(c, "with_irods")
-			if !ok {
-				return
-			}
-			ctx := c.Request.Context()
-			result, err := queryer.StudyManifest(ctx, id, fileType, withIRODS, pagination.limit, pagination.offset)
-			writeMLWHStudyManifest(c, result, err, pagination.offset, func() (int, error) {
-				return studyManifestTotal(ctx, queryer, id)
-			})
-		}
 	case "StudiesForSample":
 		return func(c *gin.Context) {
 			id, ok := mlwhPathParam(c, "id")
@@ -1435,15 +1415,6 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			result, err := queryer.CountRunListing(c.Request.Context(), opts)
 			writeMLWHResult(c, result, err)
 		}
-	case "CountStudyManifest":
-		return func(c *gin.Context) {
-			id, ok := mlwhPathParam(c, "id")
-			if !ok {
-				return
-			}
-			result, err := queryer.CountStudyManifest(c.Request.Context(), id)
-			writeMLWHResult(c, result, err)
-		}
 	case "CountLibrariesForStudy":
 		return func(c *gin.Context) {
 			id, ok := mlwhPathParam(c, "id")
@@ -1717,15 +1688,15 @@ func countSamplesWithoutData(ctx context.Context, queryer Queryer, studyLimsID s
 	return total - withData, nil
 }
 
-// mlwhFileTypeFromQuery reads the optional file_type query param of the iRODS
-// list and count endpoints. It mirrors mlwhQueryRFC3339's contract: an ABSENT
-// param is returned as ("", true) (the all-file-types case, the same as the bare
-// endpoint); a PRESENT param is normalised (strip one leading '.', lowercase) and
-// validated, and an empty/whitespace value or one containing a LIKE wildcard
-// ('%'/'_') or path separator ('/') aborts with the bad_request 400 envelope
-// BEFORE the queryer is reached, reporting false. A present-and-valid value is
-// returned normalised. The present-but-empty case is a 400 (not silently treated
-// as no filter), so `?file_type=` is rejected while an omitted param is allowed.
+// mlwhFileTypeFromQuery reads the optional file_type query param for file-aware
+// endpoints. It mirrors mlwhQueryRFC3339's contract: an ABSENT param is returned
+// as ("", true) (the all-file-types case, the same as the bare endpoint); a
+// PRESENT param is normalised (strip one leading '.', lowercase) and validated,
+// and an empty/whitespace value or one containing a LIKE wildcard ('%'/'_') or
+// path separator ('/') aborts with the bad_request 400 envelope BEFORE the
+// queryer is reached, reporting false. A present-and-valid value is returned
+// normalised. The present-but-empty case is a 400 (not silently treated as no
+// filter), so `?file_type=` is rejected while an omitted param is allowed.
 func mlwhFileTypeFromQuery(c *gin.Context) (string, bool) {
 	raw, present := c.GetQuery("file_type")
 	if !present {
@@ -1740,37 +1711,6 @@ func mlwhFileTypeFromQuery(c *gin.Context) (string, bool) {
 	}
 
 	return normalised, true
-}
-
-// writeMLWHStudyManifest writes the study manifest envelope: on error it writes
-// the error envelope and sets no headers, and on success it sets the
-// X-Total-Count / X-Next-Offset list-sizing headers (sizing the paginated Rows
-// collection by the study's product count, the C2 count grain) before writing the
-// envelope body. The body stays the full StudyManifest object (not a bare array),
-// so unlike the bare-slice lists it cannot reuse writeMLWHPaginatedResult; the
-// header path is the same writeListSizingHeaders, so the manifest's sizing matches
-// every other paginated endpoint. A total error leaves the headers unset rather
-// than reporting a wrong total.
-func writeMLWHStudyManifest(c *gin.Context, manifest StudyManifest, err error, offset int, total func() (int, error)) {
-	if err != nil {
-		writeMLWHError(c, err)
-
-		return
-	}
-
-	if totalRows, totalErr := total(); totalErr == nil {
-		writeListSizingHeaders(c, totalRows, offset, len(manifest.Rows))
-	}
-
-	c.JSON(http.StatusOK, manifest)
-}
-
-// studyManifestTotal resolves the total product count sizing the manifest's Rows
-// collection by reusing Queryer.CountStudyManifest, the same public method backing
-// /study/:id/manifest/count, so X-Total-Count equals the count endpoint for local,
-// remote, and external Queryer implementations.
-func studyManifestTotal(ctx context.Context, queryer Queryer, studyLimsID string) (int, error) {
-	return countValue(queryer.CountStudyManifest(ctx, studyLimsID))
 }
 
 func mlwhExportRequest(c *gin.Context) (ExportRelationship, string, ExportOptions, bool) {
@@ -1815,6 +1755,10 @@ func mlwhExportOptionsFromQuery(c *gin.Context) (ExportOptions, bool) {
 	if !ok {
 		return ExportOptions{}, false
 	}
+	fileType, ok := mlwhFileTypeFromQuery(c)
+	if !ok {
+		return ExportOptions{}, false
+	}
 	sort := c.Query("sort")
 	if sort == "" {
 		sort = c.Query("order_by")
@@ -1822,7 +1766,7 @@ func mlwhExportOptionsFromQuery(c *gin.Context) (ExportOptions, bool) {
 
 	return ExportOptions{
 		Columns:          columns,
-		FileType:         c.Query("file_type"),
+		FileType:         fileType,
 		DeliverablesOnly: deliverablesOnly,
 		Role:             c.Query("role"),
 		QC:               c.Query("qc"),

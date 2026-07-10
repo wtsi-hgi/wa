@@ -670,60 +670,6 @@ func (c *Client) CountSamplesForLibraryType(ctx context.Context, pipelineIDLims 
 	return Count{Count: 0}, nil
 }
 
-// CountStudyManifest counts the distinct (id_run, position, tag_index) products
-// in a study, the count counterpart of StudyManifest (spec C2). It sizes the
-// manifest via the SAME private countStudyManifestProducts helper the list handler
-// uses for X-Total-Count, which does COUNT(*) over manifestProductGrainDistinctSQL
-// -- the EXACT SELECT DISTINCT product set the manifest list groups by -- so
-// CountStudyManifest(study) equals len(StudyManifest(study, ..., all).Rows) and the
-// standalone count and the list's sizing total cannot drift. The manifest is
-// product-grained, so the with_irods / file_type params (which this count does not
-// take) never change it: a product with no matching iRODS object is still one row.
-// The never-synced / unknown-study / synced-empty cascade follows
-// CountSamplesForStudy's shape, but a known zero-product study returns
-// Count{Count: 0} only once iseq_product_metrics (the count's row-grain source)
-// has synced; a never-synced source returns Count{} with an error satisfying both
-// ErrCacheNeverSynced and ErrNotFound, and an unknown study returns ErrNotFound.
-func (c *Client) CountStudyManifest(ctx context.Context, studyLimsID string) (Count, error) {
-	count, err := c.countStudyManifestProducts(ctx, studyLimsID)
-	if err != nil {
-		return Count{}, err
-	}
-	if count > 0 {
-		return Count{Count: count}, nil
-	}
-
-	return c.countStudyManifestForEmptyStudy(ctx, studyLimsID)
-}
-
-// countStudyManifestForEmptyStudy resolves the result when no manifest products
-// were counted for a study. It follows the same known-study / unknown-study
-// cascade as CountSamplesForStudy, but also requires iseq_product_metrics because
-// that mirror is the manifest count's row-grain source.
-func (c *Client) countStudyManifestForEmptyStudy(ctx context.Context, studyLimsID string) (Count, error) {
-	studyExists, err := c.cacheStudyExists(ctx, studyLimsID)
-	if err != nil {
-		return Count{}, err
-	}
-	if studyExists {
-		summary, err := c.requiredSyncStateSummary(ctx, manifestEmptyRequiredSyncTables(false)...)
-		if err != nil {
-			return Count{}, err
-		}
-		if summary.allAbsent || !summary.allPresent {
-			return Count{}, neverSyncedReadErr()
-		}
-
-		return Count{Count: 0}, nil
-	}
-
-	if err := c.requireAnySyncState(ctx, syncTableStudy); err != nil {
-		return Count{}, err
-	}
-
-	return Count{}, ErrNotFound
-}
-
 // RunsForSample lists the distinct sequencing runs associated with a sample.
 func (c *Client) RunsForSample(ctx context.Context, sangerName string, limit, offset int) ([]Run, error) {
 	sample, err := c.resolveSampleFromCache(ctx, `SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, sangerName)
