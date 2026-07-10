@@ -85,8 +85,8 @@ exactly one iRODS source query is issued and its text applies the
 referencing that changed set). Test file:
 `mlwh/sync_real_schema_test.go`.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.2: A2 - zero-change warm iRODS no-op
 
@@ -104,8 +104,8 @@ mirror write recorded, exactly one `sync_state` upsert, `high_water`
 unchanged; and `last_run` advances to a fresh non-empty timestamp while
 `high_water` is preserved). Test file: `mlwh/sync_test.go`. Depends on 2.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For these sequential items, a single review pass after each item is
 acceptable; the reviewer for 2.1 must confirm `recordingSource` wraps the

@@ -239,11 +239,36 @@ const seqProductIRODSLocationsIlluminaCompositionRecovery = `SELECT path_ipm.id_
 // does not collide with the iseq_product_metrics sync-routing marker.
 const seqProductIRODSLocationsIlluminaLegacyRecovery = `SELECT path_ipm.id_iseq_product AS id_product, ifc.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM iseq_product_metrics path_ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = path_ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP'`
 
+const seqProductIRODSLocationsPacBioRecovery = `SELECT pbm.id_pac_bio_product AS id_product, pbr.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM pac_bio_product_metrics pbm INNER JOIN pac_bio_run pbr ON pbr.id_pac_bio_tmp = pbm.id_pac_bio_tmp INNER JOIN study ON study.id_study_tmp = pbr.id_study_tmp AND study.id_lims = 'SQSCP'`
+
+const seqProductIRODSLocationsElembioRecovery = `SELECT epm.id_eseq_product AS id_product, efc.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM eseq_product_metrics epm INNER JOIN eseq_flowcell efc ON efc.id_eseq_flowcell_tmp = epm.id_eseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = efc.id_study_tmp AND study.id_lims = 'SQSCP'`
+
+const seqProductIRODSLocationsUltimagenRecovery = `SELECT upm.id_useq_product AS id_product, uw.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM useq_product_metrics upm INNER JOIN useq_wafer uw ON uw.id_useq_wafer_tmp = upm.id_useq_wafer_tmp INNER JOIN study ON study.id_study_tmp = uw.id_study_tmp AND study.id_lims = 'SQSCP'`
+
+const seqProductIRODSLocationsONTRecovery = `SELECT CAST(ofc.id_oseq_flowcell_tmp AS CHAR) AS id_product, ofc.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM oseq_flowcell ofc INNER JOIN study ON study.id_study_tmp = ofc.id_study_tmp AND study.id_lims = 'SQSCP'`
+
 // seqProductIRODSLocationsNonIlluminaRecovery is the PacBio/Elembio/Ultimagen
 // and ONT recovery, keyed on each platform's source product/identity id matching
 // spi.id_product and recovering only id_sample_tmp/id_study_lims (platform always
 // comes from spi.seq_platform_name, never from which metrics table matched).
-const seqProductIRODSLocationsNonIlluminaRecovery = `SELECT pbm.id_pac_bio_product AS id_product, pbr.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM pac_bio_product_metrics pbm INNER JOIN pac_bio_run pbr ON pbr.id_pac_bio_tmp = pbm.id_pac_bio_tmp INNER JOIN study ON study.id_study_tmp = pbr.id_study_tmp AND study.id_lims = 'SQSCP' UNION ALL SELECT epm.id_eseq_product AS id_product, efc.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM eseq_product_metrics epm INNER JOIN eseq_flowcell efc ON efc.id_eseq_flowcell_tmp = epm.id_eseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = efc.id_study_tmp AND study.id_lims = 'SQSCP' UNION ALL SELECT upm.id_useq_product AS id_product, uw.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM useq_product_metrics upm INNER JOIN useq_wafer uw ON uw.id_useq_wafer_tmp = upm.id_useq_wafer_tmp INNER JOIN study ON study.id_study_tmp = uw.id_study_tmp AND study.id_lims = 'SQSCP' UNION ALL SELECT CAST(ofc.id_oseq_flowcell_tmp AS CHAR) AS id_product, ofc.id_sample_tmp AS id_sample_tmp, study.id_study_lims AS id_study_lims FROM oseq_flowcell ofc INNER JOIN study ON study.id_study_tmp = ofc.id_study_tmp AND study.id_lims = 'SQSCP'`
+const seqProductIRODSLocationsNonIlluminaRecovery = seqProductIRODSLocationsPacBioRecovery + ` UNION ALL ` +
+	seqProductIRODSLocationsElembioRecovery + ` UNION ALL ` +
+	seqProductIRODSLocationsUltimagenRecovery + ` UNION ALL ` +
+	seqProductIRODSLocationsONTRecovery
+
+// seqProductIRODSLocationsChangedRecovery preserves every recovery branch while
+// restricting its source-side work to products selected by the warm changed_spi
+// CTE. The composition JSON_TABLE fragment above remains byte-identical.
+const seqProductIRODSLocationsChangedRecovery = seqProductIRODSLocationsIlluminaCompositionRecovery +
+	` WHERE path_ipm.id_iseq_product IN (SELECT id_product FROM changed_spi) UNION ALL ` +
+	seqProductIRODSLocationsPacBioRecovery +
+	` WHERE pbm.id_pac_bio_product IN (SELECT id_product FROM changed_spi) UNION ALL ` +
+	seqProductIRODSLocationsElembioRecovery +
+	` WHERE epm.id_eseq_product IN (SELECT id_product FROM changed_spi) UNION ALL ` +
+	seqProductIRODSLocationsUltimagenRecovery +
+	` WHERE upm.id_useq_product IN (SELECT id_product FROM changed_spi) UNION ALL ` +
+	seqProductIRODSLocationsONTRecovery +
+	` WHERE CAST(ofc.id_oseq_flowcell_tmp AS CHAR) IN (SELECT id_product FROM changed_spi)`
 
 const iseqProductMetricsSelectColumns = `ipm.id_iseq_product, ipm.id_iseq_pr_metrics_tmp, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ipm.id_sample_tmp, ipm.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_changed`
 
@@ -699,6 +724,13 @@ func iseqProductMetricsLegacySyncSourceQueryFromCursor() string {
 	return iseqProductMetricsLegacyDirectSourceSelect("", `(ipm.last_changed > ?) OR (ipm.last_changed = ? AND ipm.id_iseq_pr_metrics_tmp > ?)`) + ` ORDER BY ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`
 }
 
+func seqProductIRODSLocationsChangedFirstSourceQuery(wherePredicate string) string {
+	return `WITH changed_spi AS (SELECT spi.* FROM seq_product_irods_locations spi WHERE ` + wherePredicate +
+		`) SELECT ` + seqProductIRODSLocationsSelectColumns +
+		` FROM changed_spi spi INNER JOIN (` + seqProductIRODSLocationsChangedRecovery +
+		`) recovery ON recovery.id_product = spi.id_product ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`
+}
+
 // seqProductIRODSLocationsSourceQuery assembles the full iRODS source SELECT for
 // the given Illumina recovery branch (composition or legacy) and WHERE/ORDER
 // suffix. The outer FROM stays seq_product_irods_locations spi and the recovery
@@ -955,8 +987,7 @@ func iseqProductMetricsSyncSourceQueryFromCursor() string {
 }
 
 func seqProductIRODSLocationsSyncSourceQuery() string {
-	return seqProductIRODSLocationsSourceQuery(seqProductIRODSLocationsIlluminaCompositionRecovery,
-		`WHERE spi.last_changed >= ? ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`)
+	return seqProductIRODSLocationsChangedFirstSourceQuery(`spi.last_changed >= ?`)
 }
 
 func seqProductIRODSLocationsColdSyncSourceQuery() string {
@@ -965,8 +996,7 @@ func seqProductIRODSLocationsColdSyncSourceQuery() string {
 }
 
 func seqProductIRODSLocationsSyncSourceQueryFromCursor() string {
-	return seqProductIRODSLocationsSourceQuery(seqProductIRODSLocationsIlluminaCompositionRecovery,
-		`WHERE (spi.last_changed > ?) OR (spi.last_changed = ? AND spi.id_seq_product_irods_locations_tmp > ?) ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`)
+	return seqProductIRODSLocationsChangedFirstSourceQuery(`(spi.last_changed > ?) OR (spi.last_changed = ? AND spi.id_seq_product_irods_locations_tmp > ?)`)
 }
 
 func seqProductIRODSLocationsLegacySyncSourceQuery() string {

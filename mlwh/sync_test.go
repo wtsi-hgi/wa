@@ -1063,6 +1063,89 @@ func TestClientSyncRepairsSparseProductReadIndexesBeforeIRODSEnrichment(t *testi
 	})
 }
 
+func TestSeqProductIRODSLocationsWarmZeroChangeWritesOnlySyncState(t *testing.T) {
+	convey.Convey("A2.1: Given existing non-zero iRODS sync state with no cursor and no source rows at or after its watermark", t, func() {
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		highWater := time.Date(2026, time.July, 10, 9, 0, 0, 0, time.UTC)
+		seedSyncState(t, cache.DB(), syncTableSeqProductIRODSLocations, highWater)
+		observer.Reset()
+
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSeqProductIRODSLocations: {
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows:    nil,
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		mirrorWrites := filterRecordedStatements(observer.Statements(), func(statement recordedSQLStatement) bool {
+			return strings.Contains(normalizeSQL(statement.Query), "seq_product_irods_locations_mirror")
+		})
+		syncStateUpserts := filterRecordedStatements(observer.Statements(), func(statement recordedSQLStatement) bool {
+			return normalizeSQL(statement.Query) == normalizeSQL(buildUpsertStatement("sqlite", "sync_state", syncStateColumns, []string{"table_name"}))
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(reports[0].Inserted, convey.ShouldEqual, 0)
+		convey.So(reports[0].Updated, convey.ShouldEqual, 0)
+		convey.So(reports[0].HighWater, convey.ShouldHappenOnOrBetween, highWater, highWater)
+		convey.So(mirrorWrites, convey.ShouldBeEmpty)
+		convey.So(syncStateUpserts, convey.ShouldHaveLength, 1)
+		convey.So(readSyncHighWater(t, cache.DB(), syncTableSeqProductIRODSLocations), convey.ShouldHappenOnOrBetween, highWater, highWater)
+	})
+}
+
+func TestSeqProductIRODSLocationsWarmZeroChangeAdvancesLastRun(t *testing.T) {
+	convey.Convey("A2.2: Given existing non-zero iRODS sync state with no cursor and no source rows at or after its watermark", t, func() {
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		highWater := time.Date(2026, time.July, 10, 9, 0, 0, 0, time.UTC)
+		previousLastRun := highWater.Add(-time.Hour)
+		seedSyncState(t, cache.DB(), syncTableSeqProductIRODSLocations, highWater)
+		_, err := cache.DB().Exec(
+			`UPDATE sync_state SET last_run = ? WHERE table_name = ?`,
+			formatSyncTime(previousLastRun),
+			syncTableSeqProductIRODSLocations,
+		)
+		convey.So(err, convey.ShouldBeNil)
+		observer.Reset()
+
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSeqProductIRODSLocations: {
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows:    nil,
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+		runStarted := time.Now().UTC()
+		_, err = syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+		runFinished := time.Now().UTC()
+
+		var lastRunRaw string
+		queryErr := cache.DB().QueryRow(
+			`SELECT last_run FROM sync_state WHERE table_name = ?`,
+			syncTableSeqProductIRODSLocations,
+		).Scan(&lastRunRaw)
+		lastRun := mustParseSyncTime(t, lastRunRaw)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(queryErr, convey.ShouldBeNil)
+		convey.So(lastRunRaw, convey.ShouldNotBeEmpty)
+		convey.So(lastRun.After(previousLastRun), convey.ShouldBeTrue)
+		convey.So(lastRun, convey.ShouldHappenOnOrBetween, runStarted, runFinished)
+		convey.So(readSyncHighWater(t, cache.DB(), syncTableSeqProductIRODSLocations), convey.ShouldHappenOnOrBetween, highWater, highWater)
+	})
+}
+
 func TestClientSyncIseqFlowcellMirrorsA1EntityTypeRows(t *testing.T) {
 	convey.Convey("A1.2: Given source iseq_flowcell rows for each deliverable entity_type discriminator", t, func() {
 		cache := openSQLiteSyncTestCache(t)
