@@ -51,6 +51,7 @@ Phase 3)
 
 First add the shared warm-path harness (extend existing test helpers, do
 not replace):
+
 - `recordingSource`, a `Querier` wrapping `sqliteJSONTableSource` that
   appends every forwarded `(query, args)` for source-shape assertions;
 - `assertWarmMirrorMatchesCold(t, table, seed, variant)`, the parity

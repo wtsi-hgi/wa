@@ -37,14 +37,15 @@ spec.md section: E1
 
 Add a unit test over `AllSyncSourceQueries()` asserting the full reshaped
 registry: the reshaped `seq_product_irods_locations` incremental (ArgCount
-1) and from-cursor (3); the `iseq_product_metrics` Phase-1 incremental (1)
-and from-cursor (3); the scoped `iseq_product_metrics composite recovery`
-representative (1); and the cold and legacy entries for both tables still
-present with unchanged ArgCounts. Keep the gated real-MLWH prepare check
-(`TestSyncSourceSchemaMatchesRealMLWH`, gated on `WA_MLWH_DSN`) green:
-every registered query prepares with its `ArgCount` placeholders. Covering
-both acceptance tests from E1. Test file:
-`mlwh/sync_source_integration_test.go`.
+
+1. and from-cursor (3); the `iseq_product_metrics` Phase-1 incremental (1)
+   and from-cursor (3); the scoped `iseq_product_metrics composite recovery`
+   representative (1); and the cold and legacy entries for both tables still
+   present with unchanged ArgCounts. Keep the gated real-MLWH prepare check
+   (`TestSyncSourceSchemaMatchesRealMLWH`, gated on `WA_MLWH_DSN`) green:
+   every registered query prepares with its `ArgCount` placeholders. Covering
+   both acceptance tests from E1. Test file:
+   `mlwh/sync_source_integration_test.go`.
 
 - [x] implemented
 - [x] reviewed

@@ -36,6 +36,7 @@ on the hermetic GoConvey suite over the ephemeral SQLite cache. Bound
 every shell command with `timeout`.
 
 Critical cautions for item 1.2 (D), stated in full in the item:
+
 1. Compute the WHOLE diff plan while streaming the mirror read, then apply
    inserts/updates/deletes AFTER the read cursor is drained and closed - a
    MySQL INSERT issued while a streaming SELECT is still open on the same
@@ -115,6 +116,7 @@ mirror diff-read `QueryContext` is recorded on the observed connection
 (D2.2).
 
 CAUTIONS (all in spec):
+
 - Full-drain: compute the entire diff plan (bounded by change count) while
   streaming the mirror, then issue every INSERT/UPDATE/DELETE only AFTER
   the diff-read cursor is drained and closed. A MySQL INSERT run while a
@@ -149,6 +151,7 @@ not `N`). Tests in `mlwh/sync_a5_test.go` on
 
 Also revise the two existing tracking tests (spec E2) so the package
 compiles and their intent is preserved:
+
 - `TestClientSyncSeqOpsTrackingPerSampleSwapIsAtomic`: retarget at the new
   diff/apply entry point, preserving the concurrent-reader atomicity
   intent (a reader never sees a partial table).

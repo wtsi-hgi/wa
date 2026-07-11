@@ -18,12 +18,13 @@ This is the most complex reshape and REUSES the Phase 2 parity harness
 it depends on Phase 2. Replace the warm monolithic union for
 `iseq_product_metrics` (when `JSON_TABLE` is supported) with the in-Go
 two-phase path in `mlwh/sync.go`:
+
 - Phase 1 (one registered SELECT): fetch every changed row with its
   own-flowcell metadata and `iseq_composition_tmp`, LEFT JOIN own
   `iseq_flowcell` and its `SQSCP` `study` (so merged products are NOT
   dropped). Predicate incremental `ipm.last_changed >= ?` (1 arg) or
   from-cursor two-part (3 args); order `ipm.last_changed,
-  ipm.id_iseq_pr_metrics_tmp`.
+ipm.id_iseq_pr_metrics_tmp`.
 - Phase 2 (Go): classify by component count parsed from
   `iseq_composition_tmp` (`COALESCE` empty to `{"components":[]}`): <= 1 is
   a direct candidate, > 1 composite. Emit a direct row only when its own
@@ -35,11 +36,11 @@ two-phase path in `mlwh/sync.go`:
   chunked to a package-level `var` defaulting to `syncStatementRowLimit(1)`
   (shrinkable in tests), preserving the existing composite semantics
   (component `JSON_TABLE` expansion, Illumina `spi` `EXISTS`, `HAVING
-  COUNT(*) > 1`, `position`/`tag_index` 0, common-run-else-0 `id_run`,
+COUNT(*) > 1`, `position`/`tag_index` 0, common-run-else-0 `id_run`,
   `MIN` sample/study, `COALESCE` path/component flowcell, path-row
   `qc`/`qc_lib`/`qc_seq`/`last_changed`).
 - Combine direct + composite rows, order `last_changed,
-  id_iseq_pr_metrics_tmp`, write via the existing batch writer
+id_iseq_pr_metrics_tmp`, write via the existing batch writer
   (`iseqProductMetricsMirrorRowArgs`). The warm run may buffer the full
   changed-row set (all-or-nothing per run); no mid-run cursor checkpoint.
 
@@ -48,6 +49,7 @@ The cold / ascending-id union query is UNCHANGED; on
 existing legacy direct-only query.
 
 CAUTIONS (all in spec):
+
 - Scan struct: Phase 1 MUST scan into a NULLABLE fetch struct (spec name
   `iseqProductMetricsChangedRow`: `id_iseq_flowcell_tmp` `sql.NullInt64`,
   `id_sample_tmp` `sql.NullInt64`, `id_study_lims` `sql.NullString`, plus

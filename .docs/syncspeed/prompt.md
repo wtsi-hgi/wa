@@ -61,9 +61,9 @@ Current warm behaviour:
 Requested behaviour:
 
 - For warm incremental sync, replace the monolithic union query with a two-phase warm path:
-  1. Fetch the changed `iseq_product_metrics` rows directly with their flowcell/study metadata and `iseq_composition_tmp`.
-  2. In Go, identify changed rows whose composition needs composite recovery.
-  3. Run composite recovery only for those changed product IDs.
+    1. Fetch the changed `iseq_product_metrics` rows directly with their flowcell/study metadata and `iseq_composition_tmp`.
+    2. In Go, identify changed rows whose composition needs composite recovery.
+    3. Run composite recovery only for those changed product IDs.
 - Keep the existing cold path and unsupported-`JSON_TABLE` fallback behaviour intact.
 - Preserve existing ordering/resume semantics by `last_changed` and `id_iseq_pr_metrics_tmp`.
 - Preserve current mirror row semantics for direct rows and recovered composite rows.
@@ -119,9 +119,9 @@ Experimental result:
 
 - A disposable clone of the current tracking mirror was created only as probe setup.
 - Against that cloned cache, the proposed no-op warm path measured:
-  - source snapshot read: 1,464,639 rows in `3.616s`;
-  - in-memory sort by `id_sample_lims`: `0.037s`;
-  - ordered cache scan and exact diff: 1,464,639 source rows vs 1,464,639 cache rows, 0 inserts, 0 updates, 0 deletes, `6.158s`.
+    - source snapshot read: 1,464,639 rows in `3.616s`;
+    - in-memory sort by `id_sample_lims`: `0.037s`;
+    - ordered cache scan and exact diff: 1,464,639 source rows vs 1,464,639 cache rows, 0 inserts, 0 updates, 0 deletes, `6.158s`.
 - The measured unchanged warm strategy is therefore about `9.81s` plus sync-state write, with zero mirror-row writes, instead of `1m12.427s` and 1.46M mirror-row writes.
 
 ## Explicit No-Change Decisions
@@ -182,7 +182,7 @@ the numbers here are from a fresh re-check.
   (identical MD5 checksum of all projected columns), in `4m27s` vs `5.3s`.
 - The rewrite that works: materialize changed `spi` rows first
   (`WHERE last_changed >= ?`, or the two-part `(last_changed > ?) OR (last_changed = ?
-  AND id_seq_product_irods_locations_tmp > ?)` from-cursor predicate), derive the
+AND id_seq_product_irods_locations_tmp > ?)` from-cursor predicate), derive the
   distinct changed `id_product` set, and push that set into EACH recovery branch
   (Illumina composition, PacBio, Elembio, Ultimagen, ONT/oseq) so `JSON_TABLE`
   expands only changed products. This is a semijoin reduction of the current
@@ -233,7 +233,7 @@ the numbers here are from a fresh re-check.
   explicit list of changed multi-component product IDs already fetched in Phase 1
   (an `IN (...)` of literal IDs, as Go would build). Re-deriving the candidate set
   with a correlated subquery (`... WHERE id_iseq_product IN (SELECT ... WHERE
-  last_changed >= ? AND JSON_LENGTH(...) > 1)`) makes the optimizer expand
+last_changed >= ? AND JSON_LENGTH(...) > 1)`) makes the optimizer expand
   `JSON_TABLE` far too broadly — the subquery form did not finish in 110s, versus
   `0.097s` for the explicit-ID form. Chunk the ID list to respect the sync statement
   parameter limit.

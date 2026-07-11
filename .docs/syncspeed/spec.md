@@ -48,8 +48,8 @@ change and no `CacheSchemaVersion` bump.
   `sync_platform_coverage.go`. No new files required.
 - Existing types reused unchanged: `Querier` (`QueryContext` only), `Cache`
   (`DB()`, `Dialect()`, `Close()`), `SyncReport{Table, Inserted, Updated,
-  Duration, HighWater}`, `syncStateRecord{HighWater, ResumeCursor,
-  IndexesDropped, Exists}`, `syncBatchResult{Inserted, Updated}`,
+Duration, HighWater}`, `syncStateRecord{HighWater, ResumeCursor,
+IndexesDropped, Exists}`, `syncBatchResult{Inserted, Updated}`,
   `seqProductIRODSLocationsSyncRow`, `iseqRunStatusSyncRow`,
   `seqOpsTrackingPerSampleSyncRow`.
 - `iseqProductMetricsSyncRow` (struct definition unchanged) is reused ONLY as
@@ -60,18 +60,18 @@ change and no `CacheSchemaVersion` bump.
   MUST NOT be the Phase-1 scan target.
 - New Phase-1 fetch/scan struct (name illustrative,
   `iseqProductMetricsChangedRow`): the own-flowcell metadata is scanned NULLABLE
-  - `id_iseq_flowcell_tmp` (`sql.NullInt64`), `id_sample_tmp` (`sql.NullInt64`),
-  `id_study_lims` (`sql.NullString`) - because Phase 1 LEFT JOINs own
-  `iseq_flowcell` / `SQSCP` `study`, so merged/multi-component products arrive
-  with all three NULL. It also carries the raw `iseq_composition_tmp` JSON and
-  the direct-row columns (`id_iseq_product`, `id_iseq_pr_metrics_tmp`, `id_run`,
-  `position`, `tag_index`, `qc`, `qc_lib`, `qc_seq`, `last_changed`). Go
-  classifies component count from `iseq_composition_tmp` and builds
-  `iseqProductMetricsSyncRow` outputs; a single-component row is emitted only
-  when its own-flowcell `SQSCP` study resolved (both nullable id fields
-  non-null). Scanning those NULLs into `iseqProductMetricsSyncRow`'s
-  int64/string fields would fail at runtime - the merged-product trap this
-  feature must avoid.
+    - `id_iseq_flowcell_tmp` (`sql.NullInt64`), `id_sample_tmp` (`sql.NullInt64`),
+      `id_study_lims` (`sql.NullString`) - because Phase 1 LEFT JOINs own
+      `iseq_flowcell` / `SQSCP` `study`, so merged/multi-component products arrive
+      with all three NULL. It also carries the raw `iseq_composition_tmp` JSON and
+      the direct-row columns (`id_iseq_product`, `id_iseq_pr_metrics_tmp`, `id_run`,
+      `position`, `tag_index`, `qc`, `qc_lib`, `qc_seq`, `last_changed`). Go
+      classifies component count from `iseq_composition_tmp` and builds
+      `iseqProductMetricsSyncRow` outputs; a single-component row is emitted only
+      when its own-flowcell `SQSCP` study resolved (both nullable id fields
+      non-null). Scanning those NULLs into `iseqProductMetricsSyncRow`'s
+      int64/string fields would fail at runtime - the merged-product trap this
+      feature must avoid.
 - `SyncReport` has no `Deleted` field; deletions are asserted via mirror row
   presence / count, not via the report.
 
@@ -88,8 +88,8 @@ Cold and legacy entries stay as-is.
 - `scanSeqProductIRODSLocationsSyncRow` consumes exactly this projected column
   list and order:
   `id_seq_product_irods_locations_tmp, id_product, irods_root_collection,
-  COALESCE(irods_data_relative_path,'') , recovered id_sample_tmp, recovered
-  id_study_lims, last_changed, created, seq_platform_name`.
+COALESCE(irods_data_relative_path,'') , recovered id_sample_tmp, recovered
+id_study_lims, last_changed, created, seq_platform_name`.
 - `seqProductIRODSLocationsSyncSourceQuery` ordering
   `ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp` and the
   source-row-boundary batch flush in `syncSeqProductIRODSLocationsTable` (all
@@ -139,7 +139,7 @@ Reuse existing helpers in `sync_test.go`, `sync_a5_test.go`,
   `countRows(t, db, query, args...) int`,
   `syncSelectedTablesForTest(ctx, client, tables...) ([]SyncReport, error)`,
   client construction `&Client{cache:..., cacheReader: cacheReadDB(cache),
-  syncSource:..., disableSyncLock:true}`.
+syncSource:..., disableSyncLock:true}`.
 
 Add four test-only helpers:
 
@@ -213,7 +213,7 @@ args) now emit the changed-first statement.
    warm mirror is byte-identical to the cold-sync mirror of the same fixture.
 2. Given the same fixture but the warm path forced via a seeded from-cursor
    `resume_cursor`, when synced via `assertWarmMirrorMatchesCold(...,
-   fromCursor)`, then the warm mirror is byte-identical to the cold mirror.
+fromCursor)`, then the warm mirror is byte-identical to the cold mirror.
 3. Given a source row whose one `id_product` expands to multiple iRODS objects
    (multi-row expansion) and a sibling changed row, when warm-synced, then every
    expansion row is present and `platform` for each mirror row equals the
@@ -223,7 +223,7 @@ args) now emit the changed-first statement.
    same run window, when warm-synced through `recordingSource`, then the issued
    iRODS source query text contains the `changed_spi` filter applied to `spi`
    before the recovery join (the query selects from `seq_product_irods_locations
-   spi` within a CTE/derived table and each recovery branch references that
+spi` within a CTE/derived table and each recovery branch references that
    changed set), and exactly one iRODS source query is issued.
 
 ### A2: Zero-change warm iRODS no-op
@@ -288,7 +288,7 @@ Replace the warm monolithic union with, when `JSON_TABLE` is supported:
   `qc_seq`/`last_changed` from the path row. A candidate lacking an Illumina
   `spi` row or failing `HAVING` yields no mirror row.
 - Combine direct + composite rows, order by `last_changed,
-  id_iseq_pr_metrics_tmp`, and write via the existing batch writer / mirror row
+id_iseq_pr_metrics_tmp`, and write via the existing batch writer / mirror row
   args. The warm run may buffer the full changed-row set in memory (all-or-
   nothing per run); no mid-run `resume_cursor` checkpoint is required.
 
@@ -353,7 +353,7 @@ when nothing changed.
 4. Given a cache with existing `iseq_product_metrics` `sync_state` and a source
    with zero rows at/after the watermark, when warm-synced on
    `openRecordingSQLiteSyncTestCache`, then `SyncReport` is `{Inserted:0,
-   Updated:0}`, no `iseq_product_metrics_mirror` write statement is recorded,
+Updated:0}`, no `iseq_product_metrics_mirror` write statement is recorded,
    exactly one `sync_state` upsert is recorded, `high_water` is preserved, and
    `last_run` advances.
 
@@ -386,7 +386,7 @@ so it is unaffected. No migration or backfill.
 2. Given the state after test 1 and no further source rows, when a third warm
    sync runs on `openRecordingSQLiteSyncTestCache`, then no
    `iseq_run_status_mirror` write is recorded, `SyncReport` is `{Inserted:0,
-   Updated:0}`, the stored `resume_cursor` still decodes to `M+P` (never NULL),
+Updated:0}`, the stored `resume_cursor` still decodes to `M+P` (never NULL),
    and `high_water` remains empty.
 
 ### C2: One-time re-read on upgrade
@@ -460,7 +460,7 @@ existing ids (deletions are observable via mirror absence / row-count delta).
 
 1. Given a mirror seeded with tracking rows for ids `{A,B,C,D}` and a source
    snapshot for ids `{A(unchanged), B(one milestone datetime changed),
-   E(new)}` (C and D absent from the snapshot), when warm-synced on
+E(new)}` (C and D absent from the snapshot), when warm-synced on
    `openRecordingSQLiteSyncTestCache`, then `SyncReport.Inserted == 1` (E),
    `SyncReport.Updated == 1` (B), the mirror afterward holds exactly `{A,B,E}`
    (C and D deleted), and each surviving row's columns equal the snapshot's.
@@ -538,7 +538,7 @@ Registry after the change (names illustrative, arg counts binding):
 - `seq_product_irods_locations incremental` (1), `... from cursor` (3) - now the
   changed-first statements.
 - `seq_product_irods_locations cold` (1), and all three `... legacy ...` entries
-  - unchanged.
+    - unchanged.
 - `iseq_product_metrics incremental` (1) and `... from cursor` (3) - now the
   Phase-1 direct changed-row fetches.
 - `iseq_product_metrics composite recovery` - the scoped composite recovery,
@@ -584,18 +584,18 @@ Must be revised:
   queries each contain the composite branch and the single-component filter,
   with ArgCounts 2/2/6. Revise it (preserving its intent that composite products
   are still synced):
-  - assert the composite-branch fragments - `JSON_TABLE(path_ipm...`, the
-    composite `EXISTS ... seq_product_irods_locations spi ... 'illumina'` check,
-    and `CASE WHEN MIN(component.component_run) ...` - on the NEW
-    `iseq_product_metrics composite recovery` entry (ArgCount 1);
-  - assert `iseq_product_metrics incremental` (ArgCount 1) and `from cursor`
-    (ArgCount 3) are Phase-1 direct-only: no composite fragments and no
-    `NOT EXISTS (... JSON_TABLE(COALESCE(ipm...` single-component filter (Go now
-    classifies component count); they keep `study.id_lims = 'SQSCP'` from the
-    own-flowcell `SQSCP` LEFT JOIN;
-  - leave `iseq_product_metrics cold` assertions unchanged (ArgCount 2, still
-    the monolithic union with every fragment above).
-  Arg counts match E1's registry.
+    - assert the composite-branch fragments - `JSON_TABLE(path_ipm...`, the
+      composite `EXISTS ... seq_product_irods_locations spi ... 'illumina'` check,
+      and `CASE WHEN MIN(component.component_run) ...` - on the NEW
+      `iseq_product_metrics composite recovery` entry (ArgCount 1);
+    - assert `iseq_product_metrics incremental` (ArgCount 1) and `from cursor`
+      (ArgCount 3) are Phase-1 direct-only: no composite fragments and no
+      `NOT EXISTS (... JSON_TABLE(COALESCE(ipm...` single-component filter (Go now
+      classifies component count); they keep `study.id_lims = 'SQSCP'` from the
+      own-flowcell `SQSCP` LEFT JOIN;
+    - leave `iseq_product_metrics cold` assertions unchanged (ArgCount 2, still
+      the monolithic union with every fragment above).
+      Arg counts match E1's registry.
 - `TestClientSyncSeqOpsTrackingPerSampleSwapIsAtomic` (`sync_a5_test.go`): the
   D1 diff/apply replaces the wholesale `writeSeqOpsTrackingPerSampleFullRefresh`
   this test calls directly, so it no longer compiles. Retarget it at the new
@@ -687,21 +687,21 @@ Verified to pass unchanged (checked; no revision needed):
 ## Implementation Order
 
 1. **Phase 1 - independent, parallelizable table reshapes (no shared harness).**
-   - C (`iseq_run_status` retained watermark): smallest, localized to
-     `sync_platform_coverage.go` finalize. No existing test pins the cleared
-     cursor, so C revises no existing test (verified, E2).
-   - D (`seq_ops_tracking_per_sample` diff/apply): application-code diff in
-     `sync_platform_coverage.go`, plus the production-no-op
-     `syncTrackingMirrorResidencyHook` seam D2.3 uses to assert bounded mirror
-     residency. D2.2 additionally EXTENDS the recording driver/observer to
-     capture the mirror diff-read `QueryContext` (per Test infrastructure), not
-     only writes. Revise the two existing tracking tests here (E2): retarget
-     `TestClientSyncSeqOpsTrackingPerSampleSwapIsAtomic` at the new diff/apply
-     entry point, and rename/recomment
-     `TestClientSyncSeqOpsTrackingPerSampleFullRefreshReplacesSnapshot` to the
-     diff/apply semantics.
-   C ships with its tests on the existing recording cache/source; D ships its
-   tests on that recording driver/observer extended per D2.2.
+    - C (`iseq_run_status` retained watermark): smallest, localized to
+      `sync_platform_coverage.go` finalize. No existing test pins the cleared
+      cursor, so C revises no existing test (verified, E2).
+    - D (`seq_ops_tracking_per_sample` diff/apply): application-code diff in
+      `sync_platform_coverage.go`, plus the production-no-op
+      `syncTrackingMirrorResidencyHook` seam D2.3 uses to assert bounded mirror
+      residency. D2.2 additionally EXTENDS the recording driver/observer to
+      capture the mirror diff-read `QueryContext` (per Test infrastructure), not
+      only writes. Revise the two existing tracking tests here (E2): retarget
+      `TestClientSyncSeqOpsTrackingPerSampleSwapIsAtomic` at the new diff/apply
+      entry point, and rename/recomment
+      `TestClientSyncSeqOpsTrackingPerSampleFullRefreshReplacesSnapshot` to the
+      diff/apply semantics.
+      C ships with its tests on the existing recording cache/source; D ships its
+      tests on that recording driver/observer extended per D2.2.
 2. **Phase 2 - parity oracle harness + `seq_product_irods_locations`.** Add
    `recordingSource` and `assertWarmMirrorMatchesCold`, extend
    `rewriteJSONTableQueryForSQLite`, then implement A (single-statement
@@ -758,14 +758,14 @@ Phases 2 and 3 are sequential (3 builds on 2's harness). Phase 4 is last.
   `SyncReport{Inserted:0, Updated:0}`, and advances `last_run`; finalize still
   runs when `state.Exists`. `high_water` is per-table, so the blanket "preserve
   high_water" does NOT hold uniformly:
-  - `seq_product_irods_locations` and `iseq_product_metrics`: `high_water` is
-    the max source `last_changed` seen, so with no changed rows it is PRESERVED
-    at its prior value.
-  - `iseq_run_status`: `high_water` stays empty (zero); the retained
-    `id_run_status` resume cursor is PRESERVED, never NULL-ed.
-  - `seq_ops_tracking_per_sample`: `high_water` is the wall-clock refresh time
-    and ADVANCES to the new refresh time on every run (the full snapshot is
-    always re-read), even when the diff is empty.
+    - `seq_product_irods_locations` and `iseq_product_metrics`: `high_water` is
+      the max source `last_changed` seen, so with no changed rows it is PRESERVED
+      at its prior value.
+    - `iseq_run_status`: `high_water` stays empty (zero); the retained
+      `id_run_status` resume cursor is PRESERVED, never NULL-ed.
+    - `seq_ops_tracking_per_sample`: `high_water` is the wall-clock refresh time
+      and ADVANCES to the new refresh time on every run (the full snapshot is
+      always re-read), even when the diff is empty.
 
 Implementors follow **go-implementor** (TDD) and **go-conventions**; tests
 follow **testing-principles** (assert user-visible boundaries: mirror contents,
