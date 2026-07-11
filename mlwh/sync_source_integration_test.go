@@ -76,6 +76,41 @@ var a9SourceColumnTypeExpectations = []sourceColumnTypeExpectation{
 	{table: "study", column: "programme", dataTypes: []string{"char", "varchar"}},
 }
 
+func TestAllSyncSourceQueriesIncludesReshapedWarmAndUnchangedFallbacks(t *testing.T) {
+	convey.Convey("Given all registered sync source queries", t, func() {
+		queriesByName := make(map[string]SyncSourceQuery)
+		for _, query := range AllSyncSourceQueries() {
+			queriesByName[query.Name] = query
+		}
+
+		expected := []struct {
+			name     string
+			argCount int
+		}{
+			{name: "seq_product_irods_locations incremental", argCount: 1},
+			{name: "seq_product_irods_locations from cursor", argCount: 3},
+			{name: "seq_product_irods_locations cold", argCount: 1},
+			{name: "seq_product_irods_locations legacy incremental", argCount: 1},
+			{name: "seq_product_irods_locations legacy cold", argCount: 1},
+			{name: "seq_product_irods_locations legacy from cursor", argCount: 3},
+			{name: "iseq_product_metrics incremental", argCount: 1},
+			{name: "iseq_product_metrics from cursor", argCount: 3},
+			{name: "iseq_product_metrics composite recovery", argCount: 1},
+			{name: "iseq_product_metrics cold", argCount: 2},
+			{name: "iseq_product_metrics legacy incremental", argCount: 1},
+			{name: "iseq_product_metrics legacy cold", argCount: 1},
+			{name: "iseq_product_metrics legacy from cursor", argCount: 3},
+		}
+
+		convey.Convey("then every reshaped warm query and unchanged cold or legacy query is present with its binding count", func() {
+			for _, want := range expected {
+				convey.So(queriesByName, convey.ShouldContainKey, want.name)
+				convey.So(queriesByName[want.name].ArgCount, convey.ShouldEqual, want.argCount)
+			}
+		})
+	})
+}
+
 func assertSourceColumnHasExpectedType(t *testing.T, db *sql.DB, expectation sourceColumnTypeExpectation) {
 	t.Helper()
 

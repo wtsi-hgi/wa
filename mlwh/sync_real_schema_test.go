@@ -28,6 +28,7 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,114 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+type warmSyncVariant int
+
+const (
+	warmSyncIncremental warmSyncVariant = iota
+	warmSyncFromCursor
+)
+
+func TestE2WarmReshapedTablesUseLegacyQueriesWhenJSONTableIsUnsupported(t *testing.T) {
+	convey.Convey("E2.2: Given changed iRODS rows and a changed multi-component metrics candidate on a source without JSON_TABLE", t, func() {
+		sourceDB := openRealMLWHSchemaSource(t)
+		seedB1IseqProductMetricsParityFixture(t, sourceDB)
+		base := time.Date(2026, time.July, 2, 10, 0, 0, 0, time.UTC)
+		seedRealMLWHIRODSLocationProductRow(t, sourceDB, 3010010, "product-301001", "/b1/direct", "direct.cram", base)
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedWarmParitySyncState(t, cache.DB(), syncTableIseqProductMetrics, warmSyncIncremental)
+		seedWarmParitySyncState(t, cache.DB(), syncTableSeqProductIRODSLocations, warmSyncIncremental)
+		source := &recordingSource{
+			source: sqliteJSONTableSource{db: sourceDB},
+			queryError: func(query string) error {
+				if strings.Contains(query, "JSON_TABLE") {
+					return fmt.Errorf("JSON_TABLE is unsupported")
+				}
+
+				return nil
+			},
+		}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(
+			context.Background(), client, syncTableIseqProductMetrics, syncTableSeqProductIRODSLocations,
+		)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 2)
+		convey.So([]string{reports[0].Table, reports[1].Table}, convey.ShouldResemble, []string{
+			syncTableIseqProductMetrics,
+			syncTableSeqProductIRODSLocations,
+		})
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`, "product-301001"), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`, "product-301001"), convey.ShouldEqual, 1)
+
+		queries := source.Queries()
+		convey.So(queries, convey.ShouldHaveLength, 5)
+		convey.So(queries[0].Query, convey.ShouldEqual, iseqProductMetricsSyncSourceQuery())
+		convey.So(queries[1].Query, convey.ShouldContainSubstring, "JSON_TABLE(path_ipm.iseq_composition_tmp")
+		convey.So(queries[1].Args, convey.ShouldContain, "b1-merged")
+		convey.So(queries[2].Query, convey.ShouldEqual, iseqProductMetricsLegacySyncSourceQuery())
+		convey.So(queries[3].Query, convey.ShouldEqual, seqProductIRODSLocationsSyncSourceQuery())
+		convey.So(queries[4].Query, convey.ShouldEqual, seqProductIRODSLocationsLegacySyncSourceQuery())
+	})
+}
+
+func TestE2WarmClientSyncPopulatesEveryReshapedMirror(t *testing.T) {
+	convey.Convey("E2.1: Given one real-schema source with changed rows for every reshaped table and warm sample/study state", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.July, 2, 9, 0, 0, 0, time.UTC)
+		seedRealMLWHSampleRow(t, source, 401001, "SQSCP", "E2-SAMPLE", "e2-sample-uuid", "e2-sample", "e2-ssid", "e2-supplier", "e2-accession", "e2-donor", 9606, "human", "E2 sample", base)
+		seedRealMLWHStudyRow(t, source, 401, "SQSCP", "E2-STUDY", "e2-study-uuid", "E2 Study", "E2-ACCESSION", base)
+		seedRealMLWHFlowcellRow(t, source, 40101, "E2-LIBRARY", 401001, 401, base.Add(time.Minute))
+		seedRealMLWHProductMetricRow(t, source, 401001, 40101, 64001, 1, 1, 1, 1, 1, base.Add(2*time.Minute))
+		seedRealMLWHIRODSLocationProductRow(t, source, 50101, "product-401001", "/e2", "64001.cram", base.Add(3*time.Minute))
+		seedRealMLWHIseqRunStatusRow(t, source, 2, 64001, 1, base.Add(4*time.Minute), 1)
+		seedRealMLWHIseqRunStatusDictRow(t, source, 1, "run complete", 1)
+		seedRealMLWHTrackingRow(t, source, "E2-SAMPLE", "E2-STUDY", base.Add(5*time.Minute))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		warmHighWater := base.Add(-24 * time.Hour)
+		for _, table := range []string{
+			syncTableSample,
+			syncTableStudy,
+			syncTableIseqFlowcell,
+			syncTableIseqProductMetrics,
+			syncTableSeqProductIRODSLocations,
+			syncTableSeqOpsTrackingPerSample,
+		} {
+			seedSyncState(t, cache.DB(), table, warmHighWater)
+		}
+		runStatusCursor := encodeAscendingIDResumeCursor(iseqRunStatusIDResumeMode, 1)
+		seedSyncStateWithCursor(t, cache.DB(), syncTableIseqRunStatus, time.Time{}, runStatusCursor)
+
+		client := &Client{
+			cache:           cache,
+			cacheReader:     cacheReadDB(cache),
+			syncSource:      sqliteJSONTableSource{db: source},
+			disableSyncLock: true,
+		}
+		reports, err := client.Sync(context.Background())
+
+		convey.So(err, convey.ShouldBeNil)
+		reportCounts := make(map[string]int, len(reports))
+		for _, report := range reports {
+			reportCounts[report.Table]++
+		}
+		expectedReportCounts := make(map[string]int, len(supportedSyncTables))
+		for _, table := range supportedSyncTables {
+			expectedReportCounts[table] = 1
+		}
+		convey.So(reportCounts, convey.ShouldResemble, expectedReportCounts)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror`), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_run_status_mirror`), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_ops_tracking_per_sample_mirror`), convey.ShouldEqual, 1)
+	})
+}
+
 func seedRealMLWHIseqRunStatusDictRow(t *testing.T, db *sql.DB, idRunStatusDict int64, description string, temporalIndex int) {
 	t.Helper()
 
@@ -47,6 +156,466 @@ func seedRealMLWHIseqRunStatusDictRow(t *testing.T, db *sql.DB, idRunStatusDict 
 	); err != nil {
 		t.Fatalf("seedRealMLWHIseqRunStatusDictRow: %v", err)
 	}
+}
+
+func assertWarmMirrorMatchesCold(t *testing.T, table string, seed func(*sql.DB), variant warmSyncVariant) {
+	t.Helper()
+
+	source := openRealMLWHSchemaSource(t)
+	seed(source)
+	coldCache := openSQLiteSyncTestCache(t)
+	defer func() { convey.So(coldCache.Close(), convey.ShouldBeNil) }()
+	warmCache := openSQLiteSyncTestCache(t)
+	defer func() { convey.So(warmCache.Close(), convey.ShouldBeNil) }()
+
+	coldSource := &recordingSource{source: sqliteJSONTableSource{db: source}}
+	coldClient := &Client{cache: coldCache, cacheReader: cacheReadDB(coldCache), syncSource: coldSource, disableSyncLock: true}
+	coldReports, err := syncSelectedTablesForTest(context.Background(), coldClient, table)
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(coldReports, convey.ShouldHaveLength, 1)
+
+	seedWarmParitySyncState(t, warmCache.DB(), table, variant)
+	warmSource := &recordingSource{source: sqliteJSONTableSource{db: source}}
+	warmClient := &Client{cache: warmCache, cacheReader: cacheReadDB(warmCache), syncSource: warmSource, disableSyncLock: true}
+	warmReports, err := syncSelectedTablesForTest(context.Background(), warmClient, table)
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(warmReports, convey.ShouldHaveLength, 1)
+	convey.So(orderedMirrorDump(t, warmCache.DB(), table), convey.ShouldResemble, orderedMirrorDump(t, coldCache.DB(), table))
+}
+
+func orderedMirrorDump(t *testing.T, db *sql.DB, table string) []byte {
+	t.Helper()
+
+	mirrorTable, orderBy := mirrorDumpQueryParts(t, table)
+	rows, err := db.Query(`SELECT * FROM ` + mirrorTable + ` ORDER BY ` + orderBy)
+	if err != nil {
+		t.Fatalf("ordered mirror dump for %s: %v", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("ordered mirror dump columns for %s: %v", table, err)
+	}
+	dumpRows := make([][]any, 0)
+	for rows.Next() {
+		values := make([]any, len(columns))
+		destinations := make([]any, len(columns))
+		for i := range values {
+			destinations[i] = &values[i]
+		}
+		if err = rows.Scan(destinations...); err != nil {
+			t.Fatalf("ordered mirror dump scan for %s: %v", table, err)
+		}
+		for i, value := range values {
+			if bytes, ok := value.([]byte); ok {
+				values[i] = string(bytes)
+			}
+		}
+		dumpRows = append(dumpRows, values)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatalf("ordered mirror dump rows for %s: %v", table, err)
+	}
+
+	dump, err := json.Marshal(struct {
+		Columns []string `json:"columns"`
+		Rows    [][]any  `json:"rows"`
+	}{Columns: columns, Rows: dumpRows})
+	if err != nil {
+		t.Fatalf("marshal ordered mirror dump for %s: %v", table, err)
+	}
+
+	return dump
+}
+
+func mirrorDumpQueryParts(t *testing.T, table string) (string, string) {
+	t.Helper()
+
+	switch table {
+	case syncTableSeqProductIRODSLocations:
+		return "seq_product_irods_locations_mirror", "id_seq_product_irods_locations_tmp, id_sample_tmp, id_study_lims, id_iseq_product"
+	case syncTableIseqProductMetrics:
+		return "iseq_product_metrics_mirror", "id_iseq_product"
+	default:
+		t.Fatalf("no ordered mirror dump definition for %q", table)
+
+		return "", ""
+	}
+}
+
+func seedWarmParitySyncState(t *testing.T, db *sql.DB, table string, variant warmSyncVariant) {
+	t.Helper()
+
+	highWater := time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC)
+	if variant == warmSyncFromCursor {
+		seedSyncStateWithCursor(t, db, table, highWater, formatSyncTime(highWater)+"\t0")
+
+		return
+	}
+
+	seedSyncState(t, db, table, highWater)
+}
+
+type recordedSourceQuery struct {
+	Query string
+	Args  []any
+}
+
+func filterCompositeRecoverySourceQueries(queries []recordedSourceQuery) []recordedSourceQuery {
+	filtered := make([]recordedSourceQuery, 0, len(queries))
+	for _, query := range queries {
+		if strings.Contains(query.Query, "JSON_TABLE(path_ipm.iseq_composition_tmp") {
+			filtered = append(filtered, query)
+		}
+	}
+
+	return filtered
+}
+
+func compositeRecoveryCandidateIDs(queries []recordedSourceQuery) map[string]bool {
+	candidateIDs := map[string]bool{}
+	for _, query := range queries {
+		for _, arg := range query.Args {
+			candidateIDs[fmt.Sprint(arg)] = true
+		}
+	}
+
+	return candidateIDs
+}
+
+func TestB1WarmIseqProductMetricsRecoversMergedAndFiltersDirectRows(t *testing.T) {
+	convey.Convey("B1.3: Given a merged product and direct products without an SQSCP own flowcell", t, func() {
+		sourceDB := openRealMLWHSchemaSource(t)
+		seedB1IseqProductMetricsParityFixture(t, sourceDB)
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedWarmParitySyncState(t, cache.DB(), syncTableIseqProductMetrics, warmSyncIncremental)
+		source := &recordingSource{source: sqliteJSONTableSource{db: sourceDB}}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		var position, tagIndex int
+		var idSampleTmp int64
+		var idStudyLims string
+		err = cache.DB().QueryRow(
+			`SELECT position, tag_index, id_sample_tmp, id_study_lims FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`,
+			"b1-merged",
+		).Scan(&position, &tagIndex, &idSampleTmp, &idStudyLims)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(position, convey.ShouldEqual, 0)
+		convey.So(tagIndex, convey.ShouldEqual, 0)
+		convey.So(idSampleTmp, convey.ShouldEqual, 301001)
+		convey.So(idStudyLims, convey.ShouldEqual, "b1-sqscp")
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`, "b1-null-flowcell"), convey.ShouldEqual, 0)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`, "product-301003"), convey.ShouldEqual, 0)
+	})
+}
+
+func seedB1IseqProductMetricsParityFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	base := time.Date(2026, time.July, 2, 9, 0, 0, 0, time.UTC)
+	seedRealMLWHStudyRow(t, db, 301, "SQSCP", "b1-sqscp", "b1-sqscp-uuid", "B1 SQSCP", "B1-SQSCP", base)
+	seedRealMLWHStudyRow(t, db, 302, "OTHER", "b1-other", "b1-other-uuid", "B1 Other", "B1-OTHER", base)
+	seedRealMLWHFlowcellRow(t, db, 30101, "B1-1", 301001, 301, base)
+	seedRealMLWHFlowcellRow(t, db, 30102, "B1-2", 301002, 301, base)
+	seedRealMLWHFlowcellRow(t, db, 30103, "B1-OTHER", 302001, 302, base)
+	seedRealMLWHProductMetricRow(t, db, 301001, 30101, 63001, 1, 1, 1, 1, 1, base.Add(time.Minute))
+	seedRealMLWHProductMetricRow(t, db, 301002, 30102, 63001, 2, 1, 1, 1, 1, base.Add(2*time.Minute))
+	seedRealMLWHProductMetricRow(t, db, 301003, 30103, 63002, 1, 1, 1, 1, 1, base.Add(3*time.Minute))
+	seedRealMLWHProductMetricRow(t, db, 301004, 30101, 63003, 1, 1, 1, 1, 1, base.Add(4*time.Minute))
+	_, err := db.Exec(
+		`UPDATE iseq_product_metrics SET id_iseq_product = ?, id_iseq_flowcell_tmp = NULL WHERE id_iseq_pr_metrics_tmp = ?`,
+		"b1-null-flowcell", 301004,
+	)
+	convey.So(err, convey.ShouldBeNil)
+	seedRealMLWHCompositeProductMetricRow(t, db, 301101, "b1-merged", `{"components":[{"id_run":63001,"position":1,"tag_index":1},{"id_run":63001,"position":2,"tag_index":1}]}`, base.Add(5*time.Minute))
+	seedRealMLWHCompositeProductMetricRow(t, db, 301102, "b1-no-spi", `{"components":[{"id_run":63001,"position":1,"tag_index":1},{"id_run":63001,"position":2,"tag_index":1}]}`, base.Add(6*time.Minute))
+	seedRealMLWHCompositeProductMetricRow(t, db, 301103, "b1-failing-having", `{"components":[{"id_run":63001,"position":1,"tag_index":1},{"id_run":63999,"position":9,"tag_index":9}]}`, base.Add(7*time.Minute))
+	seedRealMLWHIRODSLocationProductRow(t, db, 3011010, "b1-merged", "/b1", "merged.cram", base.Add(8*time.Minute))
+	seedRealMLWHIRODSLocationProductRow(t, db, 3011030, "b1-failing-having", "/b1", "failing.cram", base.Add(9*time.Minute))
+}
+
+func TestB2WarmIseqProductMetricsScopesCompositeRecoveryToChangedCandidates(t *testing.T) {
+	convey.Convey("B2.1: Given changed direct rows and multi-component candidates within one recovery chunk", t, func() {
+		withSyncCompositeRecoveryChunkSizeForTest(t, 4)
+		sourceDB := openRealMLWHSchemaSource(t)
+		seedB1IseqProductMetricsParityFixture(t, sourceDB)
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedWarmParitySyncState(t, cache.DB(), syncTableIseqProductMetrics, warmSyncIncremental)
+		source := &recordingSource{source: sqliteJSONTableSource{db: sourceDB}}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+
+		convey.So(err, convey.ShouldBeNil)
+		recoveryQueries := filterCompositeRecoverySourceQueries(source.Queries())
+		convey.So(recoveryQueries, convey.ShouldHaveLength, 1)
+		for _, query := range recoveryQueries {
+			convey.So(query.Query, convey.ShouldContainSubstring, "path_ipm.id_iseq_product IN ("+sqlPlaceholders(len(query.Args))+")")
+			convey.So(query.Query, convey.ShouldNotContainSubstring, "id_iseq_product IN (SELECT")
+		}
+		convey.So(compositeRecoveryCandidateIDs(recoveryQueries), convey.ShouldResemble, map[string]bool{
+			"b1-merged":         true,
+			"b1-no-spi":         true,
+			"b1-failing-having": true,
+		})
+	})
+}
+
+func TestB2WarmIseqProductMetricsChunksCompositeRecoveryCandidates(t *testing.T) {
+	convey.Convey("B2.2: Given more multi-component candidates than the forced recovery chunk size", t, func() {
+		const chunkSize = 2
+		withSyncCompositeRecoveryChunkSizeForTest(t, chunkSize)
+		sourceDB := openRealMLWHSchemaSource(t)
+		seedB1IseqProductMetricsParityFixture(t, sourceDB)
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedWarmParitySyncState(t, cache.DB(), syncTableIseqProductMetrics, warmSyncIncremental)
+		source := &recordingSource{source: sqliteJSONTableSource{db: sourceDB}}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+
+		convey.So(err, convey.ShouldBeNil)
+		recoveryQueries := filterCompositeRecoverySourceQueries(source.Queries())
+		convey.So(len(recoveryQueries), convey.ShouldBeGreaterThan, 1)
+		for _, query := range recoveryQueries {
+			convey.So(len(query.Args), convey.ShouldBeLessThanOrEqualTo, chunkSize)
+			convey.So(query.Query, convey.ShouldContainSubstring, "path_ipm.id_iseq_product IN ("+sqlPlaceholders(len(query.Args))+")")
+			convey.So(query.Query, convey.ShouldNotContainSubstring, "id_iseq_product IN (SELECT")
+		}
+		convey.So(compositeRecoveryCandidateIDs(recoveryQueries), convey.ShouldResemble, map[string]bool{
+			"b1-merged":         true,
+			"b1-no-spi":         true,
+			"b1-failing-having": true,
+		})
+	})
+}
+
+func TestB2WarmIseqProductMetricsSkipsCompositeRecoveryWithoutCandidates(t *testing.T) {
+	convey.Convey("B2.3: Given changed rows with no multi-component candidates", t, func() {
+		sourceDB := openRealMLWHSchemaSource(t)
+		seedB1IseqProductMetricsParityFixture(t, sourceDB)
+		removeB2CompositeCandidatesForTest(t, sourceDB)
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedWarmParitySyncState(t, cache.DB(), syncTableIseqProductMetrics, warmSyncIncremental)
+		source := &recordingSource{source: sqliteJSONTableSource{db: sourceDB}}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(filterCompositeRecoverySourceQueries(source.Queries()), convey.ShouldBeEmpty)
+	})
+}
+
+func removeB2CompositeCandidatesForTest(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	if _, err := db.Exec(`DELETE FROM iseq_product_metrics WHERE id_iseq_product IN (?, ?, ?)`, "b1-merged", "b1-no-spi", "b1-failing-having"); err != nil {
+		t.Fatalf("remove B2 composite candidates: %v", err)
+	}
+}
+
+func TestB1WarmIseqProductMetricsFallsBackWhenChangedRowQueryIsUnsupported(t *testing.T) {
+	convey.Convey("B1 fallback: Given the warm changed-row SELECT cannot read iseq_composition_tmp", t, func() {
+		sourceDB := openRealMLWHSchemaSource(t)
+		seedB1IseqProductMetricsParityFixture(t, sourceDB)
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedWarmParitySyncState(t, cache.DB(), syncTableIseqProductMetrics, warmSyncIncremental)
+		source := &recordingSource{
+			source: sqliteJSONTableSource{db: sourceDB},
+			queryError: func(query string) error {
+				if query == iseqProductMetricsSyncSourceQuery() {
+					return fmt.Errorf("no such column: ipm.iseq_composition_tmp")
+				}
+
+				return nil
+			},
+		}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`, "product-301001"), convey.ShouldEqual, 1)
+		queries := source.Queries()
+		convey.So(queries, convey.ShouldHaveLength, 2)
+		convey.So(queries[0].Query, convey.ShouldEqual, iseqProductMetricsSyncSourceQuery())
+		convey.So(queries[1].Query, convey.ShouldEqual, iseqProductMetricsLegacySyncSourceQuery())
+	})
+}
+
+func TestB1WarmIseqProductMetricsPropagatesUnrelatedChangedRowQueryErrors(t *testing.T) {
+	convey.Convey("B1 fallback: Given the warm changed-row SELECT fails for an unrelated reason", t, func() {
+		sourceDB := openRealMLWHSchemaSource(t)
+		seedB1IseqProductMetricsParityFixture(t, sourceDB)
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedWarmParitySyncState(t, cache.DB(), syncTableIseqProductMetrics, warmSyncIncremental)
+		source := &recordingSource{
+			source: sqliteJSONTableSource{db: sourceDB},
+			queryError: func(query string) error {
+				if query == iseqProductMetricsSyncSourceQuery() {
+					return fmt.Errorf("permission denied")
+				}
+
+				return nil
+			},
+		}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "permission denied")
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror`), convey.ShouldEqual, 0)
+		convey.So(source.Queries(), convey.ShouldHaveLength, 1)
+	})
+}
+
+func TestB1WarmIseqProductMetricsFallsBackWhenCompositeRecoveryIsUnsupported(t *testing.T) {
+	convey.Convey("B1 fallback: Given changed multi-component candidates and unsupported composite recovery", t, func() {
+		sourceDB := openRealMLWHSchemaSource(t)
+		seedB1IseqProductMetricsParityFixture(t, sourceDB)
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedWarmParitySyncState(t, cache.DB(), syncTableIseqProductMetrics, warmSyncIncremental)
+		source := &recordingSource{
+			source: sqliteJSONTableSource{db: sourceDB},
+			queryError: func(query string) error {
+				if strings.Contains(query, "JSON_TABLE(path_ipm.iseq_composition_tmp") {
+					return fmt.Errorf("JSON_TABLE is unsupported")
+				}
+
+				return nil
+			},
+		}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`, "product-301001"), convey.ShouldEqual, 1)
+		queries := source.Queries()
+		convey.So(queries, convey.ShouldHaveLength, 3)
+		convey.So(queries[0].Query, convey.ShouldEqual, iseqProductMetricsSyncSourceQuery())
+		convey.So(queries[1].Query, convey.ShouldContainSubstring, "JSON_TABLE(path_ipm.iseq_composition_tmp")
+		convey.So(queries[2].Query, convey.ShouldEqual, iseqProductMetricsLegacySyncSourceQuery())
+	})
+}
+
+func TestA1WarmSeqProductIRODSLocationsKeepsExpansionPlatformPerSourceRow(t *testing.T) {
+	convey.Convey("A1.3: Given a multi-row Illumina expansion and a sibling changed row with different source platforms", t, func() {
+		assertWarmMirrorMatchesCold(t, syncTableSeqProductIRODSLocations, func(db *sql.DB) {
+			seedA1IRODSParityFixture(t, db)
+		}, warmSyncIncremental)
+
+		source := openRealMLWHSchemaSource(t)
+		seedA1IRODSParityFixture(t, source)
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedWarmParitySyncState(t, cache.DB(), syncTableSeqProductIRODSLocations, warmSyncIncremental)
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`, "a1-illumina-merged"), convey.ShouldEqual, 2)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ? AND platform = ?`, "a1-illumina-merged", "illumina-merged"), convey.ShouldEqual, 2)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ? AND platform = ?`, "product-201003", "illumina-single"), convey.ShouldEqual, 1)
+	})
+}
+
+func seedA1IRODSParityFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	base := time.Date(2026, time.July, 2, 9, 0, 0, 0, time.UTC)
+	created := base.Add(12 * time.Hour)
+
+	seedRealMLWHStudyRow(t, db, 201, "SQSCP", "a1-study-illumina", "a1-study-illumina-uuid", "A1 Illumina", "A1-ILL", base)
+	seedRealMLWHFlowcellRow(t, db, 20101, "A1-IL-1", 201001, 201, base)
+	seedRealMLWHFlowcellRow(t, db, 20102, "A1-IL-2", 201002, 201, base)
+	seedRealMLWHFlowcellRow(t, db, 20103, "A1-IL-3", 201003, 201, base)
+	seedRealMLWHProductMetricRow(t, db, 201001, 20101, 62001, 1, 1, 1, 1, 1, base)
+	seedRealMLWHProductMetricRow(t, db, 201002, 20102, 62001, 2, 1, 1, 1, 1, base)
+	seedRealMLWHCompositeProductMetricRow(t, db, 201099, "a1-illumina-merged", `{"components":[{"id_run":62001,"position":1,"tag_index":1},{"id_run":62001,"position":2,"tag_index":1}]}`, base)
+	seedRealMLWHProductMetricRow(t, db, 201003, 20103, 62002, 1, 1, 1, 1, 1, base)
+	seedRealMLWHIRODSLocationPlatformRow(t, db, 30101, "a1-illumina-merged", "illumina-merged", "/a1/illumina/merged", "merged.cram", created, base.Add(time.Minute))
+	seedRealMLWHIRODSLocationPlatformRow(t, db, 30102, "product-201003", "illumina-single", "/a1/illumina/single", "single.cram", created, base.Add(2*time.Minute))
+
+	seedRealMLWHStudyRow(t, db, 202, "SQSCP", "a1-study-pacbio", "a1-study-pacbio-uuid", "A1 PacBio", "A1-PB", base)
+	seedRealMLWHPacBioRunRow(t, db, 20201, 202001, 202)
+	seedRealMLWHPacBioProductMetricRow(t, db, 202001, 20201, "a1-pacbio", base)
+	seedRealMLWHIRODSLocationPlatformRow(t, db, 30201, "a1-pacbio", "pacbio", "/a1/pacbio", "pacbio.bam", created, base.Add(3*time.Minute))
+
+	seedRealMLWHStudyRow(t, db, 203, "SQSCP", "a1-study-elembio", "a1-study-elembio-uuid", "A1 Elembio", "A1-EL", base)
+	seedRealMLWHEseqFlowcellRow(t, db, 20301, 203001, 203)
+	seedRealMLWHEseqProductMetricRow(t, db, "a1-elembio", 20301, 63001, sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{Int64: 1, Valid: true}, base)
+	seedRealMLWHIRODSLocationPlatformRow(t, db, 30301, "a1-elembio", "elembio", "/a1/elembio", "elembio.cram", created, base.Add(4*time.Minute))
+
+	seedRealMLWHStudyRow(t, db, 204, "SQSCP", "a1-study-ultimagen", "a1-study-ultimagen-uuid", "A1 Ultimagen", "A1-UL", base)
+	seedRealMLWHUseqWaferRow(t, db, 20401, 204001, 204)
+	seedRealMLWHUseqProductMetricRow(t, db, "a1-ultimagen", 20401, 64001, base)
+	seedRealMLWHIRODSLocationPlatformRow(t, db, 30401, "a1-ultimagen", "ultimagen", "/a1/ultimagen", "ultimagen.cram", created, base.Add(5*time.Minute))
+
+	seedRealMLWHStudyRow(t, db, 205, "SQSCP", "a1-study-ont", "a1-study-ont-uuid", "A1 ONT", "A1-ONT", base)
+	seedRealMLWHOseqFlowcellRow(t, db, 20501, 205001, 205)
+	seedRealMLWHIRODSLocationPlatformRow(t, db, 30501, "20501", "ont", "/a1/ont", "ont.fastq.gz", created, base.Add(6*time.Minute))
+}
+
+func TestA1WarmSeqProductIRODSLocationsIssuesOneChangedFirstQuery(t *testing.T) {
+	convey.Convey("A1.4: Given changed and unchanged Illumina products in one source fixture", t, func() {
+		sourceDB := openRealMLWHSchemaSource(t)
+		seedA1IRODSQueryShapeFixture(t, sourceDB)
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedWarmParitySyncState(t, cache.DB(), syncTableSeqProductIRODSLocations, warmSyncIncremental)
+		source := &recordingSource{source: sqliteJSONTableSource{db: sourceDB}}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+		queries := source.Queries()
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(queries, convey.ShouldHaveLength, 1)
+		query := queries[0].Query
+		convey.So(query, convey.ShouldContainSubstring, `WITH changed_spi AS (SELECT spi.* FROM seq_product_irods_locations spi WHERE spi.last_changed >= ?)`)
+		convey.So(query, convey.ShouldContainSubstring, `FROM changed_spi spi LEFT JOIN`)
+		convey.So(query, convey.ShouldContainSubstring, `path_ipm.id_iseq_product IN (SELECT id_product FROM changed_spi)`)
+		convey.So(query, convey.ShouldContainSubstring, `pbm.id_pac_bio_product IN (SELECT id_product FROM changed_spi)`)
+		convey.So(query, convey.ShouldContainSubstring, `epm.id_eseq_product IN (SELECT id_product FROM changed_spi)`)
+		convey.So(query, convey.ShouldContainSubstring, `upm.id_useq_product IN (SELECT id_product FROM changed_spi)`)
+		convey.So(query, convey.ShouldContainSubstring, `CAST(ofc.id_oseq_flowcell_tmp AS CHAR) IN (SELECT id_product FROM changed_spi)`)
+		convey.So(strings.Count(query, `IN (SELECT id_product FROM changed_spi)`), convey.ShouldEqual, 5)
+		convey.So(strings.Count(query, "?"), convey.ShouldEqual, 1)
+		convey.So(queries[0].Args, convey.ShouldHaveLength, 1)
+	})
+}
+
+func seedA1IRODSQueryShapeFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	changed := time.Date(2026, time.July, 2, 10, 0, 0, 0, time.UTC)
+	unchanged := time.Date(2026, time.June, 30, 10, 0, 0, 0, time.UTC)
+	seedRealMLWHStudyRow(t, db, 211, "SQSCP", "a1-study-shape", "a1-study-shape-uuid", "A1 Shape", "A1-SHAPE", unchanged)
+	seedRealMLWHFlowcellRow(t, db, 21101, "A1-SHAPE-CHANGED", 211001, 211, changed)
+	seedRealMLWHFlowcellRow(t, db, 21102, "A1-SHAPE-UNCHANGED", 211002, 211, unchanged)
+	seedRealMLWHProductMetricRow(t, db, 211001, 21101, 62101, 1, 1, 1, 1, 1, changed)
+	seedRealMLWHProductMetricRow(t, db, 211002, 21102, 62101, 2, 1, 1, 1, 1, unchanged)
+	seedRealMLWHIRODSLocationPlatformRow(t, db, 31101, "product-211001", "illumina", "/a1/shape", "changed.cram", changed, changed)
+	seedRealMLWHIRODSLocationPlatformRow(t, db, 31102, "product-211002", "illumina", "/a1/shape", "unchanged.cram", unchanged, unchanged)
 }
 
 func TestClientSyncSeqProductIRODSLocationsRecoversONTIdentityWithNullA4Fields(t *testing.T) {
@@ -121,6 +690,27 @@ func seedRealMLWHTrackingRow(t *testing.T, db *sql.DB, idSampleLims, studyID str
 	); err != nil {
 		t.Fatalf("seedRealMLWHTrackingRow: %v", err)
 	}
+}
+
+type recordingSource struct {
+	source     sqliteJSONTableSource
+	queryError func(string) error
+	queries    []recordedSourceQuery
+}
+
+func (source *recordingSource) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	source.queries = append(source.queries, recordedSourceQuery{Query: query, Args: append([]any(nil), args...)})
+	if source.queryError != nil {
+		if err := source.queryError(query); err != nil {
+			return nil, err
+		}
+	}
+
+	return source.source.QueryContext(ctx, query, args...)
+}
+
+func (source *recordingSource) Queries() []recordedSourceQuery {
+	return append([]recordedSourceQuery(nil), source.queries...)
 }
 
 type irodsLocationMirrorRow struct {
@@ -548,6 +1138,38 @@ func TestClientSyncSeqProductIRODSLocationsRealSourceExpandsCompositeProducts(t 
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ? AND id_sample_tmp = ? AND id_study_lims = ?`, "composite-product", 9419243, "7607"), convey.ShouldEqual, 1)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ? AND id_sample_tmp = ? AND id_study_lims = ?`, "composite-product", 9419244, "7607"), convey.ShouldEqual, 1)
 		convey.So(locationMirrorFileForTest(t, cache.DB(), "composite-product"), convey.ShouldEqual, "48522#1.cram")
+	})
+}
+
+func TestB1WarmIseqProductMetricsIncrementalMatchesCold(t *testing.T) {
+	convey.Convey("B1.1: Given direct, filtered, merged, and unrecoverable changed product metrics", t, func() {
+		assertWarmMirrorMatchesCold(t, syncTableIseqProductMetrics, func(db *sql.DB) {
+			seedB1IseqProductMetricsParityFixture(t, db)
+		}, warmSyncIncremental)
+	})
+}
+
+func TestB1WarmIseqProductMetricsFromCursorMatchesCold(t *testing.T) {
+	convey.Convey("B1.2: Given the mixed changed product-metrics fixture and a resume cursor", t, func() {
+		assertWarmMirrorMatchesCold(t, syncTableIseqProductMetrics, func(db *sql.DB) {
+			seedB1IseqProductMetricsParityFixture(t, db)
+		}, warmSyncFromCursor)
+	})
+}
+
+func TestA1WarmSeqProductIRODSLocationsIncrementalMatchesCold(t *testing.T) {
+	convey.Convey("A1.1: Given every recoverable iRODS platform branch after an early watermark", t, func() {
+		assertWarmMirrorMatchesCold(t, syncTableSeqProductIRODSLocations, func(db *sql.DB) {
+			seedA1IRODSParityFixture(t, db)
+		}, warmSyncIncremental)
+	})
+}
+
+func TestA1WarmSeqProductIRODSLocationsFromCursorMatchesCold(t *testing.T) {
+	convey.Convey("A1.2: Given every recoverable iRODS platform branch and a forced warm resume cursor", t, func() {
+		assertWarmMirrorMatchesCold(t, syncTableSeqProductIRODSLocations, func(db *sql.DB) {
+			seedA1IRODSParityFixture(t, db)
+		}, warmSyncFromCursor)
 	})
 }
 
@@ -1141,6 +1763,7 @@ func rewriteJSONTableQueryForSQLite(query string) string {
 	// SQLite has no schemas, so the schema-qualified tracking table name resolves
 	// to the unqualified fixture table.
 	query = strings.ReplaceAll(query, "mlwh_reporting.seq_ops_tracking_per_sample", "seq_ops_tracking_per_sample")
+	query = strings.ReplaceAll(query, `JSON_LENGTH(COALESCE(ipm.iseq_composition_tmp, '{"components":[]}'), '$.components')`, `json_array_length(COALESCE(ipm.iseq_composition_tmp, '{"components":[]}'), '$.components')`)
 	query = strings.Replace(query,
 		`JSON_TABLE(COALESCE(ipm.iseq_composition_tmp, '{"components":[]}'), '$.components[1]' COLUMNS(component_run INT PATH '$.id_run')) direct_component`,
 		`json_each(COALESCE(ipm.iseq_composition_tmp, '{"components":[]}'), '$.components[1]') direct_component`,
