@@ -3339,6 +3339,50 @@ type a4IRODSExportFields struct {
 	merged        int64
 }
 
+type recordingSQLiteStmt struct {
+	driver.Stmt
+	query    string
+	observer *sqliteSyncSQLObserver
+}
+
+func (s *recordingSQLiteStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+	execer, ok := s.Stmt.(driver.StmtExecContext)
+	if !ok {
+		return nil, driver.ErrSkip
+	}
+	if s.observer != nil {
+		if s.observer.RejectWriteDuringTrackingRead() {
+			return nil, errors.New("recording sqlite: cache write attempted before tracking diff-read was closed")
+		}
+		s.observer.Record(s.query, args)
+	}
+
+	return execer.ExecContext(ctx, args)
+}
+
+func (c *recordingSQLiteConn) Prepare(query string) (driver.Stmt, error) {
+	stmt, err := c.Conn.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+
+	return &recordingSQLiteStmt{Stmt: stmt, query: query, observer: c.observer}, nil
+}
+
+func (c *recordingSQLiteConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	preparer, ok := c.Conn.(driver.ConnPrepareContext)
+	if !ok {
+		return c.Prepare(query)
+	}
+
+	stmt, err := preparer.PrepareContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	return &recordingSQLiteStmt{Stmt: stmt, query: query, observer: c.observer}, nil
+}
+
 func TestCreateSampleMirrorSecondaryIndexesMySQLUsesSingleAlter(t *testing.T) {
 	convey.Convey("Given all sample_mirror secondary indexes are missing for a MySQL cache", t, func() {
 		statement := buildMySQLCreateSampleMirrorSecondaryIndexesStatement(sampleMirrorSecondaryIndexes)

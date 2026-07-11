@@ -1264,18 +1264,31 @@ func insertSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, rows []s
 	})
 }
 
-func updateSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, dialect string, rows []seqOpsTrackingPerSampleSyncRow) error {
+func updateSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, dialect string, rows []seqOpsTrackingPerSampleSyncRow) (err error) {
+	if len(rows) == 0 {
+		return nil
+	}
+
 	assignments := make([]string, 0, len(seqOpsTrackingPerSampleMirrorColumns)-1)
 	for _, column := range seqOpsTrackingPerSampleMirrorColumns[1:] {
 		assignments = append(assignments, column+" = ?")
 	}
 	query := `UPDATE seq_ops_tracking_per_sample_mirror SET ` + strings.Join(assignments, ", ") +
 		` WHERE id_sample_lims COLLATE ` + trackingBinaryCollation(dialect) + ` = ?`
+	stmt, err := tx.PrepareContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("mlwh: prepare seq_ops_tracking_per_sample mirror row update: %w", err)
+	}
+	defer func() {
+		if closeErr := stmt.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("mlwh: close seq_ops_tracking_per_sample mirror row update: %w", closeErr)
+		}
+	}()
 
 	for _, row := range rows {
 		args := seqOpsTrackingPerSampleMirrorRowArgs(row)
-		if _, err := tx.ExecContext(ctx, query, append(args[1:], row.IDSampleLims)...); err != nil {
-			return fmt.Errorf("mlwh: update seq_ops_tracking_per_sample mirror row: %w", err)
+		if _, execErr := stmt.ExecContext(ctx, append(args[1:], row.IDSampleLims)...); execErr != nil {
+			return fmt.Errorf("mlwh: update seq_ops_tracking_per_sample mirror row: %w", execErr)
 		}
 	}
 
