@@ -1295,11 +1295,25 @@ func updateSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, dialect 
 	return nil
 }
 
-func deleteSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, dialect string, ids []string) error {
+func deleteSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, dialect string, ids []string) (err error) {
+	if len(ids) == 0 {
+		return nil
+	}
+
 	query := `DELETE FROM seq_ops_tracking_per_sample_mirror WHERE id_sample_lims = ? AND id_sample_lims COLLATE ` + trackingBinaryCollation(dialect) + ` = ?`
+	stmt, err := tx.PrepareContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("mlwh: prepare seq_ops_tracking_per_sample mirror row delete: %w", err)
+	}
+	defer func() {
+		if closeErr := stmt.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("mlwh: close seq_ops_tracking_per_sample mirror row delete: %w", closeErr)
+		}
+	}()
+
 	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx, query, id, id); err != nil {
-			return fmt.Errorf("mlwh: delete seq_ops_tracking_per_sample mirror row: %w", err)
+		if _, execErr := stmt.ExecContext(ctx, id, id); execErr != nil {
+			return fmt.Errorf("mlwh: delete seq_ops_tracking_per_sample mirror row: %w", execErr)
 		}
 	}
 

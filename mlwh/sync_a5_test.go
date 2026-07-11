@@ -29,11 +29,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/smartystreets/goconvey/convey"
 )
 
@@ -181,6 +183,30 @@ func TestClientSyncPacBioRunWellMetricsWholesaleReplace(t *testing.T) {
 			convey.So(runStartCol, convey.ShouldEqual, "<null>")
 			convey.So(runComp.String, convey.ShouldEqual, formatSyncTime(runComplete))
 			convey.So(lastUpdated, convey.ShouldEqual, formatSyncTime(time.Time{}))
+		})
+	})
+}
+
+func TestClientSyncSeqOpsTrackingPerSampleDeletesReusePreparedStatement(t *testing.T) {
+	convey.Convey("Given multiple tracking rows to delete", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		query := `DELETE FROM seq_ops_tracking_per_sample_mirror WHERE id_sample_lims = ? AND id_sample_lims COLLATE BINARY = ?`
+		mock.ExpectBegin()
+		prepared := mock.ExpectPrepare(regexp.QuoteMeta(query))
+		prepared.ExpectExec().WithArgs("CaseProbe", "CaseProbe").WillReturnResult(sqlmock.NewResult(0, 1))
+		prepared.ExpectExec().WithArgs("caseprobe", "caseprobe").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+
+		tx, err := db.BeginTx(context.Background(), nil)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(deleteSeqOpsTrackingPerSampleRows(context.Background(), tx, "sqlite", []string{"CaseProbe", "caseprobe"}), convey.ShouldBeNil)
+		convey.So(tx.Commit(), convey.ShouldBeNil)
+
+		convey.Convey("when the deletion is applied, then both exact-match writes reuse one prepared statement", func() {
+			convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
 		})
 	})
 }
