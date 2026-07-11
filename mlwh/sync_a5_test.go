@@ -39,11 +39,10 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
-// TestClientSyncPacBioProductMetricsIncrementalFollowsLastChanged covers the
-// per-platform product-metrics incremental strategy (the iseq_product_metrics
-// last_changed precedent): a NULL qc is preserved as pending, and the sync_state
-// high_water tracks the latest source last_changed.
-func TestClientSyncPacBioProductMetricsIncrementalFollowsLastChanged(t *testing.T) {
+// TestClientSyncPacBioProductMetricsSnapshotPreservesNullableQC covers the
+// authoritative PacBio snapshot: a NULL qc is preserved as pending, and the
+// sync_state high_water tracks the latest source last_changed.
+func TestClientSyncPacBioProductMetricsSnapshotPreservesNullableQC(t *testing.T) {
 	convey.Convey("A5: Given PacBio product-metrics source rows with a NULL qc and ascending last_changed", t, func() {
 		source := openRealMLWHSchemaSource(t)
 		base := time.Date(2026, time.June, 13, 9, 0, 0, 0, time.UTC)
@@ -78,6 +77,60 @@ func TestClientSyncPacBioProductMetricsIncrementalFollowsLastChanged(t *testing.
 
 			convey.So(readSyncHighWater(t, cache.DB(), syncTablePacBioProductMetrics), convey.ShouldEqual, latest)
 		})
+	})
+}
+
+func TestClientSyncPacBioProductMetricsWarmRemovesJoinIneligibleProductAndIRODS(t *testing.T) {
+	convey.Convey("Given a cold-synced PacBio product and iRODS location", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.July, 11, 8, 0, 0, 0, time.UTC)
+		const productID = "pacbio-dependency-product"
+
+		seedRealMLWHStudyRow(t, source, 801, "SQSCP", "study-801", "study-uuid-801", "Study 801", "study-accession-801", base)
+		seedRealMLWHPacBioRunRow(t, source, 802, 803, 801)
+		seedRealMLWHPacBioProductMetricRow(t, source, 804, 802, productID, base.Add(time.Minute))
+		seedRealMLWHIRODSLocationPlatformRow(t, source, 805, productID, "PacBio", "/seq/pacbio", "run/product.bam", base.Add(2*time.Minute), base.Add(2*time.Minute))
+		seedRealMLWHPacBioProductMetricRow(t, source, 806, 802, "pacbio-newer-product", base.Add(9*time.Minute))
+		seedRealMLWHIRODSLocationPlatformRow(t, source, 807, "pacbio-newer-product", "PacBio", "/seq/pacbio", "run/newer-product.bam", base.Add(10*time.Minute), base.Add(10*time.Minute))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTablePacBioProductMetrics, syncTableSeqProductIRODSLocations)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM pac_bio_product_metrics_mirror WHERE id_pac_bio_product = ?`, productID), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`, productID), convey.ShouldEqual, 1)
+
+		_, err = source.Exec(`UPDATE pac_bio_product_metrics SET id_pac_bio_tmp = NULL WHERE id_pac_bio_product = ?`, productID)
+		convey.So(err, convey.ShouldBeNil)
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTablePacBioProductMetrics, syncTableSeqProductIRODSLocations)
+
+		convey.Convey("when only the PacBio linkage becomes ineligible and warm sync runs, then the product and dependent iRODS row disappear", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 2)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM pac_bio_product_metrics_mirror WHERE id_pac_bio_product = ?`, productID), convey.ShouldEqual, 0)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`, productID), convey.ShouldEqual, 0)
+		})
+
+		_, err = source.Exec(`UPDATE pac_bio_product_metrics SET id_pac_bio_tmp = ? WHERE id_pac_bio_product = ?`, 802, productID)
+		convey.So(err, convey.ShouldBeNil)
+
+		_, err = syncSelectedTablesForTest(context.Background(), client, syncTablePacBioProductMetrics, syncTableSeqProductIRODSLocations)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM pac_bio_product_metrics_mirror WHERE id_pac_bio_product = ? AND id_sample_tmp = ? AND id_study_lims = ?`, productID, 803, "study-801"), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ? AND id_sample_tmp = ? AND id_study_lims = ?`, productID, 803, "study-801"), convey.ShouldEqual, 1)
+
+		seedRealMLWHStudyRow(t, source, 811, "SQSCP", "study-811", "study-uuid-811", "Study 811", "study-accession-811", base)
+		seedRealMLWHPacBioRunRow(t, source, 812, 813, 811)
+		_, err = source.Exec(`UPDATE pac_bio_product_metrics SET id_pac_bio_tmp = ? WHERE id_pac_bio_product = ?`, 812, productID)
+		convey.So(err, convey.ShouldBeNil)
+
+		_, err = syncSelectedTablesForTest(context.Background(), client, syncTablePacBioProductMetrics, syncTableSeqProductIRODSLocations)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM pac_bio_product_metrics_mirror WHERE id_pac_bio_product = ? AND id_sample_tmp = ? AND id_study_lims = ?`, productID, 813, "study-811"), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ? AND id_sample_tmp = ? AND id_study_lims = ?`, productID, 813, "study-811"), convey.ShouldEqual, 1)
 	})
 }
 

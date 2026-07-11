@@ -40,9 +40,10 @@ import (
 // table (added in A4) its sync strategy (A5), reusing the established sync
 // infrastructure:
 //
-//   - Per-platform *_product_metrics tables sync incrementally on the source
-//     last_changed watermark, exactly like iseq_product_metrics, with
-//     NULL-preserving QC.
+//   - Elembio and Ultimagen *_product_metrics tables sync incrementally on the
+//     source last_changed watermark, with NULL-preserving QC. PacBio is small
+//     enough for an authoritative snapshot/diff, which also detects rows that
+//     disappear when their run/study linkage becomes ineligible.
 //   - iseq_run_status syncs in ascending-id mode on its id_run_status primary
 //     key (no last_changed), like the seq_product_irods_locations cold path;
 //     high_water stays empty for ascending-id tables.
@@ -55,13 +56,12 @@ import (
 //     is the refresh time and last_run the sync time.
 
 // ---------------------------------------------------------------------------
-// Per-platform product-metrics incremental syncs (last_changed precedent).
+// Per-platform product-metrics syncs.
 // ---------------------------------------------------------------------------
 
-// productMetricsMirrorSpec describes one per-platform product-metrics mirror so
-// the shared incremental sync can read, scan and upsert it without per-table
-// duplication. The source query recovers id_sample_tmp/id_study_lims through the
-// platform's linkage table and projects the QC columns plus last_changed.
+// productMetricsMirrorSpec describes one per-platform product-metrics mirror.
+// The source query recovers id_sample_tmp/id_study_lims through the platform's
+// linkage table and projects the QC columns plus last_changed.
 type productMetricsMirrorSpec struct {
 	syncTable            string
 	mirrorTable          string
@@ -132,9 +132,8 @@ func pacBioProductMetricsSpec() productMetricsMirrorSpec {
 		keyColumn:     "id_pac_bio_product",
 		mirrorColumns: pacBioProductMetricsMirrorColumns,
 		qcColumns:     1,
-		sourceQuery: func(state syncStateRecord) (string, []any) {
-			return `SELECT pbm.id_pac_bio_product, pbm.id_pac_bio_rw_metrics_tmp, pbr.id_sample_tmp, study.id_study_lims, pbm.qc, pbm.last_changed FROM pac_bio_product_metrics pbm INNER JOIN pac_bio_run pbr ON pbr.id_pac_bio_tmp = pbm.id_pac_bio_tmp INNER JOIN study ON study.id_study_tmp = pbr.id_study_tmp AND study.id_lims = 'SQSCP' WHERE pbm.last_changed >= ? ORDER BY pbm.last_changed, pbm.id_pac_bio_pr_metrics_tmp`,
-				[]any{formatSyncTime(state.HighWater)}
+		sourceQuery: func(_ syncStateRecord) (string, []any) {
+			return `SELECT pbm.id_pac_bio_product, pbm.id_pac_bio_rw_metrics_tmp, pbr.id_sample_tmp, study.id_study_lims, pbm.qc, pbm.last_changed FROM pac_bio_product_metrics pbm INNER JOIN pac_bio_run pbr ON pbr.id_pac_bio_tmp = pbm.id_pac_bio_tmp INNER JOIN study ON study.id_study_tmp = pbr.id_study_tmp AND study.id_lims = 'SQSCP' ORDER BY pbm.last_changed, pbm.id_pac_bio_pr_metrics_tmp`, nil
 		},
 	}
 }
@@ -191,7 +190,148 @@ type productMetricsMirrorSyncRow struct {
 }
 
 func syncPacBioProductMetricsTable(ctx context.Context, cache Cache, source Querier, state syncStateRecord) (SyncReport, bool, error) {
-	return syncProductMetricsMirrorTable(ctx, cache, source, state, pacBioProductMetricsSpec())
+	spec := pacBioProductMetricsSpec()
+	snapshot, highWater, err := readProductMetricsMirrorSnapshot(ctx, source, state, spec)
+	if err != nil {
+		return SyncReport{}, false, err
+	}
+
+	report := SyncReport{Table: spec.syncTable, HighWater: highWater}
+	result, err := writePacBioProductMetricsMirrorDiff(ctx, cache, spec, snapshot, highWater)
+	if err != nil {
+		return report, false, err
+	}
+	report.Inserted = result.Inserted
+	report.Updated = result.Updated
+
+	return report, len(snapshot) > 0, nil
+}
+
+func readProductMetricsMirrorSnapshot(ctx context.Context, source Querier, state syncStateRecord, spec productMetricsMirrorSpec) ([]productMetricsMirrorSyncRow, time.Time, error) {
+	query, args := spec.sourceQuery(state)
+	rows, err := source.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, state.HighWater, fmt.Errorf("mlwh: query %s sync source: %w", spec.syncTable, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	highWater := state.HighWater
+	snapshot := []productMetricsMirrorSyncRow{}
+	for rows.Next() {
+		row, scanErr := scanProductMetricsMirrorSyncRow(rows, spec)
+		if scanErr != nil {
+			return nil, highWater, scanErr
+		}
+		if row.LastUpdated.After(highWater) {
+			highWater = row.LastUpdated
+		}
+		snapshot = append(snapshot, row)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, highWater, fmt.Errorf("mlwh: read %s sync source: %w", spec.syncTable, err)
+	}
+
+	return dedupeProductMetricsMirrorBatch(snapshot), highWater, nil
+}
+
+type productMetricsMirrorDiffPlan struct {
+	inserts []productMetricsMirrorSyncRow
+	updates []productMetricsMirrorSyncRow
+	deletes []string
+}
+
+func writePacBioProductMetricsMirrorDiff(ctx context.Context, cache Cache, spec productMetricsMirrorSpec, snapshot []productMetricsMirrorSyncRow, highWater time.Time) (syncBatchResult, error) {
+	var result syncBatchResult
+	err := withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
+		plan, err := planProductMetricsMirrorDiff(ctx, tx, spec, snapshot)
+		if err != nil {
+			return err
+		}
+		if err = applyPacBioProductMetricsMirrorDiff(ctx, tx, cache.Dialect(), spec, plan); err != nil {
+			return err
+		}
+
+		result = syncBatchResult{Inserted: len(plan.inserts), Updated: len(plan.updates)}
+
+		return writeSyncStateTx(ctx, tx, cache.Dialect(), spec.syncTable, highWater, nil, false)
+	})
+
+	return result, err
+}
+
+func planProductMetricsMirrorDiff(ctx context.Context, tx *sql.Tx, spec productMetricsMirrorSpec, snapshot []productMetricsMirrorSyncRow) (productMetricsMirrorDiffPlan, error) {
+	current := make(map[string]productMetricsMirrorSyncRow)
+	query := `SELECT ` + strings.Join(spec.mirrorColumns, ", ") + ` FROM ` + spec.mirrorTable
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return productMetricsMirrorDiffPlan{}, fmt.Errorf("mlwh: query %s for diff: %w", spec.mirrorTable, err)
+	}
+	for rows.Next() {
+		row, scanErr := scanProductMetricsMirrorSyncRow(rows, spec)
+		if scanErr != nil {
+			_ = rows.Close()
+
+			return productMetricsMirrorDiffPlan{}, scanErr
+		}
+		current[row.ProductID] = row
+	}
+	if err = rows.Err(); err != nil {
+		_ = rows.Close()
+
+		return productMetricsMirrorDiffPlan{}, fmt.Errorf("mlwh: read %s for diff: %w", spec.mirrorTable, err)
+	}
+	if err = rows.Close(); err != nil {
+		return productMetricsMirrorDiffPlan{}, fmt.Errorf("mlwh: close %s diff read: %w", spec.mirrorTable, err)
+	}
+
+	plan := productMetricsMirrorDiffPlan{}
+	for _, row := range snapshot {
+		old, ok := current[row.ProductID]
+		if !ok {
+			plan.inserts = append(plan.inserts, row)
+		} else if old != row {
+			plan.updates = append(plan.updates, row)
+		}
+		delete(current, row.ProductID)
+	}
+	for id := range current {
+		plan.deletes = append(plan.deletes, id)
+	}
+	slices.Sort(plan.deletes)
+
+	return plan, nil
+}
+
+func applyPacBioProductMetricsMirrorDiff(ctx context.Context, tx *sql.Tx, dialect string, spec productMetricsMirrorSpec, plan productMetricsMirrorDiffPlan) error {
+	changed := append(append([]productMetricsMirrorSyncRow{}, plan.inserts...), plan.updates...)
+	if err := upsertProductMetricsMirrorBatch(ctx, tx, dialect, spec, changed); err != nil {
+		return err
+	}
+	deleteKeys := make([][]any, 0, len(plan.deletes))
+	for _, id := range plan.deletes {
+		deleteKeys = append(deleteKeys, []any{id})
+	}
+	if err := deleteExistingKeys(ctx, tx, spec.mirrorTable, []string{spec.keyColumn}, deleteKeys); err != nil {
+		return err
+	}
+
+	return deleteIneligiblePacBioIRODSRows(ctx, tx, plan.deletes)
+}
+
+func deleteIneligiblePacBioIRODSRows(ctx context.Context, tx *sql.Tx, productIDs []string) error {
+	return forEachRowChunk(productIDs, syncStatementRowLimit(1), func(chunk []string) error {
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		query := `DELETE FROM seq_product_irods_locations_mirror AS spi WHERE spi.id_iseq_product IN (` + sqlPlaceholders(len(chunk)) + `)` +
+			` AND ` + normalizedPacBioPlatformSQL("spi.platform")
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+			return fmt.Errorf("mlwh: delete ineligible PacBio iRODS rows: %w", err)
+		}
+
+		return nil
+	})
 }
 
 func syncEseqProductMetricsTable(ctx context.Context, cache Cache, source Querier, state syncStateRecord) (SyncReport, bool, error) {

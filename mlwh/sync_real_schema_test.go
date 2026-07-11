@@ -592,7 +592,7 @@ func TestA1WarmSeqProductIRODSLocationsIssuesOneChangedFirstQuery(t *testing.T) 
 		convey.So(queries, convey.ShouldHaveLength, 1)
 		query := queries[0].Query
 		convey.So(query, convey.ShouldContainSubstring, `WITH changed_spi AS (SELECT spi.* FROM seq_product_irods_locations spi WHERE spi.last_changed >= ?)`)
-		convey.So(query, convey.ShouldContainSubstring, `FROM changed_spi spi INNER JOIN`)
+		convey.So(query, convey.ShouldContainSubstring, `FROM changed_spi spi LEFT JOIN`)
 		convey.So(query, convey.ShouldContainSubstring, `path_ipm.id_iseq_product IN (SELECT id_product FROM changed_spi)`)
 		convey.So(query, convey.ShouldContainSubstring, `pbm.id_pac_bio_product IN (SELECT id_product FROM changed_spi)`)
 		convey.So(query, convey.ShouldContainSubstring, `epm.id_eseq_product IN (SELECT id_product FROM changed_spi)`)
@@ -1763,6 +1763,7 @@ func rewriteJSONTableQueryForSQLite(query string) string {
 	// SQLite has no schemas, so the schema-qualified tracking table name resolves
 	// to the unqualified fixture table.
 	query = strings.ReplaceAll(query, "mlwh_reporting.seq_ops_tracking_per_sample", "seq_ops_tracking_per_sample")
+	query = strings.ReplaceAll(query, `JSON_LENGTH(COALESCE(ipm.iseq_composition_tmp, '{"components":[]}'), '$.components')`, `json_array_length(COALESCE(ipm.iseq_composition_tmp, '{"components":[]}'), '$.components')`)
 	query = strings.Replace(query,
 		`JSON_TABLE(COALESCE(ipm.iseq_composition_tmp, '{"components":[]}'), '$.components[1]' COLUMNS(component_run INT PATH '$.id_run')) direct_component`,
 		`json_each(COALESCE(ipm.iseq_composition_tmp, '{"components":[]}'), '$.components[1]') direct_component`,
