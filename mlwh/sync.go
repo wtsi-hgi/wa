@@ -26,6 +26,7 @@
 package mlwh
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -2400,7 +2401,7 @@ func compareIseqProductMetricsSyncRows(left, right iseqProductMetricsSyncRow) in
 		return 1
 	}
 
-	return int(left.SourceRowID - right.SourceRowID)
+	return cmp.Compare(left.SourceRowID, right.SourceRowID)
 }
 
 func normalisedDateFromNullableTime(value sql.NullString) string {
