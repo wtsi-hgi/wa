@@ -1004,6 +1004,11 @@ func TestClientSyncRepairsSparseProductReadIndexesBeforeIRODSEnrichment(t *testi
 			WithArgs(syncTableIseqProductMetrics, formatSyncTime(base), sqlmock.AnyArg(), nil, 1).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectCommit()
+		mock.ExpectBegin()
+		mock.ExpectExec(regexp.QuoteMeta(buildUpsertStatement("mysql", "sync_state", syncStateColumns, []string{"table_name"}))).
+			WithArgs(syncTableIseqProductMetricsIRODSRepair, formatSyncTime(time.Time{}), sqlmock.AnyArg(), nil, 0).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
 
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 			WithArgs(syncTableIseqProductMetrics).
