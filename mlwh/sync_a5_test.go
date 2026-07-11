@@ -817,6 +817,43 @@ func TestClientSyncSeqOpsTrackingPerSampleCaseVariantsUseByteOrder(t *testing.T)
 	})
 }
 
+func TestClientSyncSeqOpsTrackingPerSampleCaseVariantWritesUseIndexedExactMatch(t *testing.T) {
+	convey.Convey("Given tracking rows whose ids differ only by case, with one update and one deletion", t, func() {
+		base := time.Date(2026, time.July, 11, 9, 0, 0, 0, time.UTC)
+		upper := newTrackingSyncRowForTest("CASEPROBE", "study-upper", base)
+		mixed := newTrackingSyncRowForTest("CaseProbe", "study-mixed", base)
+		lower := newTrackingSyncRowForTest("caseprobe", "study-lower", base)
+		changedMixed := newTrackingSyncRowForTest("CaseProbe", "study-mixed", base.Add(time.Hour))
+
+		source := openRealMLWHSchemaSource(t)
+		seedTrackingSourceRowsForTest(t, source, []seqOpsTrackingPerSampleSyncRow{changedMixed, lower})
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedTrackingMirrorRowsForTest(t, cache.DB(), []seqOpsTrackingPerSampleSyncRow{upper, mixed, lower})
+		observer.Reset()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqOpsTrackingPerSample)
+
+		convey.Convey("when synced, then each write narrows by indexed equality before exact binary matching and does not touch the other case variant", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Updated, convey.ShouldEqual, 1)
+			convey.So(readTrackingMirrorRowsForTest(t, cacheReadDB(cache)), convey.ShouldResemble, []seqOpsTrackingPerSampleSyncRow{changedMixed, lower})
+
+			mutations := filterRecordedStatements(observer.Statements(), isTrackingMirrorMutationForTest)
+			convey.So(mutations, convey.ShouldHaveLength, 2)
+			convey.So(normalizeSQL(mutations[0].Query), convey.ShouldContainSubstring,
+				"WHERE id_sample_lims = ? AND id_sample_lims COLLATE BINARY = ?")
+			convey.So(namedValueOrdinals(mutations[0].Args[len(mutations[0].Args)-2:]), convey.ShouldResemble,
+				[]any{"CaseProbe", "CaseProbe"})
+			convey.So(normalizeSQL(mutations[1].Query), convey.ShouldEqual, normalizeSQL(
+				"DELETE FROM seq_ops_tracking_per_sample_mirror WHERE id_sample_lims = ? AND id_sample_lims COLLATE BINARY = ?"))
+			convey.So(namedValueOrdinals(mutations[1].Args), convey.ShouldResemble, []any{"CASEPROBE", "CASEPROBE"})
+		})
+	})
+}
+
 func TestClientSyncSeqOpsTrackingPerSampleUnchangedWritesOnlySyncState(t *testing.T) {
 	convey.Convey("D2.1: Given an unchanged tracking mirror/source snapshot and an old refresh watermark", t, func() {
 		oldRefresh := time.Date(2026, time.July, 1, 8, 0, 0, 0, time.UTC)

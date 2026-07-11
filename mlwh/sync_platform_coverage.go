@@ -1274,7 +1274,7 @@ func updateSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, dialect 
 		assignments = append(assignments, column+" = ?")
 	}
 	query := `UPDATE seq_ops_tracking_per_sample_mirror SET ` + strings.Join(assignments, ", ") +
-		` WHERE id_sample_lims COLLATE ` + trackingBinaryCollation(dialect) + ` = ?`
+		` WHERE id_sample_lims = ? AND id_sample_lims COLLATE ` + trackingBinaryCollation(dialect) + ` = ?`
 	stmt, err := tx.PrepareContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("mlwh: prepare seq_ops_tracking_per_sample mirror row update: %w", err)
@@ -1287,7 +1287,7 @@ func updateSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, dialect 
 
 	for _, row := range rows {
 		args := seqOpsTrackingPerSampleMirrorRowArgs(row)
-		if _, execErr := stmt.ExecContext(ctx, append(args[1:], row.IDSampleLims)...); execErr != nil {
+		if _, execErr := stmt.ExecContext(ctx, append(args[1:], row.IDSampleLims, row.IDSampleLims)...); execErr != nil {
 			return fmt.Errorf("mlwh: update seq_ops_tracking_per_sample mirror row: %w", execErr)
 		}
 	}
@@ -1296,9 +1296,9 @@ func updateSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, dialect 
 }
 
 func deleteSeqOpsTrackingPerSampleRows(ctx context.Context, tx *sql.Tx, dialect string, ids []string) error {
-	query := `DELETE FROM seq_ops_tracking_per_sample_mirror WHERE id_sample_lims COLLATE ` + trackingBinaryCollation(dialect) + ` = ?`
+	query := `DELETE FROM seq_ops_tracking_per_sample_mirror WHERE id_sample_lims = ? AND id_sample_lims COLLATE ` + trackingBinaryCollation(dialect) + ` = ?`
 	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx, query, id); err != nil {
+		if _, err := tx.ExecContext(ctx, query, id, id); err != nil {
 			return fmt.Errorf("mlwh: delete seq_ops_tracking_per_sample mirror row: %w", err)
 		}
 	}
