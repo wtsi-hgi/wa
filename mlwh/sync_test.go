@@ -1224,6 +1224,58 @@ func readSyncLastRun(t *testing.T, db *sql.DB, table string) time.Time {
 	return mustParseSyncTime(t, raw)
 }
 
+func TestRecordingSQLiteStmtGuardsLegacyExecFallback(t *testing.T) {
+	convey.Convey("Given a recording statement whose wrapped driver only supports legacy Exec", t, func() {
+		observer := &sqliteSyncSQLObserver{}
+		legacy := &legacyExecSQLiteStmt{}
+		stmt := &recordingSQLiteStmt{
+			Stmt:     legacy,
+			query:    "DELETE FROM seq_ops_tracking_per_sample_mirror WHERE id_sample_lims = ?",
+			observer: observer,
+		}
+		args := []driver.NamedValue{{Ordinal: 1, Value: "sample-1"}}
+
+		convey.Convey("when the legacy Exec entry point is used during a tracking read, then the write is rejected before execution", func() {
+			convey.So(observer.BeginTrackingRead("SELECT id_sample_lims FROM seq_ops_tracking_per_sample_mirror", nil), convey.ShouldBeTrue)
+			defer observer.EndTrackingRead()
+
+			_, err := stmt.Exec([]driver.Value{"sample-1"})
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "cache write attempted before tracking diff-read was closed")
+			convey.So(observer.WriteWhileTrackingReadCount(), convey.ShouldEqual, 1)
+			convey.So(legacy.execCalls, convey.ShouldEqual, 0)
+		})
+
+		convey.Convey("when a tracking read is active, then the fallback write is rejected before execution", func() {
+			convey.So(observer.BeginTrackingRead("SELECT id_sample_lims FROM seq_ops_tracking_per_sample_mirror", nil), convey.ShouldBeTrue)
+			defer observer.EndTrackingRead()
+
+			_, err := stmt.ExecContext(context.Background(), args)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "cache write attempted before tracking diff-read was closed")
+			convey.So(observer.WriteWhileTrackingReadCount(), convey.ShouldEqual, 1)
+			convey.So(legacy.execCalls, convey.ShouldEqual, 0)
+		})
+
+		convey.Convey("when no tracking read is active, then the fallback executes and is recorded once", func() {
+			result, err := stmt.ExecContext(context.Background(), args)
+
+			convey.So(err, convey.ShouldBeNil)
+			rowsAffected, err := result.RowsAffected()
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(rowsAffected, convey.ShouldEqual, 1)
+			convey.So(legacy.execCalls, convey.ShouldEqual, 1)
+			convey.So(legacy.args, convey.ShouldResemble, []driver.Value{"sample-1"})
+			statements := observer.Statements()
+			convey.So(statements, convey.ShouldHaveLength, 1)
+			convey.So(statements[0].Query, convey.ShouldEqual, stmt.query)
+			convey.So(statements[0].Args, convey.ShouldResemble, args)
+		})
+	})
+}
+
 func TestIseqProductMetricsWarmSyncKeepsResumeCursorAtChangedRowFrontier(t *testing.T) {
 	convey.Convey("Given phase-one observes a composite at T1 and phase-two recovers it after a concurrent change at T3", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -3502,19 +3554,90 @@ type recordingSQLiteStmt struct {
 	observer *sqliteSyncSQLObserver
 }
 
+func (s *recordingSQLiteStmt) Exec(args []driver.Value) (driver.Result, error) {
+	namedArgs := make([]driver.NamedValue, len(args))
+	for i, arg := range args {
+		namedArgs[i] = driver.NamedValue{Ordinal: i + 1, Value: arg}
+	}
+	if err := s.observeExec(namedArgs); err != nil {
+		return nil, err
+	}
+
+	//nolint:staticcheck // Required to wrap the legacy driver.Stmt execution path.
+	return s.Stmt.Exec(args)
+}
+
 func (s *recordingSQLiteStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
 	execer, ok := s.Stmt.(driver.StmtExecContext)
 	if !ok {
-		return nil, driver.ErrSkip
+		values, err := legacyStmtValues(args)
+		if err != nil {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		if err = s.observeExec(args); err != nil {
+			return nil, err
+		}
+
+		//nolint:staticcheck // Required to wrap the legacy driver.Stmt execution path.
+		return s.Stmt.Exec(values)
 	}
+	if err := s.observeExec(args); err != nil {
+		return nil, err
+	}
+
+	return execer.ExecContext(ctx, args)
+}
+
+func legacyStmtValues(args []driver.NamedValue) ([]driver.Value, error) {
+	values := make([]driver.Value, len(args))
+	for i, arg := range args {
+		if arg.Name != "" {
+			return nil, fmt.Errorf("recording sqlite: legacy statement does not support named parameter %q", arg.Name)
+		}
+		values[i] = arg.Value
+	}
+
+	return values, nil
+}
+
+func (s *recordingSQLiteStmt) observeExec(args []driver.NamedValue) error {
 	if s.observer != nil {
 		if s.observer.RejectWriteDuringTrackingRead() {
-			return nil, errors.New("recording sqlite: cache write attempted before tracking diff-read was closed")
+			return errors.New("recording sqlite: cache write attempted before tracking diff-read was closed")
 		}
 		s.observer.Record(s.query, args)
 	}
 
-	return execer.ExecContext(ctx, args)
+	return nil
+}
+
+type legacyExecSQLiteStmt struct {
+	execCalls int
+	args      []driver.Value
+}
+
+func (s *legacyExecSQLiteStmt) Close() error {
+	return nil
+}
+
+func (s *legacyExecSQLiteStmt) NumInput() int {
+	return -1
+}
+
+func (s *legacyExecSQLiteStmt) Exec(args []driver.Value) (driver.Result, error) {
+	s.execCalls++
+	s.args = append([]driver.Value(nil), args...)
+
+	return driver.RowsAffected(1), nil
+}
+
+func (s *legacyExecSQLiteStmt) Query(_ []driver.Value) (driver.Rows, error) {
+	return nil, driver.ErrSkip
 }
 
 func (c *recordingSQLiteConn) Prepare(query string) (driver.Stmt, error) {
