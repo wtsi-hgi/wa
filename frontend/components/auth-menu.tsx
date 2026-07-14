@@ -43,12 +43,6 @@ function anonymousSession(): CurrentSession {
     };
 }
 
-async function logoutFromBrowser(): Promise<CurrentSession> {
-    const nextSession = await logoutAction();
-
-    return nextSession.authenticated ? anonymousSession() : nextSession;
-}
-
 async function refreshFromBrowser(): Promise<CurrentSession> {
     const response = await fetch("/api/auth/refresh", {
         cache: "no-store",
@@ -179,19 +173,13 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
         refreshGenerationRef.current += 1;
 
         try {
-            const nextSession = await logoutFromBrowser();
-
-            setSession(nextSession);
+            await logoutAction();
         } catch {
-            setSession(anonymousSession());
-        } finally {
-            setUsername("");
-            setPassword("");
-            setLoginError(null);
-            setLoginOpen(false);
-            refreshRoute();
-            setLogoutPending(false);
+            // Reload to reconcile with the server even when the action response
+            // is lost after it expires the authentication cookie.
         }
+
+        window.location.reload();
     }
 
     function handleAccessFilterChange(checked: boolean): void {
