@@ -29,6 +29,9 @@ const navigationMocks = vi.hoisted(() => ({
     refresh: vi.fn(),
     searchParams: new URLSearchParams(),
 }));
+const browserNavigationMocks = vi.hoisted(() => ({
+    reloadDocument: vi.fn(),
+}));
 
 vi.mock("@/app/(results)/auth/actions", () => ({
     currentSession: authActionMocks.currentSession,
@@ -42,6 +45,9 @@ vi.mock("next/navigation", () => ({
         refresh: navigationMocks.refresh,
     }),
     useSearchParams: () => navigationMocks.searchParams,
+}));
+vi.mock("@/lib/browser-navigation", () => ({
+    reloadDocument: browserNavigationMocks.reloadDocument,
 }));
 
 beforeEach(() => {
@@ -383,5 +389,6 @@ describe("E3 auth menu", () => {
         ).toBeTruthy();
         expect(screen.queryByRole("button", { name: "Log in" })).toBeNull();
         expect(navigationMocks.refresh).not.toHaveBeenCalled();
+        expect(browserNavigationMocks.reloadDocument).toHaveBeenCalledOnce();
     });
 });

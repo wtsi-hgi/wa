@@ -28,6 +28,7 @@ import {
     logoutAction,
     type CurrentSession,
 } from "@/app/(results)/auth/actions";
+import { reloadDocument } from "@/lib/browser-navigation";
 import { showLockedResultsParam } from "@/lib/search-params";
 
 type AuthMenuProps = {
@@ -179,7 +180,7 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
             // is lost after it expires the authentication cookie.
         }
 
-        window.location.reload();
+        reloadDocument();
     }
 
     function handleAccessFilterChange(checked: boolean): void {
