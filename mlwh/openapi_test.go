@@ -299,6 +299,38 @@ func TestOpenAPISchemaUsesDocTagDescriptionsC2(t *testing.T) {
 	})
 }
 
+func TestOpenAPIFreshnessSchemaDistinguishesSyncProgressFromCacheCurrency(t *testing.T) {
+	convey.Convey("Given the freshness schema, then its field descriptions distinguish mode-specific sync progress from cache currency", t, func() {
+		doc := decodedOpenAPIDocForTest(t)
+		tableProperties := openAPISchemaProperties(t, doc, "TableFreshness")
+
+		highWater, ok := tableProperties["high_water"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		highWaterDescription, ok := highWater["description"].(string)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(highWaterDescription, convey.ShouldContainSubstring, "sync-mode-specific source-progress watermark")
+		convey.So(highWaterDescription, convey.ShouldContainSubstring, "latest source-row change for incremental tables")
+		convey.So(highWaterDescription, convey.ShouldContainSubstring, "refresh/snapshot time for full-refresh tables")
+		convey.So(highWaterDescription, convey.ShouldContainSubstring, "empty for unsynced tables and sync modes without a meaningful watermark")
+		convey.So(highWaterDescription, convey.ShouldContainSubstring, "may remain old when source data is unchanged")
+		convey.So(highWaterDescription, convey.ShouldContainSubstring, "do not use as cache refresh currency")
+
+		lastRun, ok := tableProperties["last_run"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		lastRunDescription, ok := lastRun["description"].(string)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(lastRunDescription, convey.ShouldContainSubstring, "last cache sync/refresh time")
+		convey.So(lastRunDescription, convey.ShouldContainSubstring, "per-table cache currency and as-of caveats")
+
+		freshnessProperties := openAPISchemaProperties(t, doc, "Freshness")
+		tables, ok := freshnessProperties["tables"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		tablesDescription, ok := tables["description"].(string)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(tablesDescription, convey.ShouldContainSubstring, "use last_run, not high_water, for cache currency")
+	})
+}
+
 func TestOpenAPISchemaExplainsEGAAccessionTerminologyC2(t *testing.T) {
 	convey.Convey("Given the generated OpenAPI schemas, then every accession-number property explains EGA terminology and the canonical field name", t, func() {
 		doc := decodedOpenAPIDocForTest(t)
