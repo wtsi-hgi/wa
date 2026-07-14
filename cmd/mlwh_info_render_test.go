@@ -30,6 +30,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/wa/mlwh"
@@ -166,6 +167,39 @@ func TestWriteInfoReportTextColourGating(t *testing.T) {
 
 		convey.So(buf.String(), convey.ShouldContainSubstring, "DN1234")
 		convey.So(strings.Contains(buf.String(), "\x1b["), convey.ShouldBeTrue)
+	})
+}
+
+func TestWriteInfoReportTextCacheSyncUsesLocalTime(t *testing.T) {
+	convey.Convey("Given a summer cache-sync instant and a Europe/London user timezone, the rendered report shows the local minute and zone", t, func() {
+		london, err := time.LoadLocation("Europe/London")
+		convey.So(err, convey.ShouldBeNil)
+
+		originalLocal := time.Local
+		time.Local = london
+		defer func() {
+			time.Local = originalLocal
+		}()
+
+		report := infoReport{
+			Identifier: "5901",
+			Kind:       string(mlwh.KindStudyLimsID),
+			Canonical:  "5901",
+			Study: &mlwh.Study{
+				IDStudyLims: "5901",
+				Name:        "Lung cancer GWAS",
+			},
+			StudyOverview: &mlwh.StudyOverview{
+				IDStudyLims:   "5901",
+				CacheSyncedAt: "2026-07-14T02:10:21Z",
+			},
+		}
+
+		var buf bytes.Buffer
+		writeInfoReportText(&buf, report, infoStyle{colour: false, width: 100})
+
+		convey.So(buf.String(), convey.ShouldContainSubstring, "Cache synced Jul 14 03:10 BST")
+		convey.So(strings.Count(buf.String(), "Cache synced"), convey.ShouldEqual, 1)
 	})
 }
 
