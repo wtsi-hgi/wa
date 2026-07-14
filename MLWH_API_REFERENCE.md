@@ -1,5 +1,7 @@
 # wa mlwh API endpoint reference
 
+**API version:** `1.8.1`
+
 This catalogue lists every endpoint of the cache-backed, read-only `wa mlwh
 serve` REST API. It is **generated** from the same enriched `Registry`
 metadata in `mlwh/registry.go` that produces the machine-readable OpenAPI

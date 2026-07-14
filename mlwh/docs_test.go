@@ -84,6 +84,18 @@ func TestEndpointReferenceMatchesCommittedDocumentG1(t *testing.T) {
 	})
 }
 
+func TestEndpointReferenceIncludesAPIVersion(t *testing.T) {
+	convey.Convey("Given the current MLWH reference, then its API version line matches the public version constant", t, func() {
+		versionLine := "**API version:** `" + APIVersion + "`\n"
+
+		convey.So(EndpointReference(), convey.ShouldContainSubstring, versionLine)
+
+		committed, err := os.ReadFile(apiReferenceDocPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(committed), convey.ShouldContainSubstring, versionLine)
+	})
+}
+
 func TestEndpointReferenceAndOpenAPICoverSamePathsG1(t *testing.T) {
 	// G1 acceptance test 2: the reference generator and the OpenAPI generator
 	// cover the same set of Registry paths (no drift between human and machine

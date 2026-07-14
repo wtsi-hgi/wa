@@ -64,6 +64,7 @@ func EndpointReference() string {
 
 	builder.WriteString(endpointReferenceTitle)
 	builder.WriteString("\n\n")
+	fmt.Fprintf(&builder, "**API version:** `%s`\n\n", APIVersion)
 	builder.WriteString(endpointReferenceIntro)
 	builder.WriteString("\n\n## Endpoints\n")
 

@@ -103,11 +103,11 @@ func TestServerOpenAPIRouteServesDocumentC2(t *testing.T) {
 	})
 }
 
-func TestAPIVersionIsThePhase1A8Release(t *testing.T) {
-	// A8 acceptance test 2: the generated OpenAPI document advertises the
-	// Phase 1 schema/API release once CacheSchemaVersion moves to 13.
-	convey.Convey("Given the public APIVersion constant, then it equals the Phase 1 A8 release 1.8.0", t, func() {
-		convey.So(APIVersion, convey.ShouldEqual, "1.8.0")
+func TestAPIVersionIsThePhase1DocumentationPatch(t *testing.T) {
+	// The Phase 1 schema remains unchanged at CacheSchemaVersion 13, while the
+	// documentation corrections since 1.8.0 advance the API patch version.
+	convey.Convey("Given the public APIVersion constant, then it equals the Phase 1 documentation patch 1.8.1", t, func() {
+		convey.So(APIVersion, convey.ShouldEqual, "1.8.1")
 	})
 }
 
