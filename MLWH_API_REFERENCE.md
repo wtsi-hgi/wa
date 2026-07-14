@@ -1,16 +1,11 @@
 # wa mlwh API endpoint reference
 
-> **Historical snapshot — no longer maintained.** For the current generated
-> reference, see [MLWH_API_REFERENCE.md](../../MLWH_API_REFERENCE.md). A running
-> MLWH query server also serves the live machine-readable contract at
-> `GET /openapi.json`.
-
 This catalogue lists every endpoint of the cache-backed, read-only `wa mlwh
 serve` REST API. It is **generated** from the same enriched `Registry`
 metadata in `mlwh/registry.go` that produces the machine-readable OpenAPI
 document at `GET /openapi.json`, so it cannot drift from the served API. Do
-not edit it by hand; refresh it with `go test ./mlwh -run
-TestWriteEndpointReference` after changing the `Registry`.
+not edit it by hand; after changing the `Registry`, refresh it with
+`WA_REFRESH_DOCS=1 go test ./mlwh -run TestWriteEndpointReference`.
 
 All endpoints are HTTP `GET`, return JSON, and are unauthenticated by
 default. Path parameters are shown as `:name`; paginated list and search
@@ -18,7 +13,8 @@ endpoints accept the `limit` and `offset` query parameters described per
 entry. On failure every endpoint returns the shared `{code, message}` error
 envelope (see the OpenAPI document for the full set of error codes and
 statuses). Field-level descriptions of each response type are in the OpenAPI
-document; the domain entities are defined in `glossary.md`.
+document; MLWH setup and usage are documented in the repository-root
+`README.md`.
 
 ## Endpoints
 
@@ -916,7 +912,7 @@ Returns the number of distinct samples whose library type exactly matches the gi
 
 Report cache freshness
 
-Reports, per mirrored sync table, its high-water mark and last sync run time (UTC RFC3339) and whether it has ever synced. Succeeds even on a never-synced cache so callers can degrade gracefully.
+Reports, per mirrored sync table, sync progress and cache currency (UTC RFC3339) and whether it has ever synced. high_water is sync-mode-specific source progress: the latest source-row change for incremental tables, the refresh/snapshot time for full-refresh tables, or empty for unsynced tables and modes without a meaningful watermark; it may remain old when source data is unchanged and must not be used as cache currency. last_run is the table's last cache sync/refresh time and is the timestamp to use for cache-currency and as-of caveats. Succeeds even on a never-synced cache so callers can degrade gracefully.
 
 - Path parameters: none
 - Query parameters: none

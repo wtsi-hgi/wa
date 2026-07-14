@@ -40,24 +40,25 @@ const (
 		"serve` REST API. It is **generated** from the same enriched `Registry`\n" +
 		"metadata in `mlwh/registry.go` that produces the machine-readable OpenAPI\n" +
 		"document at `GET /openapi.json`, so it cannot drift from the served API. Do\n" +
-		"not edit it by hand; refresh it with `go test ./mlwh -run\n" +
-		"TestWriteEndpointReference` after changing the `Registry`.\n\n" +
+		"not edit it by hand; after changing the `Registry`, refresh it with\n" +
+		"`WA_REFRESH_DOCS=1 go test ./mlwh -run TestWriteEndpointReference`.\n\n" +
 		"All endpoints are HTTP `GET`, return JSON, and are unauthenticated by\n" +
 		"default. Path parameters are shown as `:name`; paginated list and search\n" +
 		"endpoints accept the `limit` and `offset` query parameters described per\n" +
 		"entry. On failure every endpoint returns the shared `{code, message}` error\n" +
 		"envelope (see the OpenAPI document for the full set of error codes and\n" +
 		"statuses). Field-level descriptions of each response type are in the OpenAPI\n" +
-		"document; the domain entities are defined in `glossary.md`."
+		"document; MLWH setup and usage are documented in the repository-root\n" +
+		"`README.md`."
 )
 
 // EndpointReference generates the human-readable Markdown endpoint reference
 // from the enriched Registry metadata (every endpoint's path, path params,
 // query params, summary, description, and response type). The output is
 // deterministic - entries are emitted in Registry order - so the committed
-// .docs/mcp/api-reference.md can be diffed against it by a no-drift test. The
-// same Registry is the single source the OpenAPI generator reads, so the human
-// and machine forms cannot diverge.
+// repository-root MLWH_API_REFERENCE.md can be diffed against it by a no-drift
+// test. The same Registry is the single source the OpenAPI generator reads, so
+// the human and machine forms cannot diverge.
 func EndpointReference() string {
 	var builder strings.Builder
 
