@@ -37,12 +37,15 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
-// apiReferenceDocPath and glossaryDocPath are the committed documents this item
-// produces, resolved relative to the mlwh package directory (tests run with the
-// package as the working directory, so the repo's .docs/mcp/ is one level up).
+// Documentation paths are resolved relative to the mlwh package directory,
+// where package tests run. The generated MLWH reference and root README are
+// current user documentation; .docs/mcp contains historical project records.
 const (
-	apiReferenceDocPath = "../.docs/mcp/api-reference.md"
-	glossaryDocPath     = "../.docs/mcp/glossary.md"
+	apiReferenceDocPath           = "../MLWH_API_REFERENCE.md"
+	readmeDocPath                 = "../README.md"
+	historicalAPIReferenceDocPath = "../.docs/mcp/api-reference.md"
+	historicalDocsReadmePath      = "../.docs/mcp/README.md"
+	glossaryDocPath               = "../.docs/mcp/glossary.md"
 )
 
 func TestEndpointReferenceCoversEveryRegistryEntryG1(t *testing.T) {
@@ -70,14 +73,26 @@ func TestEndpointReferenceCoversEveryRegistryEntryG1(t *testing.T) {
 }
 
 func TestEndpointReferenceMatchesCommittedDocumentG1(t *testing.T) {
-	// G1 acceptance test 1 (no-drift / golden-file): the committed reference under
-	// .docs/mcp/ must equal the generator output, so the human document cannot
+	// G1 acceptance test 1 (no-drift / golden-file): the committed root reference
+	// must equal the generator output, so the human document cannot
 	// silently drift from the served API. To refresh it, run WriteEndpointReference.
-	convey.Convey("Given the committed .docs/mcp endpoint reference, when compared to the generator output, then they are identical", t, func() {
+	convey.Convey("Given the committed root MLWH endpoint reference, when compared to the generator output, then they are identical", t, func() {
 		committed, err := os.ReadFile(apiReferenceDocPath)
 		convey.So(err, convey.ShouldBeNil)
 
 		convey.So(string(committed), convey.ShouldEqual, EndpointReference())
+	})
+}
+
+func TestEndpointReferenceIncludesAPIVersion(t *testing.T) {
+	convey.Convey("Given the current MLWH reference, then its API version line matches the public version constant", t, func() {
+		versionLine := "**API version:** `" + APIVersion + "`\n"
+
+		convey.So(EndpointReference(), convey.ShouldContainSubstring, versionLine)
+
+		committed, err := os.ReadFile(apiReferenceDocPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(committed), convey.ShouldContainSubstring, versionLine)
 	})
 }
 
@@ -109,17 +124,40 @@ func TestEndpointReferenceAndOpenAPICoverSamePathsG1(t *testing.T) {
 	})
 }
 
-// TestEndpointReferenceFilenameMatchesGenerator pins the committed reference's
-// location to the path the generator writes, so the no-drift test and the
-// refresh helper agree on a single file.
-func TestEndpointReferenceFilenameMatchesGenerator(t *testing.T) {
-	convey.Convey("Given the committed reference path, then it resolves under .docs/mcp", t, func() {
-		convey.So(filepath.ToSlash(apiReferenceDocPath), convey.ShouldContainSubstring, ".docs/mcp/")
-		convey.So(filepath.ToSlash(glossaryDocPath), convey.ShouldContainSubstring, ".docs/mcp/")
+// TestEndpointReferenceUsesMLWHSpecificRootArtifact pins the supported
+// documentation artifact to the MLWH-specific repository-root name that the
+// no-drift check and refresh helper share.
+func TestEndpointReferenceUsesMLWHSpecificRootArtifact(t *testing.T) {
+	convey.Convey("Given the current generated endpoint reference, then it has an MLWH-specific name in the repository root", t, func() {
+		convey.So(filepath.ToSlash(apiReferenceDocPath), convey.ShouldEqual, "../MLWH_API_REFERENCE.md")
 	})
 }
 
-// TestWriteEndpointReference refreshes the committed .docs/mcp endpoint
+func TestEndpointReferenceDocumentationNavigation(t *testing.T) {
+	convey.Convey("Given the public documentation entry points, then they direct readers to the current MLWH reference and live OpenAPI", t, func() {
+		convey.So(EndpointReference(), convey.ShouldContainSubstring, "WA_REFRESH_DOCS=1 go test ./mlwh -run TestWriteEndpointReference")
+
+		readme, err := os.ReadFile(readmeDocPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(readme), convey.ShouldContainSubstring, "[MLWH API endpoint reference](MLWH_API_REFERENCE.md)")
+		convey.So(string(readme), convey.ShouldContainSubstring, "`GET /openapi.json`")
+
+		historicalReference, err := os.ReadFile(historicalAPIReferenceDocPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(historicalReference), convey.ShouldStartWith, "# wa mlwh API endpoint reference\n\n> **Historical snapshot")
+		convey.So(string(historicalReference), convey.ShouldContainSubstring, "../../MLWH_API_REFERENCE.md")
+		convey.So(string(historicalReference), convey.ShouldContainSubstring, "`GET /openapi.json`")
+
+		historicalIndex, err := os.ReadFile(historicalDocsReadmePath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(historicalIndex), convey.ShouldContainSubstring, "historical")
+		convey.So(string(historicalIndex), convey.ShouldContainSubstring, "../../README.md")
+		convey.So(string(historicalIndex), convey.ShouldContainSubstring, "../../MLWH_API_REFERENCE.md")
+		convey.So(string(historicalIndex), convey.ShouldContainSubstring, "`GET /openapi.json`")
+	})
+}
+
+// TestWriteEndpointReference refreshes the committed root MLWH endpoint
 // reference from the generator. It is the documented way to regenerate the
 // human catalogue after changing the Registry; it only writes when
 // WA_REFRESH_DOCS is set so ordinary test runs stay read-only and the no-drift

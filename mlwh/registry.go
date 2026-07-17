@@ -1024,7 +1024,7 @@ var Registry = []Endpoint{
 		Query:       []string{},
 		NewResult:   newResult[Freshness],
 		Summary:     "Report cache freshness",
-		Description: "Reports, per mirrored sync table, its high-water mark and last sync run time (UTC RFC3339) and whether it has ever synced. Succeeds even on a never-synced cache so callers can degrade gracefully.",
+		Description: "Reports, per mirrored sync table, sync progress and cache currency (UTC RFC3339) and whether it has ever synced. high_water is sync-mode-specific source progress: the latest source-row change for incremental tables, the refresh/snapshot time for full-refresh tables, or empty for unsynced tables and modes without a meaningful watermark; it may remain old when source data is unchanged and must not be used as cache currency. last_run is the table's last cache sync/refresh time and is the timestamp to use for cache-currency and as-of caveats. Succeeds even on a never-synced cache so callers can degrade gracefully.",
 	},
 }
 

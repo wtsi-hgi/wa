@@ -114,7 +114,27 @@ test("logout immediately revokes protected result access", async ({
         accountTrigger.click();
     });
     await expect(page.getByRole("menuitem", { name: "Log out" })).toBeVisible();
-    await page.getByRole("menuitem", { name: "Log out" }).click();
+    const detailFrame = page.mainFrame();
+    const loadedDetailUrl = page.url();
+    const logoutDocumentRequest = page.waitForRequest(
+        (request) =>
+            request.isNavigationRequest() &&
+            request.frame() === detailFrame &&
+            request.url() === loadedDetailUrl,
+        { timeout: 5_000 },
+    );
+    const logoutNavigation = page.waitForEvent("framenavigated", {
+        predicate: (frame) =>
+            frame === detailFrame && frame.url() === loadedDetailUrl,
+        timeout: 5_000,
+    });
+
+    await Promise.all([
+        logoutDocumentRequest,
+        logoutNavigation,
+        page.getByRole("menuitem", { name: "Log out" }).click(),
+    ]);
+    await page.waitForLoadState("domcontentloaded");
 
     await Promise.all([
         expect(page.getByRole("button", { name: "Log in" })).toBeVisible({

@@ -170,6 +170,11 @@ default MLWH server is plain HTTP, so publish an `https://` URL only when
 `wa mlwh serve` is configured with `WA_MLWH_SERVER_CERT`,
 `WA_MLWH_SERVER_KEY`, and `WA_MLWH_SERVER_TOKEN`.
 
+For the current REST API contract, see the generated
+[MLWH API endpoint reference](MLWH_API_REFERENCE.md). A running MLWH query
+server exposes the same contract as machine-readable OpenAPI at
+`GET /openapi.json`.
+
 Normal CLI users can query that server without local MLWH database or cache
 credentials. The MLWH CLI covers identifier summaries, sample/study search,
 relationship exports, latest data, run aggregation, study-owner/programme

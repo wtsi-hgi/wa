@@ -103,11 +103,11 @@ func TestServerOpenAPIRouteServesDocumentC2(t *testing.T) {
 	})
 }
 
-func TestAPIVersionIsThePhase1A8Release(t *testing.T) {
-	// A8 acceptance test 2: the generated OpenAPI document advertises the
-	// Phase 1 schema/API release once CacheSchemaVersion moves to 13.
-	convey.Convey("Given the public APIVersion constant, then it equals the Phase 1 A8 release 1.8.0", t, func() {
-		convey.So(APIVersion, convey.ShouldEqual, "1.8.0")
+func TestAPIVersionIsThePhase1DocumentationPatch(t *testing.T) {
+	// The Phase 1 schema remains unchanged at CacheSchemaVersion 13, while the
+	// documentation corrections since 1.8.0 advance the API patch version.
+	convey.Convey("Given the public APIVersion constant, then it equals the Phase 1 documentation patch 1.8.1", t, func() {
+		convey.So(APIVersion, convey.ShouldEqual, "1.8.1")
 	})
 }
 
@@ -296,6 +296,38 @@ func TestOpenAPISchemaUsesDocTagDescriptionsC2(t *testing.T) {
 		name, ok := properties["name"].(map[string]any)
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(name["description"], convey.ShouldEqual, "study name")
+	})
+}
+
+func TestOpenAPIFreshnessSchemaDistinguishesSyncProgressFromCacheCurrency(t *testing.T) {
+	convey.Convey("Given the freshness schema, then its field descriptions distinguish mode-specific sync progress from cache currency", t, func() {
+		doc := decodedOpenAPIDocForTest(t)
+		tableProperties := openAPISchemaProperties(t, doc, "TableFreshness")
+
+		highWater, ok := tableProperties["high_water"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		highWaterDescription, ok := highWater["description"].(string)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(highWaterDescription, convey.ShouldContainSubstring, "sync-mode-specific source-progress watermark")
+		convey.So(highWaterDescription, convey.ShouldContainSubstring, "latest source-row change for incremental tables")
+		convey.So(highWaterDescription, convey.ShouldContainSubstring, "refresh/snapshot time for full-refresh tables")
+		convey.So(highWaterDescription, convey.ShouldContainSubstring, "empty for unsynced tables and sync modes without a meaningful watermark")
+		convey.So(highWaterDescription, convey.ShouldContainSubstring, "may remain old when source data is unchanged")
+		convey.So(highWaterDescription, convey.ShouldContainSubstring, "do not use as cache refresh currency")
+
+		lastRun, ok := tableProperties["last_run"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		lastRunDescription, ok := lastRun["description"].(string)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(lastRunDescription, convey.ShouldContainSubstring, "last cache sync/refresh time")
+		convey.So(lastRunDescription, convey.ShouldContainSubstring, "per-table cache currency and as-of caveats")
+
+		freshnessProperties := openAPISchemaProperties(t, doc, "Freshness")
+		tables, ok := freshnessProperties["tables"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		tablesDescription, ok := tables["description"].(string)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(tablesDescription, convey.ShouldContainSubstring, "use last_run, not high_water, for cache currency")
 	})
 }
 

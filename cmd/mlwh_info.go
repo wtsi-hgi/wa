@@ -537,12 +537,13 @@ func writeListField(out io.Writer, style infoStyle, label, value string, index, 
 }
 
 func writeCacheSyncedLine(out io.Writer, style infoStyle, synced string) {
-	date := infoCompactDate(synced)
-	if date == "" {
+	syncedAt, ok := parseInfoTime(synced)
+	if !ok {
 		return
 	}
 
-	_, _ = fmt.Fprintf(out, "\n  %s\n", style.dim("Cache synced "+date))
+	localMinute := syncedAt.Local().Format("Jan 02 15:04 MST")
+	_, _ = fmt.Fprintf(out, "\n  %s\n", style.dim("Cache synced "+localMinute))
 }
 
 // sampleCacheSyncedAt picks the cache-synced timestamp to show once for a sample

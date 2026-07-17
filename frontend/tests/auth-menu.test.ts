@@ -29,6 +29,9 @@ const navigationMocks = vi.hoisted(() => ({
     refresh: vi.fn(),
     searchParams: new URLSearchParams(),
 }));
+const browserNavigationMocks = vi.hoisted(() => ({
+    reloadDocument: vi.fn(),
+}));
 
 vi.mock("@/app/(results)/auth/actions", () => ({
     currentSession: authActionMocks.currentSession,
@@ -42,6 +45,9 @@ vi.mock("next/navigation", () => ({
         refresh: navigationMocks.refresh,
     }),
     useSearchParams: () => navigationMocks.searchParams,
+}));
+vi.mock("@/lib/browser-navigation", () => ({
+    reloadDocument: browserNavigationMocks.reloadDocument,
 }));
 
 beforeEach(() => {
@@ -317,7 +323,7 @@ describe("E3 auth menu", () => {
         ).toBeNull();
     });
 
-    it("removes the username and shows Log in after successful logout", async () => {
+    it("keeps the authenticated client tree intact until logout reloads the document", async () => {
         const fetchMock = vi.fn((url: string) =>
             Promise.resolve(
                 Response.json(
@@ -359,14 +365,14 @@ describe("E3 auth menu", () => {
             expect.any(Object),
         );
 
-        await waitFor(() => {
-            expect(screen.queryByText("alice")).toBeNull();
-        });
-        expect(screen.getByRole("button", { name: "Log in" })).toBeTruthy();
-        expect(navigationMocks.refresh).toHaveBeenCalled();
+        expect(
+            screen.getByRole("button", { name: /alice account/i }),
+        ).toBeTruthy();
+        expect(screen.queryByRole("button", { name: "Log in" })).toBeNull();
+        expect(navigationMocks.refresh).not.toHaveBeenCalled();
     });
 
-    it("shows Log in after logout clears the cookie but the backend call fails", async () => {
+    it("keeps the authenticated client tree intact when logout reloads after an action failure", async () => {
         authActionMocks.logoutAction.mockRejectedValueOnce(
             new Error("results backend request failed"),
         );
@@ -374,12 +380,15 @@ describe("E3 auth menu", () => {
         await renderAuthMenu({ authenticated: true, username: "alice" });
 
         fireEvent.click(screen.getByRole("button", { name: /alice account/i }));
-        fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
-
-        await waitFor(() => {
-            expect(screen.queryByText("alice")).toBeNull();
+        await act(async () => {
+            fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
         });
-        expect(screen.getByRole("button", { name: "Log in" })).toBeTruthy();
-        expect(navigationMocks.refresh).toHaveBeenCalled();
+
+        expect(
+            screen.getByRole("button", { name: /alice account/i }),
+        ).toBeTruthy();
+        expect(screen.queryByRole("button", { name: "Log in" })).toBeNull();
+        expect(navigationMocks.refresh).not.toHaveBeenCalled();
+        expect(browserNavigationMocks.reloadDocument).toHaveBeenCalledOnce();
     });
 });

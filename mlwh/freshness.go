@@ -65,13 +65,15 @@ var freshnessSyncTables = []string{
 	syncTableUseqProductMetrics,
 }
 
-// TableFreshness is the per-table freshness reported by Freshness (and served by
-// GET /freshness). HighWater and LastRun are UTC RFC3339 strings, empty when the
-// table has never synced; EverSynced is false when no sync_state row exists.
+// TableFreshness is the per-table sync metadata reported by Freshness (and
+// served by GET /freshness). HighWater is a sync-mode-specific source-progress
+// watermark, while LastRun is the cache-refresh timestamp used to judge
+// currency. Present timestamps are UTC RFC3339 strings; EverSynced is false and
+// both timestamps are empty when no sync_state row exists.
 type TableFreshness struct {
 	Table      string `json:"table" doc:"mirrored MLWH table name"`
-	HighWater  string `json:"high_water" doc:"latest synced last_updated (UTC RFC3339), empty if never synced"`
-	LastRun    string `json:"last_run" doc:"timestamp of the last sync run (UTC RFC3339), empty if never synced"`
+	HighWater  string `json:"high_water" doc:"sync-mode-specific source-progress watermark (UTC RFC3339): latest source-row change for incremental tables, refresh/snapshot time for full-refresh tables, or empty for unsynced tables and sync modes without a meaningful watermark; may remain old when source data is unchanged; do not use as cache refresh currency"`
+	LastRun    string `json:"last_run" doc:"last cache sync/refresh time for this table (UTC RFC3339), empty if never synced; use for per-table cache currency and as-of caveats"`
 	EverSynced bool   `json:"ever_synced" doc:"false when no sync_state row exists for the table"`
 }
 
@@ -106,14 +108,15 @@ func readTableFreshness(ctx context.Context, db *sql.DB, table string) (TableFre
 // Freshness reports the freshness of every mirrored sync table, returned by
 // GET /freshness.
 type Freshness struct {
-	Tables []TableFreshness `json:"tables" doc:"freshness per mirrored sync table"`
+	Tables []TableFreshness `json:"tables" doc:"sync metadata per mirrored table; use last_run, not high_water, for cache currency"`
 }
 
 // Freshness reports, for each mirrored sync table in freshnessSyncTables, its
-// high_water and last_run (UTC RFC3339) and whether it has ever synced. It reads
-// sync_state directly and must succeed even on a never-synced cache (every table
-// then reports ever_synced=false with empty timestamps), so the MCP layer can
-// degrade gracefully rather than seeing ErrCacheNeverSynced.
+// sync-mode-specific source-progress high_water and cache-refresh last_run (UTC
+// RFC3339) and whether it has ever synced. It reads sync_state directly and must
+// succeed even on a never-synced cache (every table then reports
+// ever_synced=false with empty timestamps), so the MCP layer can degrade
+// gracefully rather than seeing ErrCacheNeverSynced.
 func (c *Client) Freshness(ctx context.Context) (Freshness, error) {
 	db := c.readCacheDB()
 	if db == nil {

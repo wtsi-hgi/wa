@@ -28,6 +28,7 @@ import {
     logoutAction,
     type CurrentSession,
 } from "@/app/(results)/auth/actions";
+import { reloadDocument } from "@/lib/browser-navigation";
 import { showLockedResultsParam } from "@/lib/search-params";
 
 type AuthMenuProps = {
@@ -41,12 +42,6 @@ function anonymousSession(): CurrentSession {
         authenticated: false,
         username: null,
     };
-}
-
-async function logoutFromBrowser(): Promise<CurrentSession> {
-    const nextSession = await logoutAction();
-
-    return nextSession.authenticated ? anonymousSession() : nextSession;
 }
 
 async function refreshFromBrowser(): Promise<CurrentSession> {
@@ -179,19 +174,13 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
         refreshGenerationRef.current += 1;
 
         try {
-            const nextSession = await logoutFromBrowser();
-
-            setSession(nextSession);
+            await logoutAction();
         } catch {
-            setSession(anonymousSession());
-        } finally {
-            setUsername("");
-            setPassword("");
-            setLoginError(null);
-            setLoginOpen(false);
-            refreshRoute();
-            setLogoutPending(false);
+            // Reload to reconcile with the server even when the action response
+            // is lost after it expires the authentication cookie.
         }
+
+        reloadDocument();
     }
 
     function handleAccessFilterChange(checked: boolean): void {
