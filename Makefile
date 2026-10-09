@@ -114,6 +114,7 @@ test-e2e:
 clean-test-tmp:
 	@rm -f .tmp/wa .tmp/playwright-ports.json
 	@rm -f .tmp/results-dev.*.sqlite
+	@rm -f .tmp/mlwh-feedback-test.*.sqlite .tmp/mlwh-feedback-test.*.sqlite-wal .tmp/mlwh-feedback-test.*.sqlite-shm
 
 # ---- Dev scenario ---------------------------------------------------------
 dev:
