@@ -2,6 +2,8 @@
  * @vitest-environment jsdom
  */
 
+import type os from "node:os";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -50,9 +52,26 @@ vi.mock("@/lib/browser-navigation", () => ({
     reloadDocument: browserNavigationMocks.reloadDocument,
 }));
 
+const userInfoMock = vi.hoisted(() => vi.fn());
+
+// Replace default as well as the named export: under the jsdom environment,
+// app modules' named node:os imports resolve through the default export.
+vi.mock("node:os", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("node:os")>();
+
+    return {
+        ...actual,
+        default: { ...actual, userInfo: userInfoMock },
+        userInfo: userInfoMock,
+    };
+});
+
 beforeEach(() => {
     navigationMocks.pathname = "/";
     navigationMocks.searchParams = new URLSearchParams();
+    userInfoMock
+        .mockReset()
+        .mockReturnValue({ username: "svc" } as ReturnType<typeof os.userInfo>);
     vi.stubGlobal("matchMedia", () => ({
         addEventListener: vi.fn(),
         addListener: vi.fn(),
@@ -65,16 +84,53 @@ beforeEach(() => {
     }));
 });
 
-function renderAuthMenu(initialSession: CurrentSession) {
+function renderAuthMenu(
+    initialSession: CurrentSession,
+    showFeedbackLink?: boolean,
+) {
     return import("@/components/auth-menu").then(({ AuthMenu }) =>
         render(
             createElement(
                 AppProviders,
                 undefined,
-                createElement(AuthMenu, { initialSession }),
+                createElement(AuthMenu, { initialSession, showFeedbackLink }),
             ),
         ),
     );
+}
+
+function stubSessionRefresh(session: CurrentSession) {
+    const fetchMock = vi.fn(() => Promise.resolve(Response.json(session)));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    return fetchMock;
+}
+
+function openAccountMenu(username: string): HTMLElement {
+    fireEvent.click(
+        screen.getByRole("button", {
+            name: new RegExp(`^${username} account$`),
+        }),
+    );
+
+    return screen.getByRole("menu");
+}
+
+async function renderResultsLayoutMenu(username: string): Promise<HTMLElement> {
+    const session = { authenticated: true, username };
+
+    authActionMocks.currentSession.mockResolvedValueOnce(session);
+    stubSessionRefresh(session);
+
+    const { default: ResultsLayout } = await import("@/app/(results)/layout");
+    const layout = await ResultsLayout({
+        children: createElement("main", undefined, "Landing page"),
+    });
+
+    render(createElement(AppProviders, undefined, layout));
+
+    return openAccountMenu(username);
 }
 
 describe("E3 auth menu", () => {
@@ -390,5 +446,197 @@ describe("E3 auth menu", () => {
         expect(screen.queryByRole("button", { name: "Log in" })).toBeNull();
         expect(navigationMocks.refresh).not.toHaveBeenCalled();
         expect(browserNavigationMocks.reloadDocument).toHaveBeenCalledOnce();
+    });
+});
+
+describe("E5 auth menu feedback link", () => {
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
+    });
+
+    it("shows a Feedback menu link to /feedback above Log out when enabled", async () => {
+        stubSessionRefresh({ authenticated: true, username: "alice" });
+
+        await renderAuthMenu({ authenticated: true, username: "alice" }, true);
+
+        const menu = openAccountMenu("alice");
+        const feedback = within(menu).getByRole("menuitem", {
+            name: "Feedback",
+        });
+
+        expect(feedback.tagName).toBe("A");
+        expect(feedback.getAttribute("href")).toBe("/feedback");
+        expect(
+            within(menu)
+                .getAllByRole("menuitem")
+                .map((item) => item.textContent),
+        ).toEqual(["Feedback", "Log out"]);
+    });
+
+    it("closes the account menu when navigation changes the route", async () => {
+        stubSessionRefresh({ authenticated: true, username: "alice" });
+
+        const session = { authenticated: true, username: "alice" };
+        const { AuthMenu } = await import("@/components/auth-menu");
+        const tree = () =>
+            createElement(
+                AppProviders,
+                undefined,
+                createElement(AuthMenu, {
+                    initialSession: session,
+                    showFeedbackLink: true,
+                }),
+            );
+        const { rerender } = render(tree());
+
+        openAccountMenu("alice");
+        navigationMocks.pathname = "/feedback";
+        rerender(tree());
+
+        expect(screen.queryByRole("menu")).toBeNull();
+    });
+
+    it("hides the Feedback link from an authenticated menu without the prop", async () => {
+        stubSessionRefresh({ authenticated: true, username: "alice" });
+
+        await renderAuthMenu({ authenticated: true, username: "alice" });
+
+        const menu = openAccountMenu("alice");
+
+        expect(
+            within(menu)
+                .getAllByRole("menuitem")
+                .map((item) => item.textContent),
+        ).toEqual(["Log out"]);
+        expect(screen.queryByText("Feedback")).toBeNull();
+        expect(document.querySelector('a[href="/feedback"]')).toBeNull();
+    });
+
+    it("hides the Feedback link from anonymous sessions even with the prop", async () => {
+        await renderAuthMenu({ authenticated: false, username: null }, true);
+
+        expect(screen.queryByText("Feedback")).toBeNull();
+
+        fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+
+        expect(screen.getByRole("form", { name: "Log in" })).toBeTruthy();
+        expect(screen.queryByText("Feedback")).toBeNull();
+        expect(document.querySelector('a[href="/feedback"]')).toBeNull();
+    });
+
+    it("hides the layout Feedback link from a non-admin user", async () => {
+        vi.stubEnv("WA_FEEDBACK_ADMINS", undefined);
+
+        const menu = await renderResultsLayoutMenu("bob");
+
+        expect(
+            within(menu).getByRole("menuitem", { name: "Log out" }),
+        ).toBeTruthy();
+        expect(
+            within(menu).queryByRole("menuitem", { name: "Feedback" }),
+        ).toBeNull();
+    });
+
+    it("shows the layout Feedback link to the server's OS user", async () => {
+        vi.stubEnv("WA_FEEDBACK_ADMINS", undefined);
+
+        const menu = await renderResultsLayoutMenu("svc");
+
+        expect(
+            within(menu)
+                .getByRole("menuitem", { name: "Feedback" })
+                .getAttribute("href"),
+        ).toBe("/feedback");
+    });
+
+    it("shows the layout Feedback link to a WA_FEEDBACK_ADMINS user", async () => {
+        vi.stubEnv("WA_FEEDBACK_ADMINS", "alice");
+
+        const menu = await renderResultsLayoutMenu("alice");
+
+        expect(
+            within(menu)
+                .getByRole("menuitem", { name: "Feedback" })
+                .getAttribute("href"),
+        ).toBe("/feedback");
+    });
+
+    it("refreshes the route once after a successful login and not after a failed one", async () => {
+        const fetchMock = stubSessionRefresh({
+            authenticated: true,
+            username: "alice",
+        });
+
+        authActionMocks.loginAction.mockResolvedValueOnce({
+            authenticated: true,
+            username: "alice",
+        });
+
+        await renderAuthMenu({ authenticated: false, username: null });
+
+        fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+        fireEvent.change(screen.getByLabelText("Username"), {
+            target: { value: "alice" },
+        });
+        fireEvent.change(screen.getByLabelText("Password"), {
+            target: { value: "secret" },
+        });
+        fireEvent.submit(screen.getByRole("form", { name: "Log in" }));
+
+        await waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/auth/refresh",
+                expect.any(Object),
+            );
+        });
+        await screen.findByRole("button", { name: /^alice account$/ });
+
+        expect(navigationMocks.refresh).toHaveBeenCalledOnce();
+
+        cleanup();
+        vi.clearAllMocks();
+
+        authActionMocks.loginAction.mockRejectedValueOnce(
+            new Error("authentication failed"),
+        );
+
+        await renderAuthMenu({ authenticated: false, username: null });
+
+        fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+        fireEvent.submit(screen.getByRole("form", { name: "Log in" }));
+
+        await screen.findByText("Authentication failed");
+
+        expect(navigationMocks.refresh).not.toHaveBeenCalled();
+    });
+
+    it("renders the layout when the OS user lookup throws", async () => {
+        vi.stubEnv("WA_FEEDBACK_ADMINS", "alice");
+        userInfoMock.mockImplementation(() => {
+            throw new Error("uid has no passwd entry");
+        });
+
+        const aliceMenu = await renderResultsLayoutMenu("alice");
+
+        expect(userInfoMock).toHaveBeenCalled();
+        expect(
+            within(aliceMenu)
+                .getByRole("menuitem", { name: "Feedback" })
+                .getAttribute("href"),
+        ).toBe("/feedback");
+
+        cleanup();
+
+        const bobMenu = await renderResultsLayoutMenu("bob");
+
+        expect(
+            within(bobMenu).getByRole("menuitem", { name: "Log out" }),
+        ).toBeTruthy();
+        expect(
+            within(bobMenu).queryByRole("menuitem", { name: "Feedback" }),
+        ).toBeNull();
     });
 });

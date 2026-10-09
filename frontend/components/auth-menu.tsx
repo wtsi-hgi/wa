@@ -7,7 +7,8 @@ import {
     useRef,
     useState,
 } from "react";
-import { LogIn, LogOut, LockKeyhole } from "lucide-react";
+import { LogIn, LogOut, LockKeyhole, MessageSquareText } from "lucide-react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Alert } from "@/components/ui/alert";
@@ -33,6 +34,7 @@ import { showLockedResultsParam } from "@/lib/search-params";
 
 type AuthMenuProps = {
     initialSession: CurrentSession;
+    showFeedbackLink?: boolean;
 };
 
 const accessFilterLabel = "Only show accessible result sets";
@@ -62,7 +64,10 @@ async function refreshFromBrowser(): Promise<CurrentSession> {
     return body?.authenticated ? body : anonymousSession();
 }
 
-export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
+export function AuthMenu({
+    initialSession,
+    showFeedbackLink = false,
+}: AuthMenuProps): ReactNode {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
@@ -203,7 +208,9 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
 
         return (
             <div className="flex min-w-0 items-center justify-end gap-2">
-                <DropdownMenu>
+                {/* The layout persists across client navigation, so remount
+                    the menu per route to close it after following a link. */}
+                <DropdownMenu key={pathname}>
                     <DropdownMenuTrigger
                         aria-label={`${accountName} account`}
                         className="inline-flex h-11 max-w-[min(16rem,calc(100vw-5rem))] items-center justify-center rounded-md border border-border bg-background/92 px-3 text-sm font-medium text-foreground shadow-sm transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none"
@@ -220,6 +227,19 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
                             </Badge>
                         </div>
                         <div className="my-1 h-px bg-border" />
+                        {showFeedbackLink ? (
+                            <Link
+                                href="/feedback"
+                                role="menuitem"
+                                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                            >
+                                <MessageSquareText
+                                    aria-hidden="true"
+                                    className="h-4 w-4"
+                                />
+                                <span>Feedback</span>
+                            </Link>
+                        ) : null}
                         <button
                             type="button"
                             role="menuitem"

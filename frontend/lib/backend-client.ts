@@ -290,8 +290,9 @@ export async function resultsJson<T>(
 export async function mlwhJson<T>(
     path: string,
     schema: ZodType<T>,
+    options?: BackendFetchOptions,
 ): Promise<T> {
-    return backendJson("mlwh", "WA_MLWH_BACKEND_URL", path, schema);
+    return backendJson("mlwh", "WA_MLWH_BACKEND_URL", path, schema, options);
 }
 
 export async function resultsRaw(

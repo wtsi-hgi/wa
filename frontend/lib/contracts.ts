@@ -486,3 +486,58 @@ export const healthSchema = z.object({
     status: z.string(),
 });
 export type Health = z.infer<typeof healthSchema>;
+
+export const feedbackCategorySchema = z.enum([
+    "could_not_answer",
+    "agent_mistake",
+    "no_endpoint",
+    "user_unhappy",
+    "other",
+]);
+export type FeedbackCategory = z.infer<typeof feedbackCategorySchema>;
+
+export const feedbackReportSchema = z.object({
+    id: z.number().int().positive(),
+    created_at: z.string(),
+    category: feedbackCategorySchema,
+    description: z.string(),
+    user_request: z.string(),
+    tools_tried: z.array(z.string()),
+    mcp_server_version: z.string(),
+    wa_api_version: z.string(),
+    transport: z.string(),
+    client_name: z.string(),
+    client_version: z.string(),
+    client_user_agent: z.string(),
+    remote_addr: z.string(),
+    acknowledged: z.boolean(),
+    acknowledged_at: z.string(),
+});
+export type FeedbackReport = z.infer<typeof feedbackReportSchema>;
+
+export const feedbackPageSchema = z.object({
+    items: z.array(feedbackReportSchema),
+    total: z.number().int().nonnegative(),
+    next_offset: z.number().int(),
+});
+export type FeedbackPage = z.infer<typeof feedbackPageSchema>;
+
+export const feedbackDeleteResponseSchema = z.literal("");
+
+// Server Action inputs. Server Actions are public POST endpoints, so
+// arguments are untrusted at runtime whatever their TS types say.
+export const feedbackIdSchema = z
+    .number()
+    .int()
+    .positive()
+    .max(Number.MAX_SAFE_INTEGER);
+
+// feedbackPageSize is the number of reports per /feedback page.
+export const feedbackPageSize = 50;
+
+export const feedbackListInputSchema = z.object({
+    show: z.enum(["unacknowledged", "all"]),
+    category: feedbackCategorySchema.nullable(),
+    offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+});
+export type FeedbackListInput = z.infer<typeof feedbackListInputSchema>;

@@ -31,8 +31,8 @@ passed to `buildFetchInit`, as `resultsJson` does. Tests go in
 `frontend/tests/backend-client.test.ts`. Implement all 7 acceptance tests
 from E1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.2: E2 - Token and allowlist helpers [parallel with 5.1]
 
@@ -46,8 +46,8 @@ throwing `userInfo()` so neither admin helper throws. Tests go in
 `frontend/tests/feedback-admin.test.ts`. Implement all 6 acceptance tests
 from E2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `nextjs-fastapi-reviewer` skill
@@ -67,8 +67,8 @@ before any `fetch`. Map backend errors to the unavailable reasons and
 go in `frontend/tests/feedback-actions.test.ts`. Depends on items 5.1 and
 5.2. Implement all 18 acceptance tests from E3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after item 5.3 is reviewed)
 
@@ -84,8 +84,8 @@ toasts, and Previous/Next links built by the param rules in spec.md E4.
 Tests go in `frontend/tests/feedback-page.test.ts`. Implement all 13
 acceptance tests from E4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.5: E5 - Auth menu link [parallel with 5.4]
 
@@ -98,8 +98,8 @@ compute it in `frontend/app/(results)/layout.tsx` as
 `frontend/tests/auth-menu.test.ts`, including test 7 pinning the existing
 `router.refresh()` after login. Implement all 8 acceptance tests from E5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `nextjs-fastapi-reviewer` skill

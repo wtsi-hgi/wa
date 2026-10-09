@@ -21,6 +21,7 @@ import {
     resultsJson,
     resultsRaw,
 } from "@/lib/backend-client";
+import { feedbackDeleteResponseSchema } from "@/lib/contracts";
 
 const agentTmpRoot = fileURLToPath(
     new URL("../../.tmp/agent/", import.meta.url),
@@ -340,6 +341,54 @@ describe("H1 dual backend client", () => {
             },
         });
         await expect(result).rejects.toBeInstanceOf(BackendRequestError);
+    });
+
+    it("passes request options through to MLWH backend requests", async () => {
+        process.env.WA_MLWH_BACKEND_URL = "http://localhost:8091";
+
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValue(Response.json({ ok: true }, { status: 200 }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(
+            mlwhJson("/feedback", z.object({ ok: z.boolean() }), {
+                method: "PATCH",
+                headers: { authorization: "Bearer T" },
+                body: "{}",
+            }),
+        ).resolves.toEqual({ ok: true });
+        expect(fetchMock).toHaveBeenCalledWith(
+            "http://localhost:8091/feedback",
+            {
+                method: "PATCH",
+                headers: { authorization: "Bearer T" },
+                body: "{}",
+            },
+        );
+    });
+
+    it("accepts an empty 204 MLWH response for feedback deletes", async () => {
+        process.env.WA_MLWH_BACKEND_URL = "http://localhost:8091";
+
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(
+            mlwhJson("/feedback/7", feedbackDeleteResponseSchema, {
+                method: "DELETE",
+                jwt: "T",
+            }),
+        ).resolves.toBe("");
+        expect(fetchMock).toHaveBeenCalledWith(
+            "http://localhost:8091/feedback/7",
+            {
+                method: "DELETE",
+                headers: { authorization: "Bearer T" },
+            },
+        );
     });
 
     it("does not reference retired frontend backend client names", async () => {

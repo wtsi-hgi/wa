@@ -829,3 +829,214 @@ describe("contract schemas", () => {
         expect("size" in parsed).toBe(false);
     });
 });
+
+describe("E1 feedback contracts", () => {
+    const feedbackCategories = [
+        "could_not_answer",
+        "agent_mistake",
+        "no_endpoint",
+        "user_unhappy",
+        "other",
+    ] as const;
+
+    const fullReport = {
+        id: 7,
+        created_at: "2026-10-01T12:00:00Z",
+        category: "no_endpoint",
+        description: "No endpoint lists sample consent.",
+        user_request: "Which samples have withdrawn consent?",
+        tools_tried: ["mlwh_search_samples", "mlwh_call_endpoint"],
+        mcp_server_version: "0.4.0",
+        wa_api_version: "1.9.0",
+        transport: "stdio",
+        client_name: "claude-code",
+        client_version: "2.1.0",
+        client_user_agent: "",
+        remote_addr: "10.0.0.5",
+        acknowledged: true,
+        acknowledged_at: "2026-10-02T09:30:00Z",
+    };
+
+    function withoutKey(
+        object: Record<string, unknown>,
+        key: string,
+    ): Record<string, unknown> {
+        const copy = { ...object };
+        delete copy[key];
+
+        return copy;
+    }
+
+    it("parses a full feedback report with all 15 fields", () => {
+        expect(Object.keys(fullReport)).toHaveLength(15);
+        expect(contracts.feedbackReportSchema.parse(fullReport)).toEqual(
+            fullReport,
+        );
+    });
+
+    it("accepts every feedback category in order and nothing else", () => {
+        expect(contracts.feedbackCategorySchema.options).toEqual(
+            feedbackCategories,
+        );
+
+        for (const category of feedbackCategories) {
+            expect(
+                contracts.feedbackReportSchema.safeParse({
+                    ...fullReport,
+                    category,
+                }).success,
+            ).toBe(true);
+        }
+    });
+
+    it("rejects a report with a bogus category or missing tools_tried", () => {
+        expect(
+            contracts.feedbackReportSchema.safeParse({
+                ...fullReport,
+                category: "bogus",
+            }).success,
+        ).toBe(false);
+        expect(
+            contracts.feedbackReportSchema.safeParse(
+                withoutKey(fullReport, "tools_tried"),
+            ).success,
+        ).toBe(false);
+    });
+
+    it("requires every report field and rejects null for each", () => {
+        for (const key of Object.keys(fullReport)) {
+            expect(
+                contracts.feedbackReportSchema.safeParse(
+                    withoutKey(fullReport, key),
+                ).success,
+                `missing ${key}`,
+            ).toBe(false);
+            expect(
+                contracts.feedbackReportSchema.safeParse({
+                    ...fullReport,
+                    [key]: null,
+                }).success,
+                `null ${key}`,
+            ).toBe(false);
+        }
+    });
+
+    it("rejects report ids that are not positive integers", () => {
+        for (const id of [0, -1, 1.5, "7"]) {
+            expect(
+                contracts.feedbackReportSchema.safeParse({ ...fullReport, id })
+                    .success,
+                `id ${String(id)}`,
+            ).toBe(false);
+        }
+    });
+
+    it("rejects non-string tool names in tools_tried", () => {
+        expect(
+            contracts.feedbackReportSchema.safeParse({
+                ...fullReport,
+                tools_tried: ["mlwh_search_samples", 3],
+            }).success,
+        ).toBe(false);
+    });
+
+    it("parses an empty feedback page with next_offset -1", () => {
+        expect(
+            contracts.feedbackPageSchema.parse({
+                items: [],
+                total: 0,
+                next_offset: -1,
+            }),
+        ).toEqual({ items: [], total: 0, next_offset: -1 });
+    });
+
+    it("validates feedback page items, total and next_offset", () => {
+        const page = { items: [fullReport], total: 51, next_offset: 50 };
+
+        expect(contracts.feedbackPageSchema.parse(page)).toEqual(page);
+
+        for (const bad of [
+            { ...page, items: [{ ...fullReport, category: "bogus" }] },
+            { ...page, total: -1 },
+            { ...page, total: 1.5 },
+            { ...page, next_offset: 1.5 },
+            withoutKey(page, "items"),
+            withoutKey(page, "total"),
+            withoutKey(page, "next_offset"),
+        ]) {
+            expect(
+                contracts.feedbackPageSchema.safeParse(bad).success,
+                JSON.stringify(bad),
+            ).toBe(false);
+        }
+    });
+
+    it("accepts only an empty body as a feedback delete response", () => {
+        expect(contracts.feedbackDeleteResponseSchema.parse("")).toBe("");
+
+        for (const bad of [" ", "{}", null, undefined, {}]) {
+            expect(
+                contracts.feedbackDeleteResponseSchema.safeParse(bad).success,
+                JSON.stringify(bad) ?? "undefined",
+            ).toBe(false);
+        }
+    });
+
+    it("accepts only positive safe integers as feedback ids", () => {
+        for (const id of [1, Number.MAX_SAFE_INTEGER]) {
+            expect(contracts.feedbackIdSchema.parse(id)).toBe(id);
+        }
+
+        for (const id of [
+            "../x",
+            "3",
+            0,
+            -1,
+            1.5,
+            Number.NaN,
+            Number.POSITIVE_INFINITY,
+            Number.MAX_SAFE_INTEGER + 1,
+        ]) {
+            expect(
+                contracts.feedbackIdSchema.safeParse(id).success,
+                `id ${String(id)}`,
+            ).toBe(false);
+        }
+    });
+
+    it("validates feedback list inputs from untrusted Server Action callers", () => {
+        const valid = { show: "all", category: null, offset: 0 };
+
+        expect(contracts.feedbackListInputSchema.parse(valid)).toEqual(valid);
+        expect(
+            contracts.feedbackListInputSchema.parse({
+                show: "unacknowledged",
+                category: "user_unhappy",
+                offset: Number.MAX_SAFE_INTEGER,
+            }),
+        ).toEqual({
+            show: "unacknowledged",
+            category: "user_unhappy",
+            offset: Number.MAX_SAFE_INTEGER,
+        });
+
+        for (const bad of [
+            { ...valid, show: "x" },
+            { ...valid, category: "bogus" },
+            { ...valid, category: "../x" },
+            { ...valid, offset: -1 },
+            { ...valid, offset: 1.5 },
+            { ...valid, offset: "0" },
+            { ...valid, offset: Number.MAX_SAFE_INTEGER + 1 },
+            withoutKey(valid, "show"),
+            withoutKey(valid, "category"),
+            withoutKey(valid, "offset"),
+            null,
+        ]) {
+            expect(
+                contracts.feedbackListInputSchema.safeParse(bad).success,
+                JSON.stringify(bad),
+            ).toBe(false);
+        }
+    });
+});
