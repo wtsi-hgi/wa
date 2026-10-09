@@ -25,12 +25,15 @@ spec.md section: F2
 First run the full verification from spec.md Implementation Order step 7
 and fix any failure: `golangci-lint run --fix`,
 `CGO_ENABLED=1 go test -tags netgo --count 1 ./...`, and
-`cd frontend && pnpm lint && pnpm test`, each bounded with `timeout`. Then
-merge the branch and tag `v0.10.0`. Merging to `main`, pushing, and
-tagging need the user's explicit approval; never push to `main` directly.
-The MCP repo then bumps `github.com/wtsi-hgi/wa` to `v0.10.0`. F2 has no
-acceptance tests; review confirms that verification passed and the tag
-points at the merged commit.
+`cd frontend && pnpm lint && pnpm test`, each bounded with `timeout`.
+After the orchestrator's spec-aware and spec-free PR
+reviews converge, push the `feedback` branch and open a PR against `develop`, and run
+the `pr-resolver` skill on it until its review comments are resolved and
+CI passes. Do not merge, push to `main`, or tag: the user merges to
+`main` and tags `v0.10.0` after the PR lands. The MCP repo then bumps
+`github.com/wtsi-hgi/wa` to `v0.10.0`. F2 has no acceptance tests;
+review confirms that verification passed and the PR is open against
+`develop` with comments resolved and CI green.
 
 - [ ] implemented
 - [ ] reviewed
