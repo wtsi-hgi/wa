@@ -217,8 +217,8 @@ wa mlwh serve --port 8091 --feedback-db /var/lib/wa/mlwh-feedback.sqlite
 ```
 
 `--feedback-db` defaults to `WA_MLWH_FEEDBACK_PATH`. The server creates the
-file and its parent directory, and rejects a MySQL DSN. The feedback database
-is separate from the MLWH cache. Without a feedback database, every feedback
+file at mode 0600 and its parent directory, and rejects a MySQL DSN. The
+feedback database is separate from the MLWH cache. Without a feedback database, every feedback
 route answers 503 `feedback_disabled`.
 
 The admin routes (`GET /feedback`, `PATCH /feedback/:id`, and

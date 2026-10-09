@@ -267,6 +267,32 @@ func TestFeedbackStoreA2(t *testing.T) {
 		_, err = store.Add(ctx, FeedbackSubmission{Category: FeedbackCategoryOther, Description: "d"}, "")
 		convey.So(err, convey.ShouldNotBeNil)
 	})
+
+	convey.Convey("Given a new path, when opened and written, then the database and its WAL are readable only by the owner", t, func() {
+		path := filepath.Join(t.TempDir(), "feedback.db")
+		store := openTestFeedbackStore(t, path)
+		addTestFeedback(ctx, store, FeedbackCategoryOther)
+
+		for _, file := range []string{path, path + "-wal"} {
+			info, err := os.Stat(file)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(info.Mode().Perm()&0o077, convey.ShouldEqual, 0)
+		}
+	})
+
+	convey.Convey("Given an existing database at mode 0644, when reopened, then its mode is unchanged", t, func() {
+		path := filepath.Join(t.TempDir(), "feedback.db")
+		store, err := OpenFeedbackStore(ctx, path)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(store.Close(), convey.ShouldBeNil)
+		convey.So(os.Chmod(path, 0o644), convey.ShouldBeNil)
+
+		openTestFeedbackStore(t, path)
+
+		info, err := os.Stat(path)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(info.Mode().Perm(), convey.ShouldEqual, os.FileMode(0o644))
+	})
 }
 
 func openTestFeedbackStore(t *testing.T, path string) *FeedbackStore {

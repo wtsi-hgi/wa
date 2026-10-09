@@ -31,11 +31,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+const feedbackStoreFileMode = 0o600
 
 const feedbackSchema = `
 CREATE TABLE IF NOT EXISTS feedback (
@@ -69,8 +73,13 @@ type FeedbackStore struct {
 }
 
 // OpenFeedbackStore opens, creating if needed, the SQLite feedback database
-// at path.
+// at path. A new database file is created at mode 0600 because reports may
+// quote user requests; an existing file keeps its mode.
 func OpenFeedbackStore(ctx context.Context, path string) (*FeedbackStore, error) {
+	if err := createFeedbackStoreFile(path); err != nil {
+		return nil, err
+	}
+
 	db, err := sql.Open("sqlite", sqliteWritableDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("mlwh: open feedback store: %w", err)
@@ -281,6 +290,21 @@ func (s *FeedbackStore) Delete(ctx context.Context, id int64) error {
 	}
 
 	return nil
+}
+
+// createFeedbackStoreFile creates an empty file at path with mode 0600 when
+// none exists. SQLite creates its -wal and -shm files with the same mode.
+func createFeedbackStoreFile(path string) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, feedbackStoreFileMode)
+	if errors.Is(err, fs.ErrExist) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("mlwh: create feedback store: %w", err)
+	}
+
+	return file.Close()
 }
 
 type rowScanner interface {
