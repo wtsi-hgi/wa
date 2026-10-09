@@ -175,6 +175,20 @@ port_arg() {
 	printf '0'
 }
 
+feedback_db_arg() {
+	local previous=""
+	local arg
+
+	for arg in "$@"; do
+		if [[ "$previous" == "--feedback-db" ]]; then
+			printf '%%s' "$arg"
+			return
+		fi
+
+		previous="$arg"
+	done
+}
+
 printf '%%s\n' "$*" >> "$invocations_path"
 
 case "${1:-} ${2:-}" in
@@ -190,6 +204,12 @@ case "${1:-} ${2:-}" in
 		;;
 	"mlwh serve")
 		port="$(port_arg "$@")"
+		feedback_db="$(feedback_db_arg "$@")"
+		if [[ -n "$feedback_db" ]]; then
+			: >"$feedback_db"
+			: >"$feedback_db-wal"
+			: >"$feedback_db-shm"
+		fi
 		exec node -e 'const http = require("node:http"); const port = Number(process.argv[1]); const tables = ["study","sample","iseq_flowcell","iseq_product_metrics","seq_product_irods_locations"]; const server = http.createServer((request, response) => { if (request.url === "/freshness") { response.writeHead(200, {"content-type":"application/json"}); response.end(JSON.stringify({tables: tables.map((table) => ({table, high_water: "2026-05-15T10:00:00Z", last_run: "2026-05-15T10:00:00Z", ever_synced: true}))})); return; } if (request.url === "/studies") { response.writeHead(200, {"content-type":"application/json"}); response.end("[]"); return; } response.writeHead(404); response.end(); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(port, "127.0.0.1");' "$port"
 		;;
 esac
@@ -729,6 +749,43 @@ func runDevLstatPathExistsForTest(path string) bool {
 	return err == nil || !errors.Is(err, fs.ErrNotExist)
 }
 
+// startRunDevDevModeFeedbackForTest starts run-dev.sh --mode dev with a
+// configured MLWH cache, setting WA_MLWH_FEEDBACK_PATH only when feedbackPath
+// is non-empty, and waits until the environment is ready.
+func startRunDevDevModeFeedbackForTest(t *testing.T, repoRoot string, invocationsPath string, feedbackPath string) *runDevProcess {
+	t.Helper()
+
+	ports := runDevFeedbackPortsForTest(t)
+	binDir := t.TempDir()
+
+	writeRunDevMLWHServeToolchainForTest(t, binDir, invocationsPath)
+
+	env := runDevFeedbackFrontendEnvForTest(t, repoRoot, binDir, ports)
+	env["WA_ENV"] = "development"
+	env["WA_RESULTS_DB_PATH"] = filepath.Join(t.TempDir(), "results-dev.sqlite")
+	env["WA_MLWH_CACHE_PATH"] = filepath.Join(t.TempDir(), "mlwh-cache.sqlite")
+	env["WA_RESULTS_LDAP_SERVER"] = "ldap.example.org"
+	env["WA_RESULTS_LDAP_DN"] = "uid=%s,ou=people,dc=example,dc=org"
+	env["WA_RUN_DEV_RESULTS_HEALTH_URL"] = fmt.Sprintf("http://127.0.0.1:%d/rest/v1/results/stats", ports.results)
+
+	if feedbackPath != "" {
+		env["WA_MLWH_FEEDBACK_PATH"] = feedbackPath
+	}
+
+	process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+		mode:         "dev",
+		frontendPort: ports.frontend,
+		resultsPort:  ports.results,
+		seqmetaPort:  ports.seqmeta,
+		unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
+		env:          env,
+	})
+
+	convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+	return process
+}
+
 func (process *runDevProcess) Terminate() {
 	if process == nil || process.Command == nil || process.Command.Process == nil {
 		return
@@ -797,6 +854,218 @@ func TestRunDevAutoManagedMLWHBackendFailsFastOnColdCacheWithoutDSN(t *testing.T
 	})
 }
 
+func TestRunDevFeedbackDB(t *testing.T) {
+	convey.Convey("D2.1: run-dev.sh --mode test passes an ephemeral .tmp feedback DB to mlwh serve and removes it on SIGINT", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		ports := runDevFeedbackPortsForTest(t)
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+		binDir := t.TempDir()
+
+		writeRunDevMLWHServeToolchainForTest(t, binDir, invocationsPath)
+
+		env := runDevFeedbackFrontendEnvForTest(t, repoRoot, binDir, ports)
+		env["WA_RUN_DEV_RESULTS_HEALTH_URL"] = fmt.Sprintf("https://127.0.0.1:%d/rest/v1/results/stats", ports.results)
+		env["WA_MLWH_FEEDBACK_PATH"] = filepath.Join(t.TempDir(), "ignored-in-test-mode.sqlite")
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "test",
+			frontendPort: ports.frontend,
+			resultsPort:  ports.results,
+			seqmetaPort:  ports.seqmeta,
+			unsetEnv:     runDevUnsetRemoteMLWHEnvForTest(),
+			env:          env,
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		serve := runDevMLWHServeInvocationForTest(t, invocationsPath)
+		feedbackPath := runDevFeedbackDBArgForTest(serve)
+
+		t.Cleanup(func() { removeRunDevSQLiteFilesForTest(feedbackPath) })
+
+		convey.So(feedbackPath, convey.ShouldNotBeBlank)
+		convey.So(filepath.Dir(feedbackPath), convey.ShouldEqual, filepath.Join(repoRoot, ".tmp"))
+		convey.So(filepath.Base(feedbackPath), convey.ShouldStartWith, "mlwh-feedback-test.")
+		convey.So(filepath.Base(feedbackPath), convey.ShouldEndWith, ".sqlite")
+
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			convey.So(runDevPathExistsForTest(feedbackPath+suffix), convey.ShouldBeTrue)
+		}
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			convey.So(runDevPathExistsForTest(feedbackPath+suffix), convey.ShouldBeFalse)
+		}
+	})
+
+	convey.Convey("D2.2: run-dev.sh --mode dev with a configured cache and no WA_MLWH_FEEDBACK_PATH passes no --feedback-db", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+
+		process := startRunDevDevModeFeedbackForTest(t, repoRoot, invocationsPath, "")
+
+		serve := runDevMLWHServeInvocationForTest(t, invocationsPath)
+
+		convey.So(serve, convey.ShouldContainSubstring, "--mlwh-cache ")
+		convey.So(serve, convey.ShouldNotContainSubstring, "--feedback-db")
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("D2.3: run-dev.sh --mode dev passes WA_MLWH_FEEDBACK_PATH, creates its parent directory, and keeps it on shutdown", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+		feedbackDir := filepath.Join(t.TempDir(), "fb")
+		feedbackPath := filepath.Join(feedbackDir, "dev.sqlite")
+
+		process := startRunDevDevModeFeedbackForTest(t, repoRoot, invocationsPath, feedbackPath)
+
+		serve := runDevMLWHServeInvocationForTest(t, invocationsPath)
+
+		convey.So(runDevFeedbackDBArgForTest(serve), convey.ShouldEqual, feedbackPath)
+		convey.So(strings.Count(serve, "--feedback-db"), convey.ShouldEqual, 1)
+
+		info, err := os.Stat(feedbackDir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(info.IsDir(), convey.ShouldBeTrue)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			convey.So(runDevPathExistsForTest(feedbackPath+suffix), convey.ShouldBeTrue)
+		}
+	})
+
+	convey.Convey("D2.4: run-dev.sh passes no --feedback-db to a WA_RUN_DEV_SEQMETA_CMD backend", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		ports := runDevFeedbackPortsForTest(t)
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+		seqmetaArgsPath := filepath.Join(t.TempDir(), "seqmeta-args.log")
+		binDir := t.TempDir()
+
+		writeRunDevMLWHServeToolchainForTest(t, binDir, invocationsPath)
+
+		env := runDevFeedbackFrontendEnvForTest(t, repoRoot, binDir, ports)
+		env["WA_RUN_DEV_RESULTS_HEALTH_URL"] = fmt.Sprintf("https://127.0.0.1:%d/rest/v1/results/stats", ports.results)
+		env["WA_RUN_DEV_SEQMETA_CMD"] = writeRunDevArgRecordingSeqmetaStubForTest(t, binDir, seqmetaArgsPath, ports.seqmeta)
+		env["WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS"] = "60"
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "test",
+			frontendPort: ports.frontend,
+			resultsPort:  ports.results,
+			seqmetaPort:  ports.seqmeta,
+			unsetEnv:     runDevUnsetRemoteMLWHEnvForTest(),
+			env:          env,
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		seqmetaArgs, err := os.ReadFile(seqmetaArgsPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(seqmetaArgs), convey.ShouldNotContainSubstring, "--feedback-db")
+		convey.So(string(seqmetaArgs), convey.ShouldNotContainSubstring, "mlwh-feedback-test.")
+
+		invocations := strings.Join(waitForRunDevStepsForTest(t, invocationsPath, 1), "\n")
+		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh serve")
+		convey.So(invocations, convey.ShouldNotContainSubstring, "--feedback-db")
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+}
+
+func runDevFeedbackPortsForTest(t *testing.T) runDevFeedbackPorts {
+	t.Helper()
+
+	return runDevFeedbackPorts{
+		frontend: runDevFreePortForTest(t),
+		results:  runDevFreePortForTest(t),
+		seqmeta:  runDevFreePortForTest(t),
+	}
+}
+
+// runDevFeedbackFrontendEnvForTest returns the env shared by the D2 tests: the
+// fake toolchain on PATH and no-op frontend checks around the frontend stub,
+// which needs a snapshot path to start.
+func runDevFeedbackFrontendEnvForTest(t *testing.T, repoRoot string, binDir string, ports runDevFeedbackPorts) map[string]string {
+	t.Helper()
+
+	return map[string]string{
+		"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"WA_RUN_DEV_ENV_SNAPSHOT":               filepath.Join(t.TempDir(), "frontend-env.json"),
+		"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+		"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q %d`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"), ports.frontend),
+		"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", ports.frontend),
+	}
+}
+
+// runDevMLWHServeInvocationForTest returns the single recorded "mlwh serve"
+// invocation of the fake wa binary.
+func runDevMLWHServeInvocationForTest(t *testing.T, invocationsPath string) string {
+	t.Helper()
+
+	var serves []string
+
+	for _, invocation := range waitForRunDevStepsForTest(t, invocationsPath, 2) {
+		if strings.HasPrefix(invocation, "mlwh serve ") {
+			serves = append(serves, invocation)
+		}
+	}
+
+	convey.So(serves, convey.ShouldHaveLength, 1)
+
+	return serves[0]
+}
+
+// runDevFeedbackDBArgForTest returns the value following --feedback-db in a
+// recorded invocation, or "" when the flag is absent.
+func runDevFeedbackDBArgForTest(invocation string) string {
+	fields := strings.Fields(invocation)
+
+	index := slices.Index(fields, "--feedback-db")
+	if index < 0 || index+1 >= len(fields) {
+		return ""
+	}
+
+	return fields[index+1]
+}
+
+func removeRunDevSQLiteFilesForTest(path string) {
+	if path == "" {
+		return
+	}
+
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		_ = os.Remove(path + suffix)
+	}
+}
+
+// writeRunDevArgRecordingSeqmetaStubForTest writes an operator-managed MLWH
+// command that records its arguments to argsPath and answers /studies on port.
+func writeRunDevArgRecordingSeqmetaStubForTest(t *testing.T, binDir string, argsPath string, port int) string {
+	t.Helper()
+
+	stubPath := filepath.Join(binDir, "seqmeta-stub")
+	stub := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%%s\n' "$*" >%q
+exec node -e 'const http = require("node:http"); const server = http.createServer((_, response) => { response.writeHead(200, {"content-type":"application/json"}); response.end("[]"); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(%d, "127.0.0.1");'
+`, argsPath, port)
+
+	convey.So(os.WriteFile(stubPath, []byte(stub), 0o755), convey.ShouldBeNil)
+
+	return stubPath
+}
+
 func runDevCommandModeForTest(process *runDevProcess) string {
 	if process == nil || process.Command == nil {
 		return "test"
@@ -814,6 +1083,12 @@ func runDevCommandModeForTest(process *runDevProcess) string {
 	}
 
 	return "test"
+}
+
+type runDevFeedbackPorts struct {
+	frontend int
+	results  int
+	seqmeta  int
 }
 
 func TestRunDevHelpDocumentsProdRefusedEnvironment(t *testing.T) {
@@ -2561,6 +2836,7 @@ func runDevEnvForTest(unsetKeys []string) []string {
 		"WA_MLWH_PASSWORD",
 		"WA_MLWH_CACHE_PATH",
 		"WA_MLWH_CACHE_PASSWORD",
+		"WA_MLWH_FEEDBACK_PATH",
 		// Strip every WA_MLWH_* server selector inherited from the developer's
 		// shell so these tests exercise the same MLWH branch CI does. A
 		// developer who exports WA_MLWH_SERVER_URL (or WA_MLWH_BACKEND_URL) to a

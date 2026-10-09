@@ -804,6 +804,8 @@ DB_PATH=""
 DB_EPHEMERAL=0
 MLWH_CACHE_PATH=""
 MLWH_CACHE_EPHEMERAL=0
+FEEDBACK_DB_PATH=""
+FEEDBACK_DB_EPHEMERAL=0
 CLEANED_UP=0
 
 process_is_running() {
@@ -896,6 +898,10 @@ cleanup() {
 
   if (( MLWH_CACHE_EPHEMERAL )) && [[ -n "$MLWH_CACHE_PATH" ]]; then
     rm -f "$MLWH_CACHE_PATH"
+  fi
+
+  if (( FEEDBACK_DB_EPHEMERAL )) && [[ -n "$FEEDBACK_DB_PATH" ]]; then
+    rm -f "$FEEDBACK_DB_PATH" "$FEEDBACK_DB_PATH-wal" "$FEEDBACK_DB_PATH-shm"
   fi
 
   cleanup_stable_bin_symlink
@@ -1558,6 +1564,20 @@ if [[ "$scenario" == "test" ]]; then
   seed_test_mlwh_cache "$MLWH_CACHE_PATH"
 fi
 
+# Feedback DB for the auto-managed MLWH server: test gets a throwaway file under
+# .tmp/ that is removed on shutdown; dev/prod enable feedback only when
+# WA_MLWH_FEEDBACK_PATH is set.
+if [[ "$scenario" == "test" ]]; then
+  FEEDBACK_DB_PATH="$(mktemp "$TMP_DIR/mlwh-feedback-test.XXXXXX.sqlite")"
+  FEEDBACK_DB_EPHEMERAL=1
+else
+  FEEDBACK_DB_PATH="${WA_MLWH_FEEDBACK_PATH:-}"
+  FEEDBACK_DB_EPHEMERAL=0
+  if [[ -n "$FEEDBACK_DB_PATH" ]]; then
+    mkdir -p "$(dirname "$FEEDBACK_DB_PATH")"
+  fi
+fi
+
 if ! has_nonblank_value "${WA_MLWH_SERVER_URL:-}" && \
    ! has_nonblank_value "$MLWH_CACHE_PATH" && \
    has_nonblank_value "$SEQMETA_CMD"; then
@@ -1667,6 +1687,9 @@ elif [[ -n "${WA_MLWH_DSN:-}" || -n "$MLWH_CACHE_PATH" ]]; then
     mlwh_args=(mlwh serve --port "$seqmeta_port" --url "$SEQMETA_BIND_ADDR")
     if [[ -n "$MLWH_CACHE_PATH" ]]; then
       mlwh_args+=(--mlwh-cache "$MLWH_CACHE_PATH")
+    fi
+    if [[ -n "$FEEDBACK_DB_PATH" ]]; then
+      mlwh_args+=(--feedback-db "$FEEDBACK_DB_PATH")
     fi
     "${BIN_PATH}" "${mlwh_args[@]}" >>"$SEQMETA_LOG" 2>&1 &
     seqmeta_pid="$!"

@@ -33,8 +33,8 @@ Tests 8 and 9 run the real command end to end on a free local port, with
 the 5 s health and 10 s shutdown limits from the spec. Covering all 9
 acceptance tests from D1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 4.2: D2 - run-dev.sh wiring
 
@@ -48,5 +48,5 @@ auto-managed `mlwh serve` branch appends `--feedback-db`, and only when the
 path is non-empty. Tests go in `cmd/run_dev_test.go`. Depends on item 4.1.
 Covering all 4 acceptance tests from D2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

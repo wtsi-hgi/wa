@@ -46,6 +46,10 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
+// mlwhServeDefaultServerTokenBasename is the plain-mode feedback admin token
+// file, resolved under gas.TokenDir() like a secured --server-token basename.
+const mlwhServeDefaultServerTokenBasename = ".wa-mlwh-server.token"
+
 var openMLWHSyncClient = func(ctx context.Context, cfg mlwh.Config) (mlwhSyncClient, error) {
 	return mlwh.Open(ctx, cfg)
 }
@@ -192,6 +196,7 @@ func newMLWHServeCommand() *cobra.Command {
 	var key string
 	var serverToken string
 	var mlwhCache string
+	var feedbackDB string
 
 	command := &cobra.Command{
 		Use:           "serve",
@@ -215,6 +220,13 @@ func newMLWHServeCommand() *cobra.Command {
 			"variables, or WA_MLWH_SERVER_PORT when no scenario port is active.",
 			"WA_MLWH_SERVER_URL is the public client URL used by wa mlwh info and",
 			"mlwhdiff; it is not used as a bind address.",
+			"",
+			"Agent feedback (POST /feedback and the admin /feedback routes) is off",
+			"unless --feedback-db or WA_MLWH_FEEDBACK_PATH names a SQLite file. When",
+			"it is on, admin routes require 'Authorization: Bearer <token>', where the",
+			"token is the --server-token file in secured mode, or else",
+			".wa-mlwh-server.token in $XDG_STATE_HOME (default: your home directory),",
+			"created at mode 0600 on first use and reused afterwards.",
 			"",
 			"Example:",
 			"  WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite wa --env production mlwh serve",
@@ -244,8 +256,9 @@ func newMLWHServeCommand() *cobra.Command {
 			defer func() { _ = client.Close() }()
 
 			authServer := mlwhServeNewAuthServer(cmd.ErrOrStderr())
-			server := mlwh.NewServer(client)
 			if serveConfig.secured {
+				// In secured mode the feedback admin token is the server token
+				// file, which may not exist until this creates it.
 				if err = authServer.EnableAuthWithServerToken(
 					serveConfig.cert,
 					serveConfig.key,
@@ -256,6 +269,19 @@ func newMLWHServeCommand() *cobra.Command {
 				}
 
 				configureMLWHServeRouter(authServer.Router())
+			}
+
+			feedbackStore, feedbackToken, err := openMLWHServeFeedback(commandContext(cmd), feedbackDB, serveConfig)
+			if err != nil {
+				return err
+			}
+
+			if feedbackStore != nil {
+				defer func() { _ = feedbackStore.Close() }()
+			}
+
+			server := mlwh.NewServer(client, mlwh.WithFeedback(feedbackStore, feedbackToken))
+			if serveConfig.secured {
 				server.RegisterRoutes(authServer.Router(), authServer.AuthRouter())
 			} else {
 				server.RegisterRoutes(authServer.Router(), nil)
@@ -270,6 +296,7 @@ func newMLWHServeCommand() *cobra.Command {
 	command.Flags().StringVar(&cert, "cert", firstEnv("WA_MLWH_SERVER_CERT"), "TLS certificate path")
 	command.Flags().StringVarP(&key, "key", "k", firstEnv("WA_MLWH_SERVER_KEY"), "TLS private key path")
 	command.Flags().StringVar(&serverToken, "server-token", firstEnv("WA_MLWH_SERVER_TOKEN"), "Server token basename or absolute path")
+	command.Flags().StringVar(&feedbackDB, "feedback-db", firstEnv("WA_MLWH_FEEDBACK_PATH"), "SQLite path for agent feedback; feedback is disabled when unset")
 	command.Flags().StringVar(&mlwhCache, "mlwh-cache", "", "MLWH cache backend path or MySQL DSN without a password; defaults to WA_MLWH_CACHE_PATH when unset")
 
 	return command
@@ -327,6 +354,53 @@ func configureMLWHServeRouter(router *gin.Engine) {
 
 	router.UseRawPath = true
 	router.UnescapePathValues = false
+}
+
+// openMLWHServeFeedback returns (nil, nil, nil) when feedbackDB is blank.
+// It rejects a MySQL-looking DSN, creates the parent directory, opens the
+// store, and resolves the admin token: the --server-token file in secured
+// mode, else mlwhServeDefaultServerTokenBasename, created if absent.
+func openMLWHServeFeedback(ctx context.Context, feedbackDB string, config mlwhServeConfig) (*mlwh.FeedbackStore, []byte, error) {
+	dbPath := strings.TrimSpace(feedbackDB)
+	if dbPath == "" {
+		return nil, nil, nil
+	}
+
+	if mlwhSyncCachePathLooksMySQL(dbPath) {
+		return nil, nil, errors.New("--feedback-db must be a SQLite file path, not a MySQL DSN")
+	}
+
+	if err := ensureMLWHSyncCacheDirectory(dbPath); err != nil {
+		return nil, nil, err
+	}
+
+	store, err := mlwh.OpenFeedbackStore(ctx, dbPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	token, err := mlwhServeFeedbackAdminToken(config)
+	if err != nil {
+		_ = store.Close()
+
+		return nil, nil, fmt.Errorf("feedback admin token: %w", err)
+	}
+
+	return store, token, nil
+}
+
+func mlwhServeFeedbackAdminToken(config mlwhServeConfig) ([]byte, error) {
+	tokenBasename := mlwhServeDefaultServerTokenBasename
+	if config.secured {
+		tokenBasename = config.serverToken
+	}
+
+	tokenPath, err := resultsServeServerTokenPath(tokenBasename)
+	if err != nil {
+		return nil, err
+	}
+
+	return resultsServeServerToken(tokenPath)
 }
 
 func newMLWHCommand() *cobra.Command {
