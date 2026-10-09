@@ -46,7 +46,7 @@ const (
 	feedbackInvalidJSONMessage   = "invalid JSON body"
 	feedbackStoreFailedMessage   = "could not store feedback"
 	feedbackReceivedLogMessage   = "mlwh feedback received"
-	feedbackSubmitPath           = "/feedback"
+	feedbackPath                 = "/feedback"
 	feedbackBodyTooLargeTemplate = "request body exceeds %d bytes"
 	feedbackAdminTokenMessage    = "admin token required"
 	feedbackAdminItemPath        = "/feedback/:id"
@@ -247,7 +247,7 @@ func feedbackFilterFromQuery(c *gin.Context) (FeedbackFilter, bool) {
 // registerFeedbackAdminRoutes registers the admin list, acknowledge and delete
 // routes, each behind requireFeedbackAdmin.
 func (s *Server) registerFeedbackAdminRoutes(registrar mlwhRouteRegistrar) {
-	registrar.Handle(http.MethodGet, feedbackSubmitPath, s.requireFeedbackAdmin, s.handleFeedbackList)
+	registrar.Handle(http.MethodGet, feedbackPath, s.requireFeedbackAdmin, s.handleFeedbackList)
 	registrar.Handle(http.MethodPatch, feedbackAdminItemPath, s.requireFeedbackAdmin, s.handleFeedbackAcknowledge)
 	registrar.Handle(http.MethodDelete, feedbackAdminItemPath, s.requireFeedbackAdmin, s.handleFeedbackDelete)
 }
@@ -337,7 +337,7 @@ func (s *Server) handleFeedbackDelete(c *gin.Context) {
 }
 
 func (s *Server) registerFeedbackSubmitRoute(registrar mlwhRouteRegistrar) {
-	registrar.Handle(http.MethodPost, feedbackSubmitPath, s.handleFeedbackSubmit)
+	registrar.Handle(http.MethodPost, feedbackPath, s.handleFeedbackSubmit)
 }
 
 // handleFeedbackSubmit stores one agent feedback report. Checks run in the
