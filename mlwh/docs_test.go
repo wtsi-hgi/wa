@@ -96,6 +96,16 @@ func TestEndpointReferenceIncludesAPIVersion(t *testing.T) {
 	})
 }
 
+func TestEndpointReferenceCommittedAtFeedbackVersionB7(t *testing.T) {
+	// B7 acceptance test 6: the committed reference was regenerated for the
+	// 1.9.0 API version that documents POST /feedback.
+	convey.Convey("Given the committed MLWH reference, then it carries the 1.9.0 API version line", t, func() {
+		committed, err := os.ReadFile(apiReferenceDocPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(committed), convey.ShouldContainSubstring, "**API version:** `1.9.0`")
+	})
+}
+
 func TestEndpointReferenceAndOpenAPICoverSamePathsG1(t *testing.T) {
 	// G1 acceptance test 2: the reference generator and the OpenAPI generator
 	// cover the same set of Registry paths (no drift between human and machine

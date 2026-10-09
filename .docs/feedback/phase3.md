@@ -30,8 +30,8 @@ Update `TestOpenAPIErrorEnvelopeC2` to nine codes and
 version line changes. Depends on phase 2. Covering all 8 acceptance tests
 from B7.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.2: C1 - RemoteClient.SubmitFeedback [parallel with 3.1]
 
@@ -46,8 +46,8 @@ envelope. Tests go in `mlwh/remote_feedback_test.go`, including the real
 `NewServer(..., WithFeedback(...))` round trip. Depends on phase 2. Covering all
 11 acceptance tests from C1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill
