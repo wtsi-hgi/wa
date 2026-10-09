@@ -36,6 +36,21 @@ const (
 	httpErrorCodeUnsupportedIdentifier = "unsupported_identifier"
 	httpErrorCodeCacheNeverSynced      = "cache_never_synced"
 	httpErrorCodeUpstreamImpaired      = "upstream_impaired"
+	httpErrorCodeBadRequest            = "bad_request"
+	httpErrorCodeUnauthorized          = "unauthorized"
+	httpErrorCodePayloadTooLarge       = "payload_too_large"
+	httpErrorCodeInternal              = "internal_error"
+	httpErrorCodeFeedbackDisabled      = "feedback_disabled"
+)
+
+// Feedback sentinels. Validation and the HTTP handlers wrap the first three;
+// RemoteClient.SubmitFeedback also maps responses to the last two.
+var (
+	ErrFeedbackDisabled     = errors.New("mlwh: feedback is disabled on this server")
+	ErrFeedbackInvalid      = errors.New("mlwh: invalid feedback")
+	ErrFeedbackTooLarge     = errors.New("mlwh: feedback too large")
+	ErrFeedbackUnsupported  = errors.New("mlwh: server does not support feedback")
+	ErrFeedbackUnauthorized = errors.New("mlwh: feedback request unauthorized")
 )
 
 func httpStatusAndErrorCode(err error) (int, string) {
@@ -67,6 +82,8 @@ func sentinelForHTTPErrorCode(code string) error {
 		return ErrCacheNeverSynced
 	case httpErrorCodeUpstreamImpaired:
 		return ErrUpstreamImpaired
+	case httpErrorCodeFeedbackDisabled:
+		return ErrFeedbackDisabled
 	default:
 		return nil
 	}

@@ -33,14 +33,15 @@ import (
 )
 
 // APIVersion is the semantic version of the served MLWH REST API, surfaced as
-// info.version in the OpenAPI document. Its minor component tracks the cache
-// schema-version lineage (CacheSchemaVersion) so the documented API version
-// moves with each schema/contract change; the patch component is reserved for
-// documentation-only revisions within a schema version. It is a compiled-in
-// constant: reading it never contacts a live server, letting an external
-// consumer (such as an MCP server importing this package) read the targeted API
-// version with compile-time safety.
-const APIVersion = "1.8.1"
+// info.version in the OpenAPI document. Its minor component moves with each
+// schema or contract change: it tracked the cache schema-version lineage
+// (CacheSchemaVersion) through 1.8, and 1.9 adds the documented POST /feedback
+// endpoint without a cache schema change. The patch component is reserved for
+// documentation-only revisions. It is a compiled-in constant: reading it never
+// contacts a live server, letting an external consumer (such as an MCP server
+// importing this package) read the targeted API version with compile-time
+// safety.
+const APIVersion = "1.9.0"
 
 // mlwhAPIVersion is the unexported alias of APIVersion retained for internal
 // references; it shares APIVersion's single source of truth so the served
@@ -93,6 +94,26 @@ func openAPIErrorResponses() []openAPIErrorResponse {
 		{status: "502", code: httpErrorCodeUpstreamImpaired, description: "the cache backend was impaired"},
 		{status: "503", code: httpErrorCodeCacheNeverSynced, description: "the cache has never been synced"},
 	}
+}
+
+// openAPIFeedbackResponses builds the POST /feedback responses: 201 with the
+// receipt and the four feedback error codes.
+func openAPIFeedbackResponses(collector *openAPISchemaCollector) map[string]any {
+	responses := map[string]any{
+		"201": openAPIJSONResponse("the stored report's receipt",
+			collector.schemaForType(reflect.TypeFor[FeedbackReceipt]())),
+	}
+
+	for _, errResponse := range []openAPIErrorResponse{
+		{status: "400", code: httpErrorCodeBadRequest, description: "invalid JSON, unknown category, or blank description"},
+		{status: "413", code: httpErrorCodePayloadTooLarge, description: "the body or a field exceeded its size cap"},
+		{status: "500", code: httpErrorCodeInternal, description: "the feedback store failed"},
+		{status: "503", code: httpErrorCodeFeedbackDisabled, description: "no feedback database is configured on this server"},
+	} {
+		responses[errResponse.status] = openAPIErrorResponseObject(errResponse)
+	}
+
+	return responses
 }
 
 // openAPIErrorResponseObject builds the response object for one stable error
@@ -287,6 +308,7 @@ func OpenAPIDocument() map[string]any {
 	}
 
 	addOpenAPIHealthPath(paths, collector)
+	addOpenAPIFeedbackPath(paths, collector)
 
 	schemas[openAPIErrorSchemaName] = openAPIErrorSchema()
 
@@ -295,7 +317,7 @@ func OpenAPIDocument() map[string]any {
 		"info": map[string]any{
 			"title":       "wa mlwh API",
 			"version":     mlwhAPIVersion,
-			"description": "Cache-backed, read-only REST API mirroring Multi-LIMS Warehouse (MLWH) study, sample, run, and library metadata. Unauthenticated by default; the network boundary is the access-control boundary.",
+			"description": "Cache-backed REST API mirroring Multi-LIMS Warehouse (MLWH) study, sample, run, and library metadata. MLWH data is read-only; the only documented write endpoint is POST /feedback, which stores agent feedback in a separate database. Unauthenticated by default; the network boundary is the access-control boundary.",
 		},
 		"paths": paths,
 		"components": map[string]any{
@@ -455,6 +477,56 @@ func addOpenAPIHealthPath(paths map[string]any, _ *openAPISchemaCollector) {
 	}
 
 	addOpenAPIOperation(paths, "/health", strings.ToLower(http.MethodGet), operation)
+}
+
+// addOpenAPIFeedbackPath documents the agent feedback submit route. It is not
+// a Registry entry, so it is added explicitly; the token-protected admin
+// routes on the same path are deliberately left undocumented.
+func addOpenAPIFeedbackPath(paths map[string]any, collector *openAPISchemaCollector) {
+	operation := map[string]any{
+		"summary": "Submit agent feedback",
+		"description": "Stores an agent's problem report in the separate feedback database. " +
+			"This is not a Registry endpoint, so mlwh_call_endpoint cannot reach it; " +
+			"in secured mode it is served behind AuthRouter() like the Registry endpoints. " +
+			"Unknown fields are ignored.",
+		"requestBody": map[string]any{
+			"required": true,
+			"content": map[string]any{
+				"application/json": map[string]any{
+					"schema": openAPIFeedbackSubmissionSchema(collector),
+				},
+			},
+		},
+		"responses": openAPIFeedbackResponses(collector),
+	}
+
+	addOpenAPIOperation(paths, "/feedback", strings.ToLower(http.MethodPost), operation)
+}
+
+// openAPIFeedbackSubmissionSchema registers the FeedbackSubmission component
+// and returns its reference. The component's category gains the enum, and it
+// alone allows additional properties because the handler ignores unknown
+// fields so newer clients can talk to this server.
+func openAPIFeedbackSubmissionSchema(collector *openAPISchemaCollector) map[string]any {
+	typ := reflect.TypeFor[FeedbackSubmission]()
+	ref := collector.schemaForType(typ)
+
+	schema, _ := collector.schemas[typ.Name()].(map[string]any)
+	schema["additionalProperties"] = true
+
+	properties, _ := schema["properties"].(map[string]any)
+	category, _ := properties["category"].(map[string]any)
+
+	categories := FeedbackCategories()
+	enum := make([]any, 0, len(categories))
+
+	for _, value := range categories {
+		enum = append(enum, string(value))
+	}
+
+	category["enum"] = enum
+
+	return ref
 }
 
 func openAPIAccessionTerminologyNote(jsonName string) string {

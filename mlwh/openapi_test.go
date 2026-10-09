@@ -27,6 +27,7 @@ package mlwh
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"reflect"
 	"slices"
@@ -35,6 +36,9 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 )
+
+// openAPIB7InfoDescription is the exact info.description B7 requires.
+const openAPIB7InfoDescription = "Cache-backed REST API mirroring Multi-LIMS Warehouse (MLWH) study, sample, run, and library metadata. MLWH data is read-only; the only documented write endpoint is POST /feedback, which stores agent feedback in a separate database. Unauthenticated by default; the network boundary is the access-control boundary."
 
 func TestServerOpenAPIRouteC2(t *testing.T) {
 	// C2 acceptance test 6: GET /openapi.json served with no auth returns 200,
@@ -104,11 +108,43 @@ func TestServerOpenAPIRouteServesDocumentC2(t *testing.T) {
 }
 
 func TestAPIVersionIsThePhase1DocumentationPatch(t *testing.T) {
-	// The Phase 1 schema remains unchanged at CacheSchemaVersion 13, while the
-	// documentation corrections since 1.8.0 advance the API patch version.
-	convey.Convey("Given the public APIVersion constant, then it equals the Phase 1 documentation patch 1.8.1", t, func() {
-		convey.So(APIVersion, convey.ShouldEqual, "1.8.1")
+	// B7 acceptance test 1: documenting the new POST /feedback contract is a
+	// minor API change, so the version moves from 1.8.1 to 1.9.0 and the served
+	// info.version follows it.
+	convey.Convey("Given the public APIVersion constant, then it equals 1.9.0 and the served info.version equals it", t, func() {
+		convey.So(APIVersion, convey.ShouldEqual, "1.9.0")
+
+		info := servedOpenAPIInfoForTest(t)
+		convey.So(info["version"], convey.ShouldEqual, "1.9.0")
 	})
+}
+
+func TestOpenAPIServedInfoDescriptionB7(t *testing.T) {
+	// B7 acceptance test 8.
+	convey.Convey("Given the served /openapi.json, then info.description is the B7 text naming POST /feedback", t, func() {
+		info := servedOpenAPIInfoForTest(t)
+
+		convey.So(info["description"], convey.ShouldEqual, openAPIB7InfoDescription)
+		convey.So(info["description"], convey.ShouldContainSubstring, "POST /feedback")
+		convey.So(info["description"], convey.ShouldNotContainSubstring, "read-only REST API")
+	})
+}
+
+// servedOpenAPIInfoForTest fetches GET /openapi.json from a real server and
+// returns its info object.
+func servedOpenAPIInfoForTest(t *testing.T) map[string]any {
+	t.Helper()
+
+	response := performMLWHRequestForTest(t, &serverFakeQueryer{}, http.MethodGet, "/openapi.json")
+	convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+	var served map[string]any
+	decodeMLWHJSONResponseForTest(t, response, &served)
+
+	info, ok := served["info"].(map[string]any)
+	convey.So(ok, convey.ShouldBeTrue)
+
+	return info
 }
 
 func TestOpenAPIDocumentIdentityC2(t *testing.T) {
@@ -405,7 +441,7 @@ func TestOpenAPINestedStructReferencedC2(t *testing.T) {
 
 func TestOpenAPIErrorEnvelopeC2(t *testing.T) {
 	// C2 acceptance test 5.
-	convey.Convey("Given the document, when inspected, then it defines the error envelope and the six stable codes with their statuses", t, func() {
+	convey.Convey("Given the document, when inspected, then it defines the error envelope and the nine stable codes with their statuses", t, func() {
 		doc := decodedOpenAPIDocForTest(t)
 
 		properties := openAPISchemaProperties(t, doc, "Error")
@@ -420,6 +456,9 @@ func TestOpenAPIErrorEnvelopeC2(t *testing.T) {
 			"cache_never_synced":     "503",
 			"upstream_impaired":      "502",
 			"bad_request":            "400",
+			"payload_too_large":      "413",
+			"internal_error":         "500",
+			"feedback_disabled":      "503",
 		})
 	})
 }
@@ -453,6 +492,168 @@ func TestOpenAPIDocumentIncludesHealthD1(t *testing.T) {
 		properties, ok := schema["properties"].(map[string]any)
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(properties, convey.ShouldContainKey, "status")
+	})
+}
+
+func TestOpenAPIFeedbackPostOperationB7(t *testing.T) {
+	// B7 acceptance test 2.
+	convey.Convey("Given the document, then POST /feedback has a required FeedbackSubmission body, the feedback responses, and no Queryer method", t, func() {
+		doc := decodedOpenAPIDocForTest(t)
+		operation := openAPIOperation(t, doc, "/feedback", "post")
+
+		convey.So(operation["summary"], convey.ShouldEqual, "Submit agent feedback")
+		convey.So(operation, convey.ShouldNotContainKey, "x-queryer-method")
+
+		description, ok := operation["description"].(string)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(description, convey.ShouldContainSubstring, "not a Registry endpoint")
+		convey.So(description, convey.ShouldContainSubstring, "AuthRouter()")
+		convey.So(description, convey.ShouldContainSubstring, "secured mode")
+
+		requestBody, ok := operation["requestBody"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(requestBody["required"], convey.ShouldEqual, true)
+
+		content, ok := requestBody["content"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(slices.Sorted(maps.Keys(content)), convey.ShouldResemble, []string{"application/json"})
+
+		mediaType, ok := content["application/json"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+
+		schema, ok := mediaType["schema"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(schema, convey.ShouldResemble, map[string]any{"$ref": "#/components/schemas/FeedbackSubmission"})
+
+		responses, ok := operation["responses"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(slices.Sorted(maps.Keys(responses)), convey.ShouldResemble, []string{"201", "400", "413", "500", "503"})
+
+		receipt := openAPIResponseSchema(t, operation, "201")
+		convey.So(receipt, convey.ShouldResemble, map[string]any{"$ref": "#/components/schemas/FeedbackReceipt"})
+
+		for status, code := range map[string]string{
+			"400": "bad_request",
+			"413": "payload_too_large",
+			"500": "internal_error",
+			"503": "feedback_disabled",
+		} {
+			convey.So(openAPIResponseExampleCodes(responses[status]), convey.ShouldResemble, []string{code})
+			convey.So(openAPIResponseSchema(t, operation, status), convey.ShouldResemble,
+				map[string]any{"$ref": "#/components/schemas/Error"})
+		}
+	})
+}
+
+func TestOpenAPIRegistryErrorResponsesUnchangedB7(t *testing.T) {
+	// B7: openAPIErrorResponses() (the six Registry codes) is unchanged, so no
+	// Registry operation documents a feedback-only error code.
+	convey.Convey("Given a Registry operation, then its error responses are still exactly the six Registry statuses", t, func() {
+		doc := decodedOpenAPIDocForTest(t)
+		operation := openAPIOperation(t, doc, "/freshness", "get")
+
+		responses, ok := operation["responses"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(slices.Sorted(maps.Keys(responses)), convey.ShouldResemble,
+			[]string{"200", "400", "404", "409", "422", "502", "503"})
+		convey.So(openAPIResponseExampleCodes(responses["503"]), convey.ShouldResemble, []string{"cache_never_synced"})
+	})
+}
+
+func TestOpenAPIFeedbackSubmissionSchemaB7(t *testing.T) {
+	// B7 acceptance test 3.
+	convey.Convey("Given component FeedbackSubmission, then it has the 10 JSON fields, the required pair, the category enum, and allows unknown fields", t, func() {
+		doc := decodedOpenAPIDocForTest(t)
+		schema := openAPISchema(t, doc, "FeedbackSubmission")
+
+		properties, ok := schema["properties"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(slices.Sorted(maps.Keys(properties)), convey.ShouldResemble, []string{
+			"category", "client_name", "client_user_agent", "client_version", "description",
+			"mcp_server_version", "tools_tried", "transport", "user_request", "wa_api_version",
+		})
+		convey.So(openAPIStringSlice(schema["required"]), convey.ShouldResemble, []string{"category", "description"})
+		convey.So(schema["additionalProperties"], convey.ShouldEqual, true)
+
+		category, ok := properties["category"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(category["type"], convey.ShouldEqual, "string")
+		convey.So(openAPIStringSlice(category["enum"]), convey.ShouldResemble, []string{
+			"could_not_answer", "agent_mistake", "no_endpoint", "user_unhappy", "other",
+		})
+
+		for name, rawProperty := range properties {
+			if name == "category" {
+				continue
+			}
+
+			property, ok := rawProperty.(map[string]any)
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(property, convey.ShouldNotContainKey, "enum")
+		}
+	})
+
+	convey.Convey("Given every other component, then additionalProperties is still false", t, func() {
+		doc := decodedOpenAPIDocForTest(t)
+		schemas := openAPISchemas(t, doc)
+
+		convey.So(openAPISchema(t, doc, "FeedbackReceipt")["additionalProperties"], convey.ShouldEqual, false)
+
+		open := []string{}
+
+		for name, rawSchema := range schemas {
+			if name == "FeedbackSubmission" {
+				continue
+			}
+
+			schema, ok := rawSchema.(map[string]any)
+			convey.So(ok, convey.ShouldBeTrue)
+
+			if schema["additionalProperties"] != false {
+				open = append(open, name)
+			}
+		}
+
+		convey.So(open, convey.ShouldBeEmpty)
+	})
+}
+
+func TestOpenAPIFeedbackReceiptSchemaB7(t *testing.T) {
+	// B7 acceptance test 4.
+	convey.Convey("Given component FeedbackReceipt, then id is an integer, created_at is a string, and both are required", t, func() {
+		doc := decodedOpenAPIDocForTest(t)
+		schema := openAPISchema(t, doc, "FeedbackReceipt")
+
+		properties, ok := schema["properties"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(slices.Sorted(maps.Keys(properties)), convey.ShouldResemble, []string{"created_at", "id"})
+
+		id, ok := properties["id"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(id["type"], convey.ShouldEqual, "integer")
+
+		createdAt, ok := properties["created_at"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(createdAt["type"], convey.ShouldEqual, "string")
+
+		convey.So(openAPIStringSlice(schema["required"]), convey.ShouldResemble, []string{"id", "created_at"})
+	})
+}
+
+func TestOpenAPIFeedbackAdminRoutesUndocumentedB7(t *testing.T) {
+	// B7 acceptance test 5.
+	convey.Convey("Given the document, then /feedback documents only post and /feedback/{id} is absent", t, func() {
+		doc := decodedOpenAPIDocForTest(t)
+		paths := openAPIPathsForTest(t, doc)
+
+		item, ok := paths["/feedback"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(item, convey.ShouldNotContainKey, "get")
+		convey.So(item, convey.ShouldNotContainKey, "patch")
+		convey.So(item, convey.ShouldNotContainKey, "delete")
+		convey.So(slices.Sorted(maps.Keys(item)), convey.ShouldResemble, []string{"post"})
+
+		convey.So(paths, convey.ShouldNotContainKey, "/feedback/{id}")
 	})
 }
 

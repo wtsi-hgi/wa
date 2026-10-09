@@ -14,8 +14,10 @@ at `GET /openapi.json`, and the domain entities are defined in `glossary.md`.
 without the TLS/token settings (`WA_MLWH_SERVER_CERT` / `--cert`,
 `WA_MLWH_SERVER_KEY` / `--key`, and `WA_MLWH_SERVER_TOKEN` / `--server-token`),
 the command binds a plain TCP listener with no TLS and registers every endpoint
-on the public router; no credential of any kind is checked. There is no
-per-request authentication and no transport encryption in this mode.
+on the public router. No route checks a credential except the feedback admin
+routes, which need a Bearer token whenever feedback is on (see
+[Agent feedback](#agent-feedback)). There is no other per-request
+authentication and no transport encryption in this mode.
 
 Concretely, in `cmd/mlwh.go` the unauthenticated path wires the routes with
 `server.RegisterRoutes(authServer.Router(), nil)` and serves over a plain
@@ -23,9 +25,11 @@ Concretely, in `cmd/mlwh.go` the unauthenticated path wires the routes with
 plain operational routes `GET /health` and `GET /openapi.json`, is therefore
 reachable by any client that can open a TCP connection to the bind address.
 
-This is intentional. The server is a read-only, internal backend that mirrors a
-curated subset of MLWH for other `wa` services (and for an external MCP server
-in a separate repo) to consume. The expectation is that it is deployed on a
+This is intentional. The server is an internal backend that serves MLWH data
+read-only: it mirrors a curated subset of MLWH for other `wa` services (and for
+an external MCP server in a separate repo) to consume. Its only write is the
+optional `POST /feedback`, which writes to a separate feedback database (see
+[Agent feedback](#agent-feedback)). The expectation is that it is deployed on a
 trusted, network-restricted host. The consequence, spelled out below, is that
 the network and the consuming layer in front of it constitute the entire
 access-control boundary.
@@ -101,6 +105,30 @@ empty timestamps, and does **not** error with `cache_never_synced`. (This
 contrasts with `GET /health`, which is a cheap plain liveness route that does no
 cache read at all.) A consumer reads `/freshness` to decide how much to trust
 the data and to surface its age to users.
+
+## Agent feedback
+
+When started with `--feedback-db` (or `WA_MLWH_FEEDBACK_PATH`), `wa mlwh serve`
+accepts agent feedback reports and stores them in a separate SQLite database.
+Without it, every feedback route answers 503 `feedback_disabled` and nothing is
+written.
+
+- `POST /feedback` is the only write endpoint. It registers alongside the
+  `Registry` endpoints, so in plain mode it is **unauthenticated**: any client
+  that can reach the bind address can submit reports. In secured mode it is
+  `POST /rest/v1/auth/feedback` and needs a gas JWT. A 65536-byte body cap and
+  per-field caps bound each report; there is no rate limit.
+- The admin routes `GET /feedback`, `PATCH /feedback/:id`, and
+  `DELETE /feedback/:id` read, acknowledge, and delete reports. They stay at
+  the root in both modes and require `Authorization: Bearer <token>`. The
+  token is the contents, with surrounding whitespace trimmed, of a token file
+  in the `$XDG_STATE_HOME` (or home directory) of the OS user who started the
+  server: `.wa-mlwh-server.token` in plain mode, the `--server-token` file in
+  secured mode. They are the only routes that return stored reports.
+- Each report stores the host part of the TCP peer address as `remote_addr`,
+  never a forwarded header. For MCP traffic that is the MCP server host, not
+  the end user's machine. No other reporter identity is stored, though the
+  report text may quote the user's request.
 
 ## Known limitation: secured (gas) mode and the RemoteClient
 

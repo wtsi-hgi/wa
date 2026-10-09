@@ -1,6 +1,7 @@
 "use client";
 
 import {
+    type ComponentProps,
     createContext,
     type HTMLAttributes,
     type PropsWithChildren,
@@ -12,6 +13,7 @@ import {
     useRef,
     useState,
 } from "react";
+import Link from "next/link";
 
 import { cn } from "@/lib/utils";
 
@@ -127,6 +129,28 @@ export function DropdownMenuContent({
         >
             {children}
         </div>
+    );
+}
+
+type DropdownMenuLinkItemProps = ComponentProps<typeof Link>;
+
+// DropdownMenuLinkItem is a menu link that closes the menu when chosen, even
+// when it points at the current route and so causes no remount.
+export function DropdownMenuLinkItem({
+    onClick,
+    ...props
+}: DropdownMenuLinkItemProps): ReactNode {
+    const { setOpen } = useDropdownMenuContext();
+
+    return (
+        <Link
+            role="menuitem"
+            onClick={(event) => {
+                onClick?.(event);
+                setOpen(false);
+            }}
+            {...props}
+        />
     );
 }
 

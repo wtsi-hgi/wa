@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -60,6 +61,12 @@ var mlwhServeG3UnauthenticatedPaths = []string{
 	"/health",
 	"/openapi.json",
 }
+
+const mlwhFeedbackExampleSubmissionForTest = `{"category":"no_endpoint","description":"No endpoint lists sample consent.",
+ "user_request":"Which samples have withdrawn consent?",
+ "tools_tried":["mlwh_search_samples","mlwh_call_endpoint"],
+ "mcp_server_version":"0.4.0","wa_api_version":"1.9.0","transport":"stdio",
+ "client_name":"claude-code","client_version":"2.1.0"}`
 
 func TestMLWHSyncCommandRequiresDSN(t *testing.T) {
 	convey.Convey("E3.2: Given a missing WA_MLWH_DSN, when wa mlwh sync runs, then the exit code is non-zero and stderr names WA_MLWH_DSN", t, func() {
@@ -255,6 +262,178 @@ func TestMLWHSyncCommandReportsConcurrentCacheLockOnStderrOnly(t *testing.T) {
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(strings.TrimSpace(stdout.String()), convey.ShouldEqual, "")
 		convey.So(strings.TrimSpace(stderr.String()), convey.ShouldEqual, mlwh.ErrSyncAlreadyRunning.Error())
+	})
+}
+
+func TestOpenMLWHServeFeedbackD1(t *testing.T) {
+	convey.Convey("D1.1: Given XDG_STATE_HOME set to a temp dir and a blank feedbackDB, then it returns nil store, nil token, nil error, and no default token file exists", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+
+		for _, blank := range []string{"", "  \t"} {
+			store, token, err := openMLWHServeFeedback(context.Background(), blank, mlwhServeConfig{})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(store, convey.ShouldBeNil)
+			convey.So(token, convey.ShouldBeNil)
+		}
+
+		entries, err := os.ReadDir(stateDir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(entries, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("D1.2: Given plain config and feedbackDB <tmp>/sub/fb.sqlite, then sub/ and the DB are created and $XDG_STATE_HOME/.wa-mlwh-server.token holds the returned token at mode 0600", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		dbPath := filepath.Join(t.TempDir(), "sub", "fb.sqlite")
+
+		store, token, err := openMLWHServeFeedback(context.Background(), dbPath, mlwhServeConfig{addr: "127.0.0.1:0"})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(store, convey.ShouldNotBeNil)
+		closeMLWHFeedbackStoreForTest(t, store)
+
+		dirInfo, err := os.Stat(filepath.Dir(dbPath))
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(dirInfo.IsDir(), convey.ShouldBeTrue)
+
+		_, err = os.Stat(dbPath)
+		convey.So(err, convey.ShouldBeNil)
+
+		added, err := store.Add(context.Background(), mlwh.FeedbackSubmission{Category: mlwh.FeedbackCategoryOther, Description: "d"}, "")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(added.ID, convey.ShouldEqual, 1)
+
+		tokenPath := filepath.Join(stateDir, mlwhServeDefaultServerTokenBasename)
+		convey.So(mlwhServeDefaultServerTokenBasename, convey.ShouldEqual, ".wa-mlwh-server.token")
+		info, err := os.Stat(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(info.Mode(), convey.ShouldEqual, os.FileMode(0o600))
+
+		contents, err := os.ReadFile(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(token), convey.ShouldEqual, string(contents))
+		convey.So(len(token), convey.ShouldEqual, 43)
+	})
+
+	convey.Convey("D1.3: Given the default token file already exists, when called again, then the same token is returned and the file is unchanged", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		dbPath := filepath.Join(t.TempDir(), "fb.sqlite")
+
+		firstStore, firstToken, err := openMLWHServeFeedback(context.Background(), dbPath, mlwhServeConfig{})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(firstStore.Close(), convey.ShouldBeNil)
+
+		tokenPath := filepath.Join(stateDir, ".wa-mlwh-server.token")
+		before, err := os.Stat(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+
+		secondStore, secondToken, err := openMLWHServeFeedback(context.Background(), dbPath, mlwhServeConfig{})
+		convey.So(err, convey.ShouldBeNil)
+		closeMLWHFeedbackStoreForTest(t, secondStore)
+
+		convey.So(string(secondToken), convey.ShouldEqual, string(firstToken))
+
+		after, err := os.Stat(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(after.ModTime(), convey.ShouldEqual, before.ModTime())
+		convey.So(after.Mode(), convey.ShouldEqual, os.FileMode(0o600))
+
+		contents, err := os.ReadFile(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(contents), convey.ShouldEqual, string(firstToken))
+	})
+
+	convey.Convey("D1.4: Given secured config whose server token file already exists at mode 0600, then that token is returned, the file is unchanged, and no default token file is created", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		existing := strings.Repeat("a", 43)
+
+		cases := []struct {
+			name      string
+			tokenPath string
+		}{
+			{name: "basename", tokenPath: filepath.Join(stateDir, ".my.token")},
+			{name: "absolute path", tokenPath: filepath.Join(t.TempDir(), "abs.token")},
+		}
+
+		for _, tc := range cases {
+			convey.So(os.WriteFile(tc.tokenPath, []byte(existing), 0o600), convey.ShouldBeNil)
+			convey.So(os.Chmod(tc.tokenPath, 0o600), convey.ShouldBeNil)
+			before, err := os.Stat(tc.tokenPath)
+			convey.So(err, convey.ShouldBeNil)
+
+			serverToken := tc.tokenPath
+			if tc.name == "basename" {
+				serverToken = filepath.Base(tc.tokenPath)
+			}
+
+			store, token, err := openMLWHServeFeedback(
+				context.Background(),
+				filepath.Join(t.TempDir(), "fb.sqlite"),
+				mlwhServeConfig{cert: "cert.pem", key: "key.pem", serverToken: serverToken, secured: true},
+			)
+			convey.So(err, convey.ShouldBeNil)
+			closeMLWHFeedbackStoreForTest(t, store)
+			convey.So(string(token), convey.ShouldEqual, existing)
+
+			after, err := os.Stat(tc.tokenPath)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(after.ModTime(), convey.ShouldEqual, before.ModTime())
+
+			contents, err := os.ReadFile(tc.tokenPath)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(string(contents), convey.ShouldEqual, existing)
+		}
+
+		_, err := os.Stat(filepath.Join(stateDir, ".wa-mlwh-server.token"))
+		convey.So(errors.Is(err, os.ErrNotExist), convey.ShouldBeTrue)
+	})
+
+	convey.Convey("D1.5: Given a MySQL-looking feedbackDB, then the error mentions SQLite file path and no token file is created", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+
+		store, token, err := openMLWHServeFeedback(context.Background(), "user@tcp(db:3306)/fb", mlwhServeConfig{})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "SQLite file path")
+		convey.So(store, convey.ShouldBeNil)
+		convey.So(token, convey.ShouldBeNil)
+
+		entries, readErr := os.ReadDir(stateDir)
+		convey.So(readErr, convey.ShouldBeNil)
+		convey.So(entries, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given :memory: or a file: URI as feedbackDB, then the error mentions SQLite file path and no token file is created", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		uriPath := "file:" + filepath.Join(t.TempDir(), "fb.sqlite")
+
+		for _, value := range []string{":memory:", " :memory: ", uriPath, "file::memory:?cache=shared"} {
+			store, token, err := openMLWHServeFeedback(context.Background(), value, mlwhServeConfig{})
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "SQLite file path")
+			convey.So(store, convey.ShouldBeNil)
+			convey.So(token, convey.ShouldBeNil)
+		}
+
+		entries, readErr := os.ReadDir(stateDir)
+		convey.So(readErr, convey.ShouldBeNil)
+		convey.So(entries, convey.ShouldBeEmpty)
+	})
+}
+
+func closeMLWHFeedbackStoreForTest(t *testing.T, store *mlwh.FeedbackStore) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close feedback store: %v", err)
+		}
 	})
 }
 
@@ -516,6 +695,47 @@ func seedMLWHServeStudyForTest(t *testing.T, db *sql.DB) {
 	}
 }
 
+func freeLocalAddrForTest(t *testing.T) string {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen for free port: %v", err)
+	}
+
+	addr := listener.Addr().String()
+	if err = listener.Close(); err != nil {
+		t.Fatalf("close free port listener: %v", err)
+	}
+
+	return addr
+}
+
+func waitForMLWHServeHealthForTest(baseURL string, done <-chan error) error {
+	client := &http.Client{Timeout: time.Second}
+	deadline := time.Now().Add(5 * time.Second)
+
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-done:
+			return fmt.Errorf("command exited early: %w", err)
+		default:
+		}
+
+		response, err := client.Get(baseURL + "/health")
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	return errors.New("GET /health did not return 200 within 5s")
+}
+
 type fakeMLWHServeAuthEnableCall struct {
 	certFile      string
 	keyFile       string
@@ -535,6 +755,7 @@ type fakeMLWHServeAuthServer struct {
 	enableCalls []fakeMLWHServeAuthEnableCall
 	startCalls  []fakeMLWHServeAuthStartCall
 	onStart     func(*fakeMLWHServeAuthServer) error
+	onEnable    func() error
 }
 
 func newFakeMLWHServeAuthServer() *fakeMLWHServeAuthServer {
@@ -567,6 +788,10 @@ func (f *fakeMLWHServeAuthServer) EnableAuthWithServerToken(certFile, keyFile, t
 
 		c.Next()
 	})
+
+	if f.onEnable != nil {
+		return f.onEnable()
+	}
 
 	return nil
 }
@@ -631,11 +856,17 @@ func performMLWHServeRequestForTest(handler http.Handler, method, target string)
 func mlwhServeErrorCodeForTest(t *testing.T, response *httptest.ResponseRecorder) string {
 	t.Helper()
 
+	return mlwhServeEnvelopeCodeForTest(t, response.Body.Bytes())
+}
+
+func mlwhServeEnvelopeCodeForTest(t *testing.T, body []byte) string {
+	t.Helper()
+
 	var payload struct {
 		Code string `json:"code"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode mlwh error envelope: %v", err)
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode mlwh error envelope %q: %v", body, err)
 	}
 
 	return payload.Code
@@ -879,8 +1110,110 @@ func TestMLWHServeStartsOnAnyBackendWithoutFlavorRefusal(t *testing.T) {
 	})
 }
 
+func TestMLWHServeSecuredFeedbackUsesServerTokenD1(t *testing.T) {
+	convey.Convey("Given secured serve with --feedback-db, then submit sits behind the auth group and admin routes accept the --server-token file written by auth setup", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		cachePath := prepareMLWHServeCacheForTest(t, true)
+		dbPath := filepath.Join(t.TempDir(), "fb.sqlite")
+		tokenPath := filepath.Join(stateDir, "mlwh-server.token")
+
+		fakeAuth := newFakeMLWHServeAuthServer()
+		fakeAuth.onEnable = func() error {
+			_, err := gas.GenerateAndStoreTokenForSelfClient(tokenPath)
+
+			return err
+		}
+		fakeAuth.onStart = func(server *fakeMLWHServeAuthServer) error {
+			token, err := os.ReadFile(tokenPath)
+			convey.So(err, convey.ShouldBeNil)
+
+			submit := performMLWHServeJSONRequestForTest(server.router, http.MethodPost, gas.EndPointAuth+"/feedback", mlwhFeedbackExampleSubmissionForTest, "Bearer jwt")
+			convey.So(submit.Code, convey.ShouldEqual, http.StatusCreated)
+
+			rootSubmit := performMLWHServeJSONRequestForTest(server.router, http.MethodPost, "/feedback", mlwhFeedbackExampleSubmissionForTest, "")
+			convey.So(rootSubmit.Code, convey.ShouldEqual, http.StatusNotFound)
+
+			list := performMLWHServeJSONRequestForTest(server.router, http.MethodGet, "/feedback", "", "Bearer "+string(token))
+			convey.So(list.Code, convey.ShouldEqual, http.StatusOK)
+			convey.So(list.Body.String(), convey.ShouldContainSubstring, "No endpoint lists sample consent.")
+
+			return nil
+		}
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+
+		_, err := executeRootCommandForTest(t, []string{
+			"mlwh", "serve",
+			"--port", "0",
+			"--mlwh-cache", cachePath,
+			"--cert", "cert.pem",
+			"--key", "key.pem",
+			"--server-token", "mlwh-server.token",
+			"--feedback-db", dbPath,
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
+
+		_, err = os.Stat(filepath.Join(stateDir, ".wa-mlwh-server.token"))
+		convey.So(errors.Is(err, os.ErrNotExist), convey.ShouldBeTrue)
+	})
+
+	convey.Convey("Given secured serve with --feedback-db whose auth setup fails, then the command errors and creates neither the feedback DB nor a token file", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		cachePath := prepareMLWHServeCacheForTest(t, true)
+		dbDir := filepath.Join(t.TempDir(), "sub")
+
+		fakeAuth := newFakeMLWHServeAuthServer()
+		fakeAuth.onEnable = func() error {
+			return errors.New("auth setup failed")
+		}
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+
+		_, err := executeRootCommandForTest(t, []string{
+			"mlwh", "serve",
+			"--port", "0",
+			"--mlwh-cache", cachePath,
+			"--cert", "cert.pem",
+			"--key", "key.pem",
+			"--server-token", "mlwh-server.token",
+			"--feedback-db", filepath.Join(dbDir, "fb.sqlite"),
+		})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "auth setup failed")
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 0)
+
+		_, err = os.Stat(dbDir)
+		convey.So(errors.Is(err, os.ErrNotExist), convey.ShouldBeTrue)
+
+		entries, err := os.ReadDir(stateDir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(entries, convey.ShouldBeEmpty)
+	})
+}
+
+func performMLWHServeJSONRequestForTest(handler http.Handler, method, target, body, authorization string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, target, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+
+	if authorization != "" {
+		request.Header.Set("Authorization", authorization)
+	}
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	return response
+}
+
 func installFakeMLWHServeAuthServer(t *testing.T, fake *fakeMLWHServeAuthServer) {
 	t.Helper()
+
+	// A developer's exported feedback path must not make these tests open a
+	// store or write a token file under the real XDG_STATE_HOME.
+	t.Setenv("WA_MLWH_FEEDBACK_PATH", "")
 
 	originalNewAuthServer := mlwhServeNewAuthServer
 	mlwhServeNewAuthServer = func(io.Writer) mlwhServeAuthServer {
@@ -889,6 +1222,156 @@ func installFakeMLWHServeAuthServer(t *testing.T, fake *fakeMLWHServeAuthServer)
 	t.Cleanup(func() {
 		mlwhServeNewAuthServer = originalNewAuthServer
 	})
+}
+
+type mlwhServeHTTPResponseForTest struct {
+	status int
+	body   []byte
+}
+
+func doMLWHServeHTTPRequestForTest(t *testing.T, method, target, body, authorization string) mlwhServeHTTPResponseForTest {
+	t.Helper()
+
+	request, err := http.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+
+	request.Header.Set("Content-Type", "application/json")
+	if authorization != "" {
+		request.Header.Set("Authorization", authorization)
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, target, err)
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+
+	return mlwhServeHTTPResponseForTest{status: response.StatusCode, body: responseBody}
+}
+
+func TestMLWHServeFeedbackEndToEndD1(t *testing.T) {
+	convey.Convey("D1.8: Given --feedback-db, when the example is submitted over real HTTP, then it is stored, listed with the admin token, rejected without it, and the store is closed on shutdown", t, func() {
+		stateDir := t.TempDir()
+		dbPath := filepath.Join(stateDir, "fb.sqlite")
+		baseURL, stop := startMLWHServeEndToEndForTest(t, stateDir, "--feedback-db", dbPath)
+
+		submit := doMLWHServeHTTPRequestForTest(t, http.MethodPost, baseURL+"/feedback", mlwhFeedbackExampleSubmissionForTest, "")
+		convey.So(submit.status, convey.ShouldEqual, http.StatusCreated)
+
+		var receipt map[string]any
+		convey.So(json.Unmarshal(submit.body, &receipt), convey.ShouldBeNil)
+		convey.So(receipt, convey.ShouldHaveLength, 2)
+		convey.So(receipt["id"], convey.ShouldEqual, float64(1))
+		createdAt, ok := receipt["created_at"].(string)
+		convey.So(ok, convey.ShouldBeTrue)
+		parsed, err := time.Parse(time.RFC3339, createdAt)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(parsed.Location(), convey.ShouldEqual, time.UTC)
+		convey.So(createdAt, convey.ShouldEndWith, "Z")
+
+		token, err := os.ReadFile(filepath.Join(stateDir, ".wa-mlwh-server.token"))
+		convey.So(err, convey.ShouldBeNil)
+
+		list := doMLWHServeHTTPRequestForTest(t, http.MethodGet, baseURL+"/feedback", "", "Bearer "+string(token))
+		convey.So(list.status, convey.ShouldEqual, http.StatusOK)
+
+		var page mlwh.Page[mlwh.FeedbackReport]
+		convey.So(json.Unmarshal(list.body, &page), convey.ShouldBeNil)
+		convey.So(page.Items, convey.ShouldHaveLength, 1)
+		convey.So(page.Items[0].ID, convey.ShouldEqual, 1)
+		convey.So(page.Items[0].Description, convey.ShouldEqual, "No endpoint lists sample consent.")
+
+		unauthorized := doMLWHServeHTTPRequestForTest(t, http.MethodGet, baseURL+"/feedback", "", "")
+		convey.So(unauthorized.status, convey.ShouldEqual, http.StatusUnauthorized)
+		convey.So(mlwhServeEnvelopeCodeForTest(t, unauthorized.body), convey.ShouldEqual, "unauthorized")
+
+		convey.So(stop(), convey.ShouldBeNil)
+
+		_, err = os.Stat(dbPath + "-wal")
+		convey.So(errors.Is(err, os.ErrNotExist), convey.ShouldBeTrue)
+
+		reopened, err := mlwh.OpenFeedbackStore(context.Background(), dbPath)
+		convey.So(err, convey.ShouldBeNil)
+		closeMLWHFeedbackStoreForTest(t, reopened)
+
+		stored, err := reopened.List(context.Background(), mlwh.FeedbackFilter{}, 10, 0)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stored.Items, convey.ShouldHaveLength, 1)
+		convey.So(stored.Items[0].ID, convey.ShouldEqual, 1)
+	})
+
+	convey.Convey("D1.9: Given no --feedback-db, when the example is submitted over real HTTP, then 503 feedback_disabled and no token file is created", t, func() {
+		stateDir := t.TempDir()
+		baseURL, stop := startMLWHServeEndToEndForTest(t, stateDir)
+
+		submit := doMLWHServeHTTPRequestForTest(t, http.MethodPost, baseURL+"/feedback", mlwhFeedbackExampleSubmissionForTest, "")
+		convey.So(submit.status, convey.ShouldEqual, http.StatusServiceUnavailable)
+		convey.So(mlwhServeEnvelopeCodeForTest(t, submit.body), convey.ShouldEqual, "feedback_disabled")
+
+		convey.So(stop(), convey.ShouldBeNil)
+
+		_, err := os.Stat(filepath.Join(stateDir, ".wa-mlwh-server.token"))
+		convey.So(errors.Is(err, os.ErrNotExist), convey.ShouldBeTrue)
+	})
+}
+
+// startMLWHServeEndToEndForTest runs the real wa mlwh serve command on a free
+// local port until the returned stop func cancels it. stop returns the
+// command's error, or a timeout error if it does not return within 10s.
+func startMLWHServeEndToEndForTest(t *testing.T, stateDir string, extraArgs ...string) (string, func() error) {
+	t.Helper()
+
+	t.Setenv("XDG_STATE_HOME", stateDir)
+	t.Setenv("WA_MLWH_SERVER_TOKEN", "")
+	t.Setenv("WA_MLWH_SERVER_CERT", "")
+	t.Setenv("WA_MLWH_SERVER_KEY", "")
+	t.Setenv("WA_MLWH_FEEDBACK_PATH", "")
+
+	cachePath := prepareMLWHServeCacheForTest(t, true)
+	addr := freeLocalAddrForTest(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	command := NewRootCommand()
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs(append([]string{"mlwh", "serve", "--url", addr, "--mlwh-cache", cachePath}, extraArgs...))
+
+	done := make(chan error, 1)
+	go func() {
+		done <- command.ExecuteContext(ctx)
+	}()
+
+	stopped := false
+	stop := func() error {
+		if stopped {
+			return nil
+		}
+		stopped = true
+		cancel()
+
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(10 * time.Second):
+			return errors.New("mlwh serve did not return within 10s of cancellation")
+		}
+	}
+	t.Cleanup(func() { _ = stop() })
+
+	baseURL := "http://" + addr
+	if err := waitForMLWHServeHealthForTest(baseURL, done); err != nil {
+		t.Fatalf("mlwh serve not healthy: %v", err)
+	}
+
+	return baseURL, stop
 }
 
 func TestMLWHKCommandsDegradeGracefullyOnNeverSyncedCache(t *testing.T) {
@@ -998,4 +1481,54 @@ func mlwhServeCommandSourceForTest(source string) string {
 	}
 
 	return source[start : start+len("func ")+end]
+}
+
+func TestMLWHServeFeedbackDBFlagD1(t *testing.T) {
+	convey.Convey("D1.6: Given WA_MLWH_FEEDBACK_PATH and no flag, then --feedback-db resolves to that path; given --feedback-db, the flag wins", t, func() {
+		envPath := filepath.Join(t.TempDir(), "fb.sqlite")
+		otherPath := filepath.Join(t.TempDir(), "other.sqlite")
+		t.Setenv("WA_MLWH_FEEDBACK_PATH", envPath)
+
+		convey.So(mlwhServeFeedbackDBFlagForTest(t, nil), convey.ShouldEqual, envPath)
+		convey.So(mlwhServeFeedbackDBFlagForTest(t, []string{"--feedback-db", otherPath}), convey.ShouldEqual, otherPath)
+
+		t.Setenv("WA_MLWH_FEEDBACK_PATH", "")
+		convey.So(mlwhServeFeedbackDBFlagForTest(t, nil), convey.ShouldEqual, "")
+	})
+
+	convey.Convey("D1.7: Given the mlwh serve command from NewRootCommand, then its Long names --feedback-db, WA_MLWH_FEEDBACK_PATH, and .wa-mlwh-server.token", t, func() {
+		serve, _, err := NewRootCommand().Find([]string{"mlwh", "serve"})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(serve.Long, convey.ShouldContainSubstring, "--feedback-db")
+		convey.So(serve.Long, convey.ShouldContainSubstring, "WA_MLWH_FEEDBACK_PATH")
+		convey.So(serve.Long, convey.ShouldContainSubstring, ".wa-mlwh-server.token")
+	})
+
+	convey.Convey("Given the mlwh serve command from NewRootCommand, then its Long says only MLWH data is read-only and names POST /feedback as the write", t, func() {
+		serve, _, err := NewRootCommand().Find([]string{"mlwh", "serve"})
+		convey.So(err, convey.ShouldBeNil)
+		long := strings.Join(strings.Fields(serve.Long), " ")
+		convey.So(long, convey.ShouldNotContainSubstring, "read-only HTTP API")
+		convey.So(long, convey.ShouldContainSubstring, "MLWH data is read-only; POST /feedback")
+	})
+}
+
+func mlwhServeFeedbackDBFlagForTest(t *testing.T, args []string) string {
+	t.Helper()
+
+	serve, _, err := NewRootCommand().Find([]string{"mlwh", "serve"})
+	if err != nil {
+		t.Fatalf("find mlwh serve: %v", err)
+	}
+
+	if err = serve.ParseFlags(args); err != nil {
+		t.Fatalf("parse mlwh serve flags: %v", err)
+	}
+
+	value, err := serve.Flags().GetString("feedback-db")
+	if err != nil {
+		t.Fatalf("get --feedback-db: %v", err)
+	}
+
+	return value
 }
