@@ -406,6 +406,25 @@ func TestOpenMLWHServeFeedbackD1(t *testing.T) {
 		convey.So(readErr, convey.ShouldBeNil)
 		convey.So(entries, convey.ShouldBeEmpty)
 	})
+
+	convey.Convey("Given :memory: or a file: URI as feedbackDB, then the error mentions SQLite file path and no token file is created", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		uriPath := "file:" + filepath.Join(t.TempDir(), "fb.sqlite")
+
+		for _, value := range []string{":memory:", " :memory: ", uriPath, "file::memory:?cache=shared"} {
+			store, token, err := openMLWHServeFeedback(context.Background(), value, mlwhServeConfig{})
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "SQLite file path")
+			convey.So(store, convey.ShouldBeNil)
+			convey.So(token, convey.ShouldBeNil)
+		}
+
+		entries, readErr := os.ReadDir(stateDir)
+		convey.So(readErr, convey.ShouldBeNil)
+		convey.So(entries, convey.ShouldBeEmpty)
+	})
 }
 
 func closeMLWHFeedbackStoreForTest(t *testing.T, store *mlwh.FeedbackStore) {

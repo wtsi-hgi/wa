@@ -357,9 +357,10 @@ func configureMLWHServeRouter(router *gin.Engine) {
 }
 
 // openMLWHServeFeedback returns (nil, nil, nil) when feedbackDB is blank.
-// It rejects a MySQL-looking DSN, creates the parent directory, opens the
-// store, and resolves the admin token: the --server-token file in secured
-// mode, else mlwhServeDefaultServerTokenBasename, created if absent.
+// It rejects a MySQL-looking DSN, :memory:, and file: URIs, creates the parent
+// directory, opens the store, and resolves the admin token: the --server-token
+// file in secured mode, else mlwhServeDefaultServerTokenBasename, created if
+// absent.
 func openMLWHServeFeedback(ctx context.Context, feedbackDB string, config mlwhServeConfig) (*mlwh.FeedbackStore, []byte, error) {
 	dbPath := strings.TrimSpace(feedbackDB)
 	if dbPath == "" {
@@ -368,6 +369,10 @@ func openMLWHServeFeedback(ctx context.Context, feedbackDB string, config mlwhSe
 
 	if mlwhSyncCachePathLooksMySQL(dbPath) {
 		return nil, nil, errors.New("--feedback-db must be a SQLite file path, not a MySQL DSN")
+	}
+
+	if dbPath == ":memory:" || strings.HasPrefix(dbPath, "file:") {
+		return nil, nil, errors.New("--feedback-db must be a SQLite file path, not :memory: or a file: URI")
 	}
 
 	if err := ensureMLWHSyncCacheDirectory(dbPath); err != nil {
