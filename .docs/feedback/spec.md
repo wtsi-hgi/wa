@@ -53,12 +53,12 @@ Go tests sit beside each file (`mlwh/feedback_test.go`,
 All bodies are JSON with snake_case fields. Errors use the existing
 `{"code","message"}` envelope (`httpErrorEnvelope`).
 
-| Method | Path            | Router            | Auth          | Success                 |
-| ------ | --------------- | ----------------- | ------------- | ----------------------- |
-| POST   | `/feedback`     | Registry router   | as Registry   | 201 `FeedbackReceipt`   |
-| GET    | `/feedback`     | plain router      | admin Bearer  | 200 `Page[FeedbackReport]` |
-| PATCH  | `/feedback/:id` | plain router      | admin Bearer  | 200 `FeedbackReport`    |
-| DELETE | `/feedback/:id` | plain router      | admin Bearer  | 204, empty body         |
+| Method | Path            | Router          | Auth         | Success                    |
+| ------ | --------------- | --------------- | ------------ | -------------------------- |
+| POST   | `/feedback`     | Registry router | as Registry  | 201 `FeedbackReceipt`      |
+| GET    | `/feedback`     | plain router    | admin Bearer | 200 `Page[FeedbackReport]` |
+| PATCH  | `/feedback/:id` | plain router    | admin Bearer | 200 `FeedbackReport`       |
+| DELETE | `/feedback/:id` | plain router    | admin Bearer | 204, empty body            |
 
 - "Registry router" means the plain router in plain mode and `AuthRouter()`
   in secured mode. In secured mode the submit path is therefore
@@ -73,28 +73,28 @@ All bodies are JSON with snake_case fields. Errors use the existing
 
 Error responses:
 
-| Status | Code                | When                                        |
-| ------ | ------------------- | ------------------------------------------- |
-| 400    | `bad_request`       | invalid JSON, bad enum, blank description, bad query/id |
-| 401    | `unauthorized`      | admin request without the correct Bearer token |
-| 404    | `not_found`         | admin PATCH/DELETE of an unknown id         |
+| Status | Code                | When                                                                               |
+| ------ | ------------------- | ---------------------------------------------------------------------------------- |
+| 400    | `bad_request`       | invalid JSON, bad enum, blank description, bad query/id                            |
+| 401    | `unauthorized`      | admin request without the correct Bearer token                                     |
+| 404    | `not_found`         | admin PATCH/DELETE of an unknown id                                                |
 | 413    | `payload_too_large` | submit body over 65536 bytes or any field over its cap; PATCH body over 1024 bytes |
-| 500    | `internal_error`    | store read or write failed                  |
-| 503    | `feedback_disabled` | no feedback DB configured (all four routes) |
+| 500    | `internal_error`    | store read or write failed                                                         |
+| 503    | `feedback_disabled` | no feedback DB configured (all four routes)                                        |
 
 Check order on every route: disabled (503), then admin auth (401, admin
 routes only), then input (413 before 400), then store.
 
 Submission caps (bytes of the UTF-8 string, `len(s)` in Go):
 
-| Field                    | Cap                 | Required |
-| ------------------------ | ------------------- | -------- |
-| whole request body       | 65536               | -        |
-| `category`               | enum                | yes      |
-| `description`            | 16384               | yes, non-blank after `strings.TrimSpace` |
-| `user_request`           | 16384               | no       |
-| `tools_tried`            | 50 items, each 128  | no       |
-| `mcp_server_version`, `wa_api_version`, `transport`, `client_name`, `client_version`, `client_user_agent` | 256 each | no |
+| Field                                                                                                     | Cap                | Required                                 |
+| --------------------------------------------------------------------------------------------------------- | ------------------ | ---------------------------------------- |
+| whole request body                                                                                        | 65536              | -                                        |
+| `category`                                                                                                | enum               | yes                                      |
+| `description`                                                                                             | 16384              | yes, non-blank after `strings.TrimSpace` |
+| `user_request`                                                                                            | 16384              | no                                       |
+| `tools_tried`                                                                                             | 50 items, each 128 | no                                       |
+| `mcp_server_version`, `wa_api_version`, `transport`, `client_name`, `client_version`, `client_user_agent` | 256 each           | no                                       |
 
 Unknown JSON fields are ignored, so newer clients can talk to this server.
 The OpenAPI `FeedbackSubmission` schema says so with
@@ -103,26 +103,32 @@ trimming.
 
 Category enum, in order:
 
-| Value              | Description (`FeedbackCategory.Description()`)       |
-| ------------------ | ---------------------------------------------------- |
+| Value              | Description (`FeedbackCategory.Description()`)         |
+| ------------------ | ------------------------------------------------------ |
 | `could_not_answer` | the agent could not work out how to answer the request |
-| `agent_mistake`    | the agent made a mistake while answering             |
-| `no_endpoint`      | no endpoint could possibly answer the question       |
-| `user_unhappy`     | the user was unhappy with the answer                 |
-| `other`            | any other problem with the request                   |
+| `agent_mistake`    | the agent made a mistake while answering               |
+| `no_endpoint`      | no endpoint could possibly answer the question         |
+| `user_unhappy`     | the user was unhappy with the answer                   |
+| `other`            | any other problem with the request                     |
 
 Example submit request and response:
 
 ```json
-{"category":"no_endpoint","description":"No endpoint lists sample consent.",
- "user_request":"Which samples have withdrawn consent?",
- "tools_tried":["mlwh_search_samples","mlwh_call_endpoint"],
- "mcp_server_version":"0.4.0","wa_api_version":"1.9.0","transport":"stdio",
- "client_name":"claude-code","client_version":"2.1.0"}
+{
+    "category": "no_endpoint",
+    "description": "No endpoint lists sample consent.",
+    "user_request": "Which samples have withdrawn consent?",
+    "tools_tried": ["mlwh_search_samples", "mlwh_call_endpoint"],
+    "mcp_server_version": "0.4.0",
+    "wa_api_version": "1.9.0",
+    "transport": "stdio",
+    "client_name": "claude-code",
+    "client_version": "2.1.0"
+}
 ```
 
 ```json
-{"id":7,"created_at":"2026-10-01T12:00:00Z"}
+{ "id": 7, "created_at": "2026-10-01T12:00:00Z" }
 ```
 
 ### Go types (`mlwh/feedback.go`)
@@ -284,12 +290,12 @@ the same file; this spec does not build one.
   404 even though admin `GET /feedback` sits there. Without a token, the MCP
   side gets:
 
-| MCP base URL                     | `SubmitFeedback`                     | Registry calls             |
-| -------------------------------- | ------------------------------------ | -------------------------- |
-| `http://host:port`               | 400 plain text from Go's TLS listener -> `ErrUpstreamImpaired` | `ErrUpstreamImpaired` |
-| `https://...`, untrusted cert    | transport failure -> `ErrUpstreamImpaired` | same                 |
-| `https://host:port`              | 404 -> `ErrFeedbackUnsupported`      | 404 -> `ErrUpstreamImpaired` |
-| `https://host:port/rest/v1/auth` | gin-jwt 401 -> `ErrFeedbackUnauthorized` | 401 -> `ErrUpstreamImpaired` |
+| MCP base URL                     | `SubmitFeedback`                                               | Registry calls               |
+| -------------------------------- | -------------------------------------------------------------- | ---------------------------- |
+| `http://host:port`               | 400 plain text from Go's TLS listener -> `ErrUpstreamImpaired` | `ErrUpstreamImpaired`        |
+| `https://...`, untrusted cert    | transport failure -> `ErrUpstreamImpaired`                     | same                         |
+| `https://host:port`              | 404 -> `ErrFeedbackUnsupported`                                | 404 -> `ErrUpstreamImpaired` |
+| `https://host:port/rest/v1/auth` | gin-jwt 401 -> `ErrFeedbackUnauthorized`                       | 401 -> `ErrUpstreamImpaired` |
 
 - Registry calls never get a wa envelope in these cases (gin-jwt's `code` is
   a number), so `decodeRemoteError` yields `ErrUpstreamImpaired`.
@@ -328,8 +334,8 @@ Types, constants, and signatures as in Architecture.
 
 **Acceptance tests:**
 
-1. Given `FeedbackCategories()`, then it equals `[could_not_answer,
-   agent_mistake, no_endpoint, user_unhappy, other]`. Each `Valid()` is true
+1. Given `FeedbackCategories()`, then it equals
+   `[could_not_answer, agent_mistake, no_endpoint, user_unhappy, other]`. Each `Valid()` is true
    and each `Description()` equals the table text.
 2. Given `FeedbackCategory("bogus")` and `FeedbackCategory("Other")`, then
    `Valid()` is false and `Description()` is `""`.
@@ -388,8 +394,8 @@ func (s *FeedbackStore) Delete(ctx context.Context, id int64) error
 **Acceptance tests:**
 
 1. Given a new path in `t.TempDir()`, when opened, then the file exists and
-   `List(ctx, FeedbackFilter{}, 50, 0)` returns `{Items: [], Total: 0,
-   NextOffset: -1}`.
+   `List(ctx, FeedbackFilter{}, 50, 0)` returns
+   `{Items: [], Total: 0, NextOffset: -1}`.
 2. Given `now` fixed at 2026-10-01T12:00:00Z, when `Add` is called with a
    full submission and `"10.0.0.5"`, then the report has `ID == 1`,
    `CreatedAt == "2026-10-01T12:00:00Z"`, every submitted field equal, and
@@ -449,15 +455,14 @@ Handler steps:
    require `io.EOF`, as `decodeJSONBody` in `results/server.go` does.
    Empty body, malformed JSON, a non-object, or trailing data after the
    object (another value or garbage; trailing whitespace is fine) -> 400
-   `invalid JSON body`. A `*http.MaxBytesError` from either decode is still
-   413. A literal `null` decodes without error to a zero submission, so it
+   `invalid JSON body`. A `*http.MaxBytesError` from either decode is still 413. A literal `null` decodes without error to a zero submission, so it
    is not special-cased and fails step 4 with `invalid category ""`.
 4. `Validate()`: `ErrFeedbackTooLarge` -> 413, `ErrFeedbackInvalid` -> 400.
    The envelope message is the validation message.
 5. `store.Add` failure -> 500 `internal_error`, message
    `could not store feedback`.
-6. Log `slog.Default().Info("mlwh feedback received", "id", id, "category",
-   category, "remote_addr", addr)`.
+6. Log
+   `slog.Default().Info("mlwh feedback received", "id", id, "category", category, "remote_addr", addr)`.
 7. 201 with `FeedbackReceipt`.
 
 **Acceptance tests:**
@@ -632,8 +637,8 @@ on `router`.
 **Acceptance tests:**
 
 1. Given `NewServer(q)` with no `WithFeedback`, when `POST /feedback` is
-   sent in plain mode, then 503 `{"code":"feedback_disabled","message":"feedback
-   is disabled on this server"}`.
+   sent in plain mode, then 503
+   `{"code":"feedback_disabled","message":"feedback is disabled on this server"}`.
 2. Given `WithFeedback(nil, nil)`, then the same as test 1, and PATCH and
    DELETE `/feedback/1` also return 503.
 3. Given a gin engine and a separate group `/rest/v1/auth` passed as `auth`,
@@ -743,19 +748,18 @@ func (rc *RemoteClient) SubmitFeedback(ctx context.Context, submission FeedbackS
 - Non-2xx: read the body once (`io.ReadAll` of
   `io.LimitReader(response.Body, FeedbackMaxBodyBytes)`). Decode it into
   `httpErrorEnvelope` with `json.NewDecoder(bytes.NewReader(raw)).Decode`,
-  as `decodeRemoteError` does. Then set `response.Body =
-  io.NopCloser(bytes.NewReader(raw))` and build `base :=
-  decodeRemoteError(response, submitFeedbackEndpoint, proxyURL)`, which keeps
+  as `decodeRemoteError` does. Then set
+  `response.Body = io.NopCloser(bytes.NewReader(raw))` and build
+  `base := decodeRemoteError(response, submitFeedbackEndpoint, proxyURL)`, which keeps
   the envelope message and the proxy hints. `submitFeedbackEndpoint` is an
-  unexported `Endpoint{Method: "SubmitFeedback", NewResult: func() any {
-  return &FeedbackReceipt{} }}`, not added to `Registry`. `NewResult` must be
+  unexported
+  `Endpoint{Method: "SubmitFeedback", NewResult: func() any { return &FeedbackReceipt{} }}`, not added to `Registry`. `NewResult` must be
   set: on a `cache_never_synced` envelope `decodeRemoteError` calls
   `endpointResultIsSlice(entry)`, which calls `entry.NewResult()` and would
   panic on nil. The result is a non-slice, so no `ErrNotFound` is joined.
   A body that does not decode gives a `base` wrapping `ErrUpstreamImpaired`
   with message
-  `remote SubmitFeedback returned <status> without a valid MLWH error
-  envelope; ...`. Return `fmt.Errorf("%w: %w", sentinel, base)`, where
+  `remote SubmitFeedback returned <status> without a valid MLWH error envelope; ...`. Return `fmt.Errorf("%w: %w", sentinel, base)`, where
   sentinel is picked by status:
 
 | Status                                    | Sentinel                  |
@@ -770,8 +774,8 @@ func (rc *RemoteClient) SubmitFeedback(ctx context.Context, submission FeedbackS
 
 - Only the wa handler sends 400 with a `bad_request` envelope. A 400
   without one is not about the input: Go's TLS listener answers a plain
-  `http://` request with a 400, no headers, and text body `Client sent an
-  HTTP request to an HTTPS server.` (Known limits).
+  `http://` request with a 400, no headers, and text body
+  `Client sent an HTTP request to an HTTPS server.` (Known limits).
 - 401, 404, and 413 map by status alone. wa's own 413s all carry the
   envelope; gas, gin, and `net/http` send none on this route (gin's 413 is
   only from `c.Bind`, which the handler does not use). A 413 from a reverse
@@ -799,15 +803,15 @@ func (rc *RemoteClient) SubmitFeedback(ctx context.Context, submission FeedbackS
    request path is `/rest/v1/auth/feedback` with header
    `Authorization: Bearer jwt`. Given no token, there is no `Authorization`
    header.
-3. Given 503 `{"code":"feedback_disabled","message":"feedback is disabled on
-   this server"}`, then `errors.Is(err, ErrFeedbackDisabled)` and
+3. Given 503
+   `{"code":"feedback_disabled","message":"feedback is disabled on this server"}`, then `errors.Is(err, ErrFeedbackDisabled)` and
    `err.Error()` contains `feedback is disabled on this server`.
 4. Given a 404 with text body `404 page not found`, then
    `errors.Is(err, ErrFeedbackUnsupported)`.
 5. Given 400 `{"code":"bad_request","message":"invalid category \"x\""}`,
    then `ErrFeedbackInvalid` and the message is kept.
-6. Given 400 with text body `Client sent an HTTP request to an HTTPS
-   server.\n`, or 400 `{"message":"x"}` (no code), then
+6. Given 400 with text body
+   `Client sent an HTTP request to an HTTPS server.\n`, or 400 `{"message":"x"}` (no code), then
    `errors.Is(err, ErrFeedbackInvalid)` is false and
    `errors.Is(err, ErrUpstreamImpaired)` is true. The text-body error
    contains `without a valid MLWH error envelope`.
@@ -844,14 +848,14 @@ deployments are unaffected.
 - Move `server := mlwh.NewServer(client)` from before the secured branch to
   after it. In secured mode the token file may not exist until
   `EnableAuthWithServerToken` creates it. The `RunE` order becomes:
-  1. `authServer := mlwhServeNewAuthServer(...)`, as now.
-  2. Secured only: `EnableAuthWithServerToken`, then
-     `configureMLWHServeRouter`.
-  3. `openMLWHServeFeedback` (below), then defer closing a non-nil store.
-  4. `server := mlwh.NewServer(client, mlwh.WithFeedback(store, token))`.
-  5. `server.RegisterRoutes(authServer.Router(), authServer.AuthRouter())`
-     when secured, else `server.RegisterRoutes(authServer.Router(), nil)`.
-  6. `startMLWHServeAuthServer`.
+    1. `authServer := mlwhServeNewAuthServer(...)`, as now.
+    2. Secured only: `EnableAuthWithServerToken`, then
+       `configureMLWHServeRouter`.
+    3. `openMLWHServeFeedback` (below), then defer closing a non-nil store.
+    4. `server := mlwh.NewServer(client, mlwh.WithFeedback(store, token))`.
+    5. `server.RegisterRoutes(authServer.Router(), authServer.AuthRouter())`
+       when secured, else `server.RegisterRoutes(authServer.Router(), nil)`.
+    6. `startMLWHServeAuthServer`.
 
 ```go
 // openMLWHServeFeedback returns (nil, nil, nil) when feedbackDB is blank.
@@ -927,8 +931,8 @@ request elsewhere, so that the admin page is exercisable locally.
 **File:** `run-dev.sh`
 **Test file:** `cmd/run_dev_test.go`
 
-- Test mode: `FEEDBACK_DB_PATH="$(mktemp
-  "$TMP_DIR/mlwh-feedback-test.XXXXXX.sqlite")"`, ephemeral. Cleanup
+- Test mode:
+  `FEEDBACK_DB_PATH="$(mktemp "$TMP_DIR/mlwh-feedback-test.XXXXXX.sqlite")"`, ephemeral. Cleanup
   removes it and its `-wal` and `-shm` files.
 - Dev and prod: `FEEDBACK_DB_PATH="${WA_MLWH_FEEDBACK_PATH:-}"`, not
   ephemeral. Create the parent directory when set.
@@ -965,7 +969,11 @@ fails fast.
 
 ```ts
 export const feedbackCategorySchema = z.enum([
-    "could_not_answer", "agent_mistake", "no_endpoint", "user_unhappy", "other",
+    "could_not_answer",
+    "agent_mistake",
+    "no_endpoint",
+    "user_unhappy",
+    "other",
 ]);
 export type FeedbackCategory = z.infer<typeof feedbackCategorySchema>;
 export const feedbackReportSchema = z.object({
@@ -997,7 +1005,10 @@ export const feedbackDeleteResponseSchema = z.literal("");
 // Server Action inputs. Server Actions are public POST endpoints, so
 // arguments are untrusted at runtime whatever their TS types say.
 export const feedbackIdSchema = z
-    .number().int().positive().max(Number.MAX_SAFE_INTEGER);
+    .number()
+    .int()
+    .positive()
+    .max(Number.MAX_SAFE_INTEGER);
 export const feedbackListInputSchema = z.object({
     show: z.enum(["unacknowledged", "all"]),
     category: feedbackCategorySchema.nullable(),
@@ -1017,8 +1028,8 @@ export type FeedbackListInput = z.infer<typeof feedbackListInputSchema>;
    missing, then `safeParse` fails.
 3. Given `{"items":[],"total":0,"next_offset":-1}`, then
    `feedbackPageSchema` parses it.
-4. Given `mlwhJson("/feedback", schema, {method: "PATCH", headers:
-   {authorization: "Bearer T"}, body: "{}"})`, then `fetch` is called with
+4. Given
+   `mlwhJson("/feedback", schema, {method: "PATCH", headers: {authorization: "Bearer T"}, body: "{}"})`, then `fetch` is called with
    `<WA_MLWH_BACKEND_URL>/feedback`, method `PATCH`, and header
    `authorization: Bearer T`.
 5. Given existing two-argument `mlwhJson` calls, then the existing tests pass
@@ -1045,10 +1056,13 @@ export const feedbackPageSize = 50;
 export function mlwhServerTokenPath(env?: NodeJS.ProcessEnv): string;
 export function readMLWHServerToken(env?: NodeJS.ProcessEnv): string | null;
 export function feedbackAdmins(
-    env?: NodeJS.ProcessEnv, osUsername?: string,
+    env?: NodeJS.ProcessEnv,
+    osUsername?: string,
 ): Set<string>;
 export function isFeedbackAdmin(
-    username: string | null, env?: NodeJS.ProcessEnv, osUsername?: string,
+    username: string | null,
+    env?: NodeJS.ProcessEnv,
+    osUsername?: string,
 ): boolean;
 ```
 
@@ -1106,7 +1120,10 @@ the token server-side, so that the browser never sees it.
 ```ts
 // FeedbackListInput comes from lib/contracts.ts (E1).
 export type FeedbackUnavailableReason =
-    | "no_token" | "feedback_disabled" | "token_rejected" | "unsupported"
+    | "no_token"
+    | "feedback_disabled"
+    | "token_rejected"
+    | "unsupported"
     | "backend_error";
 export type FeedbackListState =
     | { status: "ok"; page: FeedbackPage }
@@ -1114,12 +1131,25 @@ export type FeedbackListState =
     | { status: "unavailable"; reason: FeedbackUnavailableReason };
 export type FeedbackMutationState =
     | { status: "ok" }
-    | { status: "unauthenticated" | "forbidden" | "invalid_input" | "not_found" }
+    | {
+          status:
+              | "unauthenticated"
+              | "forbidden"
+              | "invalid_input"
+              | "not_found";
+      }
     | { status: "unavailable"; reason: FeedbackUnavailableReason };
 
-export async function listFeedbackAction(input: FeedbackListInput): Promise<FeedbackListState>;
-export async function setFeedbackAcknowledgedAction(id: number, acknowledged: boolean): Promise<FeedbackMutationState>;
-export async function deleteFeedbackAction(id: number): Promise<FeedbackMutationState>;
+export async function listFeedbackAction(
+    input: FeedbackListInput,
+): Promise<FeedbackListState>;
+export async function setFeedbackAcknowledgedAction(
+    id: number,
+    acknowledged: boolean,
+): Promise<FeedbackMutationState>;
+export async function deleteFeedbackAction(
+    id: number,
+): Promise<FeedbackMutationState>;
 ```
 
 Every action checks, in order:
@@ -1142,14 +1172,14 @@ It then calls `mlwhJson` with header `authorization: Bearer <token>` and
   `content-type: application/json`, validated by `feedbackReportSchema`.
 - DELETE `/feedback/<id>`, validated by `feedbackDeleteResponseSchema`.
 - Errors (`BackendRequestError` status and body):
-  - 503 with body code `feedback_disabled` -> `feedback_disabled`.
-  - 401 -> `token_rejected`.
-  - 404 on list, any body -> `unsupported`. A wa older than API 1.9.0 has
-    no `GET /feedback`, and gin answers with text `404 page not found`;
-    a 1.9.0+ wa never sends 404 on list.
-  - 404 on mutations whose body is the wa envelope with code `not_found`
-    (B4, B5) -> `not_found`. Any other 404 body -> `unsupported`.
-  - `BackendUnavailableError` or anything else -> `backend_error`.
+    - 503 with body code `feedback_disabled` -> `feedback_disabled`.
+    - 401 -> `token_rejected`.
+    - 404 on list, any body -> `unsupported`. A wa older than API 1.9.0 has
+      no `GET /feedback`, and gin answers with text `404 page not found`;
+      a 1.9.0+ wa never sends 404 on list.
+    - 404 on mutations whose body is the wa envelope with code `not_found`
+      (B4, B5) -> `not_found`. Any other 404 body -> `unsupported`.
+    - `BackendUnavailableError` or anything else -> `backend_error`.
 
 **Acceptance tests:**
 
@@ -1179,8 +1209,7 @@ It then calls `mlwhJson` with header `authorization: Bearer <token>` and
 10. Given no session, then `setFeedbackAcknowledgedAction(3, true)` returns
     `unauthenticated` and `fetch` is not called.
 11. Given admin and token `T`, when `deleteFeedbackAction(3)` gets wa 503
-    `{"code":"feedback_disabled","message":"feedback is disabled on this
-    server"}`, then `{status:"unavailable",reason:"feedback_disabled"}`.
+    `{"code":"feedback_disabled","message":"feedback is disabled on this server"}`, then `{status:"unavailable",reason:"feedback_disabled"}`.
 12. Given admin and token `T`, when `fetch` rejects (`backendJson` turns
     this into `BackendRequestError(503, null)`, not
     `BackendUnavailableError`), then `listFeedbackAction` returns
@@ -1223,57 +1252,57 @@ quickly.
 **Test file:** `frontend/tests/feedback-page.test.ts`
 
 - The page (Server Component, in the `(results)` group so it reuses the
-  layout) takes `{ searchParams?: Promise<Record<string, string | string[] |
-  undefined>> }`, as `app/(results)/page.tsx` does, and reads
+  layout) takes
+  `{ searchParams?: Promise<Record<string, string | string[] | undefined>> }`, as `app/(results)/page.tsx` does, and reads
   `(await searchParams) ?? {}`:
-  - `show=all` -> `all`, anything else -> `unacknowledged`.
-  - `category` -> the value if it is in the enum, else null.
-  - `offset` -> a non-negative integer, else 0.
+    - `show=all` -> `all`, anything else -> `unacknowledged`.
+    - `category` -> the value if it is in the enum, else null.
+    - `offset` -> a non-negative integer, else 0.
 - It calls `listFeedbackAction` and renders by status:
-  - `unauthenticated`: "Log in to view feedback."
-  - `forbidden`: "You do not have access to feedback."
-  - `invalid_input`: "Invalid feedback request." The page sanitises its
-    params, so this only guards the type.
-  - `unavailable`: "Feedback is unavailable." plus a reason line.
-    `no_token`: "The MLWH server token is not readable by this server."
-    `feedback_disabled`: "Feedback collection is disabled on the MLWH
-    server." `token_rejected`: "The MLWH server rejected the admin token."
-    `unsupported`: "wa mlwh serve is too old for feedback (needs MLWH API
-    1.9.0)." `backend_error`: "The MLWH server could not be reached."
-  - `ok`: `<FeedbackAdminView page={...} show={...} category={...}
-    offset={...} />`.
+    - `unauthenticated`: "Log in to view feedback."
+    - `forbidden`: "You do not have access to feedback."
+    - `invalid_input`: "Invalid feedback request." The page sanitises its
+      params, so this only guards the type.
+    - `unavailable`: "Feedback is unavailable." plus a reason line.
+      `no_token`: "The MLWH server token is not readable by this server."
+      `feedback_disabled`: "Feedback collection is disabled on the MLWH
+      server." `token_rejected`: "The MLWH server rejected the admin token."
+      `unsupported`: "wa mlwh serve is too old for feedback (needs MLWH API
+      1.9.0)." `backend_error`: "The MLWH server could not be reached."
+    - `ok`:
+      `<FeedbackAdminView page={...} show={...} category={...} offset={...} />`.
 - `FeedbackAdminView` (`'use client'`):
-  - Heading "Agent feedback" and "`<total>` reports".
-  - A checkbox "Show acknowledged" and a native `<select>` labelled
-    "Category" (no shadcn Select exists here). Options: "All categories"
-    (value `""`) plus the five labels "Could not answer", "Agent mistake",
-    "No endpoint", "User unhappy", "Other" with the enum values. Changing
-    either calls `router.push("/feedback?" + params)`, params in order
-    `show`, `category`, built from the props with `offset` removed. Omit
-    `show` when unacknowledged and `category` when null. With no params,
-    push `/feedback`, not `/feedback?`.
-  - One `article` per report showing:
-    - category label badge, `#<id>`, and `LocalTimestamp` of `created_at`
-    - `description` (`whitespace-pre-wrap`)
-    - `user_request` under "User request" when non-empty
-    - `tools_tried` joined by ", " under "Tools tried" when non-empty
-    - a metadata line with client name/version or user agent, MCP server
-      version, wa API version, transport, and `remote_addr`
-    - "Acknowledged" badge when acknowledged
-  - Button "Acknowledge" or "Unacknowledge" calls
-    `setFeedbackAcknowledgedAction`, then `router.refresh()`.
-  - Button "Delete" calls `window.confirm("Delete feedback #<id>? This
-    cannot be undone.")`. Only on true does it call `deleteFeedbackAction`,
-    then `router.refresh()`.
-  - A non-`ok` mutation result shows a Sonner error toast.
-  - "Previous" link when `offset > 0`, omitted when `offset` is 0. "Next"
-    link when `next_offset !== -1`. Both hrefs are `/feedback?` plus params
-    in order `show`, `category`, `offset`, with `show` and `category` kept
-    from the props under the omission rules above. `offset` is
-    `max(0, offset - 50)` for Previous and `next_offset` for Next, omitted
-    when 0. With no params the href is `/feedback`.
-  - Empty list: "No feedback to show."
-  - shadcn `Button`/`Badge`, semantic tokens, mobile-first layout.
+    - Heading "Agent feedback" and "`<total>` reports".
+    - A checkbox "Show acknowledged" and a native `<select>` labelled
+      "Category" (no shadcn Select exists here). Options: "All categories"
+      (value `""`) plus the five labels "Could not answer", "Agent mistake",
+      "No endpoint", "User unhappy", "Other" with the enum values. Changing
+      either calls `router.push("/feedback?" + params)`, params in order
+      `show`, `category`, built from the props with `offset` removed. Omit
+      `show` when unacknowledged and `category` when null. With no params,
+      push `/feedback`, not `/feedback?`.
+    - One `article` per report showing:
+        - category label badge, `#<id>`, and `LocalTimestamp` of `created_at`
+        - `description` (`whitespace-pre-wrap`)
+        - `user_request` under "User request" when non-empty
+        - `tools_tried` joined by ", " under "Tools tried" when non-empty
+        - a metadata line with client name/version or user agent, MCP server
+          version, wa API version, transport, and `remote_addr`
+        - "Acknowledged" badge when acknowledged
+    - Button "Acknowledge" or "Unacknowledge" calls
+      `setFeedbackAcknowledgedAction`, then `router.refresh()`.
+    - Button "Delete" calls
+      `window.confirm("Delete feedback #<id>? This cannot be undone.")`. Only on true does it call `deleteFeedbackAction`,
+      then `router.refresh()`.
+    - A non-`ok` mutation result shows a Sonner error toast.
+    - "Previous" link when `offset > 0`, omitted when `offset` is 0. "Next"
+      link when `next_offset !== -1`. Both hrefs are `/feedback?` plus params
+      in order `show`, `category`, `offset`, with `show` and `category` kept
+      from the props under the omission rules above. `offset` is
+      `max(0, offset - 50)` for Previous and `next_offset` for Next, omitted
+      when 0. With no params the href is `/feedback`.
+    - Empty list: "No feedback to show."
+    - shadcn `Button`/`Badge`, semantic tokens, mobile-first layout.
 
 **Acceptance tests:**
 
@@ -1391,15 +1420,15 @@ read it.
 **Test file:** `mlwh/docs_test.go`, `frontend/tests/scaffold.test.ts`
 
 - README `mlwh serve` section covers:
-  - `--feedback-db` / `WA_MLWH_FEEDBACK_PATH`
-  - the token file location in both modes
-  - `/feedback` page requirements: same OS user and token dir, LDAP login,
-    `WA_FEEDBACK_ADMINS`
-  - the known limits above, including that `WA_MLWH_SERVER_TOKEN` is for
-    secured mode only (same value for both processes, unset in plain mode)
-    and that a private CA needs `NODE_EXTRA_CA_CERTS` for Next.js
-  - that `make dev` in dev mode reuses an MLWH server already running on
-    its port without applying `--feedback-db` (D2)
+    - `--feedback-db` / `WA_MLWH_FEEDBACK_PATH`
+    - the token file location in both modes
+    - `/feedback` page requirements: same OS user and token dir, LDAP login,
+      `WA_FEEDBACK_ADMINS`
+    - the known limits above, including that `WA_MLWH_SERVER_TOKEN` is for
+      secured mode only (same value for both processes, unset in plain mode)
+      and that a private CA needs `NODE_EXTRA_CA_CERTS` for Next.js
+    - that `make dev` in dev mode reuses an MLWH server already running on
+      its port without applying `--feedback-db` (D2)
 - Security posture gains a short section. `POST /feedback` is the only write
   endpoint and is unauthenticated in plain mode. Admin routes need the
   starter-user token. The stored remote address is the client host.
