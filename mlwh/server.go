@@ -380,7 +380,9 @@ func countSampleSearchResult(ctx context.Context, queryer Queryer, term string, 
 
 // Server serves the MLWH read/query REST API.
 type Server struct {
-	queryer Queryer
+	queryer            Queryer
+	feedback           *FeedbackStore
+	feedbackAdminToken []byte
 }
 
 // NewServer constructs an MLWH API server.
@@ -402,7 +404,10 @@ func NewServer(q Queryer, opts ...ServerOption) *Server {
 // at their root paths (unauthenticated mode). When an auth group is supplied
 // (secured mode) the Registry endpoints register behind it while /health and
 // /openapi.json stay plain routes on the router, so readiness checks and the
-// OpenAPI document remain reachable and unauthenticated.
+// OpenAPI document remain reachable and unauthenticated. The feedback routes
+// register whether or not feedback is enabled: submit (POST /feedback)
+// alongside the Registry endpoints, and the admin routes, which check their
+// own token, always on the router. None of them is a Registry entry.
 func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
 	if s == nil {
 		return
@@ -411,14 +416,17 @@ func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
 	if router != nil {
 		configureMLWHRouter(router)
 		registerMLWHPlainRoutes(router)
+		s.registerFeedbackAdminRoutes(router)
 
 		if auth == nil {
 			registerMLWHEndpoints(router, s.queryer)
+			s.registerFeedbackSubmitRoute(router)
 		}
 	}
 
 	if auth != nil {
 		registerMLWHEndpoints(auth, s.queryer)
+		s.registerFeedbackSubmitRoute(auth)
 	}
 }
 
@@ -447,6 +455,19 @@ func registerMLWHEndpoints(registrar mlwhRouteRegistrar, queryer Queryer) {
 
 // ServerOption configures a Server.
 type ServerOption func(*Server)
+
+// WithFeedback enables feedback. store may be nil (disabled). adminToken is
+// the admin Bearer token; ignored when store is nil.
+func WithFeedback(store *FeedbackStore, adminToken []byte) ServerOption {
+	return func(s *Server) {
+		s.feedback = store
+		s.feedbackAdminToken = nil
+
+		if store != nil {
+			s.feedbackAdminToken = adminToken
+		}
+	}
+}
 
 type mlwhRouteRegistrar interface {
 	Handle(string, string, ...gin.HandlerFunc) gin.IRoutes
@@ -1546,7 +1567,7 @@ func mlwhPathParam(c *gin.Context, name string) (string, bool) {
 
 func writeMLWHBadRequest(c *gin.Context, message string) {
 	c.JSON(http.StatusBadRequest, httpErrorEnvelope{
-		Code:    "bad_request",
+		Code:    httpErrorCodeBadRequest,
 		Message: message,
 	})
 }

@@ -36,6 +36,11 @@ const (
 	httpErrorCodeUnsupportedIdentifier = "unsupported_identifier"
 	httpErrorCodeCacheNeverSynced      = "cache_never_synced"
 	httpErrorCodeUpstreamImpaired      = "upstream_impaired"
+	httpErrorCodeBadRequest            = "bad_request"
+	httpErrorCodeUnauthorized          = "unauthorized"
+	httpErrorCodePayloadTooLarge       = "payload_too_large"
+	httpErrorCodeInternal              = "internal_error"
+	httpErrorCodeFeedbackDisabled      = "feedback_disabled"
 )
 
 // Feedback sentinels. Validation and the HTTP handlers wrap the first three;
@@ -77,6 +82,8 @@ func sentinelForHTTPErrorCode(code string) error {
 		return ErrCacheNeverSynced
 	case httpErrorCodeUpstreamImpaired:
 		return ErrUpstreamImpaired
+	case httpErrorCodeFeedbackDisabled:
+		return ErrFeedbackDisabled
 	default:
 		return nil
 	}
