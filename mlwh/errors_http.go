@@ -38,6 +38,16 @@ const (
 	httpErrorCodeUpstreamImpaired      = "upstream_impaired"
 )
 
+// Feedback sentinels. Validation and the HTTP handlers wrap the first three;
+// RemoteClient.SubmitFeedback also maps responses to the last two.
+var (
+	ErrFeedbackDisabled     = errors.New("mlwh: feedback is disabled on this server")
+	ErrFeedbackInvalid      = errors.New("mlwh: invalid feedback")
+	ErrFeedbackTooLarge     = errors.New("mlwh: feedback too large")
+	ErrFeedbackUnsupported  = errors.New("mlwh: server does not support feedback")
+	ErrFeedbackUnauthorized = errors.New("mlwh: feedback request unauthorized")
+)
+
 func httpStatusAndErrorCode(err error) (int, string) {
 	switch {
 	case errors.Is(err, ErrCacheNeverSynced):

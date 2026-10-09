@@ -415,7 +415,9 @@ func (s *FeedbackStore) Delete(ctx context.Context, id int64) error
 9. Given id 99 absent, then `SetAcknowledged` and `Delete` return
    `errors.Is(err, ErrNotFound)`.
 10. Given ids 1 and 2, when `Delete(1)` runs and a new report is added, then
-    `List` returns `[3, 2]`. The id is not reused.
+    `List` returns `[3, 2]`. When `Delete(3)` then removes the highest id and
+    another report is added, then `List` returns `[4, 2]`. Ids are never
+    reused.
 11. Given a closed store, when `Add` is called, then it returns a non-nil
     error.
 

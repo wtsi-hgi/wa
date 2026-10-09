@@ -27,8 +27,8 @@ wraps two of them. Caps count bytes. `Validate` checks caps first, then
 category, then description. Tests go in `mlwh/feedback_test.go`. Covering
 all 12 acceptance tests from A1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.2: A2 - SQLite feedback store
 
@@ -43,5 +43,5 @@ id return an error wrapping `ErrNotFound`. Tests go in
 `mlwh/feedback_store_test.go` using `t.TempDir()`. Depends on item 1.1.
 Covering all 11 acceptance tests from A2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
