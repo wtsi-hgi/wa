@@ -205,7 +205,8 @@ func newMLWHServeCommand() *cobra.Command {
 		SilenceErrors: true,
 		Long: strings.Join([]string{
 			"Serve the local Sanger Multi-LIMS Warehouse (MLWH) metadata cache as",
-			"the registry-backed read-only HTTP API used by other wa services.",
+			"the registry-backed HTTP API used by other wa services. MLWH data is",
+			"read-only; POST /feedback (below) is the only write.",
 			"",
 			"The server opens only the local cache and never contacts the upstream",
 			"MLWH database or runs a sync; WA_MLWH_DSN is intentionally unused here.",

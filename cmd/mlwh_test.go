@@ -1503,6 +1503,14 @@ func TestMLWHServeFeedbackDBFlagD1(t *testing.T) {
 		convey.So(serve.Long, convey.ShouldContainSubstring, "WA_MLWH_FEEDBACK_PATH")
 		convey.So(serve.Long, convey.ShouldContainSubstring, ".wa-mlwh-server.token")
 	})
+
+	convey.Convey("Given the mlwh serve command from NewRootCommand, then its Long says only MLWH data is read-only and names POST /feedback as the write", t, func() {
+		serve, _, err := NewRootCommand().Find([]string{"mlwh", "serve"})
+		convey.So(err, convey.ShouldBeNil)
+		long := strings.Join(strings.Fields(serve.Long), " ")
+		convey.So(long, convey.ShouldNotContainSubstring, "read-only HTTP API")
+		convey.So(long, convey.ShouldContainSubstring, "MLWH data is read-only; POST /feedback")
+	})
 }
 
 func mlwhServeFeedbackDBFlagForTest(t *testing.T, args []string) string {
