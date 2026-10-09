@@ -580,6 +580,7 @@ describe("E4 feedback admin view", () => {
 
         await waitFor(() => {
             expect(toastMocks.error).toHaveBeenCalledOnce();
+            expect(navigationMocks.refresh).toHaveBeenCalledOnce();
         });
         expect(toastMocks.success).not.toHaveBeenCalled();
     });
@@ -599,6 +600,7 @@ describe("E4 feedback admin view", () => {
 
         await waitFor(() => {
             expect(toastMocks.error).toHaveBeenCalledOnce();
+            expect(navigationMocks.refresh).toHaveBeenCalledOnce();
         });
     });
 
@@ -615,6 +617,7 @@ describe("E4 feedback admin view", () => {
 
         await waitFor(() => {
             expect(toastMocks.error).toHaveBeenCalledOnce();
+            expect(navigationMocks.refresh).toHaveBeenCalledOnce();
         });
     });
 
