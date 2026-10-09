@@ -27,5 +27,5 @@ spec.md F1, reword security posture line 26 rather than supplementing it,
 and add the commented env entries. Depends on phases 4 and 5. Covering all
 3 acceptance tests from F1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

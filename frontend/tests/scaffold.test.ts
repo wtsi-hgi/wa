@@ -62,6 +62,15 @@ describe("G1 scaffold", () => {
         expect(envExample).toContain("WA_STUDIES_CACHE_TTL_SECONDS=");
     });
 
+    it("documents the feedback admin allowlist variable", () => {
+        const envExample = readFileSync(
+            path.join(frontendRoot, ".env.example"),
+            "utf8",
+        );
+
+        expect(envExample).toContain("WA_FEEDBACK_ADMINS=");
+    });
+
     it("documents the per-scenario root env files", () => {
         const testEnv = readFileSync(path.join(repoRoot, ".env.test"), "utf8");
         const developmentEnv = readFileSync(

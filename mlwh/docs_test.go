@@ -46,6 +46,7 @@ const (
 	historicalAPIReferenceDocPath = "../.docs/mcp/api-reference.md"
 	historicalDocsReadmePath      = "../.docs/mcp/README.md"
 	glossaryDocPath               = "../.docs/mcp/glossary.md"
+	securityPostureDocPath        = "../.docs/mcp/security-posture.md"
 )
 
 func TestEndpointReferenceCoversEveryRegistryEntryG1(t *testing.T) {
@@ -103,6 +104,37 @@ func TestEndpointReferenceCommittedAtFeedbackVersionB7(t *testing.T) {
 		committed, err := os.ReadFile(apiReferenceDocPath)
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(string(committed), convey.ShouldContainSubstring, "**API version:** `1.9.0`")
+	})
+}
+
+func TestReadmeDocumentsFeedbackSetupF1(t *testing.T) {
+	// F1 acceptance test 1: the README tells operators how to enable feedback,
+	// where the admin token lives, who may use the /feedback page, and how
+	// Next.js trusts a private CA.
+	convey.Convey("Given README.md, then it documents the feedback flag, env vars, token file, and CA setting", t, func() {
+		readme, err := os.ReadFile(readmeDocPath)
+		convey.So(err, convey.ShouldBeNil)
+
+		for _, want := range []string{
+			"--feedback-db",
+			"WA_MLWH_FEEDBACK_PATH",
+			".wa-mlwh-server.token",
+			"WA_FEEDBACK_ADMINS",
+			"NODE_EXTRA_CA_CERTS",
+		} {
+			convey.So(string(readme), convey.ShouldContainSubstring, want)
+		}
+	})
+}
+
+func TestSecurityPostureDocumentsFeedbackWriteF1(t *testing.T) {
+	// F1 acceptance test 3: the security posture names POST /feedback as a
+	// write and no longer calls the server a read-only backend.
+	convey.Convey("Given the security posture document, then it covers POST /feedback and drops the read-only backend claim", t, func() {
+		posture, err := os.ReadFile(securityPostureDocPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(posture), convey.ShouldContainSubstring, "POST /feedback")
+		convey.So(string(posture), convey.ShouldNotContainSubstring, "The server is a read-only, internal backend")
 	})
 }
 

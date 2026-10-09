@@ -207,6 +207,79 @@ replaced by the generic export surface. Use `wa mlwh export sample-crams ...`
 for sample-grained CRAM exports: each row is one selected, merged-aware CRAM for
 a sample.
 
+#### Agent feedback
+
+LLM agents using the MLWH MCP server can report problems with a user request to
+`POST /feedback`. Feedback is off by default. To turn it on, name a SQLite file:
+
+```bash
+wa mlwh serve --port 8091 --feedback-db /var/lib/wa/mlwh-feedback.sqlite
+```
+
+`--feedback-db` defaults to `WA_MLWH_FEEDBACK_PATH`. The server creates the
+file and its parent directory, and rejects a MySQL DSN. The feedback database
+is separate from the MLWH cache. Without a feedback database, every feedback
+route answers 503 `feedback_disabled`.
+
+The admin routes (`GET /feedback`, `PATCH /feedback/:id`, and
+`DELETE /feedback/:id`) sit at the server root in both modes and require
+`Authorization: Bearer <token>`. The token is the contents of a token file in
+`$XDG_STATE_HOME`, or your home directory when that is unset:
+
+- Plain mode: `.wa-mlwh-server.token`. `wa mlwh serve` creates it at mode 0600
+  the first time it starts with feedback on, and reuses it afterwards.
+- Secured mode: the `--server-token` / `WA_MLWH_SERVER_TOKEN` file that secured
+  mode already creates. An absolute value is used as-is.
+
+With feedback off, `wa mlwh serve` neither creates nor reads a token file for
+feedback.
+
+The frontend `/feedback` page lists, filters, acknowledges, and deletes
+reports. To use it:
+
+- Run Next.js as the same OS user as `wa mlwh serve`, with the same
+  `XDG_STATE_HOME` (or home directory), so it can read the token file. Next.js
+  sends the token from the server side; the browser never receives it.
+- Set `WA_MLWH_BACKEND_URL` to the MLWH server root. The page calls
+  `${WA_MLWH_BACKEND_URL}/feedback`.
+- Log in through the account menu with your LDAP username and password.
+- Be an admin: your username must appear in the comma-separated
+  `WA_FEEDBACK_ADMINS` list (exact, case-sensitive match), or be the OS user
+  that runs Next.js. Admins see a Feedback link in the account menu.
+
+Known limits:
+
+- `WA_MLWH_SERVER_TOKEN` is for secured mode only. `wa mlwh serve` reads it as
+  its `--server-token` default, and any non-empty value makes the server
+  secured, so it then also needs `--cert` and `--key`. In secured mode, set it
+  to the same value in the environment of both `wa mlwh serve` and Next.js:
+  Next.js cannot see a token path given only as the `--server-token` flag. In
+  plain mode, leave it unset for both, and both use `.wa-mlwh-server.token`.
+- The MCP server sends no credentials, so it can submit feedback only to a
+  plain-mode `wa mlwh serve`. Secured mode serves TLS only and moves the submit
+  route to `POST /rest/v1/auth/feedback`, which needs a gas JWT like every
+  data endpoint.
+- The frontend's other MLWH reads send no JWT, so against a secured server
+  with `WA_MLWH_BACKEND_URL` at the root they get 404 and only the feedback
+  page works.
+- Next.js has no CA setting for the MLWH server. If a secured server's
+  certificate is signed by a private CA, start Next.js with
+  `NODE_EXTRA_CA_CERTS=<ca.pem>`.
+- Each report stores the TCP peer host as its remote address. For MCP traffic
+  that is the MCP server host, not the end user's machine.
+- There is no rate limiting and no notification of new reports. Reports are
+  kept until an admin deletes them.
+
+`make dev` passes `--feedback-db` only to an MLWH server it starts itself. Test
+mode always enables feedback with a throwaway database under `.tmp/` that is
+removed on shutdown. Dev and production modes enable it when
+`WA_MLWH_FEEDBACK_PATH` is set; a relative path resolves from the repo root.
+In dev mode, if an MLWH server is already healthy on the MLWH port, `make dev`
+reuses it, starts nothing, and does not apply `--feedback-db`. Feedback then
+depends on how that server was started, so stop it first if you want
+`make dev` to start one with feedback on. A remote `WA_MLWH_SERVER_URL` or a
+`WA_RUN_DEV_SEQMETA_CMD` server never gets the flag.
+
 ### Poll for metadata changes
 
 ```bash
