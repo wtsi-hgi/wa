@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useId, useState } from "react";
+import { startTransition, useId, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -195,7 +195,9 @@ export function FeedbackAdminView({
     show,
 }: FeedbackAdminViewProps) {
     const router = useRouter();
-    const [busyId, setBusyId] = useState<number | null>(null);
+    const [busyIds, setBusyIds] = useState<ReadonlySet<number>>(
+        () => new Set(),
+    );
     const categorySelectId = useId();
     const showAcknowledgedId = useId();
     const previousOffset = Math.max(0, offset - feedbackPageSize);
@@ -205,7 +207,7 @@ export function FeedbackAdminView({
         verb: string,
         mutate: () => Promise<FeedbackMutationState>,
     ) {
-        setBusyId(id);
+        setBusyIds((ids) => new Set(ids).add(id));
 
         try {
             const state = await mutate();
@@ -217,11 +219,20 @@ export function FeedbackAdminView({
             }
         } catch {
             toast.error(`Could not ${verb} feedback #${id}.`);
-        } finally {
-            setBusyId(null);
         }
 
-        router.refresh();
+        // Clear busy in the refresh's transition, so the buttons re-enable
+        // only once the refreshed report has rendered.
+        startTransition(() => {
+            router.refresh();
+            setBusyIds((ids) => {
+                const next = new Set(ids);
+
+                next.delete(id);
+
+                return next;
+            });
+        });
     }
 
     function handleAcknowledge(report: FeedbackReport) {
@@ -315,7 +326,7 @@ export function FeedbackAdminView({
                 <div className="flex flex-col gap-3">
                     {page.items.map((report) => (
                         <FeedbackReportArticle
-                            busy={busyId === report.id}
+                            busy={busyIds.has(report.id)}
                             key={report.id}
                             onAcknowledge={handleAcknowledge}
                             onDelete={handleDelete}

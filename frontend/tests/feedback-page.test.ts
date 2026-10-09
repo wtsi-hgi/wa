@@ -2,8 +2,16 @@
  * @vitest-environment jsdom
  */
 
-import { createElement } from "react";
 import {
+    createElement,
+    startTransition,
+    Suspense,
+    use,
+    useEffect,
+    useState,
+} from "react";
+import {
+    act,
     cleanup,
     fireEvent,
     render,
@@ -15,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
     FeedbackListState,
+    FeedbackMutationState,
     FeedbackUnavailableReason,
 } from "@/app/(results)/feedback/actions";
 import type {
@@ -116,6 +125,15 @@ function articleFor(id: number): HTMLElement {
 
 function linkHref(name: string): string | null {
     return screen.getByRole("link", { name }).getAttribute("href");
+}
+
+function deferred<T>() {
+    let resolve: (value: T) => void = () => {};
+    const promise = new Promise<T>((settle) => {
+        resolve = settle;
+    });
+
+    return { promise, resolve };
 }
 
 beforeEach(() => {
@@ -618,6 +636,123 @@ describe("E4 feedback admin view", () => {
         await waitFor(() => {
             expect(toastMocks.error).toHaveBeenCalledOnce();
             expect(navigationMocks.refresh).toHaveBeenCalledOnce();
+        });
+    });
+
+    it("keeps each report busy until its own concurrent mutation resolves", async () => {
+        const first = deferred<FeedbackMutationState>();
+        const second = deferred<FeedbackMutationState>();
+
+        actionMocks.setFeedbackAcknowledgedAction
+            .mockReturnValueOnce(first.promise)
+            .mockReturnValueOnce(second.promise);
+
+        await renderView({
+            page: buildPage({
+                items: [buildReport({ id: 1 }), buildReport({ id: 2 })],
+                total: 2,
+            }),
+        });
+
+        const buttonsOf = (id: number) =>
+            within(articleFor(id)).getAllByRole<HTMLButtonElement>("button");
+        const disabledStates = (id: number) =>
+            buttonsOf(id).map((button) => button.disabled);
+
+        fireEvent.click(
+            within(articleFor(1)).getByRole("button", { name: "Acknowledge" }),
+        );
+        fireEvent.click(
+            within(articleFor(2)).getByRole("button", { name: "Acknowledge" }),
+        );
+
+        expect(disabledStates(1)).toEqual([true, true]);
+        expect(disabledStates(2)).toEqual([true, true]);
+
+        first.resolve({ status: "ok" });
+
+        await waitFor(() => {
+            expect(disabledStates(1)).toEqual([false, false]);
+        });
+        expect(disabledStates(2)).toEqual([true, true]);
+
+        second.resolve({ status: "ok" });
+
+        await waitFor(() => {
+            expect(disabledStates(2)).toEqual([false, false]);
+        });
+        expect(actionMocks.setFeedbackAcknowledgedAction).toHaveBeenCalledTimes(
+            2,
+        );
+        expect(navigationMocks.refresh).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps a report busy until its refresh delivers new data", async () => {
+        const { FeedbackAdminView } =
+            await import("@/components/feedback-admin-view");
+        const fulfilled = (page: FeedbackPage) =>
+            Object.assign(Promise.resolve(page), {
+                status: "fulfilled",
+                value: page,
+            });
+        const refreshed = deferred<FeedbackPage>();
+        const pageSetter: {
+            current: (promise: Promise<FeedbackPage>) => void;
+        } = { current: () => {} };
+
+        // Mimic the App Router: refresh starts a transition that swaps in a
+        // pending RSC payload the tree reads with use(), so it suspends and
+        // keeps the old UI until the payload arrives.
+        function RoutedView() {
+            const [pagePromise, setPromise] = useState<Promise<FeedbackPage>>(
+                () => fulfilled(buildPage({ items: [buildReport({ id: 2 })] })),
+            );
+
+            useEffect(() => {
+                pageSetter.current = setPromise;
+            }, []);
+
+            return createElement(FeedbackAdminView, {
+                category: null,
+                offset: 0,
+                page: use(pagePromise),
+                show: "all",
+            });
+        }
+
+        navigationMocks.refresh.mockImplementationOnce(() => {
+            startTransition(() => {
+                pageSetter.current(refreshed.promise);
+            });
+        });
+        render(createElement(Suspense, null, createElement(RoutedView)));
+
+        fireEvent.click(screen.getByRole("button", { name: "Acknowledge" }));
+
+        await waitFor(() => {
+            expect(navigationMocks.refresh).toHaveBeenCalledOnce();
+        });
+        expect(
+            screen.getByRole<HTMLButtonElement>("button", {
+                name: "Acknowledge",
+            }).disabled,
+        ).toBe(true);
+
+        await act(async () => {
+            refreshed.resolve(
+                buildPage({
+                    items: [buildReport({ id: 2, acknowledged: true })],
+                }),
+            );
+            await refreshed.promise;
+        });
+
+        await waitFor(() => {
+            expect(
+                screen.getByRole<HTMLButtonElement>("button", {
+                    name: "Unacknowledge",
+                }).disabled,
+            ).toBe(false);
         });
     });
 
