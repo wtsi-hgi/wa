@@ -21,6 +21,7 @@ import {
     type FeedbackPage,
     type FeedbackReport,
 } from "@/lib/contracts";
+import { feedbackReasonMessages } from "@/lib/feedback-messages";
 
 type FeedbackShow = FeedbackListInput["show"];
 
@@ -213,8 +214,13 @@ export function FeedbackAdminView({
             const state = await mutate();
 
             if (state.status !== "ok") {
+                const reason =
+                    state.status === "unavailable"
+                        ? ` ${feedbackReasonMessages[state.reason]}`
+                        : "";
+
                 toast.error(
-                    `Could not ${verb} feedback #${id}: ${mutationFailureMessages[state.status]}.`,
+                    `Could not ${verb} feedback #${id}: ${mutationFailureMessages[state.status]}.${reason}`,
                 );
             }
         } catch {

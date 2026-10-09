@@ -1,24 +1,15 @@
 import {
     listFeedbackAction,
     type FeedbackListState,
-    type FeedbackUnavailableReason,
 } from "@/app/(results)/feedback/actions";
 import { FeedbackAdminView } from "@/components/feedback-admin-view";
 import {
     feedbackCategorySchema,
     type FeedbackListInput,
 } from "@/lib/contracts";
+import { feedbackReasonMessages } from "@/lib/feedback-messages";
 
 type SearchParams = Record<string, string | string[] | undefined>;
-
-const reasonMessages: Record<FeedbackUnavailableReason, string> = {
-    no_token: "The MLWH server token is not readable by this server.",
-    feedback_disabled: "Feedback collection is disabled on the MLWH server.",
-    token_rejected: "The MLWH server rejected the admin token.",
-    unsupported:
-        "wa mlwh serve is too old for feedback (needs MLWH API 1.9.0).",
-    backend_error: "The MLWH server could not be reached.",
-};
 
 const statusMessages: Record<
     Exclude<FeedbackListState["status"], "ok">,
@@ -78,7 +69,7 @@ export default async function FeedbackAdminPage({
                 <p className="font-medium">{statusMessages[state.status]}</p>
                 {state.status === "unavailable" ? (
                     <p className="text-muted-foreground">
-                        {reasonMessages[state.reason]}
+                        {feedbackReasonMessages[state.reason]}
                     </p>
                 ) : null}
             </section>

@@ -620,6 +620,9 @@ describe("E4 feedback admin view", () => {
             expect(toastMocks.error).toHaveBeenCalledOnce();
             expect(navigationMocks.refresh).toHaveBeenCalledOnce();
         });
+        expect(toastMocks.error).toHaveBeenCalledWith(
+            "Could not delete feedback #2: feedback is unavailable. The MLWH server rejected the admin token.",
+        );
     });
 
     it("shows an error toast when a mutation action rejects", async () => {
