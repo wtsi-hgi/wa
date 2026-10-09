@@ -499,6 +499,21 @@ describe("E5 auth menu feedback link", () => {
         expect(screen.queryByRole("menu")).toBeNull();
     });
 
+    it("closes the account menu when Feedback is chosen on /feedback", async () => {
+        navigationMocks.pathname = "/feedback";
+        stubSessionRefresh({ authenticated: true, username: "alice" });
+
+        await renderAuthMenu({ authenticated: true, username: "alice" }, true);
+
+        const menu = openAccountMenu("alice");
+
+        fireEvent.click(
+            within(menu).getByRole("menuitem", { name: "Feedback" }),
+        );
+
+        expect(screen.queryByRole("menu")).toBeNull();
+    });
+
     it("hides the Feedback link from an authenticated menu without the prop", async () => {
         stubSessionRefresh({ authenticated: true, username: "alice" });
 

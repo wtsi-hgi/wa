@@ -8,7 +8,6 @@ import {
     useState,
 } from "react";
 import { LogIn, LogOut, LockKeyhole, MessageSquareText } from "lucide-react";
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Alert } from "@/components/ui/alert";
@@ -17,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import {
     DropdownMenu,
     DropdownMenuContent,
+    DropdownMenuLinkItem,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -209,7 +209,9 @@ export function AuthMenu({
         return (
             <div className="flex min-w-0 items-center justify-end gap-2">
                 {/* The layout persists across client navigation, so remount
-                    the menu per route to close it after following a link. */}
+                    the menu per route to close it after navigation that
+                    does not go through a menu item, such as a keyboard-
+                    activated page link or browser back. */}
                 <DropdownMenu key={pathname}>
                     <DropdownMenuTrigger
                         aria-label={`${accountName} account`}
@@ -228,9 +230,8 @@ export function AuthMenu({
                         </div>
                         <div className="my-1 h-px bg-border" />
                         {showFeedbackLink ? (
-                            <Link
+                            <DropdownMenuLinkItem
                                 href="/feedback"
-                                role="menuitem"
                                 className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                             >
                                 <MessageSquareText
@@ -238,7 +239,7 @@ export function AuthMenu({
                                     className="h-4 w-4"
                                 />
                                 <span>Feedback</span>
-                            </Link>
+                            </DropdownMenuLinkItem>
                         ) : null}
                         <button
                             type="button"
