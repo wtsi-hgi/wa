@@ -841,21 +841,55 @@ wait_for_process_exit() {
   return 1
 }
 
+descendant_pids() {
+  ps -A -o pid=,ppid= | awk -v root="$1" '
+    { children[$2] = children[$2] " " $1 }
+    END {
+      queue = root
+      while (queue != "") {
+        n = split(queue, parents, " ")
+        queue = ""
+        for (i = 1; i <= n; i++) {
+          m = split(children[parents[i]], kids, " ")
+          for (j = 1; j <= m; j++) {
+            print kids[j]
+            queue = queue " " kids[j]
+          }
+        }
+      }
+    }'
+}
+
+# Children stay in run-dev.sh's process group so an outer group kill still
+# reaches them, but a SIGTERM sent to run-dev.sh alone only reaches this
+# script. Wrappers such as pnpm exit on SIGTERM without forwarding it, so
+# signal the whole tree under each child, not just the child.
 terminate_child_process() {
   local pid="$1"
+  local -a descendants=()
+  local descendant
 
   if ! process_is_running "$pid"; then
     wait "$pid" 2>/dev/null || true
     return
   fi
 
-  kill "$pid" 2>/dev/null || true
+  mapfile -t descendants < <(descendant_pids "$pid")
+
+  kill "$pid" "${descendants[@]}" 2>/dev/null || true
   if ! wait_for_process_exit "$pid"; then
     printf 'run-dev.sh: process %s did not exit after SIGTERM; sending SIGKILL.\n' "$pid" >&2
     kill -KILL "$pid" 2>/dev/null || true
   fi
 
   wait "$pid" 2>/dev/null || true
+
+  for descendant in "${descendants[@]}"; do
+    if ! wait_for_process_exit "$descendant"; then
+      printf 'run-dev.sh: process %s (descendant of %s) did not exit after SIGTERM; sending SIGKILL.\n' "$descendant" "$pid" >&2
+      kill -KILL "$descendant" 2>/dev/null || true
+    fi
+  done
 }
 
 update_stable_bin_symlink() {

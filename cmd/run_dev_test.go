@@ -749,6 +749,74 @@ func runDevLstatPathExistsForTest(path string) bool {
 	return err == nil || !errors.Is(err, fs.ErrNotExist)
 }
 
+func TestRunDevScriptStopsFrontendDescendantsOnSIGTERM(t *testing.T) {
+	convey.Convey("run-dev.sh stops the frontend's descendants when it alone receives SIGTERM", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+		binDir := t.TempDir()
+
+		writeRunDevMLWHServeToolchainForTest(t, binDir, invocationsPath)
+
+		// This models a multi-level wrapper chain like pnpm -> sh -c next dev
+		// -> node: the outer wrapper exits on SIGTERM without forwarding it,
+		// and the intermediate shell cannot exec node in place, so the server
+		// is a grandchild that keeps the frontend port unless run-dev.sh
+		// signals the whole descendant tree itself.
+		frontendStub := filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")
+		frontendCmd := fmt.Sprintf(`bash -c 'trap "exit 0" TERM; bash -c "node \"%s\" %d; :" & wait'`, frontendStub, frontendPort)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "test",
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			seqmetaPort:  seqmetaPort,
+			unsetEnv:     runDevUnsetRemoteMLWHEnvForTest(),
+			env: map[string]string{
+				"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_RESULTS_HEALTH_URL":         fmt.Sprintf("https://127.0.0.1:%d/rest/v1/results/stats", resultsPort),
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           frontendCmd,
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+		t.Cleanup(func() {
+			signalRunDevProcessGroupForTest(process.Command, syscall.SIGKILL)
+		})
+
+		_ = waitForRunDevSnapshotForTest(t, process, snapshotPath)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGTERM), convey.ShouldBeNil)
+		convey.So(process.ExitedWithin(10*time.Second), convey.ShouldBeTrue)
+		convey.So(runDevTCPPortClosesWithinForTest(frontendPort, 5*time.Second), convey.ShouldBeTrue)
+	})
+}
+
+func runDevTCPPortClosesWithinForTest(port int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	address := fmt.Sprintf("127.0.0.1:%d", port)
+
+	for time.Now().Before(deadline) {
+		connection, err := net.DialTimeout("tcp", address, 250*time.Millisecond)
+		if err != nil {
+			return true
+		}
+
+		_ = connection.Close()
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return false
+}
+
 // startRunDevDevModeFeedbackForTest starts run-dev.sh --mode dev with a
 // configured MLWH cache, setting WA_MLWH_FEEDBACK_PATH only when feedbackPath
 // is non-empty, and waits until the environment is ready.

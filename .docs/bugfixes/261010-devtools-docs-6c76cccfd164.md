@@ -53,7 +53,7 @@ the `.tmp/wa` symlink removed on cleanup. Their regressions are in
       and reports unknown flags and unknown nested subcommands. Red command now
       exits 0.
 
-- [ ] run-dev.sh leaves `next dev` and its workers running (holding the frontend port) after the script receives SIGTERM, because it only signals pnpm.
+- [x] run-dev.sh leaves `next dev` and its workers running (holding the frontend port) after the script receives SIGTERM, because it only signals pnpm.
     - Source: llm-knowledge-base `feedback` delivery (PR wtsi-hgi/llm-knowledge-base#5)
     - Confirmed at 29077be. `run-dev.sh` starts the frontend as
       `bash -lc '… exec pnpm dev …' &` and records only that PID.
@@ -81,6 +81,15 @@ the `.tmp/wa` symlink removed on cleanup. Their regressions are in
         2073962 2073551 next-server (v16.2.4)
         cleanup: group 2073551 gone, ports free
         ```
+
+    - Fixed: `terminate_child_process` in `run-dev.sh` now sends SIGTERM to each
+      child and its whole descendant tree (new `descendant_pids`, from one `ps`
+      snapshot), then escalates and reaps as before; children stay in run-dev's
+      process group so outer group kills still work. Regression test
+      `TestRunDevScriptStopsFrontendDescendantsOnSIGTERM` (`cmd/run_dev_test.go`)
+      uses a multi-level wrapper tree and fails against the old script and a
+      direct-children-only mutant. verify-wa `SKILL.md` and `cleanup.sh` no longer
+      describe the bug as current. Red command now exits 0.
 
 - [ ] `cmd/run_dev_test.go` (`TestRunDevAutoManagedMLWHBackendCanServeProdConfiguredCacheWithoutDSN`) fails whenever the repository is checked out under `/tmp`, because `mlwh_cache_path_looks_test` in `run-dev.sh` treats any cache path under `/tmp/*` as test-shaped.
     - Source: found by the serve-startup item 7 reviewer, who ran the suite from a scratch copy under `/tmp`; the same failure occurs on the unpatched base there.

@@ -10,16 +10,16 @@ RUN="${1:?usage: cleanup.sh <run-dir>}"
 PID="$(cat "$RUN/run-dev.pid")"
 PGID="${PGID:-$PID}"
 
-# run-dev.sh traps TERM and stops its direct children, then deletes its
-# ephemeral DBs and binary.
+# run-dev.sh traps TERM and stops each child's process tree, then deletes
+# its ephemeral DBs and binary.
 kill -TERM "$PID" 2>/dev/null || true
 for _ in $(seq 1 40); do
   kill -0 "$PID" 2>/dev/null || break
   sleep 0.5
 done
 
-# run-dev.sh only signals pnpm, so `next dev` and its workers survive; they
-# stay in the session's process group.
+# Anything left if run-dev.sh hung, crashed or was killed is still in the
+# session's process group.
 if ps -eo pgid= | grep -qx " *$PGID"; then
   kill -TERM -- "-$PGID" 2>/dev/null || true
   sleep 2
