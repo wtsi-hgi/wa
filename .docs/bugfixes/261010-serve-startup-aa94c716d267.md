@@ -70,3 +70,21 @@ them twice.
         FAIL
         FAIL	github.com/wtsi-hgi/wa/cmd	0.183s
         ```
+- [ ] `wa mlwhdiff bogus` and `wa results bogus` exit 0 with nothing on stderr, while `wa bogus` and `wa mlwh bogus` report an unknown command.
+  - Source: found by the item 7 reviewer.
+  - Red command (from an empty directory, binary built from this branch):
+    `env -i HOME=$HOME PATH=$PATH wa mlwhdiff bogus; [ $? -ne 0 ]` and the
+    same for `wa results bogus`.
+  - Exit status: 1 (both commands exit 0 with empty stderr).
+- [ ] `wa mlwh serve extra-arg` and `wa mlwh sync extra` accept unexpected positional arguments instead of rejecting them.
+  - Source: found by the item 7 reviewer.
+  - Red command:
+    `env -i HOME=$HOME PATH=$PATH wa mlwh serve extra-arg 2>&1 | grep -q 'accepts 0 arg'`
+  - Exit status: 1 (output is
+    `Error: WA_MLWH_CACHE_PATH must be set or --mlwh-cache provided`; the
+    extra argument is ignored).
+- [ ] `wa mlwh sync` prints its errors without the `Error: ` prefix every other command uses.
+  - Source: found by the item 7 reviewer.
+  - Red command:
+    `env -i HOME=$HOME PATH=$PATH wa mlwh sync 2>&1 | grep -q '^Error: WA_MLWH_DSN must be set'`
+  - Exit status: 1 (output is `WA_MLWH_DSN must be set`).
