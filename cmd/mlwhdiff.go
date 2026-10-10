@@ -282,6 +282,7 @@ func newMLWHDiffCommand() *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "mlwhdiff",
+		Args:  cobra.NoArgs,
 		Short: "MLWH diff CLI",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()

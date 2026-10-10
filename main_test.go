@@ -80,6 +80,47 @@ func TestRunPrintsStartupErrorsOnce(t *testing.T) {
 	})
 }
 
+func TestRunRejectsUnknownSubcommands(t *testing.T) {
+	convey.Convey("Given a parent command, when run is given an unknown subcommand, then it fails with one unknown command error", t, func() {
+		cwd, err := os.Getwd()
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(os.Chdir(t.TempDir()), convey.ShouldBeNil)
+		defer func() {
+			convey.So(os.Chdir(cwd), convey.ShouldBeNil)
+		}()
+
+		t.Setenv("WA_ENV", "")
+
+		for _, parent := range []string{"mlwh", "mlwhdiff", "results"} {
+			stderr := &bytes.Buffer{}
+
+			err := run([]string{parent, "bogus"}, stderr)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(stderr.String(), convey.ShouldContainSubstring, `Error: unknown command "bogus" for "wa `+parent+`"`)
+			convey.So(strings.Count(stderr.String(), "Error:"), convey.ShouldEqual, 1)
+		}
+	})
+
+	convey.Convey("Given a parent command, when run is given no subcommand, then it shows help and succeeds", t, func() {
+		cwd, err := os.Getwd()
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(os.Chdir(t.TempDir()), convey.ShouldBeNil)
+		defer func() {
+			convey.So(os.Chdir(cwd), convey.ShouldBeNil)
+		}()
+
+		t.Setenv("WA_ENV", "")
+
+		for _, parent := range []string{"mlwh", "mlwhdiff", "results"} {
+			stderr := &bytes.Buffer{}
+
+			convey.So(run([]string{parent}, stderr), convey.ShouldBeNil)
+			convey.So(stderr.String(), convey.ShouldBeEmpty)
+		}
+	})
+}
+
 func TestRunLoadsSelectedEnv(t *testing.T) {
 	convey.Convey("run loads the dotenv files for the selected WA_ENV", t, func() {
 		repoRoot := t.TempDir()

@@ -1030,6 +1030,7 @@ func newResultsCommand() *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "results",
+		Args:  cobra.NoArgs,
 		Short: "Results REST API commands",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()

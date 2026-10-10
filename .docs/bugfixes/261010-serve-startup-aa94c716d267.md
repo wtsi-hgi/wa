@@ -79,12 +79,18 @@ them twice.
       and `TestResultsServeCreatesMissingStateDir` (`cmd/results_serve_test.go`).
       Red command now exits 0.
 
-- [ ] `wa mlwhdiff bogus` and `wa results bogus` exit 0 with nothing on stderr, while `wa bogus` and `wa mlwh bogus` report an unknown command.
+- [x] `wa mlwhdiff bogus` and `wa results bogus` exit 0 with nothing on stderr, while `wa bogus` and `wa mlwh bogus` report an unknown command.
     - Source: found by the item 7 reviewer.
     - Red command (from an empty directory, binary built from this branch):
       `env -i HOME=$HOME PATH=$PATH wa mlwhdiff bogus; [ $? -ne 0 ]` and the
       same for `wa results bogus`.
     - Exit status: 1 (both commands exit 0 with empty stderr).
+    - Fixed: the `wa mlwhdiff` and `wa results` parent commands now set
+      `Args: cobra.NoArgs`, as `wa mlwh` already does, so an unknown subcommand
+      exits 1 with one `Error: unknown command` line. Bare invocations and `--help`
+      still exit 0. Regression test: `TestRunRejectsUnknownSubcommands`
+      (`main_test.go`). Red command now exits 0.
+
 - [ ] `wa mlwh serve extra-arg` and `wa mlwh sync extra` accept unexpected positional arguments instead of rejecting them.
     - Source: found by the item 7 reviewer.
     - Red command:
