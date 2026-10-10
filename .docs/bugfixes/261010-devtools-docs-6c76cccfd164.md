@@ -1,0 +1,76 @@
+# Bugfix checklist: developer docs and run-dev shutdown
+
+- Branch: `devtools-docs-9abf0468` (worktree `../wa-devtools-docs`)
+- Base: `origin/develop` at `29077be861f3db047bb12322327a1efbf565be54`
+- Queue owner: llm-knowledge-base branch `feedback` delivery
+  (PR wtsi-hgi/llm-knowledge-base#5); this checklist
+
+Red scripts live in the orchestrating session's scratchpad, outside this
+repository, at
+`/tmp/claude-1000/-home-ubuntu-llm-knowledge-base/76e80516-b817-4e23-b793-f62b560cc0a0/scratchpad/wa-red/devtools-docs/`
+(`$RED` below). Each takes the worktree path and writes temporary files under
+`$TMPDIR`.
+
+Prior items that must not regress: 260422-2 stops spawned frontend and
+results-server processes as process groups during test teardown.
+260522-1 makes `run-dev.sh` send SIGTERM to each child, escalate to SIGKILL,
+and reap it. 260708-6 and 260709-1 cover the per-process binary and
+the `.tmp/wa` symlink removed on cleanup. Their regressions are in
+`cmd/run_dev_test.go`.
+
+- [ ] README.md:70,87 and DEVELOPING.md:197,337 document `wa results search --pipeline …`, which fails with 'unknown flag: --pipeline'; the real flags are --pipeline-name and --pipeline-identifier.
+    - Source: llm-knowledge-base `feedback` delivery (PR wtsi-hgi/llm-knowledge-base#5)
+    - Confirmed at 29077be. `wa results search --help` lists
+      `--pipeline-identifier`, `--pipeline-name` and `--pipeline-version`, and
+      has no `--pipeline` flag.
+    - Red command: `$RED/red9.sh .` from the worktree root (exit 1). It
+      builds `wa`, extracts every `wa … results search` line from `README.md`
+      and `DEVELOPING.md`, and runs each with `--help` appended in an empty
+      directory under `env -i`. Cobra parses flags before handling help, so
+      an unknown flag still fails and no server is contacted. The same line
+      with `--pipeline-name` exits 0, so the script turns green once the docs
+      are fixed.
+
+        ```text
+        == README.md:70: wa results search --pipeline my-pipeline --user jdoe
+        exit=1 Error: unknown flag: --pipeline
+        == README.md:87: wa --env development results search --pipeline my-pipeline
+        exit=1 Error: unknown flag: --pipeline
+        == DEVELOPING.md:197: wa results search --pipeline nf-pipe
+        exit=1 Error: unknown flag: --pipeline
+        == DEVELOPING.md:337: ./wa --env development results search --pipeline nf-pipe
+        exit=1 Error: unknown flag: --pipeline
+        checked 4 documented lines; real flags:
+              --pipeline-identifier string   Pipeline identifier filter
+              --pipeline-name string         Pipeline name filter
+              --pipeline-version string      Pipeline version filter
+        ```
+
+- [ ] run-dev.sh leaves `next dev` and its workers running (holding the frontend port) after the script receives SIGTERM, because it only signals pnpm.
+    - Source: llm-knowledge-base `feedback` delivery (PR wtsi-hgi/llm-knowledge-base#5)
+    - Confirmed at 29077be. `run-dev.sh` starts the frontend as
+      `bash -lc '… exec pnpm dev …' &` and records only that PID.
+      `cleanup` → `terminate_child_process` sends SIGTERM to that PID alone.
+      pnpm exits, and its `next dev` child and `next-server` worker stay up.
+      Ctrl-C in a terminal does not show the bug, because SIGINT reaches the
+      whole foreground process group.
+    - Red command: `$RED/red10.sh .` from the worktree root (exit 1, about 18
+      s, the same result on two runs). It needs `frontend/node_modules`
+      (`pnpm install --frozen-lockfile`). It starts
+      `setsid ./run-dev.sh --mode test` with `.env.test` on ports 47791–47793
+      (`WA_RED_PORT_BASE`), waits for `Development environment is ready.`,
+      sends SIGTERM to the run-dev.sh PID only, and waits for it to exit.
+      It then fails if the frontend port is still listening or any process
+      in run-dev.sh's process group survives. It always kills that group
+      and checks that the ports are free. Exit 2 means the result is
+      inconclusive.
+
+        ```text
+        ready: run-dev.sh pid=2073551 pgid=2073551; frontend port 47791 listening: yes
+        run-dev.sh exited with status 0 after SIGTERM
+        FAIL: frontend port 47791 still LISTENING after run-dev.sh exited
+        FAIL: processes left in run-dev.sh's group 2073551:
+        2073941 2073551 node <worktree>/frontend/node_modules/.bin/../next/dist/bin/next dev --port 47791 --experimental-https --experimental-https-k
+        2073962 2073551 next-server (v16.2.4)
+        cleanup: group 2073551 gone, ports free
+        ```
