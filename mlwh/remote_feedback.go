@@ -29,10 +29,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // submitFeedbackEndpoint lets SubmitFeedback reuse decodeRemoteError.
@@ -45,7 +47,9 @@ var submitFeedbackEndpoint = Endpoint{
 
 // submitFeedbackError reads the error body once so it can both pick the
 // feedback sentinel from the envelope code and hand the same bytes to
-// decodeRemoteError, which keeps the message and the proxy hints.
+// decodeRemoteError, which keeps the message and the proxy hints. It wraps
+// the sentinel only when decodeRemoteError has not already done so, so the
+// sentinel text appears once.
 func submitFeedbackError(response *http.Response, proxyURL *url.URL) error {
 	raw, err := io.ReadAll(io.LimitReader(response.Body, FeedbackMaxBodyBytes))
 	if err != nil {
@@ -64,7 +68,17 @@ func submitFeedbackError(response *http.Response, proxyURL *url.URL) error {
 		return base
 	}
 
-	return fmt.Errorf("%w: %w", sentinel, base)
+	if !errors.Is(base, sentinel) {
+		return fmt.Errorf("%w: %w", sentinel, base)
+	}
+
+	// decodeRemoteError already wrapped the sentinel (503 feedback_disabled).
+	// Drop the server message too when the sentinel text already says it.
+	if envelope.Message != "" && strings.Contains(sentinel.Error(), envelope.Message) {
+		return sentinel
+	}
+
+	return base
 }
 
 func submitFeedbackSentinel(status int, decoded bool, code string) error {

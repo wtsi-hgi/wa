@@ -17,7 +17,7 @@ Prior items checked: no earlier checklist covers `SubmitFeedback` error text.
 260627-9 relies on `errors.Is` reaching `context.DeadlineExceeded` through
 `ErrUpstreamImpaired` on Registry calls, which `SubmitFeedback` does not touch.
 
-- [ ] Feedback client error text repeats 'feedback is disabled on this server' three times: submitFeedbackError in mlwh/remote_feedback.go wraps the decodeRemoteError result (which already contains the sentinel) with the sentinel again, so callers see e.g. `mlwh: feedback is disabled on this server: feedback is disabled on this server: mlwh: feedback is disabled on this server`.
+- [x] Feedback client error text repeats 'feedback is disabled on this server' three times: submitFeedbackError in mlwh/remote_feedback.go wraps the decodeRemoteError result (which already contains the sentinel) with the sentinel again, so callers see e.g. `mlwh: feedback is disabled on this server: feedback is disabled on this server: mlwh: feedback is disabled on this server`.
     - Source: llm-knowledge-base `feedback` delivery (PR wtsi-hgi/llm-knowledge-base#5)
     - Confirmed at 29077be against the real `NewServer` with feedback off.
       `decodeRemoteError` maps `feedback_disabled` to `ErrFeedbackDisabled`
@@ -36,6 +36,13 @@ Prior items checked: no earlier checklist covers `SubmitFeedback` error text.
             red_feedback_errors_test.go:71: "feedback is disabled on this server" appears 3 times in "mlwh: feedback is disabled on this server: feedback is disabled on this server: mlwh: feedback is disabled on this server"; want 1
         --- FAIL: TestRedItem5FeedbackDisabledTextNotRepeated (0.00s)
         ```
+  - Fixed: `submitFeedbackError` in `mlwh/remote_feedback.go` wraps with the
+    feedback sentinel only when the error does not already match it, and returns
+    the bare sentinel when the server message is already part of its text.
+    Regression cases in `TestRemoteSubmitFeedbackStatusSentinels`
+    (`mlwh/remote_feedback_test.go`); one C1 sentence in
+    `.docs/feedback/spec.md` now describes the disabled case. Item 5 red case
+    passes; item 6 cases unchanged.
 
 - [ ] Client-side feedback errors (401/404 text bodies, 413 too large, 400 invalid, 500) include the misleading text 'mlwh: upstream database impaired' even though no database is involved.
     - Source: llm-knowledge-base `feedback` delivery (PR wtsi-hgi/llm-knowledge-base#5)

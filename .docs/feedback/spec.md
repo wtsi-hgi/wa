@@ -760,7 +760,10 @@ func (rc *RemoteClient) SubmitFeedback(ctx context.Context, submission FeedbackS
   A body that does not decode gives a `base` wrapping `ErrUpstreamImpaired`
   with message
   `remote SubmitFeedback returned <status> without a valid MLWH error envelope; ...`. Return `fmt.Errorf("%w: %w", sentinel, base)`, where
-  sentinel is picked by status:
+  sentinel is picked by status. When `base` already wraps the sentinel
+  (503 `feedback_disabled`), return `base` instead, or the bare sentinel
+  when its text already contains the envelope message, so the sentinel
+  text appears once:
 
 | Status                                    | Sentinel                  |
 | ----------------------------------------- | ------------------------- |

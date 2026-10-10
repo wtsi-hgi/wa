@@ -32,6 +32,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -276,6 +277,33 @@ func TestRemoteSubmitFeedbackStatusSentinels(t *testing.T) {
 
 		convey.So(errors.Is(err, ErrFeedbackDisabled), convey.ShouldBeTrue)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "feedback is disabled on this server")
+	})
+
+	convey.Convey("C1.3: Given the real server with feedback off, then the disabled text appears once", t, func() {
+		gin.SetMode(gin.TestMode)
+
+		router := gin.New()
+		NewServer(&serverFakeQueryer{}).RegisterRoutes(router, nil)
+
+		server := httptest.NewServer(router)
+		defer server.Close()
+
+		_, err := submitFeedbackClientForTest(server.URL, "").
+			SubmitFeedback(context.Background(), submitFeedbackFullSubmissionForTest())
+
+		convey.So(submitFeedbackMatchedSentinelsForTest(err), convey.ShouldResemble, []error{ErrFeedbackDisabled})
+		convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeFalse)
+		convey.So(strings.Count(err.Error(), "feedback is disabled on this server"), convey.ShouldEqual, 1)
+	})
+
+	convey.Convey("C1.3: Given 503 feedback_disabled with another message, then the message is kept and "+
+		"the disabled text appears once", t, func() {
+		err := submitFeedbackErrorForTest(t, http.StatusServiceUnavailable, "application/json",
+			`{"code":"feedback_disabled","message":"feedback store not configured"}`)
+
+		convey.So(submitFeedbackMatchedSentinelsForTest(err), convey.ShouldResemble, []error{ErrFeedbackDisabled})
+		convey.So(err.Error(), convey.ShouldContainSubstring, "feedback store not configured")
+		convey.So(strings.Count(err.Error(), "feedback is disabled on this server"), convey.ShouldEqual, 1)
 	})
 
 	convey.Convey("C1.4: Given a 404 with a text body, then ErrFeedbackUnsupported", t, func() {
