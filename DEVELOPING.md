@@ -194,7 +194,7 @@ Normal users only need the full API URL:
 
 ```bash
 export WA_RESULTS_SERVER_URL=https://dev-host.example.org:3672
-wa results search --pipeline nf-pipe
+wa results search --pipeline-name nf-pipe
 wa results register /shared/results/run42 --user alice --workflow nf-pipe --unique run42 --sample SANG001
 ```
 
@@ -334,7 +334,7 @@ export WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite
 ./wa results serve --port 8090 --db dev.db --mlwh-server-url http://localhost:8091
 
 # Run the results CLI against the development stack described by .env.development
-./wa --env development results search --pipeline nf-pipe
+./wa --env development results search --pipeline-name nf-pipe
 
 # Start results server (MySQL without exposing the password on argv)
 export WA_RESULTS_DB_PATH='user@tcp(db-host:3306)/wa_results'

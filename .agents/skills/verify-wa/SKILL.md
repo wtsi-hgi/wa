@@ -84,8 +84,9 @@ through the admin API (the drive scripts do) before Cleanup.
 ```
 
 It sends TERM to the recorded run-dev PID, then TERM to its recorded process
-group. run-dev.sh signals only pnpm, so `next dev` would survive without the
-group kill. Evidence stays. Run it after every failed launch or drive too.
+group. run-dev.sh stops its children's whole process trees on TERM; the group
+kill catches anything left if run-dev.sh hangs or was killed. Evidence stays.
+Run it after every failed launch or drive too.
 
 ## Proof Standards
 
