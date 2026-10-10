@@ -67,7 +67,7 @@ metadata entries for search and validation. Normal CLI users do not need
 ### Search results
 
 ```bash
-wa results search --pipeline my-pipeline --user jdoe
+wa results search --pipeline-name my-pipeline --user jdoe
 ```
 
 ### Get a result set (with files)
@@ -84,7 +84,7 @@ default, then `https://127.0.0.1:<active results port>` from the active
 scenario.
 
 ```bash
-wa --env development results search --pipeline my-pipeline
+wa --env development results search --pipeline-name my-pipeline
 wa --env production results register /path/to/output --user jdoe
 ```
 

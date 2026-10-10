@@ -18,7 +18,7 @@ and reap it. 260708-6 and 260709-1 cover the per-process binary and
 the `.tmp/wa` symlink removed on cleanup. Their regressions are in
 `cmd/run_dev_test.go`.
 
-- [ ] README.md:70,87 and DEVELOPING.md:197,337 document `wa results search --pipeline …`, which fails with 'unknown flag: --pipeline'; the real flags are --pipeline-name and --pipeline-identifier.
+- [x] README.md:70,87 and DEVELOPING.md:197,337 document `wa results search --pipeline …`, which fails with 'unknown flag: --pipeline'; the real flags are --pipeline-name and --pipeline-identifier.
     - Source: llm-knowledge-base `feedback` delivery (PR wtsi-hgi/llm-knowledge-base#5)
     - Confirmed at 29077be. `wa results search --help` lists
       `--pipeline-identifier`, `--pipeline-name` and `--pipeline-version`, and
@@ -45,6 +45,13 @@ the `.tmp/wa` symlink removed on cleanup. Their regressions are in
               --pipeline-name string         Pipeline name filter
               --pipeline-version string      Pipeline version filter
         ```
+
+    - Fixed: the four examples in `README.md` and `DEVELOPING.md` now use
+      `--pipeline-name`, and the verify-wa `results-cli.md` gotcha no longer
+      describes the wrong docs. New `TestDocumentedCommandsParse`
+      (`cmd/docs_commands_test.go`) parses every documented `wa` line with `--help`
+      and reports unknown flags and unknown nested subcommands. Red command now
+      exits 0.
 
 - [ ] run-dev.sh leaves `next dev` and its workers running (holding the frontend port) after the script receives SIGTERM, because it only signals pnpm.
     - Source: llm-knowledge-base `feedback` delivery (PR wtsi-hgi/llm-knowledge-base#5)
@@ -74,10 +81,11 @@ the `.tmp/wa` symlink removed on cleanup. Their regressions are in
         2073962 2073551 next-server (v16.2.4)
         cleanup: group 2073551 gone, ports free
         ```
+
 - [ ] `cmd/run_dev_test.go` (`TestRunDevAutoManagedMLWHBackendCanServeProdConfiguredCacheWithoutDSN`) fails whenever the repository is checked out under `/tmp`, because `mlwh_cache_path_looks_test` in `run-dev.sh` treats any cache path under `/tmp/*` as test-shaped.
-  - Source: found by the serve-startup item 7 reviewer, who ran the suite from a scratch copy under `/tmp`; the same failure occurs on the unpatched base there.
-  - Red command: run `go test ./cmd -run TestRunDevAutoManagedMLWHBackendCanServeProdConfiguredCacheWithoutDSN` from a detached copy of this branch under `/tmp`.
+    - Source: found by the serve-startup item 7 reviewer, who ran the suite from a scratch copy under `/tmp`; the same failure occurs on the unpatched base there.
+    - Red command: run `go test ./cmd -run TestRunDevAutoManagedMLWHBackendCanServeProdConfiguredCacheWithoutDSN` from a detached copy of this branch under `/tmp`.
 - [ ] `gofmt -l cmd/` lists `cmd/env.go`, so the file is not gofmt-formatted although `make lint-go` passes.
-  - Source: found by the serve-startup item 7 implementor.
-  - Red command: `[ -z "$(gofmt -l cmd/)" ]`
-  - Exit status: 1 (prints `cmd/env.go`).
+    - Source: found by the serve-startup item 7 implementor.
+    - Red command: `[ -z "$(gofmt -l cmd/)" ]`
+    - Exit status: 1 (prints `cmd/env.go`).

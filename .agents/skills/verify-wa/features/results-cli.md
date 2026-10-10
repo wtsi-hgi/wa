@@ -45,8 +45,8 @@ Evidence: `30-register.txt`, `31-search.json`, `32-get.json`.
 
 ## Gotchas
 
-- README and DEVELOPING show `wa results search --pipeline …`. That flag does
-  not exist; use `--pipeline-name` or `--pipeline-identifier`.
+- `results search` filters pipelines with `--pipeline-name` or
+  `--pipeline-identifier`; there is no `--pipeline` flag.
 - Always redirect stdin from `/dev/null`. Without a cached JWT or owner
   token the CLI prompts `Password:` and would hang.
 - Point `--server` at the results API port, never the frontend port.
