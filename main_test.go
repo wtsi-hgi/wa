@@ -77,6 +77,7 @@ func TestRunPrintsStartupErrorsOnce(t *testing.T) {
 
 			convey.So(err, convey.ShouldNotBeNil)
 			convey.So(strings.Count(stderr.String(), "WA_MLWH_DSN must be set"), convey.ShouldEqual, 1)
+			convey.So(strings.Count(stderr.String(), "Error: WA_MLWH_DSN must be set"), convey.ShouldEqual, 1)
 		})
 	})
 }
@@ -112,6 +113,7 @@ func TestRunRejectsPositionalArgsOnNoArgCommands(t *testing.T) {
 			convey.So(err, convey.ShouldNotBeNil)
 			convey.So(err.Error(), convey.ShouldEqual, `accepts 0 arg(s), received 1`)
 			convey.So(strings.Count(stderr.String(), `accepts 0 arg(s), received 1`), convey.ShouldEqual, 1)
+			convey.So(strings.Count(stderr.String(), `Error: accepts 0 arg(s), received 1`), convey.ShouldEqual, 1)
 		}
 	})
 }

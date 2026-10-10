@@ -105,11 +105,17 @@ them twice.
       `TestRunRejectsPositionalArgsOnNoArgCommands` (`main_test.go`). Red command now
       exits 0.
 
-- [ ] `wa mlwh sync` prints its errors without the `Error: ` prefix every other command uses.
+- [x] `wa mlwh sync` prints its errors without the `Error: ` prefix every other command uses.
     - Source: found by the item 7 reviewer.
     - Red command:
       `env -i HOME=$HOME PATH=$PATH wa mlwh sync 2>&1 | grep -q '^Error: WA_MLWH_DSN must be set'`
     - Exit status: 1 (output is `WA_MLWH_DSN must be set`).
+    - Fixed: `wa mlwh sync` no longer silences cobra or prints its own errors
+      (`reportMLWHSyncCommandError` removed); it keeps `SilenceUsage`, so every
+      error prints once as `Error: ...` with no usage. The B6.1 lock test and
+      `.docs/mlwh-sync/spec.md` (lock paragraph, B6.1 test 1) now expect the
+      prefix. Red command now exits 0.
+
 - [ ] Authenticated `wa results` client commands (e.g. `wa results register`) fail after a successful login when the `XDG_STATE_HOME` directory does not exist: go-authserver v1.6.0 `ClientCLI.storeJWT` (cli.go:293) writes the JWT with `os.WriteFile` without creating the directory, giving `Error: open <tmp>/missing/state/.wa-results.jwt: no such file or directory`.
     - Source: found by the item 8 reviewer.
     - Red command: the password-prompt test D1.2 in `cmd/` with `XDG_STATE_HOME` set to a missing nested directory; a probe is in the session scratchpad at `review8/probe_login_test.go` (outside the repository), run with `go test -overlay`.

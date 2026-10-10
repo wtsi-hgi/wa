@@ -261,7 +261,7 @@ func TestMLWHSyncCommandReportsConcurrentCacheLockOnStderrOnly(t *testing.T) {
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(strings.TrimSpace(stdout.String()), convey.ShouldEqual, "")
-		convey.So(strings.TrimSpace(stderr.String()), convey.ShouldEqual, mlwh.ErrSyncAlreadyRunning.Error())
+		convey.So(strings.TrimSpace(stderr.String()), convey.ShouldEqual, "Error: "+mlwh.ErrSyncAlreadyRunning.Error())
 	})
 }
 
@@ -1261,6 +1261,7 @@ func TestMLWHStartupErrorsPrintedOnceOnStderr(t *testing.T) {
 
 			convey.So(err, convey.ShouldNotBeNil)
 			convey.So(strings.Count(stderr, "WA_MLWH_DSN must be set"), convey.ShouldEqual, 1)
+			convey.So(strings.Count(stderr, "Error: WA_MLWH_DSN must be set"), convey.ShouldEqual, 1)
 		})
 
 		convey.Convey("sync with an unknown flag reports it once", func() {
@@ -1268,6 +1269,7 @@ func TestMLWHStartupErrorsPrintedOnceOnStderr(t *testing.T) {
 
 			convey.So(err, convey.ShouldNotBeNil)
 			convey.So(strings.Count(stderr, "unknown flag: --no-such-flag"), convey.ShouldEqual, 1)
+			convey.So(strings.Count(stderr, "Error: unknown flag: --no-such-flag"), convey.ShouldEqual, 1)
 		})
 	})
 }
