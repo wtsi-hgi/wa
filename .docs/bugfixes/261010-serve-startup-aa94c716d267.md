@@ -18,7 +18,7 @@ not error reporting. `wa mlwh sync` also sets `SilenceErrors: true`
 `reportMLWHSyncCommandError`, so a fix in `main.go` must not make sync print
 them twice.
 
-- [ ] `wa mlwh serve` startup errors exit 1 with nothing on stderr (cmd/mlwh.go:205 sets SilenceErrors: true and main.go does not print the error), e.g. `wa mlwh serve` with no cache path, or with `--feedback-db :memory:`, though README promises a rejection message.
+- [x] `wa mlwh serve` startup errors exit 1 with nothing on stderr (cmd/mlwh.go:205 sets SilenceErrors: true and main.go does not print the error), e.g. `wa mlwh serve` with no cache path, or with `--feedback-db :memory:`, though README promises a rejection message.
     - Source: llm-knowledge-base `feedback` delivery (PR wtsi-hgi/llm-knowledge-base#5)
     - Confirmed at 29077be. `main.go` exits 1 without printing the error that
       `run` returns. The other cobra commands print because they leave
@@ -41,6 +41,12 @@ them twice.
         stderr:
         FAIL: want non-zero exit and stderr containing: :memory:
         ```
+  - Fixed: the serve command in `cmd/mlwh.go` no longer sets `SilenceErrors`, so
+    cobra prints its errors once. `run` in `main.go` takes a stderr writer and
+    prints errors raised before any command runs (env and scenario checks) once.
+    Regression tests: `TestMLWHStartupErrorsPrintedOnceOnStderr`
+    (`cmd/mlwh_test.go`) and `TestRunPrintsStartupErrorsOnce` (`main_test.go`).
+    Red command now exits 0.
 
 - [ ] `wa mlwh serve --feedback-db <path>` fails to start (silently) when the XDG_STATE_HOME directory for the feedback token does not exist, instead of creating it.
     - Source: llm-knowledge-base `feedback` delivery (PR wtsi-hgi/llm-knowledge-base#5)

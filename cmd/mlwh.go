@@ -202,7 +202,7 @@ func newMLWHServeCommand() *cobra.Command {
 		Use:           "serve",
 		Short:         "Serve the MLWH cache-backed HTTP API",
 		SilenceUsage:  true,
-		SilenceErrors: true,
+		SilenceErrors: false,
 		Long: strings.Join([]string{
 			"Serve the local Sanger Multi-LIMS Warehouse (MLWH) metadata cache as",
 			"the registry-backed HTTP API used by other wa services. MLWH data is",

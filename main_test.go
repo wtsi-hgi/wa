@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
@@ -24,6 +27,59 @@ func TestRewriteLegacyInspectArgs(t *testing.T) {
 	})
 }
 
+func TestRunPrintsStartupErrorsOnce(t *testing.T) {
+	convey.Convey("Given startup failures before and inside a command, when run executes, then each error is printed exactly once to stderr", t, func() {
+		cwd, err := os.Getwd()
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(os.Chdir(t.TempDir()), convey.ShouldBeNil)
+		defer func() {
+			convey.So(os.Chdir(cwd), convey.ShouldBeNil)
+		}()
+
+		stderr := &bytes.Buffer{}
+
+		convey.Convey("a rejected scenario environment is reported", func() {
+			t.Setenv("WA_ENV", "test")
+			t.Setenv("WA_MLWH_DSN", "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse")
+
+			err := run([]string{"mlwh", "serve"}, stderr)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(strings.Count(stderr.String(), "WA_MLWH_DSN is not permitted when WA_ENV=test"), convey.ShouldEqual, 1)
+		})
+
+		convey.Convey("an unreadable selected .env file is reported", func() {
+			t.Setenv("WA_ENV", "")
+			convey.So(os.Mkdir(".env", 0o700), convey.ShouldBeNil)
+
+			err := run([]string{"--help"}, stderr)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(strings.Count(stderr.String(), err.Error()), convey.ShouldEqual, 1)
+		})
+
+		convey.Convey("mlwh serve without a cache path is rejected", func() {
+			t.Setenv("WA_ENV", "")
+			t.Setenv("WA_MLWH_CACHE_PATH", "")
+
+			err := run([]string{"mlwh", "serve", "--port", "0"}, stderr)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(strings.Count(stderr.String(), "WA_MLWH_CACHE_PATH must be set"), convey.ShouldEqual, 1)
+		})
+
+		convey.Convey("mlwh sync without a DSN is reported once", func() {
+			t.Setenv("WA_ENV", "")
+			t.Setenv("WA_MLWH_DSN", "")
+
+			err := run([]string{"mlwh", "sync"}, stderr)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(strings.Count(stderr.String(), "WA_MLWH_DSN must be set"), convey.ShouldEqual, 1)
+		})
+	})
+}
+
 func TestRunLoadsSelectedEnv(t *testing.T) {
 	convey.Convey("run loads the dotenv files for the selected WA_ENV", t, func() {
 		repoRoot := t.TempDir()
@@ -39,7 +95,7 @@ func TestRunLoadsSelectedEnv(t *testing.T) {
 		t.Setenv("WA_ENV", "production")
 		unsetEnvForTest(t, "WA_TEST_SENTINEL")
 
-		err = run([]string{"--help"})
+		err = run([]string{"--help"}, io.Discard)
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(os.Getenv("WA_TEST_SENTINEL"), convey.ShouldEqual, "from-production")
@@ -60,7 +116,7 @@ func TestRunLoadsSelectedEnv(t *testing.T) {
 		t.Setenv("WA_ENV", "production")
 		unsetEnvForTest(t, "WA_TEST_SENTINEL")
 
-		err = run([]string{"--env", "test", "--help"})
+		err = run([]string{"--env", "test", "--help"}, io.Discard)
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(os.Getenv("WA_TEST_SENTINEL"), convey.ShouldEqual, "from-test")
@@ -82,7 +138,7 @@ func TestRunLoadsSelectedEnv(t *testing.T) {
 		unsetEnvForTest(t, "WA_MLWH_DSN")
 		unsetEnvForTest(t, "WA_DEV_RESULTS_PORT")
 
-		err = run([]string{"--help"})
+		err = run([]string{"--help"}, io.Discard)
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(os.Getenv("WA_MLWH_DSN"), convey.ShouldEqual, "")
@@ -90,7 +146,7 @@ func TestRunLoadsSelectedEnv(t *testing.T) {
 	})
 
 	convey.Convey("run returns a flag error when --env is provided without a value", t, func() {
-		err := run([]string{"--env"})
+		err := run([]string{"--env"}, io.Discard)
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "flag needs an argument: --env")
@@ -100,7 +156,7 @@ func TestRunLoadsSelectedEnv(t *testing.T) {
 		t.Setenv("WA_ENV", "test")
 		t.Setenv("WA_MLWH_DSN", "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse")
 
-		err := run(nil)
+		err := run(nil, io.Discard)
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_MLWH_DSN")
@@ -110,7 +166,7 @@ func TestRunLoadsSelectedEnv(t *testing.T) {
 		t.Setenv("WA_ENV", "production")
 		t.Setenv("WA_MLWH_PASSWORD", "mlwh_humgen_is_secure")
 
-		err := run(nil)
+		err := run(nil, io.Discard)
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_MLWH_PASSWORD")
@@ -124,7 +180,7 @@ func TestRunLoadsSelectedEnv(t *testing.T) {
 		t.Setenv("WA_MLWH_CACHE_PATH", "")
 		t.Setenv("WA_DEV_RESULTS_HOST", "0.0.0.0")
 
-		err := run(nil)
+		err := run(nil, io.Discard)
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_DEV_RESULTS_HOST")
@@ -139,7 +195,7 @@ func TestRunLoadsSelectedEnv(t *testing.T) {
 		t.Setenv("WA_DEV_RESULTS_HOST", "")
 		t.Setenv("WA_DEV_SEQMETA_HOST", "0.0.0.0")
 
-		err := run(nil)
+		err := run(nil, io.Discard)
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_DEV_SEQMETA_HOST")

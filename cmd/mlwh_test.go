@@ -1208,6 +1208,70 @@ func performMLWHServeJSONRequestForTest(handler http.Handler, method, target, bo
 	return response
 }
 
+func TestMLWHStartupErrorsPrintedOnceOnStderr(t *testing.T) {
+	convey.Convey("Given wa mlwh serve and sync startup failures, when run via the root command, then each error appears exactly once on stderr with a non-nil error", t, func() {
+		fakeAuth := newFakeMLWHServeAuthServer()
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+
+		run := func(args ...string) (string, string, error) {
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+			command := NewRootCommand()
+			command.SetOut(stdout)
+			command.SetErr(stderr)
+			command.SetArgs(args)
+
+			err := command.Execute()
+
+			return stdout.String(), stderr.String(), err
+		}
+
+		convey.Convey("serve with no cache path names the missing configuration", func() {
+			t.Setenv("WA_MLWH_CACHE_PATH", "")
+
+			stdout, stderr, err := run("mlwh", "serve", "--port", "0")
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(stdout, convey.ShouldEqual, "")
+			convey.So(strings.Count(stderr, "WA_MLWH_CACHE_PATH must be set"), convey.ShouldEqual, 1)
+		})
+
+		convey.Convey("serve with --feedback-db :memory: rejects it", func() {
+			cachePath := prepareMLWHServeCacheForTest(t, true)
+
+			stdout, stderr, err := run("mlwh", "serve", "--port", "0", "--mlwh-cache", cachePath, "--feedback-db", ":memory:")
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(stdout, convey.ShouldEqual, "")
+			convey.So(strings.Count(stderr, "not :memory: or a file: URI"), convey.ShouldEqual, 1)
+			convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 0)
+		})
+
+		convey.Convey("serve with an unknown flag reports it", func() {
+			_, stderr, err := run("mlwh", "serve", "--no-such-flag")
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(strings.Count(stderr, "unknown flag: --no-such-flag"), convey.ShouldEqual, 1)
+		})
+
+		convey.Convey("sync with no DSN reports it once", func() {
+			t.Setenv("WA_MLWH_DSN", "")
+
+			_, stderr, err := run("mlwh", "sync")
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(strings.Count(stderr, "WA_MLWH_DSN must be set"), convey.ShouldEqual, 1)
+		})
+
+		convey.Convey("sync with an unknown flag reports it once", func() {
+			_, stderr, err := run("mlwh", "sync", "--no-such-flag")
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(strings.Count(stderr, "unknown flag: --no-such-flag"), convey.ShouldEqual, 1)
+		})
+	})
+}
+
 func installFakeMLWHServeAuthServer(t *testing.T, fake *fakeMLWHServeAuthServer) {
 	t.Helper()
 
