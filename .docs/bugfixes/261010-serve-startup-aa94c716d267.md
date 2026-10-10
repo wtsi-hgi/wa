@@ -91,13 +91,20 @@ them twice.
       still exit 0. Regression test: `TestRunRejectsUnknownSubcommands`
       (`main_test.go`). Red command now exits 0.
 
-- [ ] `wa mlwh serve extra-arg` and `wa mlwh sync extra` accept unexpected positional arguments instead of rejecting them.
+- [x] `wa mlwh serve extra-arg` and `wa mlwh sync extra` accept unexpected positional arguments instead of rejecting them.
     - Source: found by the item 7 reviewer.
     - Red command:
       `env -i HOME=$HOME PATH=$PATH wa mlwh serve extra-arg 2>&1 | grep -q 'accepts 0 arg'`
     - Exit status: 1 (output is
       `Error: WA_MLWH_CACHE_PATH must be set or --mlwh-cache provided`; the
       extra argument is ignored).
+    - Fixed: the nine leaf commands that take no positional arguments (`mlwh serve`,
+      `sync`, `runs`, `studies`, `programmes`; `mlwhdiff diff`, `serve`;
+      `results search`, `serve`) now set `Args: cobra.ExactArgs(0)`; `sync` wraps it
+      so the rejection prints once despite `SilenceErrors`. Regression test:
+      `TestRunRejectsPositionalArgsOnNoArgCommands` (`main_test.go`). Red command now
+      exits 0.
+
 - [ ] `wa mlwh sync` prints its errors without the `Error: ` prefix every other command uses.
     - Source: found by the item 7 reviewer.
     - Red command:

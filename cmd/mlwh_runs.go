@@ -102,6 +102,7 @@ func newMLWHRunsCommand() *cobra.Command {
 
 	command := &cobra.Command{
 		Use:           "runs",
+		Args:          cobra.ExactArgs(0),
 		Short:         "List global MLWH run aggregates",
 		SilenceUsage:  true,
 		SilenceErrors: false,

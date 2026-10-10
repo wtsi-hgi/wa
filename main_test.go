@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -77,6 +78,41 @@ func TestRunPrintsStartupErrorsOnce(t *testing.T) {
 			convey.So(err, convey.ShouldNotBeNil)
 			convey.So(strings.Count(stderr.String(), "WA_MLWH_DSN must be set"), convey.ShouldEqual, 1)
 		})
+	})
+}
+
+func TestRunRejectsPositionalArgsOnNoArgCommands(t *testing.T) {
+	convey.Convey("Given commands that take no positional arguments, when run is given one, then each fails before acting and prints the rejection once", t, func() {
+		cwd, err := os.Getwd()
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(os.Chdir(t.TempDir()), convey.ShouldBeNil)
+		defer func() {
+			convey.So(os.Chdir(cwd), convey.ShouldBeNil)
+		}()
+
+		t.Setenv("WA_ENV", "")
+
+		leaves := [][]string{
+			{"mlwh", "serve"},
+			{"mlwh", "sync"},
+			{"mlwh", "runs"},
+			{"mlwh", "studies"},
+			{"mlwh", "programmes"},
+			{"mlwhdiff", "diff"},
+			{"mlwhdiff", "serve"},
+			{"results", "search"},
+			{"results", "serve"},
+		}
+
+		for _, leaf := range leaves {
+			stderr := &bytes.Buffer{}
+
+			err := run(append(slices.Clone(leaf), "extra-arg"), stderr)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldEqual, `accepts 0 arg(s), received 1`)
+			convey.So(strings.Count(stderr.String(), `accepts 0 arg(s), received 1`), convey.ShouldEqual, 1)
+		}
 	})
 }
 

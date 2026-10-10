@@ -1452,6 +1452,7 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "search",
+		Args:  cobra.ExactArgs(0),
 		Short: "Search result sets",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			uniqueValue, err := resultsSearchUniqueValue(unique, legacyRunKey)
@@ -1805,6 +1806,7 @@ func newResultsServeCommand() *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "serve",
+		Args:  cobra.ExactArgs(0),
 		Short: "Serve the results HTTP API",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := commandContext(cmd)

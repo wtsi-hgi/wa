@@ -109,6 +109,7 @@ func newMLWHDiffDiffCommand(options *mlwhdiffOptions) *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "diff",
+		Args:  cobra.ExactArgs(0),
 		Short: "Diff study samples or sample files",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if (studyID == "" && sampleID == "") || (studyID != "" && sampleID != "") {
@@ -229,6 +230,7 @@ func newMLWHDiffServeCommand(options *mlwhdiffOptions) *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "serve",
+		Args:  cobra.ExactArgs(0),
 		Short: "Serve the mlwhdiff HTTP API",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			provider, err := openMLWHDiffClient(commandContext(cmd), options, mlwhdiffFlagChanged(cmd, "mlwh-cache"))

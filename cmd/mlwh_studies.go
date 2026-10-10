@@ -176,6 +176,7 @@ func newMLWHStudiesCommand() *cobra.Command {
 
 	command := &cobra.Command{
 		Use:           "studies (--faculty-sponsor <name> | --programme <name> | --user <login>)",
+		Args:          cobra.ExactArgs(0),
 		Short:         "List studies by sponsor, programme, or study_users membership",
 		SilenceUsage:  true,
 		SilenceErrors: false,
@@ -397,6 +398,7 @@ func newMLWHProgrammesCommand() *cobra.Command {
 
 	command := &cobra.Command{
 		Use:           "programmes",
+		Args:          cobra.ExactArgs(0),
 		Short:         "List MLWH programme values with study counts",
 		SilenceUsage:  true,
 		SilenceErrors: false,

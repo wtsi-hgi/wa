@@ -200,6 +200,7 @@ func newMLWHServeCommand() *cobra.Command {
 
 	command := &cobra.Command{
 		Use:           "serve",
+		Args:          cobra.ExactArgs(0),
 		Short:         "Serve the MLWH cache-backed HTTP API",
 		SilenceUsage:  true,
 		SilenceErrors: false,
@@ -471,6 +472,9 @@ func newMLWHSyncCommand() *cobra.Command {
 		Short:         "Sync supported MLWH metadata and data into the local cache",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Args: func(cmd *cobra.Command, args []string) error {
+			return reportMLWHSyncCommandError(cmd, cobra.ExactArgs(0)(cmd, args))
+		},
 		Long: strings.Join([]string{
 			"Sync supported MLWH metadata and data into the local cache used",
 			"by other wa subcommands.",
