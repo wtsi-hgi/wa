@@ -107,6 +107,11 @@ the `.tmp/wa` symlink removed on cleanup. Their regressions are in
     - Fixed: `gofmt -w cmd/env.go` added the missing final newline. No other tracked
       Go file is unformatted. Red command now exits 0.
 
-- [ ] `make lint-go` does not check gofmt formatting: the repo has no golangci-lint config, golangci-lint v2's defaults enable no formatters, and the Makefile's fallback pin (`golangci-lint@v1.64.8`) would reject a v2 config.
+- [x] `make lint-go` does not check gofmt formatting: the repo has no golangci-lint config, golangci-lint v2's defaults enable no formatters, and the Makefile's fallback pin (`golangci-lint@v1.64.8`) would reject a v2 config.
     - Source: found while fixing the `cmd/env.go` item.
     - Red command: in a scratch copy, strip the final newline from a Go file in `cmd/` and run `make lint-go`; it should fail and currently reports `0 issues.`
+    - Fixed: new `.golangci.yml` (`version: "2"`, the unchanged standard linter set,
+      and the `gofmt` formatter); the `Makefile` fallback pin moves to
+      `golangci-lint/v2@v2.12.2`, which CI uses via `make lint`. The red copy now
+      fails with a gofmt finding, both with the local binary and the `go run`
+      fallback.
