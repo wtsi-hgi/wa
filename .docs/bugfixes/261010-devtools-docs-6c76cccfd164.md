@@ -74,3 +74,10 @@ the `.tmp/wa` symlink removed on cleanup. Their regressions are in
         2073962 2073551 next-server (v16.2.4)
         cleanup: group 2073551 gone, ports free
         ```
+- [ ] `cmd/run_dev_test.go` (`TestRunDevAutoManagedMLWHBackendCanServeProdConfiguredCacheWithoutDSN`) fails whenever the repository is checked out under `/tmp`, because `mlwh_cache_path_looks_test` in `run-dev.sh` treats any cache path under `/tmp/*` as test-shaped.
+  - Source: found by the serve-startup item 7 reviewer, who ran the suite from a scratch copy under `/tmp`; the same failure occurs on the unpatched base there.
+  - Red command: run `go test ./cmd -run TestRunDevAutoManagedMLWHBackendCanServeProdConfiguredCacheWithoutDSN` from a detached copy of this branch under `/tmp`.
+- [ ] `gofmt -l cmd/` lists `cmd/env.go`, so the file is not gofmt-formatted although `make lint-go` passes.
+  - Source: found by the serve-startup item 7 implementor.
+  - Red command: `[ -z "$(gofmt -l cmd/)" ]`
+  - Exit status: 1 (prints `cmd/env.go`).
