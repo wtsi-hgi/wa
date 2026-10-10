@@ -129,4 +129,10 @@ them twice.
 
 - [ ] `wa results register` prints its full usage text to stdout on a runtime (non-usage) error, in addition to the error.
     - Source: found by the item 8 reviewer while reproducing the item above.
-    - Red command: to be built when this item is fixed.
+    - Red command: `red-register-usage.sh <worktree>` in the session
+      scratchpad (`wa-red/serve-startup/`, outside the repository). It runs
+      `wa results register out --user u --workflow w --unique k --server https://127.0.0.1:1`
+      on an empty output directory and exits 0 only when the error prints once
+      with no usage text.
+    - Exit status: 1. stderr is `Error: no output files discovered in output directory`
+      followed by `Usage:` and the full flag list.
