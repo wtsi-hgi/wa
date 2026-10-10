@@ -184,8 +184,25 @@ func TestRemoteSubmitFeedbackOtherFailures(t *testing.T) {
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(submitFeedbackMatchedSentinelsForTest(err), convey.ShouldBeEmpty)
-		convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+		submitFeedbackShouldNotClaimImpairedForTest(err)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "store write failed")
+	})
+
+	convey.Convey("C1.8: Given the real server with a closed store, then the 500 keeps its message and does not "+
+		"claim the upstream database is impaired", t, func() {
+		store := newFeedbackServerTestStore(t)
+		convey.So(store.Close(), convey.ShouldBeNil)
+
+		server := httptest.NewServer(newFeedbackTestRouter(store))
+		defer server.Close()
+
+		_, err := submitFeedbackClientForTest(server.URL, "").
+			SubmitFeedback(context.Background(), submitFeedbackFullSubmissionForTest())
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(submitFeedbackMatchedSentinelsForTest(err), convey.ShouldBeEmpty)
+		submitFeedbackShouldNotClaimImpairedForTest(err)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "could not store feedback")
 	})
 
 	convey.Convey("C1.8: Given 503 cache_never_synced, then ErrCacheNeverSynced without ErrNotFound and no panic", t, func() {
@@ -206,10 +223,12 @@ func TestRemoteSubmitFeedbackOtherFailures(t *testing.T) {
 		err := submitFeedbackErrorForTest(t, http.StatusServiceUnavailable, "text/plain", "feedback_disabled")
 
 		convey.So(errors.Is(err, ErrFeedbackDisabled), convey.ShouldBeFalse)
-		convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+		submitFeedbackShouldNotClaimImpairedForTest(err)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "without a valid MLWH error envelope")
 	})
 
-	convey.Convey("C1.9: Given a closed listener, then ErrUpstreamImpaired", t, func() {
+	convey.Convey("C1.9: Given a closed listener, then a transport error that does not claim the upstream "+
+		"database is impaired", t, func() {
 		server := httptest.NewServer(http.NotFoundHandler())
 		baseURL := server.URL
 		server.Close()
@@ -217,27 +236,43 @@ func TestRemoteSubmitFeedbackOtherFailures(t *testing.T) {
 		_, err := submitFeedbackClientForTest(baseURL, "").
 			SubmitFeedback(context.Background(), submitFeedbackFullSubmissionForTest())
 
-		convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+		submitFeedbackShouldNotClaimImpairedForTest(err)
 		convey.So(submitFeedbackMatchedSentinelsForTest(err), convey.ShouldBeEmpty)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "SubmitFeedback request failed")
 	})
 
-	convey.Convey("C1.10: Given 201 with a non-JSON body, then ErrUpstreamImpaired", t, func() {
+	convey.Convey("C1.9: Given a cancelled context, then the error still matches context.Canceled", t, func() {
+		server, _ := submitFeedbackStubForTest(t, http.StatusCreated, "application/json", `{"id":1}`)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, err := submitFeedbackClientForTest(server.URL, "").SubmitFeedback(ctx, submitFeedbackFullSubmissionForTest())
+
+		convey.So(errors.Is(err, context.Canceled), convey.ShouldBeTrue)
+		submitFeedbackShouldNotClaimImpairedForTest(err)
+	})
+
+	convey.Convey("C1.10: Given 201 with a non-JSON body, then a decode error that does not claim the "+
+		"upstream database is impaired", t, func() {
 		server, _ := submitFeedbackStubForTest(t, http.StatusCreated, "text/plain", "not json")
 
 		receipt, err := submitFeedbackClientForTest(server.URL, "").
 			SubmitFeedback(context.Background(), submitFeedbackFullSubmissionForTest())
 
-		convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+		submitFeedbackShouldNotClaimImpairedForTest(err)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "decode SubmitFeedback response")
 		convey.So(receipt, convey.ShouldResemble, FeedbackReceipt{})
 	})
 
-	convey.Convey("C1: Given a nil client, then ErrUpstreamImpaired", t, func() {
+	convey.Convey("C1: Given a nil client, then an error that does not claim the upstream database is "+
+		"impaired", t, func() {
 		var client *RemoteClient
 
 		_, err := client.SubmitFeedback(context.Background(), submitFeedbackFullSubmissionForTest())
 
-		convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+		submitFeedbackShouldNotClaimImpairedForTest(err)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "nil remote client")
 	})
 }
 
@@ -258,6 +293,15 @@ func submitFeedbackSentinelsForTest() []error {
 		ErrFeedbackDisabled, ErrFeedbackInvalid, ErrFeedbackTooLarge,
 		ErrFeedbackUnsupported, ErrFeedbackUnauthorized,
 	}
+}
+
+// submitFeedbackShouldNotClaimImpairedForTest asserts err is non-nil and
+// neither matches nor mentions ErrUpstreamImpaired: no feedback failure is
+// about the upstream MLWH database.
+func submitFeedbackShouldNotClaimImpairedForTest(err error) {
+	convey.So(err, convey.ShouldNotBeNil)
+	convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeFalse)
+	convey.So(err.Error(), convey.ShouldNotContainSubstring, ErrUpstreamImpaired.Error())
 }
 
 func submitFeedbackErrorForTest(t *testing.T, status int, contentType, body string) error {
@@ -292,7 +336,7 @@ func TestRemoteSubmitFeedbackStatusSentinels(t *testing.T) {
 			SubmitFeedback(context.Background(), submitFeedbackFullSubmissionForTest())
 
 		convey.So(submitFeedbackMatchedSentinelsForTest(err), convey.ShouldResemble, []error{ErrFeedbackDisabled})
-		convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeFalse)
+		submitFeedbackShouldNotClaimImpairedForTest(err)
 		convey.So(strings.Count(err.Error(), "feedback is disabled on this server"), convey.ShouldEqual, 1)
 	})
 
@@ -310,7 +354,22 @@ func TestRemoteSubmitFeedbackStatusSentinels(t *testing.T) {
 		err := submitFeedbackErrorForTest(t, http.StatusNotFound, "text/plain", "404 page not found")
 
 		convey.So(submitFeedbackMatchedSentinelsForTest(err), convey.ShouldResemble, []error{ErrFeedbackUnsupported})
-		convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+		submitFeedbackShouldNotClaimImpairedForTest(err)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "without a valid MLWH error envelope")
+	})
+
+	convey.Convey("C1.4: Given a router without the feedback route, then ErrFeedbackUnsupported that does not "+
+		"claim the upstream database is impaired", t, func() {
+		gin.SetMode(gin.TestMode)
+
+		server := httptest.NewServer(gin.New())
+		defer server.Close()
+
+		_, err := submitFeedbackClientForTest(server.URL, "").
+			SubmitFeedback(context.Background(), submitFeedbackFullSubmissionForTest())
+
+		convey.So(submitFeedbackMatchedSentinelsForTest(err), convey.ShouldResemble, []error{ErrFeedbackUnsupported})
+		submitFeedbackShouldNotClaimImpairedForTest(err)
 	})
 
 	convey.Convey("C1.4: Given a 404 with a not_found envelope, then ErrFeedbackUnsupported by status alone", t, func() {
@@ -329,20 +388,20 @@ func TestRemoteSubmitFeedbackStatusSentinels(t *testing.T) {
 		convey.So(err.Error(), convey.ShouldContainSubstring, `invalid category "x"`)
 	})
 
-	convey.Convey("C1.6: Given a 400 without a bad_request envelope, then not ErrFeedbackInvalid but "+
+	convey.Convey("C1.6: Given a 400 without a bad_request envelope, then no feedback sentinel and no "+
 		"ErrUpstreamImpaired", t, func() {
 		textErr := submitFeedbackErrorForTest(t, http.StatusBadRequest, "",
 			"Client sent an HTTP request to an HTTPS server.\n")
 
 		convey.So(errors.Is(textErr, ErrFeedbackInvalid), convey.ShouldBeFalse)
-		convey.So(errors.Is(textErr, ErrUpstreamImpaired), convey.ShouldBeTrue)
+		submitFeedbackShouldNotClaimImpairedForTest(textErr)
 		convey.So(textErr.Error(), convey.ShouldContainSubstring, "without a valid MLWH error envelope")
 
 		for _, body := range []string{`{"message":"x"}`, `{"code":"bad_request","message":5}`} {
 			err := submitFeedbackErrorForTest(t, http.StatusBadRequest, "application/json", body)
 
 			convey.So(submitFeedbackMatchedSentinelsForTest(err), convey.ShouldBeEmpty)
-			convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+			submitFeedbackShouldNotClaimImpairedForTest(err)
 		}
 
 		otherCodeErr := submitFeedbackErrorForTest(t, http.StatusBadRequest, "application/json",
@@ -351,34 +410,36 @@ func TestRemoteSubmitFeedbackStatusSentinels(t *testing.T) {
 		convey.So(errors.Is(otherCodeErr, ErrNotFound), convey.ShouldBeTrue)
 	})
 
-	convey.Convey("C1.7: Given 413 payload_too_large, then ErrFeedbackTooLarge and ErrUpstreamImpaired", t, func() {
+	convey.Convey("C1.7: Given 413 payload_too_large, then ErrFeedbackTooLarge but not ErrUpstreamImpaired", t, func() {
 		err := submitFeedbackErrorForTest(t, http.StatusRequestEntityTooLarge, "application/json",
 			`{"code":"payload_too_large","message":"description exceeds 16384 bytes"}`)
 
 		convey.So(submitFeedbackMatchedSentinelsForTest(err), convey.ShouldResemble, []error{ErrFeedbackTooLarge})
-		convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+		submitFeedbackShouldNotClaimImpairedForTest(err)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "description exceeds 16384 bytes")
 	})
 
-	convey.Convey("C1.7: Given 401 with any body, then ErrFeedbackUnauthorized and ErrUpstreamImpaired", t, func() {
+	convey.Convey("C1.7: Given 401 with any body, then ErrFeedbackUnauthorized but not ErrUpstreamImpaired", t, func() {
 		for _, body := range []string{`{"code":401,"message":"x"}`, "unauthorized", ""} {
 			err := submitFeedbackErrorForTest(t, http.StatusUnauthorized, "", body)
 
 			convey.So(submitFeedbackMatchedSentinelsForTest(err), convey.ShouldResemble, []error{ErrFeedbackUnauthorized})
-			convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+			submitFeedbackShouldNotClaimImpairedForTest(err)
 		}
 
 		envelopeErr := submitFeedbackErrorForTest(t, http.StatusUnauthorized, "application/json",
 			`{"code":"unauthorized","message":"missing admin token"}`)
 		convey.So(errors.Is(envelopeErr, ErrFeedbackUnauthorized), convey.ShouldBeTrue)
+		submitFeedbackShouldNotClaimImpairedForTest(envelopeErr)
 		convey.So(envelopeErr.Error(), convey.ShouldContainSubstring, "missing admin token")
 	})
 
-	convey.Convey("C1.7: Given 400 bad_request, then ErrUpstreamImpaired also matches", t, func() {
+	convey.Convey("C1.7: Given 400 bad_request, then ErrUpstreamImpaired does not match", t, func() {
 		err := submitFeedbackErrorForTest(t, http.StatusBadRequest, "application/json",
 			`{"code":"bad_request","message":"invalid category \"x\""}`)
 
-		convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+		convey.So(errors.Is(err, ErrFeedbackInvalid), convey.ShouldBeTrue)
+		submitFeedbackShouldNotClaimImpairedForTest(err)
 	})
 }
 
@@ -430,6 +491,22 @@ func TestRemoteSubmitFeedbackRoundTrip(t *testing.T) {
 			SubmitFeedback(context.Background(), FeedbackSubmission{Category: "bogus", Description: "d"})
 
 		convey.So(errors.Is(err, ErrFeedbackInvalid), convey.ShouldBeTrue)
+		submitFeedbackShouldNotClaimImpairedForTest(err)
 		convey.So(err.Error(), convey.ShouldContainSubstring, `invalid category "bogus"`)
+	})
+
+	convey.Convey("C1.11: Given the real server with a too-long description, then ErrFeedbackTooLarge that "+
+		"does not claim the upstream database is impaired", t, func() {
+		server := httptest.NewServer(newFeedbackTestRouter(newFeedbackServerTestStore(t)))
+		defer server.Close()
+
+		submission := submitFeedbackFullSubmissionForTest()
+		submission.Description = strings.Repeat("x", FeedbackMaxDescriptionBytes+1)
+
+		_, err := submitFeedbackClientForTest(server.URL, "").SubmitFeedback(context.Background(), submission)
+
+		convey.So(submitFeedbackMatchedSentinelsForTest(err), convey.ShouldResemble, []error{ErrFeedbackTooLarge})
+		submitFeedbackShouldNotClaimImpairedForTest(err)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "description exceeds")
 	})
 }

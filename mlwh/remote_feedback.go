@@ -47,13 +47,14 @@ var submitFeedbackEndpoint = Endpoint{
 
 // submitFeedbackError reads the error body once so it can both pick the
 // feedback sentinel from the envelope code and hand the same bytes to
-// decodeRemoteError, which keeps the message and the proxy hints. It wraps
-// the sentinel only when decodeRemoteError has not already done so, so the
-// sentinel text appears once.
+// decodeRemoteErrorWithFallback, which keeps the message and the proxy hints.
+// Its nil fallback keeps ErrUpstreamImpaired out: the feedback store is not
+// the upstream MLWH database. It wraps the feedback sentinel only when the
+// decoded error does not already match it, so the sentinel text appears once.
 func submitFeedbackError(response *http.Response, proxyURL *url.URL) error {
 	raw, err := io.ReadAll(io.LimitReader(response.Body, FeedbackMaxBodyBytes))
 	if err != nil {
-		return fmt.Errorf("%w: read SubmitFeedback %d response: %w", ErrUpstreamImpaired, response.StatusCode, err)
+		return fmt.Errorf("mlwh: read SubmitFeedback %d response: %w", response.StatusCode, err)
 	}
 
 	var envelope httpErrorEnvelope
@@ -61,7 +62,7 @@ func submitFeedbackError(response *http.Response, proxyURL *url.URL) error {
 	decoded := json.NewDecoder(bytes.NewReader(raw)).Decode(&envelope) == nil
 
 	response.Body = io.NopCloser(bytes.NewReader(raw))
-	base := decodeRemoteError(response, submitFeedbackEndpoint, proxyURL)
+	base := decodeRemoteErrorWithFallback(response, submitFeedbackEndpoint, proxyURL, nil)
 
 	sentinel := submitFeedbackSentinel(response.StatusCode, decoded, envelope.Code)
 	if sentinel == nil {
@@ -72,7 +73,7 @@ func submitFeedbackError(response *http.Response, proxyURL *url.URL) error {
 		return fmt.Errorf("%w: %w", sentinel, base)
 	}
 
-	// decodeRemoteError already wrapped the sentinel (503 feedback_disabled).
+	// The envelope code already gave the sentinel (503 feedback_disabled).
 	// Drop the server message too when the sentinel text already says it.
 	if envelope.Message != "" && strings.Contains(sentinel.Error(), envelope.Message) {
 		return sentinel
@@ -108,21 +109,23 @@ func submitFeedbackSentinel(status int, decoded bool, code string) error {
 // Error responses keep the server's message and wrap ErrFeedbackInvalid (400
 // with a bad_request envelope), ErrFeedbackUnauthorized (401),
 // ErrFeedbackUnsupported (404), ErrFeedbackTooLarge (413) or
-// ErrFeedbackDisabled (503 feedback_disabled). Many of these also satisfy
-// ErrUpstreamImpaired, so check the feedback sentinels first.
+// ErrFeedbackDisabled (503 feedback_disabled). Other failures, including
+// transport errors, other statuses and non-envelope bodies, match no feedback
+// sentinel. No feedback error wraps ErrUpstreamImpaired unless the server's
+// envelope code is upstream_impaired, which the feedback route never sends.
 func (rc *RemoteClient) SubmitFeedback(ctx context.Context, submission FeedbackSubmission) (FeedbackReceipt, error) {
 	if rc == nil || rc.httpClient == nil {
-		return FeedbackReceipt{}, fmt.Errorf("%w: nil remote client", ErrUpstreamImpaired)
+		return FeedbackReceipt{}, errors.New("mlwh: SubmitFeedback: nil remote client")
 	}
 
 	body, err := json.Marshal(submission)
 	if err != nil {
-		return FeedbackReceipt{}, fmt.Errorf("%w: encode SubmitFeedback request: %w", ErrUpstreamImpaired, err)
+		return FeedbackReceipt{}, fmt.Errorf("mlwh: encode SubmitFeedback request: %w", err)
 	}
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, rc.baseURL+"/feedback", bytes.NewReader(body))
 	if err != nil {
-		return FeedbackReceipt{}, fmt.Errorf("%w: build SubmitFeedback request: %w", ErrUpstreamImpaired, err)
+		return FeedbackReceipt{}, fmt.Errorf("mlwh: build SubmitFeedback request: %w", err)
 	}
 
 	request.Header.Set("Content-Type", "application/json")
@@ -135,7 +138,7 @@ func (rc *RemoteClient) SubmitFeedback(ctx context.Context, submission FeedbackS
 
 	response, err := rc.httpClient.Do(request)
 	if err != nil {
-		return FeedbackReceipt{}, fmt.Errorf("%w: SubmitFeedback request failed: %w", ErrUpstreamImpaired, err)
+		return FeedbackReceipt{}, fmt.Errorf("mlwh: SubmitFeedback request failed: %w", err)
 	}
 	// Bind the original body now: submitFeedbackError replaces response.Body.
 	defer func(body io.Closer) {
@@ -148,7 +151,7 @@ func (rc *RemoteClient) SubmitFeedback(ctx context.Context, submission FeedbackS
 
 	var receipt FeedbackReceipt
 	if err := json.NewDecoder(response.Body).Decode(&receipt); err != nil {
-		return FeedbackReceipt{}, fmt.Errorf("%w: decode SubmitFeedback response: %w", ErrUpstreamImpaired, err)
+		return FeedbackReceipt{}, fmt.Errorf("mlwh: decode SubmitFeedback response: %w", err)
 	}
 
 	return receipt, nil

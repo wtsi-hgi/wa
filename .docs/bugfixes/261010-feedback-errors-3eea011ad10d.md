@@ -36,15 +36,16 @@ Prior items checked: no earlier checklist covers `SubmitFeedback` error text.
             red_feedback_errors_test.go:71: "feedback is disabled on this server" appears 3 times in "mlwh: feedback is disabled on this server: feedback is disabled on this server: mlwh: feedback is disabled on this server"; want 1
         --- FAIL: TestRedItem5FeedbackDisabledTextNotRepeated (0.00s)
         ```
-  - Fixed: `submitFeedbackError` in `mlwh/remote_feedback.go` wraps with the
-    feedback sentinel only when the error does not already match it, and returns
-    the bare sentinel when the server message is already part of its text.
-    Regression cases in `TestRemoteSubmitFeedbackStatusSentinels`
-    (`mlwh/remote_feedback_test.go`); one C1 sentence in
-    `.docs/feedback/spec.md` now describes the disabled case. Item 5 red case
-    passes; item 6 cases unchanged.
 
-- [ ] Client-side feedback errors (401/404 text bodies, 413 too large, 400 invalid, 500) include the misleading text 'mlwh: upstream database impaired' even though no database is involved.
+    - Fixed: `submitFeedbackError` in `mlwh/remote_feedback.go` wraps with the
+      feedback sentinel only when the error does not already match it, and returns
+      the bare sentinel when the server message is already part of its text.
+      Regression cases in `TestRemoteSubmitFeedbackStatusSentinels`
+      (`mlwh/remote_feedback_test.go`); one C1 sentence in
+      `.docs/feedback/spec.md` now describes the disabled case. Item 5 red case
+      passes; item 6 cases unchanged.
+
+- [x] Client-side feedback errors (401/404 text bodies, 413 too large, 400 invalid, 500) include the misleading text 'mlwh: upstream database impaired' even though no database is involved.
     - Source: llm-knowledge-base `feedback` delivery (PR wtsi-hgi/llm-knowledge-base#5)
     - Confirmed at 29077be. 413, 400 and 500 come from the real `NewServer`
       with `WithFeedback`. The 500 comes from a closed feedback store. The 404
@@ -93,3 +94,32 @@ Prior items checked: no earlier checklist covers `SubmitFeedback` error text.
             --- FAIL: .../500_from_the_real_server_with_a_closed_store (0.01s)
         FAIL	github.com/wtsi-hgi/wa/mlwh	0.040s
         ```
+
+    - Fixed: the user chose to change the contract (option a): `SubmitFeedback`
+      errors no longer wrap `ErrUpstreamImpaired`, because the feedback store is
+      not the upstream MLWH database and the only caller (llm-knowledge-base
+      `mapFeedbackError`) checks the feedback sentinels only. `mlwh/remote.go` adds
+      `decodeRemoteErrorWithFallback`; Registry calls keep the
+      `ErrUpstreamImpaired` fallback unchanged, and the feedback path passes none.
+      Client-side failures are plain `mlwh: ...: %w` errors. `.docs/feedback/spec.md`
+      (Known limits, C1, C1.6 to C1.12, Key Decisions), the `SubmitFeedback` doc
+      comment and `mlwh/remote_feedback_test.go` are amended to match. Red command
+      now exits 0.
+
+## Delivery queue
+
+Moved here from llm-knowledge-base `.docs/bugfixes/261010-outside-issues-558c69a87292.md`
+after that branch merged. Worktree paths are relative to the wa main clone.
+
+| Repo / PR             | Branch                     | Target    | Head       | Worktree                | Items                       | Status               | Next action                |
+| --------------------- | -------------------------- | --------- | ---------- | ----------------------- | --------------------------- | -------------------- | -------------------------- |
+| llm-knowledge-base #5 | `feedback`                 | `develop` | `3bca0ec`  | -                       | -                           | merged as `b3634f7`  | none                       |
+| wa #35                | `verify-skill-be9d6e11`    | `develop` | `c7a1dfe`  | -                       | -                           | merged as `e0e12ac`  | none                       |
+| llm-knowledge-base #6 | `outside-fixes-6196aa3d`   | `develop` | `aeac63d`  | -                       | 1-5                         | merged as `f20d81c`  | none                       |
+| wa                    | `feedback-errors-55019c28` | `develop` | branch tip | `../wa-feedback-errors` | 5-6                         | fixed                | publish and resolve the PR |
+| wa                    | `serve-startup-d4629ccd`   | `develop` | branch tip | `../wa-serve-startup`   | 7-8, CLI consistency        | 7 fixed, 8 in review | fix the remaining items    |
+| wa                    | `devtools-docs-9abf0468`   | `develop` | branch tip | `../wa-devtools-docs`   | 9-10, run-dev `/tmp`, gofmt | red loops recorded   | fix the items              |
+
+After wa releases the item 6 contract change, llm-knowledge-base needs a wa
+bump and an update to the stale `ErrUpstreamImpaired` comment at
+`internal/mlwh/tools_feedback.go:75`.

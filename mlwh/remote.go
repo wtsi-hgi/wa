@@ -1368,29 +1368,7 @@ func decodeRemoteResult(response *http.Response, entry Endpoint) (any, error) {
 }
 
 func decodeRemoteError(response *http.Response, entry Endpoint, proxyURL *url.URL) error {
-	var envelope httpErrorEnvelope
-	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
-		return invalidRemoteErrorEnvelopeError(response, entry, proxyURL)
-	}
-
-	sentinel := sentinelForHTTPErrorCode(envelope.Code)
-	if sentinel == nil {
-		sentinel = ErrUpstreamImpaired
-	}
-
-	if errors.Is(sentinel, ErrCacheNeverSynced) && endpointResultIsSlice(entry) {
-		sentinel = errors.Join(ErrCacheNeverSynced, ErrNotFound)
-	}
-
-	message := envelope.Message
-	if message == "" {
-		message = http.StatusText(response.StatusCode)
-	}
-	if message == "" {
-		message = fmt.Sprintf("remote %s returned %d", entry.Method, response.StatusCode)
-	}
-
-	return fmt.Errorf("%s: %w", message, sentinel)
+	return decodeRemoteErrorWithFallback(response, entry, proxyURL, ErrUpstreamImpaired)
 }
 
 func (rc *RemoteClient) requestURL(entry Endpoint, pathParams []string, query url.Values) (string, error) {
@@ -1514,6 +1492,39 @@ type RemoteConfig struct {
 	CacheTTL time.Duration
 }
 
+// decodeRemoteErrorWithFallback is decodeRemoteError with fallback wrapped in
+// place of ErrUpstreamImpaired when the body is not an envelope or its code
+// has no sentinel. A nil fallback wraps no sentinel in those cases.
+func decodeRemoteErrorWithFallback(response *http.Response, entry Endpoint, proxyURL *url.URL, fallback error) error {
+	var envelope httpErrorEnvelope
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		return invalidRemoteErrorEnvelopeError(response, entry, proxyURL, fallback)
+	}
+
+	sentinel := sentinelForHTTPErrorCode(envelope.Code)
+	if sentinel == nil {
+		sentinel = fallback
+	}
+
+	if sentinel != nil && errors.Is(sentinel, ErrCacheNeverSynced) && endpointResultIsSlice(entry) {
+		sentinel = errors.Join(ErrCacheNeverSynced, ErrNotFound)
+	}
+
+	message := envelope.Message
+	if message == "" {
+		message = http.StatusText(response.StatusCode)
+	}
+	if message == "" {
+		message = fmt.Sprintf("remote %s returned %d", entry.Method, response.StatusCode)
+	}
+
+	if sentinel == nil {
+		return errors.New(message)
+	}
+
+	return fmt.Errorf("%s: %w", message, sentinel)
+}
+
 func addSampleSearchOptionValues(query url.Values, opts SampleSearchOptions) {
 	if opts.Words {
 		query.Set("words", "true")
@@ -1550,7 +1561,7 @@ func remoteSetNonEmptyQuery(query url.Values, key, value string) {
 	}
 }
 
-func invalidRemoteErrorEnvelopeError(response *http.Response, entry Endpoint, proxyURL *url.URL) error {
+func invalidRemoteErrorEnvelopeError(response *http.Response, entry Endpoint, proxyURL *url.URL, sentinel error) error {
 	parts := []string{
 		fmt.Sprintf("remote %s returned %d without a valid MLWH error envelope", entry.Method, response.StatusCode),
 		"response may not have come from the MLWH server",
@@ -1566,7 +1577,12 @@ func invalidRemoteErrorEnvelopeError(response *http.Response, entry Endpoint, pr
 		parts = append(parts, remoteProxyHint(requestURL, proxyURL))
 	}
 
-	return fmt.Errorf("%w: %s", ErrUpstreamImpaired, strings.Join(parts, "; "))
+	message := strings.Join(parts, "; ")
+	if sentinel == nil {
+		return errors.New(message)
+	}
+
+	return fmt.Errorf("%w: %s", sentinel, message)
 }
 
 func remoteProxyHint(requestURL *url.URL, proxyURL *url.URL) string {
