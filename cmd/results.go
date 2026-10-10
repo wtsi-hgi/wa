@@ -621,6 +621,22 @@ func resultsRegisterAuthenticatedRequest(serverURL, certPath string) (*resty.Req
 	return authClient.AuthenticatedRequest()
 }
 
+// ensureResultsJWTDir creates the missing parent directories of the JWT file at
+// mode 0700, since go-authserver stores a fresh JWT without creating them.
+// Existing directories keep their permissions.
+func ensureResultsJWTDir(jwtBasename string) error {
+	jwtPath, err := resultsTokenPath(jwtBasename)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(jwtPath), 0o700); err != nil {
+		return fmt.Errorf("create JWT directory: %w", err)
+	}
+
+	return nil
+}
+
 func defaultResultsEnvServerURL(envName string) string {
 	envURL := strings.TrimSpace(firstEnv(envName))
 	if envURL == "" {
@@ -965,6 +981,10 @@ func (c *permissionCheckingResultsAuthClient) authenticatedRequest(ownerLogin bo
 	}
 
 	if err := resultsTokenPermissionError(c.serverTokenBasename); err != nil {
+		return nil, err
+	}
+
+	if err := ensureResultsJWTDir(c.jwtBasename); err != nil {
 		return nil, err
 	}
 

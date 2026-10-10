@@ -116,9 +116,17 @@ them twice.
       `.docs/mlwh-sync/spec.md` (lock paragraph, B6.1 test 1) now expect the
       prefix. Red command now exits 0.
 
-- [ ] Authenticated `wa results` client commands (e.g. `wa results register`) fail after a successful login when the `XDG_STATE_HOME` directory does not exist: go-authserver v1.6.0 `ClientCLI.storeJWT` (cli.go:293) writes the JWT with `os.WriteFile` without creating the directory, giving `Error: open <tmp>/missing/state/.wa-results.jwt: no such file or directory`.
+- [x] Authenticated `wa results` client commands (e.g. `wa results register`) fail after a successful login when the `XDG_STATE_HOME` directory does not exist: go-authserver v1.6.0 `ClientCLI.storeJWT` (cli.go:293) writes the JWT with `os.WriteFile` without creating the directory, giving `Error: open <tmp>/missing/state/.wa-results.jwt: no such file or directory`.
     - Source: found by the item 8 reviewer.
     - Red command: the password-prompt test D1.2 in `cmd/` with `XDG_STATE_HOME` set to a missing nested directory; a probe is in the session scratchpad at `review8/probe_login_test.go` (outside the repository), run with `go test -overlay`.
+    - Fixed: `permissionCheckingResultsAuthClient.authenticatedRequest` in
+      `cmd/results.go` creates the JWT directory with mode 0700 (new
+      `ensureResultsJWTDir`) before go-authserver can log in and store the JWT, so
+      every authenticated `wa results` command is covered. Existing directories keep
+      their mode. Regression tests D1.2a and D1.2a2 in `cmd/results_auth_test.go`.
+      Red probe now passes. go-authserver `storeJWT` could also create the
+      directory upstream.
+
 - [ ] `wa results register` prints its full usage text to stdout on a runtime (non-usage) error, in addition to the error.
     - Source: found by the item 8 reviewer while reproducing the item above.
     - Red command: to be built when this item is fixed.
