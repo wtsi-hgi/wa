@@ -395,8 +395,10 @@ at construction and drives the open-time prune, the hourly prune, `Prune`,
 and `Summary`; nothing reassigns it later. Tests use `openUsageStore` for
 small queues and fixed clocks; every test with a fixed `now` passes it here.
 Insert truncates each string field to its cap (`Path` to
-`UsageMaxPathBytes`) with `truncateUTF8`. Tests read rows back with a
-test-file helper that queries `usage_requests`.
+`UsageMaxPathBytes`) with `truncateUTF8`. It also cuts `Method` to the
+unexported `usageMaxMethodBytes = 32`, because unmatched routes accept any
+client-sent method. Tests read rows back with a test-file helper that queries
+`usage_requests`.
 
 **Acceptance tests:**
 
@@ -405,8 +407,8 @@ test-file helper that queries `usage_requests`.
 2. Given one full `UsageEvent` at 2026-10-10T12:00:00.123Z with latency
    1500 us, when `Record` then `Flush` run, then one row holds every field,
    `ts_ms == 1791633600123`, and `latency_us == 1500`.
-3. Given `ClientID` of 200 bytes and `UserAgent` of 600 bytes, then the row
-   holds the first 128 and 512 bytes.
+3. Given `ClientID` of 200 bytes, `UserAgent` of 600 bytes, and `Method` of
+   1 MiB, then the row holds the first 128, 512, and 32 bytes.
 4. Given 3 events recorded and the store closed without `Flush`, when
    reopened, then 3 rows exist (Close flushes).
 5. Given `openUsageStore` with retention 30 and a clock fixed at

@@ -301,7 +301,7 @@ func createFeedbackStoreFile(path string) error {
 	}
 
 	if err != nil {
-		return fmt.Errorf("mlwh: create feedback store: %w", err)
+		return fmt.Errorf("mlwh: create store file: %w", err)
 	}
 
 	return file.Close()

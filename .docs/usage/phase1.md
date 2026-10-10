@@ -24,8 +24,8 @@ the text before the first `/` or space, matched exactly and
 case-sensitively. Tests go in `mlwh/usage_test.go`. Covering all 5
 acceptance tests from A1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.2: A2 - SQLite usage store and async writer
 
@@ -47,5 +47,5 @@ Test 10's `Summary` assertion needs A3, which phase 2 adds; write that
 assertion in item 2.1 and the `Flush` half here. Depends on item 1.1.
 Covering all 10 acceptance tests from A2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
