@@ -261,7 +261,7 @@ func TestMLWHSyncCommandReportsConcurrentCacheLockOnStderrOnly(t *testing.T) {
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(strings.TrimSpace(stdout.String()), convey.ShouldEqual, "")
-		convey.So(strings.TrimSpace(stderr.String()), convey.ShouldEqual, mlwh.ErrSyncAlreadyRunning.Error())
+		convey.So(strings.TrimSpace(stderr.String()), convey.ShouldEqual, "Error: "+mlwh.ErrSyncAlreadyRunning.Error())
 	})
 }
 
@@ -1208,6 +1208,72 @@ func performMLWHServeJSONRequestForTest(handler http.Handler, method, target, bo
 	return response
 }
 
+func TestMLWHStartupErrorsPrintedOnceOnStderr(t *testing.T) {
+	convey.Convey("Given wa mlwh serve and sync startup failures, when run via the root command, then each error appears exactly once on stderr with a non-nil error", t, func() {
+		fakeAuth := newFakeMLWHServeAuthServer()
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+
+		run := func(args ...string) (string, string, error) {
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+			command := NewRootCommand()
+			command.SetOut(stdout)
+			command.SetErr(stderr)
+			command.SetArgs(args)
+
+			err := command.Execute()
+
+			return stdout.String(), stderr.String(), err
+		}
+
+		convey.Convey("serve with no cache path names the missing configuration", func() {
+			t.Setenv("WA_MLWH_CACHE_PATH", "")
+
+			stdout, stderr, err := run("mlwh", "serve", "--port", "0")
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(stdout, convey.ShouldEqual, "")
+			convey.So(strings.Count(stderr, "WA_MLWH_CACHE_PATH must be set"), convey.ShouldEqual, 1)
+		})
+
+		convey.Convey("serve with --feedback-db :memory: rejects it", func() {
+			cachePath := prepareMLWHServeCacheForTest(t, true)
+
+			stdout, stderr, err := run("mlwh", "serve", "--port", "0", "--mlwh-cache", cachePath, "--feedback-db", ":memory:")
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(stdout, convey.ShouldEqual, "")
+			convey.So(strings.Count(stderr, "not :memory: or a file: URI"), convey.ShouldEqual, 1)
+			convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 0)
+		})
+
+		convey.Convey("serve with an unknown flag reports it", func() {
+			_, stderr, err := run("mlwh", "serve", "--no-such-flag")
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(strings.Count(stderr, "unknown flag: --no-such-flag"), convey.ShouldEqual, 1)
+		})
+
+		convey.Convey("sync with no DSN reports it once", func() {
+			t.Setenv("WA_MLWH_DSN", "")
+
+			_, stderr, err := run("mlwh", "sync")
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(strings.Count(stderr, "WA_MLWH_DSN must be set"), convey.ShouldEqual, 1)
+			convey.So(strings.Count(stderr, "Error: WA_MLWH_DSN must be set"), convey.ShouldEqual, 1)
+		})
+
+		convey.Convey("sync with an unknown flag reports it once", func() {
+			_, stderr, err := run("mlwh", "sync", "--no-such-flag")
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(strings.Count(stderr, "unknown flag: --no-such-flag"), convey.ShouldEqual, 1)
+			convey.So(strings.Count(stderr, "Error: unknown flag: --no-such-flag"), convey.ShouldEqual, 1)
+		})
+	})
+}
+
 func installFakeMLWHServeAuthServer(t *testing.T, fake *fakeMLWHServeAuthServer) {
 	t.Helper()
 
@@ -1372,6 +1438,50 @@ func startMLWHServeEndToEndForTest(t *testing.T, stateDir string, extraArgs ...s
 	}
 
 	return baseURL, stop
+}
+
+func TestMLWHServeFeedbackCreatesMissingStateDir(t *testing.T) {
+	convey.Convey("Given XDG_STATE_HOME names a missing nested directory, when mlwh serve starts with --feedback-db, then the directory is created at 0700, the 0600 token is written, and GET /feedback accepts it", t, func() {
+		stateDir := filepath.Join(t.TempDir(), "missing", "state")
+		dbPath := filepath.Join(t.TempDir(), "fb.sqlite")
+
+		baseURL, stop := startMLWHServeEndToEndForTest(t, stateDir, "--feedback-db", dbPath)
+
+		dirInfo, err := os.Stat(stateDir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(dirInfo.Mode().Perm(), convey.ShouldEqual, os.FileMode(0o700))
+
+		tokenPath := filepath.Join(stateDir, ".wa-mlwh-server.token")
+		tokenInfo, err := os.Stat(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(tokenInfo.Mode(), convey.ShouldEqual, os.FileMode(0o600))
+
+		token, err := os.ReadFile(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(token, convey.ShouldNotBeEmpty)
+
+		list := doMLWHServeHTTPRequestForTest(t, http.MethodGet, baseURL+"/feedback", "", "Bearer "+string(token))
+		convey.So(list.status, convey.ShouldEqual, http.StatusOK)
+
+		convey.So(stop(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("Given XDG_STATE_HOME names an existing 0750 directory, when mlwh serve starts with --feedback-db, then the directory keeps mode 0750", t, func() {
+		stateDir := filepath.Join(t.TempDir(), "state")
+		convey.So(os.Mkdir(stateDir, 0o750), convey.ShouldBeNil)
+		convey.So(os.Chmod(stateDir, 0o750), convey.ShouldBeNil)
+		dbPath := filepath.Join(t.TempDir(), "fb.sqlite")
+
+		_, stop := startMLWHServeEndToEndForTest(t, stateDir, "--feedback-db", dbPath)
+		convey.So(stop(), convey.ShouldBeNil)
+
+		dirInfo, err := os.Stat(stateDir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(dirInfo.Mode().Perm(), convey.ShouldEqual, os.FileMode(0o750))
+
+		_, err = os.Stat(filepath.Join(stateDir, ".wa-mlwh-server.token"))
+		convey.So(err, convey.ShouldBeNil)
+	})
 }
 
 func TestMLWHKCommandsDegradeGracefullyOnNeverSyncedCache(t *testing.T) {

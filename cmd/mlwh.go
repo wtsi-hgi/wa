@@ -179,7 +179,7 @@ func resolveMLWHServeConfig(rawURL string, port int, portChanged bool, cert stri
 	}
 
 	if config.cert == "" || config.key == "" || config.serverToken == "" {
-		return mlwhServeConfig{}, errors.New("--cert, --key, and --server-token are required together for secured mlwh serve")
+		return mlwhServeConfig{}, usageError("--cert, --key, and --server-token are required together for secured mlwh serve")
 	}
 
 	if err = validateResultsServeServerToken(config.serverToken); err != nil {
@@ -199,10 +199,9 @@ func newMLWHServeCommand() *cobra.Command {
 	var feedbackDB string
 
 	command := &cobra.Command{
-		Use:           "serve",
-		Short:         "Serve the MLWH cache-backed HTTP API",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+		Use:   "serve",
+		Args:  cobra.ExactArgs(0),
+		Short: "Serve the MLWH cache-backed HTTP API",
 		Long: strings.Join([]string{
 			"Serve the local Sanger Multi-LIMS Warehouse (MLWH) metadata cache as",
 			"the registry-backed HTTP API used by other wa services. MLWH data is",
@@ -467,10 +466,9 @@ func newMLWHCommand() *cobra.Command {
 
 func newMLWHSyncCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync supported MLWH metadata and data into the local cache",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+		Use:   "sync",
+		Short: "Sync supported MLWH metadata and data into the local cache",
+		Args:  cobra.ExactArgs(0),
 		Long: strings.Join([]string{
 			"Sync supported MLWH metadata and data into the local cache used",
 			"by other wa subcommands.",
@@ -510,16 +508,16 @@ func newMLWHSyncCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := resolveMLWHSyncConfig()
 			if err != nil {
-				return reportMLWHSyncCommandError(cmd, err)
+				return err
 			}
 
 			client, err := openMLWHSyncClient(cmd.Context(), cfg)
 			if err != nil {
 				if errors.Is(err, mlwh.ErrPasswordInDSN) {
-					return reportMLWHSyncCommandError(cmd, fmt.Errorf("WA_MLWH_DSN: %w", err))
+					return fmt.Errorf("WA_MLWH_DSN: %w", err)
 				}
 
-				return reportMLWHSyncCommandError(cmd, fmt.Errorf("open mlwh client: %w", err))
+				return fmt.Errorf("open mlwh client: %w", err)
 			}
 			defer func() { _ = client.Close() }()
 
@@ -530,7 +528,7 @@ func newMLWHSyncCommand() *cobra.Command {
 
 			reports, err := client.Sync(cmd.Context())
 			if err != nil {
-				return reportMLWHSyncCommandError(cmd, err)
+				return err
 			}
 
 			if streamsReports {
@@ -552,19 +550,7 @@ func newMLWHSyncCommand() *cobra.Command {
 		},
 	}
 
-	command.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
-		return reportMLWHSyncCommandError(cmd, err)
-	})
-
 	return command
-}
-
-func reportMLWHSyncCommandError(cmd *cobra.Command, err error) error {
-	if cmd != nil && err != nil {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
-	}
-
-	return err
 }
 
 func resolveMLWHSyncConfig() (mlwh.Config, error) {

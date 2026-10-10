@@ -103,11 +103,11 @@ func resolveResultsServeMode(cert, key, acme, cache string) (resultsServeMode, e
 	hasCache := strings.TrimSpace(cache) != ""
 
 	if hasCert != hasKey || hasACME != hasCache {
-		return 0, errors.New("you must supply --cert and --key, or --acme and --cache")
+		return 0, usageError("you must supply --cert and --key, or --acme and --cache")
 	}
 
 	if hasCert && hasACME {
-		return 0, errors.New("you must supply either --cert and --key, or --acme and --cache, not both")
+		return 0, usageError("you must supply either --cert and --key, or --acme and --cache, not both")
 	}
 
 	if hasACME && hasCache {
@@ -118,7 +118,7 @@ func resolveResultsServeMode(cert, key, acme, cache string) (resultsServeMode, e
 		return resultsServeModeTLS, nil
 	}
 
-	return 0, errors.New("you must supply --cert and --key, or --acme and --cache")
+	return 0, usageError("you must supply --cert and --key, or --acme and --cache")
 }
 
 type resultsServeMLWHConfig struct {
@@ -274,7 +274,7 @@ func activeResultsBindHost() string {
 
 func validateResultsServeLDAP(ldapServer, ldapDN string) error {
 	if ldapServer == "" || ldapDN == "" {
-		return errors.New("--ldap_server and --ldap_dn are required")
+		return usageError("--ldap_server and --ldap_dn are required")
 	}
 
 	if !strings.Contains(ldapDN, "%s") {
@@ -286,7 +286,7 @@ func validateResultsServeLDAP(ldapServer, ldapDN string) error {
 
 func validateResultsServeServerToken(serverToken string) error {
 	if serverToken == "" {
-		return errors.New("--server-token is required")
+		return usageError("--server-token is required")
 	}
 
 	if !filepath.IsAbs(serverToken) && filepath.Base(serverToken) != serverToken {
@@ -357,7 +357,14 @@ func resultsServeServerToken(tokenPath string) ([]byte, error) {
 	return token, nil
 }
 
+// writeResultsServeServerToken writes token to tokenPath at mode 0600. Missing
+// parent directories, such as a fresh $XDG_STATE_HOME, are created at mode
+// 0700; existing directories keep their permissions.
 func writeResultsServeServerToken(tokenPath string, token []byte) error {
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o700); err != nil {
+		return fmt.Errorf("create server token directory: %w", err)
+	}
+
 	file, err := os.OpenFile(tokenPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
@@ -614,6 +621,22 @@ func resultsRegisterAuthenticatedRequest(serverURL, certPath string) (*resty.Req
 	return authClient.AuthenticatedRequest()
 }
 
+// ensureResultsJWTDir creates the missing parent directories of the JWT file at
+// mode 0700, since go-authserver stores a fresh JWT without creating them.
+// Existing directories keep their permissions.
+func ensureResultsJWTDir(jwtBasename string) error {
+	jwtPath, err := resultsTokenPath(jwtBasename)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(jwtPath), 0o700); err != nil {
+		return fmt.Errorf("create JWT directory: %w", err)
+	}
+
+	return nil
+}
+
 func defaultResultsEnvServerURL(envName string) string {
 	envURL := strings.TrimSpace(firstEnv(envName))
 	if envURL == "" {
@@ -841,7 +864,7 @@ func resultsRegisterUniqueValue(unique, legacyRunID string) (string, error) {
 	trimmedLegacyRunID := strings.TrimSpace(legacyRunID)
 
 	if trimmedUnique != "" && trimmedLegacyRunID != "" && trimmedUnique != trimmedLegacyRunID {
-		return "", errors.New("--unique and deprecated --runid cannot both be set to different values")
+		return "", usageError("--unique and deprecated --runid cannot both be set to different values")
 	}
 
 	if trimmedUnique != "" {
@@ -961,6 +984,10 @@ func (c *permissionCheckingResultsAuthClient) authenticatedRequest(ownerLogin bo
 		return nil, err
 	}
 
+	if err := ensureResultsJWTDir(c.jwtBasename); err != nil {
+		return nil, err
+	}
+
 	if ownerLogin && c.client.CanReadServerToken() {
 		if loginClient, ok := c.client.(resultsAuthLoginClient); ok {
 			if err := loginClient.Login(); err != nil {
@@ -1023,6 +1050,7 @@ func newResultsCommand() *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "results",
+		Args:  cobra.NoArgs,
 		Short: "Results REST API commands",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
@@ -1273,7 +1301,7 @@ func buildResultsRegistrationForCommand(
 ) (*results.Registration, error) {
 	if useJSON {
 		if len(args) != 0 {
-			return nil, errors.New("usage: register --json")
+			return nil, usageError("usage: register --json")
 		}
 
 		registration, err := decodeResultsRegistration(cmd.InOrStdin())
@@ -1289,11 +1317,11 @@ func buildResultsRegistrationForCommand(
 	}
 
 	if len(args) != 1 {
-		return nil, errors.New("usage: register [output-dir]")
+		return nil, usageError("usage: register [output-dir]")
 	}
 
 	if strings.TrimSpace(requester) == "" {
-		return nil, errors.New("--user is required")
+		return nil, usageError("--user is required")
 	}
 
 	operatorName, err := resultsRegisterOperatorName(operator)
@@ -1302,7 +1330,7 @@ func buildResultsRegistrationForCommand(
 	}
 
 	if strings.TrimSpace(workflowReference) == "" {
-		return nil, errors.New("--workflow is required")
+		return nil, usageError("--workflow is required")
 	}
 
 	uniqueValue, err := resultsRegisterUniqueValue(unique, legacyRunID)
@@ -1312,7 +1340,7 @@ func buildResultsRegistrationForCommand(
 
 	runKey := results.BuildRunKey(uniqueValue, strings.TrimSpace(additionalUnique))
 	if runKey == "" {
-		return nil, errors.New("--unique is required")
+		return nil, usageError("--unique is required")
 	}
 
 	outputDir, err := filepath.Abs(args[0])
@@ -1444,6 +1472,7 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "search",
+		Args:  cobra.ExactArgs(0),
 		Short: "Search result sets",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			uniqueValue, err := resultsSearchUniqueValue(unique, legacyRunKey)
@@ -1493,7 +1522,7 @@ func resultsSearchUniqueValue(unique, legacyRunKey string) (string, error) {
 	trimmedLegacyRunKey := strings.TrimSpace(legacyRunKey)
 
 	if trimmedUnique != "" && trimmedLegacyRunKey != "" && trimmedUnique != trimmedLegacyRunKey {
-		return "", errors.New("--unique and deprecated --run-key cannot both be set to different values")
+		return "", usageError("--unique and deprecated --run-key cannot both be set to different values")
 	}
 
 	if trimmedUnique != "" {
@@ -1612,7 +1641,7 @@ func newResultsGetCommand(options *resultsCommandOptions) *cobra.Command {
 		Short: "Get one result set",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return errors.New("usage: get <id>")
+				return usageError("usage: get <id>")
 			}
 
 			ctx := cmd.Context()
@@ -1641,7 +1670,7 @@ func newResultsDeleteCommand(options *resultsCommandOptions) *cobra.Command {
 		Short: "Delete one result set",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return errors.New("usage: delete <id>")
+				return usageError("usage: delete <id>")
 			}
 
 			ctx := cmd.Context()
@@ -1684,7 +1713,7 @@ func newResultsRescanCommand(options *resultsCommandOptions) *cobra.Command {
 		Short: "Rescan registered output files",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 2 {
-				return errors.New("usage: rescan <id> <dir>")
+				return usageError("usage: rescan <id> <dir>")
 			}
 
 			ctx := cmd.Context()
@@ -1797,6 +1826,7 @@ func newResultsServeCommand() *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "serve",
+		Args:  cobra.ExactArgs(0),
 		Short: "Serve the results HTTP API",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := commandContext(cmd)

@@ -511,10 +511,10 @@ Per-cache advisory lock:
   `<cache_id>` derives from the cache DSN's host/database (so two
   caches on the same MySQL server don't lock each other out).
 
-If the lock cannot be acquired, the command exits non-zero with
-`mlwh sync: another sync is already running against this cache` and
-prints no per-table summary lines. The lock releases on normal
-exit, on error, and on signal.
+If the lock cannot be acquired, the command exits non-zero, prints
+`Error: mlwh sync: another sync is already running against this cache`
+to stderr once, and prints no per-table summary lines. The lock
+releases on normal exit, on error, and on signal.
 
 ### Read-path correctness
 
@@ -1074,9 +1074,9 @@ cache.
 1. Given a SQLite cache and two `wa mlwh sync` invocations started
    concurrently against it, when both attempt the
    `IMMEDIATE BEGIN` on `sync_lock`, then exactly one acquires the
-   lock and the other exits non-zero with stderr `mlwh sync:
-another sync is already running against this cache` and stdout
-   empty.
+   lock and the other exits non-zero with stderr
+   `Error: mlwh sync: another sync is already running against this cache`
+   and stdout empty.
 2. Given a MySQL cache and the same concurrent setup, when both
    attempt `GET_LOCK('wa_mlwh_sync_<id>', 0)`, then exactly one
    acquires the lock and the other exits non-zero with the same

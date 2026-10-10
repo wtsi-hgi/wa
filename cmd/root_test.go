@@ -27,6 +27,7 @@ package cmd
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -74,6 +75,57 @@ func TestNewRootCommand(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "mlwhdiff")
 		convey.So(output, convey.ShouldContainSubstring, "results")
 		convey.So(output, convey.ShouldContainSubstring, "mlwh")
+	})
+}
+
+func TestRootCommandShowsUsageOnlyForUsageErrors(t *testing.T) {
+	convey.Convey("Given a command that fails at runtime, when it runs, then it prints the error once and no usage", t, func() {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+		t.Setenv("WA_MLWH_DSN", "")
+
+		emptyOutputDir := t.TempDir()
+
+		failures := map[string][]string{
+			"no output files discovered in output directory": {
+				"results", "register", emptyOutputDir,
+				"--user", "u", "--workflow", "w", "--unique", "k", "--server", "https://127.0.0.1:1",
+			},
+			"WA_MLWH_DSN must be set": {"mlwh", "sync"},
+		}
+
+		for message, args := range failures {
+			output, err := executeRootCommandForTest(t, args)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(strings.Count(output, "Error: "+message), convey.ShouldEqual, 1)
+			convey.So(output, convey.ShouldNotContainSubstring, "Usage:")
+		}
+	})
+
+	convey.Convey("Given a command invoked wrongly, when it runs, then it prints the error once followed by its usage", t, func() {
+		invocations := []struct {
+			message string
+			args    []string
+		}{
+			{"unknown flag: --bogus", []string{"results", "register", "--bogus"}},
+			{"unknown flag: --bogus", []string{"mlwh", "serve", "--bogus"}},
+			{"accepts 0 arg(s), received 1", []string{"results", "search", "extra-arg"}},
+			{"usage: get <id>", []string{"results", "get"}},
+			{"usage: specify exactly one of --study or --sample", []string{"mlwhdiff", "diff"}},
+			{"usage: wa mlwh export <children> <parent-kind> <parent-id>", []string{"mlwh", "export"}},
+			{"--user is required", []string{"results", "register", "out"}},
+			{"exactly one of --faculty-sponsor, --programme, or --user is required", []string{"mlwh", "studies"}},
+		}
+
+		for _, invocation := range invocations {
+			output, err := executeRootCommandForTest(t, invocation.args)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(strings.Count(output, "Error: "+invocation.message), convey.ShouldEqual, 1)
+			convey.So(output, convey.ShouldContainSubstring, "Usage:\n  wa "+strings.Join(invocation.args[:2], " "))
+		}
 	})
 }
 

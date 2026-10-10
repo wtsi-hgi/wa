@@ -163,6 +163,56 @@ func TestResultsAuthClient(t *testing.T) {
 		convey.So(string(mustReadResultsAuthFileForTest(t, jwtPath)), convey.ShouldEqual, "jwt-password")
 	})
 
+	convey.Convey("D1.2a: Given XDG_STATE_HOME names a missing nested directory, register logs in, creates the directory at 0700 and stores a private JWT", t, func() {
+		stateDir := filepath.Join(t.TempDir(), "missing", "state")
+		t.Setenv("XDG_STATE_HOME", stateDir)
+
+		passwordHandler := &resultsAuthPasswordHandler{password: resultsAuthTestPassword, terminal: true}
+		installGasResultsClientCLIForTest(t, passwordHandler)
+
+		server := newResultsAuthTestServer(t, resultsAuthTestPassword, "jwt-password")
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, resultsAuthRegisterArgs(t, server), nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeEmpty)
+		convey.So(passwordHandler.readCalled, convey.ShouldBeTrue)
+		convey.So(receiveResultsAuthValueForTest(t, server.authHeaderCh, "auth header"), convey.ShouldEqual, "Bearer jwt-password")
+
+		dirInfo, dirErr := os.Stat(stateDir)
+		convey.So(dirErr, convey.ShouldBeNil)
+		convey.So(dirInfo.Mode().Perm(), convey.ShouldEqual, os.FileMode(0o700))
+
+		jwtPath := filepath.Join(stateDir, resultsJWTBasename)
+		stat, statErr := os.Stat(jwtPath)
+		convey.So(statErr, convey.ShouldBeNil)
+		convey.So(stat.Mode(), convey.ShouldEqual, os.FileMode(0o600))
+		convey.So(string(mustReadResultsAuthFileForTest(t, jwtPath)), convey.ShouldEqual, "jwt-password")
+	})
+
+	convey.Convey("D1.2a2: Given an existing XDG_STATE_HOME with mode 0750, register stores the JWT without changing the directory mode", t, func() {
+		stateDir := filepath.Join(t.TempDir(), "state")
+		convey.So(os.Mkdir(stateDir, 0o750), convey.ShouldBeNil)
+		convey.So(os.Chmod(stateDir, 0o750), convey.ShouldBeNil)
+		t.Setenv("XDG_STATE_HOME", stateDir)
+
+		passwordHandler := &resultsAuthPasswordHandler{password: resultsAuthTestPassword, terminal: true}
+		installGasResultsClientCLIForTest(t, passwordHandler)
+
+		server := newResultsAuthTestServer(t, resultsAuthTestPassword, "jwt-password")
+		defer server.Close()
+
+		_, _, err := executeRootCommandWithInputForRegisterTest(t, resultsAuthRegisterArgs(t, server), nil)
+
+		convey.So(err, convey.ShouldBeNil)
+
+		dirInfo, dirErr := os.Stat(stateDir)
+		convey.So(dirErr, convey.ShouldBeNil)
+		convey.So(dirInfo.Mode().Perm(), convey.ShouldEqual, os.FileMode(0o750))
+		convey.So(string(mustReadResultsAuthFileForTest(t, filepath.Join(stateDir, resultsJWTBasename))), convey.ShouldEqual, "jwt-password")
+	})
+
 	convey.Convey("D1.2b: Given WA_RESULTS_SERVER_CERT and a blank cert argument, register auth uses the env cert for JWT login", t, func() {
 		stateDir := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", stateDir)

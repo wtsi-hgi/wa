@@ -91,10 +91,8 @@ func newMLWHLatestCommand() *cobra.Command {
 	)
 
 	command := &cobra.Command{
-		Use:           "latest <study-id>",
-		Short:         "List the newest iRODS data rows for a study or faculty sponsor",
-		SilenceUsage:  true,
-		SilenceErrors: false,
+		Use:   "latest <study-id>",
+		Short: "List the newest iRODS data rows for a study or faculty sponsor",
 		Long: strings.Join([]string{
 			"List newest raw iRODS data rows from the local MLWH mirror, ordered",
 			"by created time descending with stable id_run/id_product tie-breaks.",
@@ -148,7 +146,7 @@ func parseLatestSelector(args []string, facultySponsor string) (string, string, 
 	sponsor := strings.TrimSpace(facultySponsor)
 
 	if len(args) > 1 || (study == "" && sponsor == "") || (study != "" && sponsor != "") {
-		return "", "", errors.New("usage: wa mlwh latest <study-id> or wa mlwh latest --faculty-sponsor NAME")
+		return "", "", usageError("usage: wa mlwh latest <study-id> or wa mlwh latest --faculty-sponsor NAME")
 	}
 
 	return study, sponsor, nil

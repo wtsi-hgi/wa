@@ -101,10 +101,9 @@ func newMLWHRunsCommand() *cobra.Command {
 	)
 
 	command := &cobra.Command{
-		Use:           "runs",
-		Short:         "List global MLWH run aggregates",
-		SilenceUsage:  true,
-		SilenceErrors: false,
+		Use:   "runs",
+		Args:  cobra.ExactArgs(0),
+		Short: "List global MLWH run aggregates",
 		Long: strings.Join([]string{
 			"List global run aggregates through a wa mlwh serve API. In this",
 			"phase, the default output is the flat global all-runs listing.",
@@ -145,7 +144,7 @@ func newMLWHRunsCommand() *cobra.Command {
 			opts := mlwh.RunAggregationOptions{Since: since, Until: until, Platforms: platforms}
 			if len(groupBy) > 0 || strings.TrimSpace(unit) != "" {
 				if all || strings.TrimSpace(cursor) != "" {
-					return errors.New("--all and --cursor are supported only for the flat run listing")
+					return usageError("--all and --cursor are supported only for the flat run listing")
 				}
 
 				aggregateOpts := mlwh.SequencingAggregateOptions{
@@ -160,7 +159,7 @@ func newMLWHRunsCommand() *cobra.Command {
 			}
 			if monthly {
 				if all || strings.TrimSpace(cursor) != "" {
-					return errors.New("--all and --cursor are supported only for the flat run listing")
+					return usageError("--all and --cursor are supported only for the flat run listing")
 				}
 
 				return runMLWHRunsMonthly(cmd.Context(), client, cmd.OutOrStdout(), opts)
@@ -311,7 +310,7 @@ func writeMonthlyRunCounts(out io.Writer, rows []mlwh.MonthlyRunCount) {
 
 func runMLWHRunsListing(ctx context.Context, client mlwhRunsClient, out io.Writer, opts mlwh.RunAggregationOptions, limit int, cursor string, all bool) error {
 	if all && strings.TrimSpace(cursor) != "" {
-		return errors.New("--cursor cannot be combined with --all")
+		return usageError("--cursor cannot be combined with --all")
 	}
 	if limit <= 0 {
 		return errors.New("--limit must be greater than 0")

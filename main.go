@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -13,21 +15,25 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	if err := run(os.Args[1:], os.Stderr); err != nil {
 		os.Exit(1)
 	}
 }
 
-func run(args []string) error {
+// run executes the wa command tree, writing every error to stderr exactly
+// once: errors before the command runs are printed here, and command errors
+// are printed by the command tree itself.
+func run(args []string, stderr io.Writer) error {
 	selectedEnv, filteredArgs := extractSelectedEnv(args)
 
 	err := loadSelectedEnv(selectedEnv)
-	if err != nil {
-		return err
+	if err == nil {
+		err = cmd.ValidateScenarioEnvironment(selectedEnv)
 	}
 
-	err = cmd.ValidateScenarioEnvironment(selectedEnv)
 	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "Error:", err)
+
 		return err
 	}
 
@@ -36,6 +42,7 @@ func run(args []string) error {
 
 	command := cmd.NewRootCommand()
 	command.SetContext(ctx)
+	command.SetErr(stderr)
 	command.SetArgs(rewriteLegacyInspectArgs(filteredArgs))
 
 	return command.Execute()

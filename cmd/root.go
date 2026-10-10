@@ -26,6 +26,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,40 @@ const (
 	knownDevelopmentMLWHDSN      = "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse"
 	knownDevelopmentMLWHPassword = "mlwh_humgen_is_secure"
 )
+
+// usageError is a command error caused by how the command was invoked, so the
+// command's usage is printed with it. The rule: a missing, conflicting or
+// mutually required flag or argument is a usageError; a bad flag value (such
+// as an invalid --since or a --limit out of range) and an environment or
+// configuration error (such as WA_MLWH_DSN not being set) are runtime errors.
+type usageError string
+
+func (e usageError) Error() string {
+	return string(e)
+}
+
+// showUsageOnlyForUsageErrors makes every command in the tree print its usage
+// only for usage errors. Cobra's own flag, argument and subcommand errors
+// arise before RunE and keep the usage; an error returned by RunE suppresses
+// it unless it is a usageError.
+func showUsageOnlyForUsageErrors(command *cobra.Command) {
+	if runE := command.RunE; runE != nil {
+		command.RunE = func(cmd *cobra.Command, args []string) error {
+			err := runE(cmd, args)
+
+			var invocationErr usageError
+			if err != nil && !errors.As(err, &invocationErr) {
+				cmd.SilenceUsage = true
+			}
+
+			return err
+		}
+	}
+
+	for _, child := range command.Commands() {
+		showUsageOnlyForUsageErrors(child)
+	}
+}
 
 // NewRootCommand builds the root wa command tree.
 func NewRootCommand() *cobra.Command {
@@ -53,6 +88,8 @@ func NewRootCommand() *cobra.Command {
 	command.AddCommand(newMLWHDiffCommand())
 	command.AddCommand(newResultsCommand())
 	command.AddCommand(newMLWHCommand())
+
+	showUsageOnlyForUsageErrors(command)
 
 	return command
 }

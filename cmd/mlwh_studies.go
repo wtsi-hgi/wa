@@ -175,10 +175,9 @@ func newMLWHStudiesCommand() *cobra.Command {
 	)
 
 	command := &cobra.Command{
-		Use:           "studies (--faculty-sponsor <name> | --programme <name> | --user <login>)",
-		Short:         "List studies by sponsor, programme, or study_users membership",
-		SilenceUsage:  true,
-		SilenceErrors: false,
+		Use:   "studies (--faculty-sponsor <name> | --programme <name> | --user <login>)",
+		Args:  cobra.ExactArgs(0),
+		Short: "List studies by sponsor, programme, or study_users membership",
 		Long: strings.Join([]string{
 			"List the studies associated with a person through a wa mlwh serve API,",
 			"in one of three distinct modes. Exactly one is required:",
@@ -268,7 +267,7 @@ func resolveStudiesMode(facultySponsor, programme, user string) (studiesMode, st
 	}
 
 	if selected != 1 {
-		return 0, "", errors.New("exactly one of --faculty-sponsor, --programme, or --user is required")
+		return 0, "", usageError("exactly one of --faculty-sponsor, --programme, or --user is required")
 	}
 	if sponsor != "" {
 		return studiesModeFacultySponsor, sponsor, nil
@@ -396,10 +395,9 @@ func newMLWHProgrammesCommand() *cobra.Command {
 	)
 
 	command := &cobra.Command{
-		Use:           "programmes",
-		Short:         "List MLWH programme values with study counts",
-		SilenceUsage:  true,
-		SilenceErrors: false,
+		Use:   "programmes",
+		Args:  cobra.ExactArgs(0),
+		Short: "List MLWH programme values with study counts",
 		Long: strings.Join([]string{
 			"List the distinct non-empty SQSCP programme values through a wa mlwh",
 			"serve API, with the number of studies in each programme. Programme",
@@ -497,10 +495,8 @@ func newMLWHPeopleCommand() *cobra.Command {
 	)
 
 	command := &cobra.Command{
-		Use:           "people <term>",
-		Short:         "Resolve a partial person name to candidate sponsors and study_users",
-		SilenceUsage:  true,
-		SilenceErrors: false,
+		Use:   "people <term>",
+		Short: "Resolve a partial person name to candidate sponsors and study_users",
 		Long: strings.Join([]string{
 			"Resolve a partial or spoken person name to the distinct candidate people",
 			"in the MLWH directory through a wa mlwh serve API, so you can disambiguate",
@@ -557,12 +553,12 @@ func newMLWHPeopleCommand() *cobra.Command {
 // rejects a missing/empty term with a clear usage error (non-zero exit).
 func parsePeopleTermArg(args []string) (string, error) {
 	if len(args) != 1 {
-		return "", errors.New("usage: wa mlwh people <term>")
+		return "", usageError("usage: wa mlwh people <term>")
 	}
 
 	term := strings.TrimSpace(args[0])
 	if term == "" {
-		return "", errors.New("usage: wa mlwh people <term>")
+		return "", usageError("usage: wa mlwh people <term>")
 	}
 
 	return term, nil

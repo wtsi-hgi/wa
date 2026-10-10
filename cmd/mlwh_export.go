@@ -158,10 +158,8 @@ func newMLWHExportCommand() *cobra.Command {
 	flags := mlwhExportFlags{format: mlwhExportFormatTSV}
 
 	command := &cobra.Command{
-		Use:           "export <children> <parent-kind> <parent-id>",
-		Short:         "Export MLWH relationship rows with selectable columns",
-		SilenceUsage:  true,
-		SilenceErrors: false,
+		Use:   "export <children> <parent-kind> <parent-id>",
+		Short: "Export MLWH relationship rows with selectable columns",
 		Long: strings.Join([]string{
 			mlwhExportIntroHelp,
 			mlwhExportChildrenHelp(),
@@ -274,14 +272,14 @@ func mlwhExportColumnNames(columns []mlwh.ExportColumnDescription) []string {
 
 func parseMLWHExportArgs(args []string) (mlwh.ExportRelationship, string, error) {
 	if len(args) != 3 {
-		return mlwh.ExportRelationship{}, "", errors.New("usage: wa mlwh export <children> <parent-kind> <parent-id>")
+		return mlwh.ExportRelationship{}, "", usageError("usage: wa mlwh export <children> <parent-kind> <parent-id>")
 	}
 
 	children := strings.ToLower(strings.TrimSpace(args[0]))
 	parentKind := strings.ToLower(strings.TrimSpace(args[1]))
 	parentID := strings.TrimSpace(args[2])
 	if children == "" || parentKind == "" || parentID == "" {
-		return mlwh.ExportRelationship{}, "", errors.New("usage: wa mlwh export <children> <parent-kind> <parent-id>")
+		return mlwh.ExportRelationship{}, "", usageError("usage: wa mlwh export <children> <parent-kind> <parent-id>")
 	}
 
 	return mlwh.ExportRelationship{Children: children, ParentKind: parentKind}, parentID, nil
@@ -441,7 +439,7 @@ func (f mlwhExportFlags) options(rel mlwh.ExportRelationship, cmd *cobra.Command
 		return mlwh.ExportOptions{}, errors.New("--limit must be non-negative")
 	}
 	if cursorChanged && (!limitChanged || f.limit <= 0) {
-		return mlwh.ExportOptions{}, errors.New("--cursor requires a positive explicit --limit to continue a bounded export")
+		return mlwh.ExportOptions{}, usageError("--cursor requires a positive explicit --limit to continue a bounded export")
 	}
 
 	opts := mlwh.ExportOptions{
@@ -490,7 +488,7 @@ func mlwhExportDeliverablesFlag(cmd *cobra.Command, deliverablesOnly, includeCon
 	deliverablesChanged := cmd.Flags().Changed("deliverables-only")
 	includeChanged := cmd.Flags().Changed("include-controls")
 	if deliverablesChanged && includeChanged {
-		return nil, errors.New("--deliverables-only and --include-controls cannot be used together")
+		return nil, usageError("--deliverables-only and --include-controls cannot be used together")
 	}
 	if includeChanged {
 		value := false
