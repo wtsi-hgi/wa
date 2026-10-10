@@ -91,9 +91,15 @@ the `.tmp/wa` symlink removed on cleanup. Their regressions are in
       direct-children-only mutant. verify-wa `SKILL.md` and `cleanup.sh` no longer
       describe the bug as current. Red command now exits 0.
 
-- [ ] `cmd/run_dev_test.go` (`TestRunDevAutoManagedMLWHBackendCanServeProdConfiguredCacheWithoutDSN`) fails whenever the repository is checked out under `/tmp`, because `mlwh_cache_path_looks_test` in `run-dev.sh` treats any cache path under `/tmp/*` as test-shaped.
+- [x] `cmd/run_dev_test.go` (`TestRunDevAutoManagedMLWHBackendCanServeProdConfiguredCacheWithoutDSN`) fails whenever the repository is checked out under `/tmp`, because `mlwh_cache_path_looks_test` in `run-dev.sh` treats any cache path under `/tmp/*` as test-shaped.
     - Source: found by the serve-startup item 7 reviewer, who ran the suite from a scratch copy under `/tmp`; the same failure occurs on the unpatched base there.
     - Red command: run `go test ./cmd -run TestRunDevAutoManagedMLWHBackendCanServeProdConfiguredCacheWithoutDSN` from a detached copy of this branch under `/tmp`.
+    - Fixed: the test was at fault, not the guard (which `.docs/mlwh/spec.md`
+      requires). It now passes the repo-relative cache path
+      `.tmp/run-dev-prod-mlwh-<port>.sqlite`, which run-dev resolves after
+      `cd "$REPO_ROOT"`, so it is never test-shaped wherever the checkout lives.
+      Passes from a copy under `/tmp` and from the real worktree.
+
 - [ ] `gofmt -l cmd/` lists `cmd/env.go`, so the file is not gofmt-formatted although `make lint-go` passes.
     - Source: found by the serve-startup item 7 implementor.
     - Red command: `[ -z "$(gofmt -l cmd/)" ]`

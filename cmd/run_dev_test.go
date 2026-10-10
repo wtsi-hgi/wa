@@ -449,13 +449,15 @@ func TestRunDevAutoManagedMLWHBackendCanServeProdConfiguredCacheWithoutDSN(t *te
 		resultsPort := runDevFreePortForTest(t)
 		seqmetaPort := runDevFreePortForTest(t)
 		resultsPath := filepath.Join(repoRoot, ".tmp", fmt.Sprintf("run-dev-prod-results-%d.sqlite", resultsPort))
-		cachePath := filepath.Join(repoRoot, ".tmp", fmt.Sprintf("run-dev-prod-mlwh-%d.sqlite", seqmetaPort))
+		// Prod refuses cache paths under /tmp, so a repo-relative path keeps
+		// this operator-style value valid wherever the repo is checked out.
+		cachePath := filepath.Join(".tmp", fmt.Sprintf("run-dev-prod-mlwh-%d.sqlite", seqmetaPort))
 		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
 		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
 		binDir := t.TempDir()
 
 		t.Cleanup(func() {
-			for _, path := range []string{resultsPath, cachePath} {
+			for _, path := range []string{resultsPath, filepath.Join(repoRoot, cachePath)} {
 				for _, suffix := range []string{"", "-shm", "-wal"} {
 					_ = os.Remove(path + suffix)
 				}
