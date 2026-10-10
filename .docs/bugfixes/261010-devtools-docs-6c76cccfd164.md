@@ -100,7 +100,13 @@ the `.tmp/wa` symlink removed on cleanup. Their regressions are in
       `cd "$REPO_ROOT"`, so it is never test-shaped wherever the checkout lives.
       Passes from a copy under `/tmp` and from the real worktree.
 
-- [ ] `gofmt -l cmd/` lists `cmd/env.go`, so the file is not gofmt-formatted although `make lint-go` passes.
+- [x] `gofmt -l cmd/` lists `cmd/env.go`, so the file is not gofmt-formatted although `make lint-go` passes.
     - Source: found by the serve-startup item 7 implementor.
     - Red command: `[ -z "$(gofmt -l cmd/)" ]`
     - Exit status: 1 (prints `cmd/env.go`).
+    - Fixed: `gofmt -w cmd/env.go` added the missing final newline. No other tracked
+      Go file is unformatted. Red command now exits 0.
+
+- [ ] `make lint-go` does not check gofmt formatting: the repo has no golangci-lint config, golangci-lint v2's defaults enable no formatters, and the Makefile's fallback pin (`golangci-lint@v1.64.8`) would reject a v2 config.
+    - Source: found while fixing the `cmd/env.go` item.
+    - Red command: in a scratch copy, strip the final newline from a Go file in `cmd/` and run `make lint-go`; it should fail and currently reports `0 issues.`
