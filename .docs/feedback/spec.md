@@ -290,15 +290,16 @@ the same file; this spec does not build one.
   404 even though admin `GET /feedback` sits there. Without a token, the MCP
   side gets:
 
-| MCP base URL                     | `SubmitFeedback`                                               | Registry calls               |
-| -------------------------------- | -------------------------------------------------------------- | ---------------------------- |
-| `http://host:port`               | 400 plain text from Go's TLS listener -> `ErrUpstreamImpaired` | `ErrUpstreamImpaired`        |
-| `https://...`, untrusted cert    | transport failure -> `ErrUpstreamImpaired`                     | same                         |
-| `https://host:port`              | 404 -> `ErrFeedbackUnsupported`                                | 404 -> `ErrUpstreamImpaired` |
-| `https://host:port/rest/v1/auth` | gin-jwt 401 -> `ErrFeedbackUnauthorized`                       | 401 -> `ErrUpstreamImpaired` |
+| MCP base URL                     | `SubmitFeedback`                                     | Registry calls               |
+| -------------------------------- | ---------------------------------------------------- | ---------------------------- |
+| `http://host:port`               | 400 plain text from Go's TLS listener -> no sentinel | `ErrUpstreamImpaired`        |
+| `https://...`, untrusted cert    | transport failure -> no sentinel                     | `ErrUpstreamImpaired`        |
+| `https://host:port`              | 404 -> `ErrFeedbackUnsupported`                      | 404 -> `ErrUpstreamImpaired` |
+| `https://host:port/rest/v1/auth` | gin-jwt 401 -> `ErrFeedbackUnauthorized`             | 401 -> `ErrUpstreamImpaired` |
 
 - Registry calls never get a wa envelope in these cases (gin-jwt's `code` is
   a number), so `decodeRemoteError` yields `ErrUpstreamImpaired`.
+  `SubmitFeedback` errors never wrap it (C1).
 - Next.js finds a non-default secured-mode token path only via
   `WA_MLWH_SERVER_TOKEN`. A path given only as the `--server-token` flag is
   invisible to it.
@@ -743,24 +744,29 @@ func (rc *RemoteClient) SubmitFeedback(ctx context.Context, submission FeedbackS
   `Content-Type: application/json`, and `Authorization: Bearer <token>` when
   `RemoteConfig.Token` is set. Uses `rc.httpClient`, so timeout, CA, and
   proxy behaviour match other calls. No client-side validation.
-- Any 2xx: decode `FeedbackReceipt`. A decode failure wraps
-  `ErrUpstreamImpaired`.
+- Any 2xx: decode `FeedbackReceipt`. A decode failure returns
+  `mlwh: decode SubmitFeedback response: <err>`.
 - Non-2xx: read the body once (`io.ReadAll` of
   `io.LimitReader(response.Body, FeedbackMaxBodyBytes)`). Decode it into
   `httpErrorEnvelope` with `json.NewDecoder(bytes.NewReader(raw)).Decode`,
   as `decodeRemoteError` does. Then set
   `response.Body = io.NopCloser(bytes.NewReader(raw))` and build
-  `base := decodeRemoteError(response, submitFeedbackEndpoint, proxyURL)`, which keeps
-  the envelope message and the proxy hints. `submitFeedbackEndpoint` is an
+  `base := decodeRemoteErrorWithFallback(response, submitFeedbackEndpoint, proxyURL, nil)`,
+  which keeps the envelope message and the proxy hints. `decodeRemoteError`
+  is that function with fallback `ErrUpstreamImpaired`; the nil fallback
+  wraps no sentinel when the body is not an envelope or its code has no
+  sentinel. `submitFeedbackEndpoint` is an
   unexported
   `Endpoint{Method: "SubmitFeedback", NewResult: func() any { return &FeedbackReceipt{} }}`, not added to `Registry`. `NewResult` must be
   set: on a `cache_never_synced` envelope `decodeRemoteError` calls
   `endpointResultIsSlice(entry)`, which calls `entry.NewResult()` and would
   panic on nil. The result is a non-slice, so no `ErrNotFound` is joined.
-  A body that does not decode gives a `base` wrapping `ErrUpstreamImpaired`
-  with message
+  A body that does not decode gives a `base` with message
   `remote SubmitFeedback returned <status> without a valid MLWH error envelope; ...`. Return `fmt.Errorf("%w: %w", sentinel, base)`, where
-  sentinel is picked by status:
+  sentinel is picked by status. When `base` already wraps the sentinel
+  (503 `feedback_disabled`), return `base` instead, or the bare sentinel
+  when its text already contains the envelope message, so the sentinel
+  text appears once:
 
 | Status                                    | Sentinel                  |
 | ----------------------------------------- | ------------------------- |
@@ -783,15 +789,21 @@ func (rc *RemoteClient) SubmitFeedback(ctx context.Context, submission FeedbackS
 - 404 means no `POST <BaseURL>/feedback` route: a wa older than API 1.9.0,
   or a secured wa addressed at its root URL (Known limits). Any 404 body
   maps to `ErrFeedbackUnsupported`.
-- `base` wraps `ErrUpstreamImpaired` whenever `sentinelForHTTPErrorCode`
-  returns nil, which includes `bad_request`, `unauthorized`, and
-  `payload_too_large`, and whenever the body is not an envelope. So 400, 401,
-  and 413 errors satisfy both their feedback sentinel and
-  `errors.Is(err, ErrUpstreamImpaired)`. Callers must check the feedback
-  sentinels before `ErrUpstreamImpaired`.
-- A transport failure gets `ErrUpstreamImpaired` with message
-  `SubmitFeedback request failed: ...`, as in `do`.
-- A nil client returns `ErrUpstreamImpaired`.
+- No `SubmitFeedback` error wraps or mentions `ErrUpstreamImpaired`
+  (`mlwh: upstream database impaired`). That sentinel names the upstream
+  MLWH database, and no feedback failure involves it: the feedback store is
+  a separate SQLite file, and a 400, 401, 404 or 413 is about the request or
+  the route. Registry calls keep `ErrUpstreamImpaired` for the same
+  responses. Only an envelope whose code has its own sentinel
+  (`sentinelForHTTPErrorCode`) wraps that sentinel, as for Registry calls;
+  the feedback route never sends `upstream_impaired`.
+- Failures that are not one of the statuses above match no sentinel and
+  keep their text: a 500 `internal_error` from a failed store write is
+  `could not store feedback`, a non-envelope body gives the
+  `without a valid MLWH error envelope` message, and a transport failure is
+  `mlwh: SubmitFeedback request failed: <err>`, which still wraps the
+  transport error so `errors.Is(err, context.DeadlineExceeded)` works.
+- A nil client returns `mlwh: SubmitFeedback: nil remote client`.
 
 **Acceptance tests:**
 
@@ -812,23 +824,29 @@ func (rc *RemoteClient) SubmitFeedback(ctx context.Context, submission FeedbackS
    then `ErrFeedbackInvalid` and the message is kept.
 6. Given 400 with text body
    `Client sent an HTTP request to an HTTPS server.\n`, or 400 `{"message":"x"}` (no code), then
-   `errors.Is(err, ErrFeedbackInvalid)` is false and
-   `errors.Is(err, ErrUpstreamImpaired)` is true. The text-body error
+   `errors.Is(err, ErrFeedbackInvalid)` is false. The text-body error
    contains `without a valid MLWH error envelope`.
 7. Given 413 `payload_too_large`, then `ErrFeedbackTooLarge`. Given 401 with
    any body, then `ErrFeedbackUnauthorized`. For the 413, for a 401 with
-   gin-jwt body `{"code":401,"message":"x"}`, and for test 5,
-   `errors.Is(err, ErrUpstreamImpaired)` is also true.
+   gin-jwt body `{"code":401,"message":"x"}`, and for test 5, the feedback
+   sentinel matches and `errors.Is(err, ErrUpstreamImpaired)` is false.
 8. Given 500 `internal_error` or 503 `cache_never_synced`, then the call
    does not panic, no feedback sentinel matches, and the error is non-nil
    with the envelope message kept. For `cache_never_synced`,
    `errors.Is(err, ErrCacheNeverSynced)` is true and
-   `errors.Is(err, ErrNotFound)` is false.
-9. Given a closed listener, then `errors.Is(err, ErrUpstreamImpaired)`.
-10. Given 201 with body `not json`, then `ErrUpstreamImpaired`.
+   `errors.Is(err, ErrNotFound)` is false. Given the real server with a
+   closed store, then the 500 error contains `could not store feedback`.
+9. Given a closed listener, then the error contains
+   `SubmitFeedback request failed`. Given a cancelled context, then
+   `errors.Is(err, context.Canceled)`.
+10. Given 201 with body `not json`, then the error contains
+    `decode SubmitFeedback response`.
 11. Given the real `NewServer(..., WithFeedback(store, token))` behind
     `httptest`, when `SubmitFeedback` is called, then it returns id 1 and
     the store holds the report (round trip).
+12. For every error in tests 3-10 and a nil client,
+    `errors.Is(err, ErrUpstreamImpaired)` is false and `err.Error()` does
+    not contain `upstream database impaired`.
 
 ## D. Serve Command and Dev Script
 
@@ -1491,6 +1509,11 @@ After all stories pass, merge and tag `v0.10.0`. The MCP repo then bumps
   needs a `bad_request` envelope: Go's TLS listener sends a plain-text 400
   to `http://` clients, and telling the agent to fix its input would be
   wrong.
+- **No `ErrUpstreamImpaired` from `SubmitFeedback`.** Its text,
+  `upstream database impaired`, names the MLWH database, which feedback
+  never touches. Even a 500 from the feedback store or a transport failure
+  is reported by its own text with no sentinel, and callers tell feedback
+  outcomes apart by the feedback sentinels alone.
 - **Byte caps.** They are deterministic in Go and bound storage. All cap
   violations are 413. Semantic errors are 400.
 - **Remote address from the socket.** Forwarded headers are spoofable and gin
