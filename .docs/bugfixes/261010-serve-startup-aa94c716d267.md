@@ -41,14 +41,15 @@ them twice.
         stderr:
         FAIL: want non-zero exit and stderr containing: :memory:
         ```
-  - Fixed: the serve command in `cmd/mlwh.go` no longer sets `SilenceErrors`, so
-    cobra prints its errors once. `run` in `main.go` takes a stderr writer and
-    prints errors raised before any command runs (env and scenario checks) once.
-    Regression tests: `TestMLWHStartupErrorsPrintedOnceOnStderr`
-    (`cmd/mlwh_test.go`) and `TestRunPrintsStartupErrorsOnce` (`main_test.go`).
-    Red command now exits 0.
 
-- [ ] `wa mlwh serve --feedback-db <path>` fails to start (silently) when the XDG_STATE_HOME directory for the feedback token does not exist, instead of creating it.
+    - Fixed: the serve command in `cmd/mlwh.go` no longer sets `SilenceErrors`, so
+      cobra prints its errors once. `run` in `main.go` takes a stderr writer and
+      prints errors raised before any command runs (env and scenario checks) once.
+      Regression tests: `TestMLWHStartupErrorsPrintedOnceOnStderr`
+      (`cmd/mlwh_test.go`) and `TestRunPrintsStartupErrorsOnce` (`main_test.go`).
+      Red command now exits 0.
+
+- [x] `wa mlwh serve --feedback-db <path>` fails to start (silently) when the XDG_STATE_HOME directory for the feedback token does not exist, instead of creating it.
     - Source: llm-knowledge-base `feedback` delivery (PR wtsi-hgi/llm-knowledge-base#5)
     - Confirmed at 29077be. In plain mode, `mlwhServeFeedbackAdminToken`
       resolves `$XDG_STATE_HOME/.wa-mlwh-server.token` through
@@ -70,21 +71,35 @@ them twice.
         FAIL
         FAIL	github.com/wtsi-hgi/wa/cmd	0.183s
         ```
+
+    - Fixed: `writeResultsServeServerToken` in `cmd/results.go` creates the token
+      directory with mode 0700 before writing, which covers `wa mlwh serve` and
+      `wa results serve`. Existing directories keep their permissions. Regression
+      tests: `TestMLWHServeFeedbackCreatesMissingStateDir` (`cmd/mlwh_test.go`)
+      and `TestResultsServeCreatesMissingStateDir` (`cmd/results_serve_test.go`).
+      Red command now exits 0.
+
 - [ ] `wa mlwhdiff bogus` and `wa results bogus` exit 0 with nothing on stderr, while `wa bogus` and `wa mlwh bogus` report an unknown command.
-  - Source: found by the item 7 reviewer.
-  - Red command (from an empty directory, binary built from this branch):
-    `env -i HOME=$HOME PATH=$PATH wa mlwhdiff bogus; [ $? -ne 0 ]` and the
-    same for `wa results bogus`.
-  - Exit status: 1 (both commands exit 0 with empty stderr).
+    - Source: found by the item 7 reviewer.
+    - Red command (from an empty directory, binary built from this branch):
+      `env -i HOME=$HOME PATH=$PATH wa mlwhdiff bogus; [ $? -ne 0 ]` and the
+      same for `wa results bogus`.
+    - Exit status: 1 (both commands exit 0 with empty stderr).
 - [ ] `wa mlwh serve extra-arg` and `wa mlwh sync extra` accept unexpected positional arguments instead of rejecting them.
-  - Source: found by the item 7 reviewer.
-  - Red command:
-    `env -i HOME=$HOME PATH=$PATH wa mlwh serve extra-arg 2>&1 | grep -q 'accepts 0 arg'`
-  - Exit status: 1 (output is
-    `Error: WA_MLWH_CACHE_PATH must be set or --mlwh-cache provided`; the
-    extra argument is ignored).
+    - Source: found by the item 7 reviewer.
+    - Red command:
+      `env -i HOME=$HOME PATH=$PATH wa mlwh serve extra-arg 2>&1 | grep -q 'accepts 0 arg'`
+    - Exit status: 1 (output is
+      `Error: WA_MLWH_CACHE_PATH must be set or --mlwh-cache provided`; the
+      extra argument is ignored).
 - [ ] `wa mlwh sync` prints its errors without the `Error: ` prefix every other command uses.
-  - Source: found by the item 7 reviewer.
-  - Red command:
-    `env -i HOME=$HOME PATH=$PATH wa mlwh sync 2>&1 | grep -q '^Error: WA_MLWH_DSN must be set'`
-  - Exit status: 1 (output is `WA_MLWH_DSN must be set`).
+    - Source: found by the item 7 reviewer.
+    - Red command:
+      `env -i HOME=$HOME PATH=$PATH wa mlwh sync 2>&1 | grep -q '^Error: WA_MLWH_DSN must be set'`
+    - Exit status: 1 (output is `WA_MLWH_DSN must be set`).
+- [ ] Authenticated `wa results` client commands (e.g. `wa results register`) fail after a successful login when the `XDG_STATE_HOME` directory does not exist: go-authserver v1.6.0 `ClientCLI.storeJWT` (cli.go:293) writes the JWT with `os.WriteFile` without creating the directory, giving `Error: open <tmp>/missing/state/.wa-results.jwt: no such file or directory`.
+    - Source: found by the item 8 reviewer.
+    - Red command: the password-prompt test D1.2 in `cmd/` with `XDG_STATE_HOME` set to a missing nested directory; a probe is in the session scratchpad at `review8/probe_login_test.go` (outside the repository), run with `go test -overlay`.
+- [ ] `wa results register` prints its full usage text to stdout on a runtime (non-usage) error, in addition to the error.
+    - Source: found by the item 8 reviewer while reproducing the item above.
+    - Red command: to be built when this item is fixed.

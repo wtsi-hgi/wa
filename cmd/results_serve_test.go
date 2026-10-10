@@ -608,6 +608,39 @@ func (f *fakeResultsServeAuthServer) StartACMETLSOnly(addr string, acmeURL, cach
 
 func (f *fakeResultsServeAuthServer) Stop() {}
 
+func TestResultsServeCreatesMissingStateDir(t *testing.T) {
+	convey.Convey("Given XDG_STATE_HOME names a missing nested directory, when results serve starts, then the directory is created at 0700 and the 0600 server token is written before the server starts", t, func() {
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
+
+		stateDir := filepath.Join(t.TempDir(), "missing", "state")
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		tokenPath := filepath.Join(stateDir, resultsServerTokenBasename)
+
+		var tokenAtStart []byte
+		fakeAuth.onStart = func(*fakeResultsServeAuthServer) error {
+			token, err := os.ReadFile(tokenPath)
+			convey.So(err, convey.ShouldBeNil)
+			tokenAtStart = token
+
+			return nil
+		}
+
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "0"))
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
+		convey.So(tokenAtStart, convey.ShouldNotBeEmpty)
+
+		dirInfo, err := os.Stat(stateDir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(dirInfo.Mode().Perm(), convey.ShouldEqual, os.FileMode(0o700))
+
+		tokenInfo, err := os.Stat(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(tokenInfo.Mode(), convey.ShouldEqual, os.FileMode(0o600))
+	})
+}
+
 func TestResultsServeCommandA2(t *testing.T) {
 	convey.Convey("A2.1: Given results serve --url without certs, when validation runs, then TLS material is required", t, func() {
 		clearResultsServeTLSModeEnvForTest(t)

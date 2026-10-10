@@ -1438,6 +1438,50 @@ func startMLWHServeEndToEndForTest(t *testing.T, stateDir string, extraArgs ...s
 	return baseURL, stop
 }
 
+func TestMLWHServeFeedbackCreatesMissingStateDir(t *testing.T) {
+	convey.Convey("Given XDG_STATE_HOME names a missing nested directory, when mlwh serve starts with --feedback-db, then the directory is created at 0700, the 0600 token is written, and GET /feedback accepts it", t, func() {
+		stateDir := filepath.Join(t.TempDir(), "missing", "state")
+		dbPath := filepath.Join(t.TempDir(), "fb.sqlite")
+
+		baseURL, stop := startMLWHServeEndToEndForTest(t, stateDir, "--feedback-db", dbPath)
+
+		dirInfo, err := os.Stat(stateDir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(dirInfo.Mode().Perm(), convey.ShouldEqual, os.FileMode(0o700))
+
+		tokenPath := filepath.Join(stateDir, ".wa-mlwh-server.token")
+		tokenInfo, err := os.Stat(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(tokenInfo.Mode(), convey.ShouldEqual, os.FileMode(0o600))
+
+		token, err := os.ReadFile(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(token, convey.ShouldNotBeEmpty)
+
+		list := doMLWHServeHTTPRequestForTest(t, http.MethodGet, baseURL+"/feedback", "", "Bearer "+string(token))
+		convey.So(list.status, convey.ShouldEqual, http.StatusOK)
+
+		convey.So(stop(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("Given XDG_STATE_HOME names an existing 0750 directory, when mlwh serve starts with --feedback-db, then the directory keeps mode 0750", t, func() {
+		stateDir := filepath.Join(t.TempDir(), "state")
+		convey.So(os.Mkdir(stateDir, 0o750), convey.ShouldBeNil)
+		convey.So(os.Chmod(stateDir, 0o750), convey.ShouldBeNil)
+		dbPath := filepath.Join(t.TempDir(), "fb.sqlite")
+
+		_, stop := startMLWHServeEndToEndForTest(t, stateDir, "--feedback-db", dbPath)
+		convey.So(stop(), convey.ShouldBeNil)
+
+		dirInfo, err := os.Stat(stateDir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(dirInfo.Mode().Perm(), convey.ShouldEqual, os.FileMode(0o750))
+
+		_, err = os.Stat(filepath.Join(stateDir, ".wa-mlwh-server.token"))
+		convey.So(err, convey.ShouldBeNil)
+	})
+}
+
 func TestMLWHKCommandsDegradeGracefullyOnNeverSyncedCache(t *testing.T) {
 	cases := []struct {
 		name string

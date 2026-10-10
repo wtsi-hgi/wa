@@ -357,7 +357,14 @@ func resultsServeServerToken(tokenPath string) ([]byte, error) {
 	return token, nil
 }
 
+// writeResultsServeServerToken writes token to tokenPath at mode 0600. Missing
+// parent directories, such as a fresh $XDG_STATE_HOME, are created at mode
+// 0700; existing directories keep their permissions.
 func writeResultsServeServerToken(tokenPath string, token []byte) error {
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o700); err != nil {
+		return fmt.Errorf("create server token directory: %w", err)
+	}
+
 	file, err := os.OpenFile(tokenPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
