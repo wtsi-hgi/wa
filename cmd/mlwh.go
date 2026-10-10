@@ -179,7 +179,7 @@ func resolveMLWHServeConfig(rawURL string, port int, portChanged bool, cert stri
 	}
 
 	if config.cert == "" || config.key == "" || config.serverToken == "" {
-		return mlwhServeConfig{}, errors.New("--cert, --key, and --server-token are required together for secured mlwh serve")
+		return mlwhServeConfig{}, usageError("--cert, --key, and --server-token are required together for secured mlwh serve")
 	}
 
 	if err = validateResultsServeServerToken(config.serverToken); err != nil {
@@ -199,11 +199,9 @@ func newMLWHServeCommand() *cobra.Command {
 	var feedbackDB string
 
 	command := &cobra.Command{
-		Use:           "serve",
-		Args:          cobra.ExactArgs(0),
-		Short:         "Serve the MLWH cache-backed HTTP API",
-		SilenceUsage:  true,
-		SilenceErrors: false,
+		Use:   "serve",
+		Args:  cobra.ExactArgs(0),
+		Short: "Serve the MLWH cache-backed HTTP API",
 		Long: strings.Join([]string{
 			"Serve the local Sanger Multi-LIMS Warehouse (MLWH) metadata cache as",
 			"the registry-backed HTTP API used by other wa services. MLWH data is",
@@ -468,11 +466,9 @@ func newMLWHCommand() *cobra.Command {
 
 func newMLWHSyncCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync supported MLWH metadata and data into the local cache",
-		SilenceUsage:  true,
-		SilenceErrors: false,
-		Args:          cobra.ExactArgs(0),
+		Use:   "sync",
+		Short: "Sync supported MLWH metadata and data into the local cache",
+		Args:  cobra.ExactArgs(0),
 		Long: strings.Join([]string{
 			"Sync supported MLWH metadata and data into the local cache used",
 			"by other wa subcommands.",

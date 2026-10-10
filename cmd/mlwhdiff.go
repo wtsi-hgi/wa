@@ -113,7 +113,7 @@ func newMLWHDiffDiffCommand(options *mlwhdiffOptions) *cobra.Command {
 		Short: "Diff study samples or sample files",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if (studyID == "" && sampleID == "") || (studyID != "" && sampleID != "") {
-				return errors.New("usage: specify exactly one of --study or --sample")
+				return usageError("usage: specify exactly one of --study or --sample")
 			}
 
 			provider, err := openMLWHDiffClient(commandContext(cmd), options, mlwhdiffFlagChanged(cmd, "mlwh-cache"))

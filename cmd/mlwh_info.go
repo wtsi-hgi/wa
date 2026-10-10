@@ -1602,12 +1602,12 @@ func newMLWHInfoCommand() *cobra.Command {
 		}, "\n"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return errors.New("usage: wa mlwh info <identifier>")
+				return usageError("usage: wa mlwh info <identifier>")
 			}
 
 			identifier := strings.TrimSpace(args[0])
 			if identifier == "" {
-				return errors.New("usage: wa mlwh info <identifier>")
+				return usageError("usage: wa mlwh info <identifier>")
 			}
 
 			since, err := resolveInfoSince(sinceFlag)

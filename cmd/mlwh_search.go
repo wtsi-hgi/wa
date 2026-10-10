@@ -165,12 +165,12 @@ func newMLWHSearchCommand() *cobra.Command {
 		}, "\n"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return errors.New("usage: wa mlwh search <term>")
+				return usageError("usage: wa mlwh search <term>")
 			}
 
 			term := strings.TrimSpace(args[0])
 			if term == "" {
-				return errors.New("usage: wa mlwh search <term>")
+				return usageError("usage: wa mlwh search <term>")
 			}
 
 			// Bound the whole invocation so a slow term cannot hang the CLI; the

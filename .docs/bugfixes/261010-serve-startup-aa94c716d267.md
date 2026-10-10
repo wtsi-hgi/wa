@@ -111,7 +111,7 @@ them twice.
       `env -i HOME=$HOME PATH=$PATH wa mlwh sync 2>&1 | grep -q '^Error: WA_MLWH_DSN must be set'`
     - Exit status: 1 (output is `WA_MLWH_DSN must be set`).
     - Fixed: `wa mlwh sync` no longer silences cobra or prints its own errors
-      (`reportMLWHSyncCommandError` removed); it keeps `SilenceUsage`, so every
+      (`reportMLWHSyncCommandError` removed), so every
       error prints once as `Error: ...` with no usage. The B6.1 lock test and
       `.docs/mlwh-sync/spec.md` (lock paragraph, B6.1 test 1) now expect the
       prefix. Red command now exits 0.
@@ -127,7 +127,7 @@ them twice.
       Red probe now passes. go-authserver `storeJWT` could also create the
       directory upstream.
 
-- [ ] `wa results register` prints its full usage text to stdout on a runtime (non-usage) error, in addition to the error.
+- [x] `wa results register` prints its full usage text to stdout on a runtime (non-usage) error, in addition to the error.
     - Source: found by the item 8 reviewer while reproducing the item above.
     - Red command: `red-register-usage.sh <worktree>` in the session
       scratchpad (`wa-red/serve-startup/`, outside the repository). It runs
@@ -136,3 +136,11 @@ them twice.
       with no usage text.
     - Exit status: 1. stderr is `Error: no output files discovered in output directory`
       followed by `Usage:` and the full flag list.
+    - Fixed: `NewRootCommand` (`cmd/root.go`) wraps every `RunE` so a returned error
+      hides usage unless it is a `usageError`. The doc comment states the rule:
+      missing, conflicting or mutually required flags or arguments are usage errors;
+      bad flag values and environment or config errors are runtime errors. 32 sites
+      return `usageError`; the 8 mlwh commands that set `SilenceUsage` no longer do,
+      so their flag and argument errors now show usage like every other command.
+      Regression test `TestRootCommandShowsUsageOnlyForUsageErrors`
+      (`cmd/root_test.go`). Red command now exits 0.
