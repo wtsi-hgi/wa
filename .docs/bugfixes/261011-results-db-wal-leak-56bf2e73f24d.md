@@ -20,3 +20,13 @@
     2026-10-11 and no matching `.sqlite` files left beside them.
   - Independent of the usage feature: the results DB lines are unchanged on
     `usage`.
+- [ ] `run-dev.sh` test mode removes only the ephemeral MLWH cache file
+  (`rm -f "$MLWH_CACHE_PATH"`) and not its `-wal`/`-shm` files, and
+  `make clean-test-tmp` never removes `.tmp/mlwh-test.*.sqlite*`. Same
+  ephemeral-SQLite cleanup gap as the item above, so it shares this branch.
+  - Source: phase 4 user-path verification on branch `usage`
+    (`.docs/usage/phase4.md`), reported as incidental.
+  - Evidence: `ls .tmp | grep -c '^mlwh-test\..*sqlite-\(wal\|shm\)'` in the
+    main clone printed `152` (exit 0), for example
+    `mlwh-test.0hMpbs.sqlite`, `mlwh-test.0hMpbs.sqlite-shm` and
+    `mlwh-test.0hMpbs.sqlite-wal`.
