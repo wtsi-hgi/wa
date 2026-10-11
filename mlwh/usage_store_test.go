@@ -29,6 +29,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -224,6 +225,19 @@ func TestUsageStoreA2(t *testing.T) {
 			reopened := openTestUsageStore(t, path, 30, usageQueueSize, clock)
 			convey.So(reopened.RetentionDays(), convey.ShouldEqual, 30)
 			convey.So(usageRowTimesForTest(path), convey.ShouldResemble, wantKept)
+		})
+
+		convey.Convey("when retention is too large for a time.Duration, then Prune keeps every row", func() {
+			for _, days := range []int{1_000_000, math.MaxInt} {
+				dayPath := filepath.Join(t.TempDir(), "u.sqlite")
+				store := openTestUsageStore(t, dayPath, days, usageQueueSize, clock)
+				recordUsageAtForTest(store, times)
+
+				n, err := store.Prune(ctx)
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(n, convey.ShouldEqual, 0)
+				convey.So(usageRowTimesForTest(dayPath), convey.ShouldHaveLength, len(times))
+			}
 		})
 	})
 

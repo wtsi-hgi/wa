@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -216,7 +217,7 @@ func (s *UsageStore) Flush(ctx context.Context) error {
 // Prune deletes rows with ts_ms older than now - retentionDays*24h and
 // returns the count deleted.
 func (s *UsageStore) Prune(ctx context.Context) (int64, error) {
-	cutoff := s.now().Add(-time.Duration(s.retentionDays) * 24 * time.Hour).UnixMilli()
+	cutoff := usageCutoffMS(s.now().UnixMilli(), s.retentionDays)
 
 	result, err := s.db.ExecContext(ctx, "DELETE FROM usage_requests WHERE ts_ms < ?", cutoff)
 	if err != nil {
@@ -229,6 +230,23 @@ func (s *UsageStore) Prune(ctx context.Context) (int64, error) {
 	}
 
 	return n, nil
+}
+
+// usageCutoffMS returns nowMS - retentionDays*24h in milliseconds, saturating
+// at math.MinInt64 (nothing pruned) when the retention reaches further back
+// than an int64 millisecond timestamp can.
+func usageCutoffMS(nowMS int64, retentionDays int) int64 {
+	days := int64(retentionDays)
+	if days > math.MaxInt64/usageMSPerDay {
+		return math.MinInt64
+	}
+
+	span := days * usageMSPerDay
+	if nowMS < math.MinInt64+span {
+		return math.MinInt64
+	}
+
+	return nowMS - span
 }
 
 // Dropped returns events dropped on a full queue since open.
