@@ -102,6 +102,31 @@ describe("E1 mlwhIdentityHeaders", () => {
         await expect(mlwhIdentityHeaders()).resolves.toEqual({});
     });
 
+    it("keeps the client ID when currentSession rejects (test 7)", async () => {
+        mocks.cookies.mockResolvedValue(
+            cookieStoreWith({ [usageSessionCookieName]: "abc" }),
+        );
+        mocks.currentSession.mockRejectedValue(new Error("backend down"));
+
+        await expect(mlwhIdentityHeaders()).resolves.toEqual({
+            "x-wa-client-id": abcClientId,
+        });
+    });
+
+    it("keeps the session user when cookies() throws (test 7)", async () => {
+        mocks.cookies.mockImplementation(() => {
+            throw new Error("outside a request scope");
+        });
+        mocks.currentSession.mockResolvedValue({
+            authenticated: true,
+            username: "alice",
+        });
+
+        await expect(mlwhIdentityHeaders()).resolves.toEqual({
+            "x-wa-client-user": "alice",
+        });
+    });
+
     it("replaces each non-ASCII UTF-8 byte of the user with ? (test 7)", async () => {
         mocks.cookies.mockResolvedValue(cookieStoreWith({}));
 
