@@ -60,6 +60,30 @@ func TestOpenStore(t *testing.T) {
 		})
 	})
 
+	for _, name := range []string{"d#1.db", "d?1.db", "d%231.db"} {
+		convey.Convey("Given a database path named "+name, t, func() {
+			dir := t.TempDir()
+			path := filepath.Join(dir, name)
+
+			store, err := OpenStore(path)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(store.Close(), convey.ShouldBeNil)
+
+			convey.Convey("when OpenStore is called, then the database is created at that exact path", func() {
+				info, statErr := os.Stat(path)
+				convey.So(statErr, convey.ShouldBeNil)
+				convey.So(info.Size(), convey.ShouldBeGreaterThan, 0)
+
+				entries, readErr := os.ReadDir(dir)
+				convey.So(readErr, convey.ShouldBeNil)
+
+				for _, entry := range entries {
+					convey.So(entry.Name(), convey.ShouldBeIn, []string{name, name + "-journal"})
+				}
+			})
+		})
+	}
+
 	convey.Convey("Given an open store", t, func() {
 		store, err := OpenStore(":memory:")
 		convey.So(err, convey.ShouldBeNil)
