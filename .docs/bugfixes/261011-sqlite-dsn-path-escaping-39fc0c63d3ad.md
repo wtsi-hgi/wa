@@ -1,7 +1,8 @@
 # Bugfix: SQLite DSN does not escape file paths
 
 - Branch: `sqlitedsn-723fb158`
-- Base: `origin/develop` at `73ebdaa721d5cfe478e22e9ee504061ad30b1492`
+- Base: `origin/develop` at `5e851cdad10a2cc9c77a8c73c08c4b263f18d34a`
+  (rebased from `73ebdaa721d5cfe478e22e9ee504061ad30b1492`)
 - Queue owner: branch `usage`, checklist
   `.docs/bugfixes/261011-usage-delivery-92e8e35556b7.md`
 - Worktree: `../wa-sqlitedsn`
@@ -78,6 +79,55 @@
       siblings, land at that exact path; the feedback DB stays 0600. Reviewer
       PASS: red commands pass, 7 revert mutants all caught,
       `golangci-lint run` 0 issues, `go test -tags netgo --count 1 ./...` ok.
+
+- [x] After the rebase onto `5e851cd` (#39), the usage DB opened by
+      `OpenUsageStore` in `mlwh/usage_store.go` uses `sqliteWritableDSN`, but
+      no test opens it at a `#`, `?` or `%23` name, so a regression there
+      would go unnoticed.
+    - Source: PR #40 rebase check requested by the queue owner.
+    - Red command (throwaway harness, not committed, that opens the usage
+      store at `u#1.sqlite`, `u?1.sqlite` and `u%231.sqlite` in a temp dir,
+      records one event, closes it, and asserts the data and only its
+      `-wal`/`-shm` siblings land at that exact path), run in a scratch copy
+      of base `5e851cd`:
+      `CGO_ENABLED=1 go test -tags netgo --count 1 -run TestRedUsageStoreDSNPathEscaping ./mlwh/`
+      exited 1:
+
+        ```text
+        usage "u#1.sqlite": files=[u u#1.sqlite] size=0
+        usage "u?1.sqlite": files=[u u?1.sqlite] size=0
+        usage "u%231.sqlite": files=[u#1.sqlite u%231.sqlite] size=0
+        usage DB data did not land at the exact path
+        FAIL	github.com/wtsi-hgi/wa/mlwh
+        ```
+
+    - The same harness passes on this branch at `8138d8e`
+      (`files=[u#1.sqlite] size=20480` and likewise for the other names), so
+      the existing fix already covers the usage DB; the missing piece is a
+      committed regression test.
+    - Fixed by adding regression test
+      `TestUsageStoreSQLitePathWithURISpecialCharacters`; no production code
+      change.
+    - Files: `mlwh/usage_store_test.go`.
+    - Approach: for each of `u#1.sqlite`, `u?1.sqlite` and `u%231.sqlite`, the
+      test opens the usage store in a temp dir with `openTestUsageStore`,
+      records one event, and flushes it. It then asserts that the file at
+      that exact path is non-empty with mode 0600 (pre-created by
+      `createStoreFile`), that its `-wal` has no group/other bits, and that
+      the dir holds only `name`, `name-wal` and `name-shm`.
+    - Mutant evidence: in a scratch copy of this branch with
+      `sqliteWritableDSN` reverted to the unescaped
+      `"file:" + path + "?mode=rwc&..."` form,
+      `CGO_ENABLED=1 go test -tags netgo --count 1 ./mlwh -run TestUsageStoreSQLitePathWithURISpecialCharacters`
+      exited 1 for all three names:
+
+        ```text
+        <tmp>/mlwh/usage_store_test.go
+        Line 461:
+        Expected '0' to be greater than '0' (but it wasn't)!
+        --- FAIL: TestUsageStoreSQLitePathWithURISpecialCharacters (0.08s)
+        FAIL	github.com/wtsi-hgi/wa/mlwh
+        ```
 
 ## Incidental handoffs
 
