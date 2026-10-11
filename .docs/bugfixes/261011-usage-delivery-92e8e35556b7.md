@@ -18,6 +18,7 @@
 | `menurace-39ecd8d1`      | `../wa-menurace`      | none | `develop` | none       | `b7565f2` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
 | `serveshutdown-cf1cb518` | `../wa-serveshutdown` | none | `develop` | none       | `a5e6c44` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
 | `rundevstate-64ed3f75`   | `../wa-rundevstate`   | none | `develop` | none       | `3281ef9` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
+| `pnpmfilter-90a8f24a`    | `../wa-pnpmfilter`    | none | `develop` | none       | `c469daa` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
 
 ## Incidental handoffs
 
@@ -61,3 +62,8 @@
     - Branch: `rundevstate-64ed3f75`
     - Checklist: `.docs/bugfixes/261011-rundev-tests-shared-state-bad805d9af8d.md`
     - Entry commit: `3281ef92624abd9f218c9a3f0395d46fc91adbeb`
+- Spec-aware PR review pass 7: `pnpm test -- <files>` ignores the file
+  filter and runs the whole suite plus the scaffold build.
+    - Branch: `pnpmfilter-90a8f24a`
+    - Checklist: `.docs/bugfixes/261011-pnpm-test-filter-110fa8768b88.md`
+    - Entry commit: `c469daa456fdb4fc8d4130986eb9b44fa63d70d3`
