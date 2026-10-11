@@ -1,7 +1,10 @@
 # Bugfix: verify-wa launch writes unquoted REVISION
 
 - Branch: `verifyrev-45b2c5f7`
-- Base: `origin/develop` at `73ebdaa721d5cfe478e22e9ee504061ad30b1492`
+- Base: `origin/develop` at `5e851cdad10a2cc9c77a8c73c08c4b263f18d34a`
+  (PR #39 squash merge). Rebased from `73ebdaa` without conflicts; commits
+  rewritten `2b7eae0`->`3cd3944`, `aae4178`->`4dc9c0c`, `11aa089`->`ff64b0c`,
+  `99b4efb`->`b66d52c`, `1b7a95d`->`476bc91`, `ca4439c`->`9948463`.
 - Queue owner: branch `usage`, checklist
   `.docs/bugfixes/261011-usage-delivery-92e8e35556b7.md`
 - Worktree: `../wa-verifyrev`
@@ -148,7 +151,7 @@
       for `wa repo` and `plainrepo`; `red.sh` still prints `OK`. No committed
       regression test, for the same reason as the item above.
 
-- [ ] `features/usage-admin-page.md`, added by PR #39 (branch `usage`), runs
+- [x] `features/usage-admin-page.md`, added by PR #39 (branch `usage`), runs
       `$RUN/wa mlwh info 6568 --type study --server $MLWH_URL` with `$RUN/wa`
       unquoted, the same flaw as the item above. The file exists only on
       `usage`, so fix it after #39 merges and this branch is rebased onto
@@ -157,3 +160,49 @@
     - Dependency: PR #39 must merge first. Hold this branch unpublished until
       then; PR #39 also edits `SKILL.md` and `features/mlwh-query-api.md`, so
       expect small rebase conflicts.
+    - PR #39 merged as `5e851cd`; the hold is released and the branch is
+      rebased onto it (see Base). Publication follows the queue owner.
+    - Also in this file: the Disabled-state relaunch block sets
+      `WA_RUN_DEV_SEQMETA_CMD="$RUN/wa mlwh serve ... --mlwh-cache <copy> ..."`.
+      `run-dev.sh` runs that value with `eval "exec $WA_RUN_DEV_SEQMETA_CMD"`,
+      so `$RUN` and the `<copy>` path (a file under `$RUN`) split on spaces.
+    - Red command: `red3.sh` (throwaway, not committed) is `red2.sh` plus
+      this file's two bash blocks: the `curl` API block with `curl` stubbed
+      (checks the bearer token header), and the relaunch block with `<mlwh>`
+      filled in, `<copy>` and `<tmp file>` replaced by
+      `"$RUN/cache copy.sqlite"` and `"$RUN/fb tmp.sqlite"`, and `launch.sh` replaced by a stub that runs
+      `bash -lc 'eval "exec $WA_RUN_DEV_SEQMETA_CMD"'` as `run-dev.sh` does.
+      It requires the stub `$RUN/wa` to receive `--mlwh-cache` and
+      `--feedback-db` as those exact paths. On the rebased tree it exits 1
+      under `wa repo` (and under `plainrepo` for the relaunch block):
+
+        ```text
+        === usage-admin-page.md: $RUN/wa mlwh info 6568 --type study --server $MLWH_URL
+          ! bash: line 1: /tmp/verifyrev-red2.l61kZk/wa: No such file or directory
+          exit=127
+        === usage-admin-page.md curl block
+        === usage-admin-page.md relaunch block
+          ! bash: line 1: copy.sqlite --feedback-db /tmp/verifyrev-red2.l61kZk/wa: No such file or directory
+          exit=127
+        relaunch block never ran $RUN/wa
+        --mlwh-cache arg is not the copy path
+        --feedback-db arg is not the tmp path
+        === argv check
+        RED
+        ```
+
+    - Rebased re-check of the items above: `red.sh` prints `OK` for
+      `plainrepo` and `wa repo`; `red2.sh` passes every recipe except this
+      item's `$RUN/wa mlwh info` span.
+    - Fixed: step 2 runs
+      `"$RUN/wa" mlwh info 6568 --type study --server "$MLWH_URL"`, and the
+      relaunch block builds the value with
+      `"$(printf '%q ' "$RUN/wa" mlwh serve ... --mlwh-cache <copy> ...)"`,
+      with a sentence saying the placeholders are double-quoted paths and
+      why `%q` is needed. The `curl` block was already quoted; the other
+      `$RUN/...` mentions are prose. File:
+      `.agents/skills/verify-wa/features/usage-admin-page.md`. `red3.sh`
+      and `red2.sh` end `ALL OK` and `red.sh` prints `OK` for `wa repo` and
+      `plainrepo`; the reviewer also confirmed `red3.sh` is red on the
+      pre-fix tree and that the value survives `eval` with `'`, `$` and
+      backticks in `$RUN`. No committed regression test, as above.

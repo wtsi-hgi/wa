@@ -34,7 +34,7 @@ No helper script. Use Playwright as described in the skill.
    throwaway DB, and the doctor's own `curl /freshness` is already counted
    as `other`.
 2. Make CLI traffic:
-   `$RUN/wa mlwh info 6568 --type study --server $MLWH_URL` sends 9
+   `"$RUN/wa" mlwh info 6568 --type study --server "$MLWH_URL"` sends 9
    requests with one `X-WA-Client-ID` and your username. `wa mlwh studies`
    needs `--programme`, `--user`, or `--faculty-sponsor`.
 3. Make web traffic: log in, then open the `nf-core/rnaseq` result detail
@@ -81,10 +81,12 @@ API checks, each with `curl -s -w '%{http_code}'`:
   `--mlwh-cache` path in the `mlwh serve` arguments) into `$RUN` with
   SQLite's backup API; a never-synced cache fails readiness. Cleanup, then
   relaunch with the copy, where `<mlwh>` is the old stack's MLWH port
-  (base+3):
+  (base+3) and `<copy>` and `<tmp file>` are double-quoted paths. run-dev
+  `eval`s the command, so `printf '%q '` escapes each argument:
 
     ```bash
-    WA_RUN_DEV_SEQMETA_CMD="$RUN/wa mlwh serve --port <mlwh> --url 127.0.0.1:<mlwh> --mlwh-cache <copy> --feedback-db <tmp file>" \
+    WA_RUN_DEV_SEQMETA_CMD="$(printf '%q ' "$RUN/wa" mlwh serve --port <mlwh> \
+      --url 127.0.0.1:<mlwh> --mlwh-cache <copy> --feedback-db <tmp file>)" \
       "$SKILL/scripts/launch.sh"
     ```
 
