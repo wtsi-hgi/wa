@@ -58,6 +58,10 @@ var mlwhServeNewAuthServer = func(logWriter io.Writer) mlwhServeAuthServer {
 	return &mlwhServeGasAuthServer{Server: gas.New(logWriter)}
 }
 
+// serveHTTPReadHeaderTimeout bounds how long the plain-HTTP serve commands
+// wait for a client to finish sending request headers.
+var serveHTTPReadHeaderTimeout = 30 * time.Second
+
 func mlwhServeRejectPasswordAuth(_, _ string) (bool, string) {
 	return false, ""
 }
@@ -133,24 +137,37 @@ func (s *mlwhServeGasAuthServer) StartHTTP(ctx context.Context, addr string) err
 	}
 	defer func() { _ = listener.Close() }()
 
-	httpServer := &http.Server{
-		Handler:           s.Router(),
-		ReadHeaderTimeout: 30 * time.Second,
-	}
+	return serveHTTPUntilCancelled(ctx, newServeHTTPServer(s.Router()), listener)
+}
+
+// serveHTTPUntilCancelled serves httpServer on listener until ctx is cancelled,
+// then returns only after the shutdown has finished, so callers can close
+// resources that handlers use once it returns. A clean shutdown returns nil.
+func serveHTTPUntilCancelled(ctx context.Context, httpServer *http.Server, listener net.Listener) error {
+	serveDone := make(chan struct{})
+	shutdownDone := make(chan struct{})
 
 	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
+		defer close(shutdownDone)
+
+		shutdownHTTPOnCancel(ctx, serveDone, httpServer)
 	}()
 
-	err = httpServer.Serve(listener)
+	err := httpServer.Serve(listener)
+	close(serveDone)
+	<-shutdownDone
+
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
 
 	return err
+}
+
+// newServeHTTPServer returns the plain-HTTP server the serve commands share,
+// with a read-header timeout so slow clients cannot hold connections open.
+func newServeHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{Handler: handler, ReadHeaderTimeout: serveHTTPReadHeaderTimeout}
 }
 
 type mlwhServeConfig struct {
@@ -500,6 +517,25 @@ func mlwhServeAdminToken(config mlwhServeConfig) ([]byte, error) {
 	}
 
 	return resultsServeServerToken(tokenPath)
+}
+
+// shutdownHTTPOnCancel gracefully shuts httpServer down once ctx is
+// cancelled, returning when in-flight requests have drained or, after the
+// shutdown timeout, once remaining connections have been closed. It returns
+// without shutting down if serveDone closes first.
+func shutdownHTTPOnCancel(ctx context.Context, serveDone <-chan struct{}, httpServer *http.Server) {
+	select {
+	case <-ctx.Done():
+	case <-serveDone:
+		return
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		_ = httpServer.Close()
+	}
 }
 
 func newMLWHCommand() *cobra.Command {
