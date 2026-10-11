@@ -55,7 +55,7 @@
       server, whose `Serve` waits for connections to drain, so they are not
       affected.
 
-- [ ] `wa mlwh-diff serve` (`cmd/mlwhdiff.go`, `RunE`, around lines 257-266)
+- [ ] `wa mlwhdiff serve` (`cmd/mlwhdiff.go`, `RunE`, around lines 257-266)
       has the same shutdown-order flaw in its own code: it calls
       `httpServer.Shutdown(context.Background())` in a goroutine and returns on
       `http.ErrServerClosed` without waiting, so the deferred `store.Close()`
