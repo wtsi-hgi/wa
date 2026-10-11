@@ -107,13 +107,63 @@
     - Files: `cmd/run_dev_test.go`, `cmd/run_dev_tmp_dir_test.go`,
       `DEVELOPING.md`.
 
-- [ ] `make test`'s Playwright step runs a real `run-dev.sh --mode test` with
+- [x] `make test`'s Playwright step runs a real `run-dev.sh --mode test` with
       the default `.tmp`, and `frontend/e2e/results-auth-helpers.ts` reads
       `.tmp/state-test`; afterwards `clean-test-tmp` deletes `.tmp/wa`. So
       `make test` can still break a verify-wa stack in the same checkout.
     - Source: bugfix of the item above, reported as incidental.
     - Evidence: code reading of the Makefile `test-e2e` target and the e2e
       helpers.
+    - Red command (from the checkout root, with frontend dependencies
+      installed): plant the same `.tmp` sentinels as the first item plus
+      sentinel `logs/{results,frontend,mlwh}.log`, run the `test-e2e` recipe
+      limited to one spec, run `make clean-test-tmp`, then check the
+      sentinels:
+
+        ```bash
+        set -a; . ./.env.test; set +a
+        (cd frontend && pnpm exec playwright test e2e/result-id-copy-chip.spec.ts)
+        make clean-test-tmp
+        ```
+
+    - Red result on `8bfc014`: the spec passed (exit 0) and
+      `clean-test-tmp` exited 0, but every sentinel was replaced or removed
+      (check exit 1):
+
+        ```text
+        CLOBBERED: .tmp/state-test/.wa-results-server.token
+        CLOBBERED: .tmp/wa-dev-key.pem (-----BEGIN PRIVATE KEY-----)
+        CLOBBERED: .tmp/wa-dev-cert.pem
+        CLOBBERED: .tmp/wa -> ''
+        CLOBBERED: logs/results.log
+        CLOBBERED: logs/frontend.log
+        CLOBBERED: logs/mlwh.log
+        ```
+
+    - The e2e run-dev also replaces a `make dev` session's `logs/`, the same
+      clobbering as the previous item, so this fix covers its log directory
+      too.
+    - Fixed. The e2e run now owns `.tmp/e2e/` (set once in
+      `frontend/e2e/run-dir.ts`): `playwright.config.ts` passes
+      `WA_RUN_DEV_TMP_DIR`, `WA_RUN_DEV_LOG_DIR` and the cert/key paths to its
+      `run-dev.sh` through `webServer.env`, the ports cache moved there, and
+      the e2e helpers and the timezone repro spec read the binary, token,
+      cert and results DB from it. `clean-test-tmp` now removes only
+      `.tmp/e2e`. `.env.test` keeps its `.tmp/wa-dev-*.pem` values because
+      `wa --env test` (see `260522-1.md`) and verify-wa's `launch.sh` rely on
+      them; the Playwright run overrides them.
+    - Regression test: `frontend/tests/e2e-run-dir.test.ts` checks the
+      Playwright run-dev env points inside a dedicated `.tmp` subdirectory and
+      that `make clean-test-tmp` leaves a stack's shared `.tmp` files and
+      `logs/` alone; both tests fail without the fix. The red command passes
+      for the single spec and for the full `make test-e2e` (107 passed, 2
+      existing `test.fixme` skips).
+    - Files: `frontend/e2e/run-dir.ts`, `frontend/playwright.config.ts`,
+      `frontend/e2e/results-auth-helpers.ts`,
+      `frontend/e2e/result-date-timezone-repro.spec.ts`,
+      `frontend/tests/e2e-run-dir.test.ts`, `Makefile`, `.env.test`,
+      `DEVELOPING.md`, `.agents/skills/verify-wa/SKILL.md`.
+
 - [ ] Dev-mode run-dev tests that don't set `XDG_STATE_HOME` inherit the
       caller's, so a real results server started by one could write its token
       into the user's real state directory. Unconfirmed: most of those tests

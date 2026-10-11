@@ -155,13 +155,14 @@ The `make` recipes, `wa` startup path, and `run-dev.sh` enforce the following:
   They also set `WA_RUN_DEV_LOG_DIR` to a `logs` directory inside it, so the
   service logs stay out of `logs/`. They leave a stack running from the same
   checkout alone.
+- Playwright does the same for its `run-dev.sh` stack with `.tmp/e2e/`,
+  which also holds its port-allocation cache and the e2e helpers' CLI state.
 - `run-dev.sh --mode dev` and `--mode prod` use the persistent
   `WA_RESULTS_DB_PATH` and never delete the database on shutdown.
-- `make test` always cleans up its `.tmp/` artefacts (the built `wa`
-  binary, the Playwright port-allocation cache, and any stray ephemeral
-  SQLite DBs) on completion, regardless of whether the sub-suites passed
-  or failed. Run `make clean-test-tmp` to perform the same cleanup
-  manually.
+- `make test` always deletes `.tmp/e2e/` (the built `wa` binary, the
+  Playwright port-allocation cache, and any stray ephemeral SQLite DBs) on
+  completion, regardless of whether the sub-suites passed or failed. Run
+  `make clean-test-tmp` to perform the same cleanup manually.
 - Live MLWH integration tests are skipped unless `WA_LIVE_MLWH_TESTS=1` is
   set. Tests that run a real cold `Client.Sync` also require
   `MLWH_SYNC_PERF_TEST=1`, `WA_MLWH_DSN`, and `WA_MLWH_PASSWORD`; they sync to

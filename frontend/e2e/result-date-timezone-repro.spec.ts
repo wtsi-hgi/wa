@@ -10,6 +10,7 @@ import {
     registerResult,
     type ResultSet,
 } from "./results-auth-helpers";
+import { e2eRunDir } from "./run-dir";
 
 const repoRoot = path.resolve(process.cwd(), "..");
 const evidenceDir = path.join(repoRoot, ".tmp", "agent");
@@ -51,11 +52,9 @@ function formatFileTimestamp(value: string, timeZone: string): string {
 }
 
 function resultDatabaseCandidates(): string[] {
-    const tmpDir = path.join(repoRoot, ".tmp");
-
-    return readdirSync(tmpDir)
+    return readdirSync(e2eRunDir)
         .filter((entry) => /^results-dev\..+\.sqlite$/.test(entry))
-        .map((entry) => path.join(tmpDir, entry))
+        .map((entry) => path.join(e2eRunDir, entry))
         .sort((left, right) => {
             return statSync(right).mtimeMs - statSync(left).mtimeMs;
         });

@@ -10,6 +10,8 @@ import path from "node:path";
 
 import type { BrowserContext } from "@playwright/test";
 
+import { e2eRunDir } from "./run-dir";
+
 export type ResultSet = {
     id: string;
 };
@@ -35,18 +37,17 @@ export type ResultRegistration = {
 };
 
 const repoRoot = path.resolve(process.cwd(), "..");
-const waBinaryPath = path.join(repoRoot, ".tmp", "wa");
-const sharedStateHome = path.join(repoRoot, ".tmp", "state-test");
+const waBinaryPath = path.join(e2eRunDir, "wa");
+const sharedStateHome = path.join(e2eRunDir, "state-test");
 const stateHome = path.join(
-    repoRoot,
-    ".tmp",
+    e2eRunDir,
     `state-test-e2e-${process.env.TEST_WORKER_INDEX ?? "0"}`,
 );
 const serverTokenBasename = ".wa-results-server.token";
 const sharedServerTokenPath = path.join(sharedStateHome, serverTokenBasename);
 const workerServerTokenPath = path.join(stateHome, serverTokenBasename);
 const jwtPath = path.join(stateHome, ".wa-results.jwt");
-const certPath = path.join(repoRoot, ".tmp", "wa-dev-cert.pem");
+const certPath = path.join(e2eRunDir, "wa-dev-cert.pem");
 let jwtReady = false;
 
 function requiredEnv(name: string): string {

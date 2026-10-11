@@ -5,9 +5,10 @@ import path from "node:path";
 
 import { resolveChromiumExecutablePath } from "@/lib/playwright-browser";
 
+import { e2eRunDir } from "./e2e/run-dir";
+
 const frontendRoot = process.cwd();
-const repoRoot = path.resolve(frontendRoot, "..");
-const portsFile = path.join(repoRoot, ".tmp", "playwright-ports.json");
+const portsFile = path.join(e2eRunDir, "playwright-ports.json");
 const portsFileTtlMs = 10 * 60 * 1000;
 
 type ResolvedPorts = {
@@ -130,6 +131,13 @@ export default defineConfig({
     },
     webServer: {
         command: frontendStartCommand,
+        // These override .env.test's shared .tmp TLS paths too.
+        env: {
+            WA_RUN_DEV_TMP_DIR: e2eRunDir,
+            WA_RUN_DEV_LOG_DIR: path.join(e2eRunDir, "logs"),
+            WA_RESULTS_SERVER_CERT: path.join(e2eRunDir, "wa-dev-cert.pem"),
+            WA_RESULTS_SERVER_KEY: path.join(e2eRunDir, "wa-dev-key.pem"),
+        },
         port: frontendPort,
         reuseExistingServer: true,
         timeout: frontendStartupTimeoutMs,
