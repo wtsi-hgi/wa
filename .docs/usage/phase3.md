@@ -83,8 +83,7 @@ create its parent directory. Only the auto-managed `mlwh serve` branch
 appends `--usage-db`, and only when the path is non-empty. Add
 `-A wa-run-dev` to `curl_probe` and to the `mlwh_freshness_is_cold`
 `curl` in every mode. Tests go in `cmd/run_dev_test.go`, extending the
-fake `mlwh serve` stub to log each request's User-Agent and URL for test
-4. Depends on item 3.1. Covering all 4 acceptance tests from D3.
+fake `mlwh serve` stub to log each request's User-Agent and URL for test 4. Depends on item 3.1. Covering all 4 acceptance tests from D3.
 
 - [x] implemented
 - [x] reviewed

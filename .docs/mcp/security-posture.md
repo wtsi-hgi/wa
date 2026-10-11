@@ -16,8 +16,10 @@ without the TLS/token settings (`WA_MLWH_SERVER_CERT` / `--cert`,
 the command binds a plain TCP listener with no TLS and registers every endpoint
 on the public router. No route checks a credential except the feedback admin
 routes, which need a Bearer token whenever feedback is on (see
-[Agent feedback](#agent-feedback)). There is no other per-request
-authentication and no transport encryption in this mode.
+[Agent feedback](#agent-feedback)), and `GET /usage`, which needs the same
+admin Bearer token whenever usage is on (see [Usage metrics](#usage-metrics)).
+There is no other per-request authentication and no transport encryption in
+this mode.
 
 Concretely, in `cmd/mlwh.go` the unauthenticated path wires the routes with
 `server.RegisterRoutes(authServer.Router(), nil)` and serves over a plain
@@ -27,12 +29,13 @@ reachable by any client that can open a TCP connection to the bind address.
 
 This is intentional. The server is an internal backend that serves MLWH data
 read-only: it mirrors a curated subset of MLWH for other `wa` services (and for
-an external MCP server in a separate repo) to consume. Its only write is the
+an external MCP server in a separate repo) to consume. Its only writes are the
 optional `POST /feedback`, which writes to a separate feedback database (see
-[Agent feedback](#agent-feedback)). The expectation is that it is deployed on a
-trusted, network-restricted host. The consequence, spelled out below, is that
-the network and the consuming layer in front of it constitute the entire
-access-control boundary.
+[Agent feedback](#agent-feedback)), and optional usage metrics, which go to a
+separate usage database (see [Usage metrics](#usage-metrics)). The
+expectation is that it is deployed on a trusted, network-restricted host. The
+consequence, spelled out below, is that the network and the consuming layer in
+front of it constitute the entire access-control boundary.
 
 ## Full-metadata exposure with no per-user authorisation
 
@@ -113,11 +116,14 @@ accepts agent feedback reports and stores them in a separate SQLite database.
 Without it, every feedback route answers 503 `feedback_disabled` and nothing is
 written.
 
-- `POST /feedback` is the only write endpoint. It registers alongside the
-  `Registry` endpoints, so in plain mode it is **unauthenticated**: any client
-  that can reach the bind address can submit reports. In secured mode it is
-  `POST /rest/v1/auth/feedback` and needs a gas JWT. A 65536-byte body cap and
-  per-field caps bound each report; there is no rate limit.
+- `POST /feedback` is the only write endpoint. When usage metrics are on,
+  the server also writes a usage row as a side effect of each counted
+  request (see [Usage metrics](#usage-metrics)). `POST /feedback` registers
+  alongside the `Registry` endpoints, so in plain mode it is
+  **unauthenticated**: any client that can reach the bind address can submit
+  reports. In secured mode it is `POST /rest/v1/auth/feedback` and needs a gas
+  JWT. A 65536-byte body cap and per-field caps bound each report; there is no
+  rate limit.
 - The admin routes `GET /feedback`, `PATCH /feedback/:id`, and
   `DELETE /feedback/:id` read, acknowledge, and delete reports. They stay at
   the root in both modes and require `Authorization: Bearer <token>`. The
@@ -129,6 +135,44 @@ written.
   never a forwarded header. For MCP traffic that is the MCP server host, not
   the end user's machine. No other reporter identity is stored, though the
   report text may quote the user's request.
+
+## Usage metrics
+
+When started with `--usage-db` (or `WA_MLWH_USAGE_PATH`), `wa mlwh serve`
+writes one row per counted request to a separate SQLite database, created at
+mode 0600. The server writes it for every counted request, from any caller,
+with no credential needed, so every reachable client adds rows. Without it,
+nothing is recorded and `GET /usage` answers 503 `usage_disabled`. Rows older
+than `--usage-retention-days` (default 365) are deleted.
+
+Each row stores:
+
+- the time, HTTP method, route template (or the URL path, up to 256 bytes,
+  when no route matched), status, and latency;
+- the caller category, parsed from the `User-Agent` product, plus the client
+  version and the full `User-Agent` up to 512 bytes;
+- the host part of the TCP peer address (socket IP), never a forwarded
+  header;
+- the caller-declared `X-WA-Client-ID`, `X-WA-Client-User`,
+  `X-WA-MCP-Transport`, `X-WA-MCP-Agent`, and `X-WA-MCP-Tool` headers, each
+  cut to its cap.
+
+`X-WA-Client-User` is a self-declared username, and the server does not
+check it. The `wa` CLI sends the local OS username, the web sends the
+logged-in username, and the MCP server sends its user's name over stdio only;
+the MCP HTTP transport sends no username. CLI and MCP stdio users cannot opt
+out. Rows therefore hold usernames and IPs, which is why the file is
+created at mode 0600. No request or response body is stored.
+
+The frontend gives each browser a `wa_usage_session` cookie: a random UUID,
+`HttpOnly`, `Secure`, `SameSite=Lax`, kept for a year. It is anonymous and is
+used only for usage counting. Next.js sends the first 32 hex characters of
+its SHA-256 as `X-WA-Client-ID`, never the cookie value.
+
+`GET /usage` returns the aggregates, including the top self-declared users
+and top client IDs or IPs. It stays at the root in both modes, is not in
+OpenAPI, and requires the same `Authorization: Bearer <token>` as the
+feedback admin routes. It is the only route that returns usage data.
 
 ## Known limitation: secured (gas) mode and the RemoteClient
 

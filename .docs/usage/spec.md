@@ -78,15 +78,15 @@ Every header is optional. Servers older than API 1.10.0 ignore them.
 User-Agent product token (text before the first `/` or space, exact,
 case-sensitive) -> category:
 
-| Product              | Category          | Sender                                                                                  |
-| -------------------- | ----------------- | --------------------------------------------------------------------------------------- |
-| `wa-cli`             | `cli`             | `wa mlwh info/latest/search/runs/export/studies/programmes/people`, `wa mlwhdiff diff`  |
-| `mlwh-mcp-server`    | `mcp`             | companion MCP server                                                                    |
-| `wa-web`             | `web`             | Next.js server (`mlwhJson`)                                                             |
-| `wa-results-server`  | `results_server`  | `wa results serve`, which also carries `wa results register` traffic                    |
-| `wa-mlwhdiff-server` | `mlwhdiff_server` | `wa mlwhdiff serve`                                                                     |
-| `wa-run-dev`         | not counted       | `run-dev.sh` readiness `curl`                                                           |
-| anything else, none  | `other`           | unidentified callers, including verify-wa `curl` and third-party `RemoteClient` users   |
+| Product              | Category          | Sender                                                                                 |
+| -------------------- | ----------------- | -------------------------------------------------------------------------------------- |
+| `wa-cli`             | `cli`             | `wa mlwh info/latest/search/runs/export/studies/programmes/people`, `wa mlwhdiff diff` |
+| `mlwh-mcp-server`    | `mcp`             | companion MCP server                                                                   |
+| `wa-web`             | `web`             | Next.js server (`mlwhJson`)                                                            |
+| `wa-results-server`  | `results_server`  | `wa results serve`, which also carries `wa results register` traffic                   |
+| `wa-mlwhdiff-server` | `mlwhdiff_server` | `wa mlwhdiff serve`                                                                    |
+| `wa-run-dev`         | not counted       | `run-dev.sh` readiness `curl`                                                          |
+| anything else, none  | `other`           | unidentified callers, including verify-wa `curl` and third-party `RemoteClient` users  |
 
 The version is the text after the first `/` up to the next space, or `""`.
 Internal servers send no `X-WA-Client-ID` or `X-WA-Client-User`; they do not
@@ -94,15 +94,15 @@ carry the originating end user.
 
 ### What is counted
 
-| Request                                                      | Counted | `route`                       | `path`                |
-| ------------------------------------------------------------ | ------- | ----------------------------- | --------------------- |
-| Registry endpoints (plain router or `AuthRouter()`)          | yes     | Registry `Path`, e.g. `/classify/:id` | `""`          |
-| `GET /openapi.json`                                          | yes     | `/openapi.json`               | `""`                  |
-| `POST /feedback`                                             | yes     | `/feedback`                   | `""`                  |
-| no matching route (gin NoRoute, 404, includes wrong method)  | yes     | `""`                          | URL path, no query    |
-| `GET /health`; admin `GET/PATCH/DELETE /feedback`; `GET /usage` | no   | -                             | -                     |
-| rejected by gas JWT middleware (401, secured mode)           | no      | -                             | -                     |
-| User-Agent product `wa-run-dev`                              | no      | -                             | -                     |
+| Request                                                         | Counted | `route`                               | `path`             |
+| --------------------------------------------------------------- | ------- | ------------------------------------- | ------------------ |
+| Registry endpoints (plain router or `AuthRouter()`)             | yes     | Registry `Path`, e.g. `/classify/:id` | `""`               |
+| `GET /openapi.json`                                             | yes     | `/openapi.json`                       | `""`               |
+| `POST /feedback`                                                | yes     | `/feedback`                           | `""`               |
+| no matching route (gin NoRoute, 404, includes wrong method)     | yes     | `""`                                  | URL path, no query |
+| `GET /health`; admin `GET/PATCH/DELETE /feedback`; `GET /usage` | no      | -                                     | -                  |
+| rejected by gas JWT middleware (401, secured mode)              | no      | -                                     | -                  |
+| User-Agent product `wa-run-dev`                                 | no      | -                                     | -                  |
 
 - `route` is the template passed at registration, never the actual path, so
   secured-mode rows carry `/classify/:id`, not `/rest/v1/auth/classify/:id`.
@@ -119,12 +119,12 @@ carry the originating end user.
 
 Query: `window` = `24h`, `7d`, `30d`, or `all`; absent or empty means `7d`.
 
-| Status | Code             | Message                                    |
-| ------ | ---------------- | ------------------------------------------ |
+| Status | Code             | Message                                     |
+| ------ | ---------------- | ------------------------------------------- |
 | 503    | `usage_disabled` | `usage tracking is disabled on this server` |
-| 401    | `unauthorized`   | `admin token required`                     |
-| 400    | `bad_request`    | `invalid window "<value>"`                 |
-| 500    | `internal_error` | `could not summarise usage`                |
+| 401    | `unauthorized`   | `admin token required`                      |
+| 400    | `bad_request`    | `invalid window "<value>"`                  |
+| 500    | `internal_error` | `could not summarise usage`                 |
 
 Check order: disabled, admin auth, window, store. The route is always
 registered and is not in OpenAPI or `Registry`. Add
@@ -337,20 +337,20 @@ func truncateUTF8(s string, max int) string
    `Duration()` of the four is `24h`, `168h`, `720h`, `0`.
 3. Given these User-Agents, then `ParseUsageUserAgent` returns:
 
-| User-Agent                        | category          | version     | counted |
-| --------------------------------- | ----------------- | ----------- | ------- |
-| `wa-cli/v0.11.0`                  | `cli`             | `v0.11.0`   | true    |
-| `mlwh-mcp-server/0.5.0`           | `mcp`             | `0.5.0`     | true    |
-| `wa-web`                          | `web`             | `""`        | true    |
-| `wa-results-server/v0.11.0`       | `results_server`  | `v0.11.0`   | true    |
-| `wa-mlwhdiff-server/v0.11.0 (x)`  | `mlwhdiff_server` | `v0.11.0`   | true    |
-| `curl/8.5.0`                      | `other`           | `8.5.0`     | true    |
-| `Go-http-client/1.1`              | `other`           | `1.1`       | true    |
-| `""`                              | `other`           | `""`        | true    |
-| `WA-CLI/1`                        | `other`           | `1`         | true    |
-| `wa-cli-extra/1`                  | `other`           | `1`         | true    |
-| `wa-run-dev`                      | -                 | -           | false   |
-| `wa-run-dev/1`                    | -                 | -           | false   |
+| User-Agent                       | category          | version   | counted |
+| -------------------------------- | ----------------- | --------- | ------- |
+| `wa-cli/v0.11.0`                 | `cli`             | `v0.11.0` | true    |
+| `mlwh-mcp-server/0.5.0`          | `mcp`             | `0.5.0`   | true    |
+| `wa-web`                         | `web`             | `""`      | true    |
+| `wa-results-server/v0.11.0`      | `results_server`  | `v0.11.0` | true    |
+| `wa-mlwhdiff-server/v0.11.0 (x)` | `mlwhdiff_server` | `v0.11.0` | true    |
+| `curl/8.5.0`                     | `other`           | `8.5.0`   | true    |
+| `Go-http-client/1.1`             | `other`           | `1.1`     | true    |
+| `""`                             | `other`           | `""`      | true    |
+| `WA-CLI/1`                       | `other`           | `1`       | true    |
+| `wa-cli-extra/1`                 | `other`           | `1`       | true    |
+| `wa-run-dev`                     | -                 | -         | false   |
+| `wa-run-dev/1`                   | -                 | -         | false   |
 
 4. Given a User-Agent `wa-cli/` plus 100 `x`, then version is 64 bytes.
 5. Given `truncateUTF8("abc", 5)`, then `"abc"`. Given 127 `a` followed by
@@ -553,17 +553,17 @@ Fixture F (tests 1-6, 13-15): store from `openUsageStore` with the clock
 fixed at `now` = 2026-10-10T12:00:00Z, retention 365. Rows
 (`-` is empty; default method GET, IP 10.0.0.1):
 
-| #   | ts         | category | route           | path     | client_id | username | IP       | user_agent                 | tool                | agent               | status | latency |
-| --- | ---------- | -------- | --------------- | -------- | --------- | -------- | -------- | -------------------------- | ------------------- | ------------------- | ------ | ------- |
-| 1   | now-1h     | cli      | `/studies`      | -        | run-a     | alice    | 10.0.0.1 | `wa-cli/v0.11.0`           | -                   | -                   | 200    | 10ms    |
-| 2   | now-2h     | cli      | `/studies`      | -        | run-a     | alice    | 10.0.0.1 | `wa-cli/v0.11.0`           | -                   | -                   | 200    | 30ms    |
-| 3   | now-3h     | cli      | `/classify/:id` | -        | run-b     | bob      | 10.0.0.1 | `wa-cli/v0.11.0`           | -                   | -                   | 404    | 5ms     |
-| 4   | now-4h     | mcp      | `/studies`      | -        | sess-1    | -        | 10.0.0.2 | `mlwh-mcp-server/0.5.0`    | `mlwh_list_studies` | `claude-code/2.1.0` | 200    | 20ms    |
-| 5   | now-5h     | other    | `/studies`      | -        | -         | -        | 10.0.0.9 | `curl/8.5.0`               | -                   | -                   | 500    | 40ms    |
-| 6   | now-6h     | other    | -               | `/bogus` | -         | -        | 10.0.0.9 | `curl/8.5.0`               | -                   | -                   | 404    | 1ms     |
-| 7   | now-30h    | cli      | `/studies`      | -        | run-a     | alice    | 10.0.0.1 | `wa-cli/v0.11.0`           | -                   | -                   | 200    | 10ms    |
-| 8   | now-60h    | web      | `/studies`      | -        | web-1     | alice    | 10.0.0.3 | `wa-web`                   | -                   | -                   | 200    | 50ms    |
-| 9   | now-228h   | cli      | `/studies`      | -        | run-c     | carol    | 10.0.0.1 | `wa-cli/v0.11.0`           | -                   | -                   | 200    | 10ms    |
+| #   | ts       | category | route           | path     | client_id | username | IP       | user_agent              | tool                | agent               | status | latency |
+| --- | -------- | -------- | --------------- | -------- | --------- | -------- | -------- | ----------------------- | ------------------- | ------------------- | ------ | ------- |
+| 1   | now-1h   | cli      | `/studies`      | -        | run-a     | alice    | 10.0.0.1 | `wa-cli/v0.11.0`        | -                   | -                   | 200    | 10ms    |
+| 2   | now-2h   | cli      | `/studies`      | -        | run-a     | alice    | 10.0.0.1 | `wa-cli/v0.11.0`        | -                   | -                   | 200    | 30ms    |
+| 3   | now-3h   | cli      | `/classify/:id` | -        | run-b     | bob      | 10.0.0.1 | `wa-cli/v0.11.0`        | -                   | -                   | 404    | 5ms     |
+| 4   | now-4h   | mcp      | `/studies`      | -        | sess-1    | -        | 10.0.0.2 | `mlwh-mcp-server/0.5.0` | `mlwh_list_studies` | `claude-code/2.1.0` | 200    | 20ms    |
+| 5   | now-5h   | other    | `/studies`      | -        | -         | -        | 10.0.0.9 | `curl/8.5.0`            | -                   | -                   | 500    | 40ms    |
+| 6   | now-6h   | other    | -               | `/bogus` | -         | -        | 10.0.0.9 | `curl/8.5.0`            | -                   | -                   | 404    | 1ms     |
+| 7   | now-30h  | cli      | `/studies`      | -        | run-a     | alice    | 10.0.0.1 | `wa-cli/v0.11.0`        | -                   | -                   | 200    | 10ms    |
+| 8   | now-60h  | web      | `/studies`      | -        | web-1     | alice    | 10.0.0.3 | `wa-web`                | -                   | -                   | 200    | 50ms    |
+| 9   | now-228h | cli      | `/studies`      | -        | run-c     | carol    | 10.0.0.1 | `wa-cli/v0.11.0`        | -                   | -                   | 200    | 10ms    |
 
 Row 7 is 2026-10-09T06:00:00Z, before the 24h `window_start`. Row 9 is
 2026-10-01T00:00:00Z.
@@ -938,7 +938,7 @@ invalid one. Range checking stays in `openMLWHServeUsage`.
 4. Given retention 0, then an error containing
    `--usage-retention-days must be at least 1`.
 5. Given `WA_MLWH_USAGE_PATH=<tmp>/u.sqlite`, then the `--usage-db` default
-   is that path. Given `WA_MLWH_USAGE_RETENTION_DAYS` `30`, ` 30 `, `""`,
+   is that path. Given `WA_MLWH_USAGE_RETENTION_DAYS` `30`, `30`, `""`,
    and unset, then `resolveMLWHServeUsageRetentionDays(365, false)` returns
    30, 30, 365, 365. Given env `30` and `(90, true)`, then 90. Given env
    `abc`, then `(365, false)` returns an error equal to
@@ -956,8 +956,7 @@ reset plus `WA_MLWH_USAGE_PATH=""`, real listener, poll `/health`, cancel).
 7. Given extra args `--usage-db <tmp>/u.sqlite` only, when `GET /studies`
    is sent with `User-Agent: wa-cli/x`, then `GET /usage?window=24h` with
    `Bearer <contents of <tmp>/.wa-mlwh-server.token>` returns 200 with
-   `totals.requests` 1 and the `cli` category requests 1; without a token,
-   401. After the command returns, reopening the DB shows one row.
+   `totals.requests` 1 and the `cli` category requests 1; without a token, 401. After the command returns, reopening the DB shows one row.
 8. Given `--usage-db` and `--feedback-db`, then the same token works for
    `GET /usage` and `GET /feedback`.
 9. Given no extra args, then `GET /usage` is 503 `usage_disabled` and
@@ -1186,7 +1185,12 @@ fails fast.
 export const usageWindowSchema = z.enum(["24h", "7d", "30d", "all"]);
 export type UsageWindow = z.infer<typeof usageWindowSchema>;
 export const usageCategorySchema = z.enum([
-    "cli", "mcp", "web", "results_server", "mlwhdiff_server", "other",
+    "cli",
+    "mcp",
+    "web",
+    "results_server",
+    "mlwhdiff_server",
+    "other",
 ]);
 export type UsageCategory = z.infer<typeof usageCategorySchema>;
 const countMap = z.record(z.string(), z.number().int().nonnegative());
@@ -1199,43 +1203,85 @@ export const usageSummarySchema = z.object({
     retention_days: z.number().int().positive(),
     dropped_events: count,
     totals: z.object({
-        requests: count, errors: count, error_rate: z.number(),
-        sessions: count, ip_clients: count, users: count,
+        requests: count,
+        errors: count,
+        error_rate: z.number(),
+        sessions: count,
+        ip_clients: count,
+        users: count,
     }),
-    categories: z.array(z.object({
-        category: usageCategorySchema,
-        requests: count, errors: count, error_rate: z.number(),
-        sessions: count, ip_clients: count, users: count,
-        requests_per_session_median: count,
-        requests_per_session_max: count,
-    })),
-    endpoints: z.array(z.object({
-        method: z.string(), route: z.string(),
-        requests: count, errors: count, error_rate: z.number(),
-        p50_ms: z.number(), p95_ms: z.number(), by_category: countMap,
-    })),
+    categories: z.array(
+        z.object({
+            category: usageCategorySchema,
+            requests: count,
+            errors: count,
+            error_rate: z.number(),
+            sessions: count,
+            ip_clients: count,
+            users: count,
+            requests_per_session_median: count,
+            requests_per_session_max: count,
+        }),
+    ),
+    endpoints: z.array(
+        z.object({
+            method: z.string(),
+            route: z.string(),
+            requests: count,
+            errors: count,
+            error_rate: z.number(),
+            p50_ms: z.number(),
+            p95_ms: z.number(),
+            by_category: countMap,
+        }),
+    ),
     mcp_tools: z.array(z.object({ value: z.string(), requests: count })),
     mcp_agents: z.array(z.object({ value: z.string(), requests: count })),
-    other_user_agents: z.array(z.object({ value: z.string(), requests: count })),
-    unmatched: z.array(z.object({
-        method: z.string(), path: z.string(), requests: count,
-        by_category: countMap, by_tool: countMap, by_agent: countMap,
-    })),
-    users: z.array(z.object({
-        name: z.string(), by_ip: z.boolean(), requests: count,
-        by_category: countMap,
-    })),
-    clients: z.array(z.object({
-        name: z.string(), by_ip: z.boolean(), requests: count,
-        by_category: countMap,
-    })),
-    days: z.array(z.object({
-        date: z.string(), requests: count, by_category: countMap,
-    })),
-    series: z.array(z.object({
-        start: z.string(), end: z.string(), requests: count,
-        by_category: countMap, by_endpoint: countMap,
-    })),
+    other_user_agents: z.array(
+        z.object({ value: z.string(), requests: count }),
+    ),
+    unmatched: z.array(
+        z.object({
+            method: z.string(),
+            path: z.string(),
+            requests: count,
+            by_category: countMap,
+            by_tool: countMap,
+            by_agent: countMap,
+        }),
+    ),
+    users: z.array(
+        z.object({
+            name: z.string(),
+            by_ip: z.boolean(),
+            requests: count,
+            by_category: countMap,
+        }),
+    ),
+    clients: z.array(
+        z.object({
+            name: z.string(),
+            by_ip: z.boolean(),
+            requests: count,
+            by_category: countMap,
+        }),
+    ),
+    days: z.array(
+        z.object({
+            date: z.string(),
+            requests: count,
+            by_category: countMap,
+        }),
+    ),
+    series: z.array(
+        z.object({
+            start: z.string(),
+            end: z.string(),
+            requests: count,
+            by_category: countMap,
+            by_endpoint: countMap,
+        }),
+    ),
 });
 export type UsageSummary = z.infer<typeof usageSummarySchema>;
 ```

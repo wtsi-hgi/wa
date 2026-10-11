@@ -29,5 +29,5 @@ page in the `SKILL.md` description, and a `scripts/doctor.sh` check that
 unauthenticated `GET /usage` is 401. Tests go in `mlwh/docs_test.go`.
 Depends on phases 3 and 4. Covering all 3 acceptance tests from F1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
