@@ -593,6 +593,25 @@ func TestUsageSummarySemantics(t *testing.T) {
 		})
 	})
 
+	convey.Convey("Given other rows with and without a User-Agent and a cli row with none, "+
+		"then other_user_agents counts the empty User-Agent of other rows only", t, func() {
+		event := func(category UsageCategory, userAgent string) UsageEvent {
+			return UsageEvent{
+				Time: usageSummaryTestNow.Add(-time.Hour), Category: category, Method: "GET",
+				Route: usageSummaryTestRouteStudies, UserAgent: userAgent, Status: 200,
+			}
+		}
+
+		summary := summariseEventsForTest(t, []UsageEvent{
+			event(UsageCategoryOther, "curl/8.5.0"), event(UsageCategoryOther, "curl/8.5.0"),
+			event(UsageCategoryOther, ""), event(UsageCategoryCLI, ""),
+		}, UsageWindow24h)
+
+		convey.So(summary.OtherUserAgents, convey.ShouldResemble, []UsageCount{
+			{Value: "curl/8.5.0", Requests: 2}, {Value: "", Requests: 1},
+		})
+	})
+
 	convey.Convey("Given GET and POST rows on one route, then each method has its own latency percentiles", t, func() {
 		get, post := latencyUsageEventForTest(10), latencyUsageEventForTest(30)
 		post.Method = "POST"
