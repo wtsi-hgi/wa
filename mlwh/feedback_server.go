@@ -48,10 +48,10 @@ const (
 	feedbackReceivedLogMessage   = "mlwh feedback received"
 	feedbackPath                 = "/feedback"
 	feedbackBodyTooLargeTemplate = "request body exceeds %d bytes"
-	feedbackAdminTokenMessage    = "admin token required"
+	adminTokenMessage            = "admin token required"
 	feedbackAdminItemPath        = "/feedback/:id"
 	feedbackListFailedMessage    = "could not list feedback"
-	feedbackBearerPrefix         = "Bearer "
+	bearerPrefix                 = "Bearer "
 	feedbackDefaultListLimit     = 50
 	feedbackMaxListLimit         = 500
 	feedbackAcknowledgedParam    = "acknowledged"
@@ -159,10 +159,10 @@ func decodeSingleJSONValue(body io.Reader, target any) error {
 	return nil
 }
 
-// feedbackRemoteHost returns the host part of the connection's remote
-// address, or the raw value when it cannot be split. Forwarded headers are
-// never consulted.
-func feedbackRemoteHost(remoteAddr string) string {
+// remoteHost returns the host part of the connection's remote address, or the
+// raw value when it cannot be split. Forwarded headers are never consulted.
+// Feedback submission and usage recording both use it.
+func remoteHost(remoteAddr string) string {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
 		return remoteAddr
@@ -171,11 +171,11 @@ func feedbackRemoteHost(remoteAddr string) string {
 	return host
 }
 
-// feedbackAdminTokenMatches reports whether authorization is "Bearer " plus a
-// value equal to token, comparing whitespace-trimmed bytes in constant time.
-// A blank token never matches.
-func feedbackAdminTokenMatches(authorization string, token []byte) bool {
-	presented, ok := strings.CutPrefix(authorization, feedbackBearerPrefix)
+// adminTokenMatches reports whether authorization is "Bearer " plus a value
+// equal to token, comparing whitespace-trimmed bytes in constant time. A blank
+// token never matches. The feedback and usage admin routes both use it.
+func adminTokenMatches(authorization string, token []byte) bool {
+	presented, ok := strings.CutPrefix(authorization, bearerPrefix)
 	if !ok {
 		return false
 	}
@@ -263,8 +263,8 @@ func (s *Server) requireFeedbackAdmin(c *gin.Context) {
 		return
 	}
 
-	if !feedbackAdminTokenMatches(c.GetHeader("Authorization"), s.feedbackAdminToken) {
-		writeErrorEnvelope(c, http.StatusUnauthorized, httpErrorCodeUnauthorized, feedbackAdminTokenMessage)
+	if !adminTokenMatches(c.GetHeader("Authorization"), s.feedbackAdminToken) {
+		writeErrorEnvelope(c, http.StatusUnauthorized, httpErrorCodeUnauthorized, adminTokenMessage)
 		c.Abort()
 	}
 }
@@ -361,7 +361,7 @@ func (s *Server) handleFeedbackSubmit(c *gin.Context) {
 		return
 	}
 
-	addr := feedbackRemoteHost(c.Request.RemoteAddr)
+	addr := remoteHost(c.Request.RemoteAddr)
 
 	report, err := s.feedback.Add(c.Request.Context(), submission, addr)
 	if err != nil {

@@ -120,7 +120,7 @@ func openUsageStore(ctx context.Context, path string, retentionDays, queueSize i
 		return nil, fmt.Errorf("%w: got %d", errUsageRetention, retentionDays)
 	}
 
-	if err := createFeedbackStoreFile(path); err != nil {
+	if err := createStoreFile(path); err != nil {
 		return nil, err
 	}
 

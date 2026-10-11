@@ -76,7 +76,7 @@ func (s *Server) usageMiddleware(route string) gin.HandlerFunc {
 			Route:         route,
 			ClientID:      truncateUTF8(c.GetHeader(HeaderClientID), UsageMaxClientIDBytes),
 			Username:      truncateUTF8(c.GetHeader(HeaderClientUser), UsageMaxUsernameBytes),
-			RemoteAddr:    feedbackRemoteHost(c.Request.RemoteAddr),
+			RemoteAddr:    remoteHost(c.Request.RemoteAddr),
 			ClientVersion: version,
 			UserAgent:     truncateUTF8(userAgent, UsageMaxUserAgentBytes),
 			MCPTransport:  truncateUTF8(c.GetHeader(HeaderMCPTransport), UsageMaxMCPTransportBytes),
@@ -110,8 +110,8 @@ func (s *Server) requireUsageAdmin(c *gin.Context) {
 		return
 	}
 
-	if !feedbackAdminTokenMatches(c.GetHeader("Authorization"), s.usageAdminToken) {
-		writeErrorEnvelope(c, http.StatusUnauthorized, httpErrorCodeUnauthorized, feedbackAdminTokenMessage)
+	if !adminTokenMatches(c.GetHeader("Authorization"), s.usageAdminToken) {
+		writeErrorEnvelope(c, http.StatusUnauthorized, httpErrorCodeUnauthorized, adminTokenMessage)
 		c.Abort()
 	}
 }
