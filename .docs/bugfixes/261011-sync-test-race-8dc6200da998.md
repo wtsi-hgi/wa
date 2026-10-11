@@ -52,3 +52,12 @@
       and 8. With the barrier, removing the `waits` guard fails 10/10 at
       `-count 1` and removing the writer guard fails 14/20 (the `fmt`
       printer pool sometimes orders the two writes for the race detector).
+
+- [ ] `emitSyncReport` (`mlwh/sync.go`, around line 2633, called around line 2462) writes to `syncReportWriter` from each table's sync goroutine, but
+      `SetSyncReportWriter` (`mlwh/cache.go`, around line 268) doesn't say the
+      writer must be safe for concurrent use. Production passes
+      `cmd.OutOrStdout()` (normally `os.Stdout`, which is safe), but a caller
+      passing a `bytes.Buffer` would race. Same concurrent-writer flaw as the
+      item above, so it shares this branch.
+    - Source: bugfix of the item above, reported as incidental.
+    - Evidence: code reading; no test hits it today.
