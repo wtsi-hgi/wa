@@ -9,7 +9,7 @@
 
 ## Items
 
-- [ ] `sqliteWritableDSN` in `mlwh/cache.go` builds
+- [x] `sqliteWritableDSN` in `mlwh/cache.go` builds
   `file:<path>?mode=rwc&...` without URI-escaping the path, so a `#` or
   `?` in the file name changes which file SQLite opens. The pre-created
   0600 file is left empty while the real database and its `-wal`/`-shm`
@@ -59,3 +59,20 @@
     mlwhdiff "d?1.db": files=[d] err=stat <tmp>/d?1.db: no such file or directory
     FAIL	github.com/wtsi-hgi/wa/mlwhdiff
     ```
+  - Fixed in `d6201ce` and `f53eae8`. New `internal/sqliteuri.File` escapes
+    the path with `url.URL.EscapedPath` (so `?`, `#` and `%` are literal)
+    and adds an empty authority to paths starting with `//`.
+    `sqliteWritableDSN`, `sqliteLockDSN`, `sqliteReadOnlyDSN`,
+    `resultsSQLiteDSN` and `mlwhdiff.OpenStore` (via `storeDSN`, `mode=rwc`)
+    use it. `:memory:` and `file:` inputs to the results DB and mlwhdiff
+    store pass through as before.
+  - Files: `internal/sqliteuri/sqliteuri.go`,
+    `internal/sqliteuri/sqliteuri_test.go`, `mlwh/cache.go`,
+    `mlwh/cache_test.go`, `mlwh/feedback_store_test.go`, `cmd/results.go`,
+    `cmd/results_serve_test.go`, `mlwhdiff/store.go`,
+    `mlwhdiff/store_test.go`.
+  - Regression tests open each store at `#`, `?` and `%23` names and assert
+    the data, and only the expected `-wal`/`-shm`/`-journal`/`.sync-lock`
+    siblings, land at that exact path; the feedback DB stays 0600. Reviewer
+    PASS: red commands pass, 7 revert mutants all caught,
+    `golangci-lint run` 0 issues, `go test -tags netgo --count 1 ./...` ok.
