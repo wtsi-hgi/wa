@@ -1230,6 +1230,53 @@ func TestClientReadOnlyHandleRejectsWrites(t *testing.T) {
 	})
 }
 
+func TestOpenCacheSQLitePathWithURISpecialCharacters(t *testing.T) {
+	for _, name := range []string{"c#1.sqlite", "c?1.sqlite", "c%231.sqlite"} {
+		convey.Convey("Given a SQLite cache path named "+name+", when opened, written, read and sync-locked", t, func() {
+			dir := t.TempDir()
+			cachePath := filepath.Join(dir, name)
+
+			cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(err, convey.ShouldBeNil)
+			convey.Reset(func() { _ = cache.Close() })
+
+			_, err = cache.DB().Exec(`CREATE TABLE probe (a INTEGER); INSERT INTO probe VALUES (1)`)
+			convey.So(err, convey.ShouldBeNil)
+
+			var count int
+			convey.So(cacheReadDB(cache).QueryRow(`SELECT COUNT(*) FROM probe`).Scan(&count), convey.ShouldBeNil)
+
+			sqlite, ok := cache.(*sqliteCache)
+			convey.So(ok, convey.ShouldBeTrue)
+
+			release, err := sqlite.acquireSyncLock(context.Background())
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(release(), convey.ShouldBeNil)
+
+			convey.Convey("then the read handle sees the write and every file lives at that exact path", func() {
+				convey.So(count, convey.ShouldEqual, 1)
+
+				info, statErr := os.Stat(cachePath)
+				convey.So(statErr, convey.ShouldBeNil)
+				convey.So(info.Size(), convey.ShouldBeGreaterThan, 0)
+
+				_, statErr = os.Stat(cachePath + ".sync-lock")
+				convey.So(statErr, convey.ShouldBeNil)
+
+				entries, readErr := os.ReadDir(dir)
+				convey.So(readErr, convey.ShouldBeNil)
+
+				for _, entry := range entries {
+					convey.So(entry.Name(), convey.ShouldBeIn, []string{
+						name, name + "-wal", name + "-shm",
+						name + ".sync-lock", name + ".sync-lock-wal", name + ".sync-lock-shm",
+					})
+				}
+			})
+		})
+	}
+}
+
 func cacheReadDB(cache Cache) *sql.DB {
 	reader, ok := cache.(interface{ ReadDB() *sql.DB })
 	if !ok {

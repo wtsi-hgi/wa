@@ -52,6 +52,7 @@ import (
 	"github.com/spf13/cobra"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/wa/internal/authldap"
+	"github.com/wtsi-hgi/wa/internal/sqliteuri"
 	"github.com/wtsi-hgi/wa/mlwh"
 	"github.com/wtsi-hgi/wa/results"
 
@@ -1953,7 +1954,7 @@ func resultsSQLiteDSN(dsn string) string {
 		return trimmed
 	}
 
-	return fmt.Sprintf("file:%s?mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", filepath.ToSlash(trimmed))
+	return sqliteuri.File(trimmed, "mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 }
 
 func resultsDBDriverName(dsn string) string {

@@ -28,9 +28,12 @@ package mlwhdiff
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/wtsi-hgi/wa/internal/sqliteuri"
 )
 
 const createWatermarksTableSQL = `
@@ -45,7 +48,7 @@ CREATE TABLE IF NOT EXISTS watermarks (
 
 // OpenStore opens a SQLite store and creates the schema on demand.
 func OpenStore(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", storeDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrStoreOpen, err)
 	}
@@ -71,6 +74,16 @@ func OpenStore(path string) (*Store, error) {
 	}
 
 	return &Store{db: db}, nil
+}
+
+// storeDSN turns a file path into a SQLite URI, because the driver cuts a
+// plain path at its first "?". :memory: and file: URIs pass through.
+func storeDSN(path string) string {
+	if path == "" || path == ":memory:" || strings.HasPrefix(path, "file:") {
+		return path
+	}
+
+	return sqliteuri.File(path, "mode=rwc")
 }
 
 // Close releases the underlying database handle.
