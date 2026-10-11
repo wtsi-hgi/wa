@@ -714,6 +714,92 @@ describe("E4 usage admin view", () => {
         );
     });
 
+    it("lets long caller-supplied values break anywhere, but not routes", async () => {
+        const long = (prefix: string, n: number) =>
+            prefix + "x".repeat(n - prefix.length);
+        const path = long("/", 256);
+        const userAgent = long("other/", 512);
+        const tool = long("tool_", 128);
+        const agent = long("agent/", 256);
+        const user = long("user", 128);
+        const client = long("run-", 128);
+
+        await renderView(
+            a3Summary({
+                mcp_tools: [{ value: tool, requests: 1 }],
+                mcp_agents: [{ value: agent, requests: 1 }],
+                other_user_agents: [{ value: userAgent, requests: 1 }],
+                unmatched: [
+                    {
+                        method: "GET",
+                        path,
+                        requests: 1,
+                        by_category: { mcp: 1 },
+                        by_tool: { [tool]: 1 },
+                        by_agent: { [agent]: 1 },
+                    },
+                ],
+                users: [
+                    {
+                        name: user,
+                        by_ip: false,
+                        requests: 1,
+                        by_category: { cli: 1 },
+                    },
+                ],
+                clients: [
+                    {
+                        name: client,
+                        by_ip: false,
+                        requests: 1,
+                        by_category: { cli: 1 },
+                    },
+                ],
+            }),
+            "24h",
+        );
+
+        // jsdom has no layout, so this checks the overflow-wrap contract
+        // that lets a cell's min-content width shrink below a long unbroken
+        // value: the text's nearest wrap class must be wrap-anywhere.
+        const wrapOf = (region: string, text: string) => {
+            let element: HTMLElement | null = within(section(region)).getByText(
+                text,
+            );
+
+            while (element) {
+                const wrap = Array.from(element.classList).find((name) =>
+                    /^(wrap-|break-words$|break-all$)/.test(name),
+                );
+
+                if (wrap) {
+                    return wrap;
+                }
+
+                element = element.parentElement;
+            }
+
+            return undefined;
+        };
+
+        for (const [region, text] of [
+            ["MCP tools", tool],
+            ["MCP agents", agent],
+            ["Other API user agents", userAgent],
+            ["Unmatched paths", path],
+            ["Unmatched paths", `${tool} 1`],
+            ["Unmatched paths", `${agent} 1`],
+            ["Top users (self-declared)", user],
+            ["Top clients", client],
+        ]) {
+            expect(wrapOf(region, text), `${region}: ${text}`).toBe(
+                "wrap-anywhere",
+            );
+        }
+
+        expect(wrapOf("Endpoints", "GET /studies")).toBe("break-words");
+    });
+
     it("shows the note on every ok render", async () => {
         for (const window of ["24h", "7d", "30d", "all"] as const) {
             await renderView(a3Summary({ window }), window);

@@ -160,13 +160,18 @@ type Column<Row> = {
     header: string;
     numeric?: boolean;
     render: (row: Row) => ReactNode;
+    // wrapAnywhere marks a column of caller-supplied values (paths, user
+    // agents, names) that may be hundreds of bytes without a space.
+    wrapAnywhere?: boolean;
 };
 
 // UsageTable renders rows as a horizontally scrolling table, or "None." when
 // there are no rows. The column at rowHeader (the first by default) is the
 // row header. Text columns keep a minimum width and break only between words,
 // so on narrow screens the table scrolls rather than splitting labels such as
-// routes into tall rows.
+// routes into tall rows. wrapAnywhere columns break anywhere instead:
+// break-words does not lower a table cell's min-content width, so one long
+// unbroken value would otherwise widen the table far past the screen.
 function UsageTable<Row>({
     columns,
     rowHeader = 0,
@@ -207,7 +212,12 @@ function UsageTable<Row>({
                             {columns.map((column, columnIndex) =>
                                 columnIndex === rowHeader ? (
                                     <th
-                                        className="min-w-40 px-4 py-2 text-left align-middle font-medium break-words"
+                                        className={cn(
+                                            "min-w-40 px-4 py-2 text-left align-middle font-medium",
+                                            column.wrapAnywhere
+                                                ? "wrap-anywhere"
+                                                : "break-words",
+                                        )}
                                         key={column.header}
                                         scope="row"
                                     >
@@ -219,7 +229,9 @@ function UsageTable<Row>({
                                             "py-2",
                                             column.numeric
                                                 ? "text-right whitespace-nowrap tabular-nums"
-                                                : "min-w-40 break-words",
+                                                : column.wrapAnywhere
+                                                  ? "min-w-40 wrap-anywhere"
+                                                  : "min-w-40 break-words",
                                         )}
                                         key={column.header}
                                     >
@@ -355,6 +367,7 @@ function valueCountSection(id: string, title: string, rows: ValueCount[]) {
                     {
                         header: "Value",
                         render: (row) => row.value || "(none)",
+                        wrapAnywhere: true,
                     },
                     {
                         header: "Requests",
@@ -559,10 +572,9 @@ export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
                         {
                             header: "Path",
                             render: (row) => (
-                                <span className="font-mono break-words">
-                                    {row.path}
-                                </span>
+                                <span className="font-mono">{row.path}</span>
                             ),
+                            wrapAnywhere: true,
                         },
                         {
                             header: "Requests",
@@ -576,10 +588,12 @@ export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
                         {
                             header: "MCP tools",
                             render: (row) => formatCounts(row.by_tool),
+                            wrapAnywhere: true,
                         },
                         {
                             header: "MCP agents",
                             render: (row) => formatCounts(row.by_agent),
+                            wrapAnywhere: true,
                         },
                     ]}
                     rowHeader={1}
@@ -591,7 +605,11 @@ export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
             <UsageSection id="users" title="Top users (self-declared)">
                 <UsageTable<UsageSummary["users"][number]>
                     columns={[
-                        { header: "User", render: (row) => row.name },
+                        {
+                            header: "User",
+                            render: (row) => row.name,
+                            wrapAnywhere: true,
+                        },
                         {
                             header: "Requests",
                             numeric: true,
@@ -614,6 +632,7 @@ export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
                             header: "Client",
                             render: (row) =>
                                 row.by_ip ? `${row.name} (by IP)` : row.name,
+                            wrapAnywhere: true,
                         },
                         {
                             header: "Requests",
