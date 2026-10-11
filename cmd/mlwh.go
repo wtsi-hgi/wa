@@ -58,6 +58,10 @@ var mlwhServeNewAuthServer = func(logWriter io.Writer) mlwhServeAuthServer {
 	return &mlwhServeGasAuthServer{Server: gas.New(logWriter)}
 }
 
+// serveHTTPReadHeaderTimeout bounds how long the plain-HTTP serve commands
+// wait for a client to finish sending request headers.
+var serveHTTPReadHeaderTimeout = 30 * time.Second
+
 func mlwhServeRejectPasswordAuth(_, _ string) (bool, string) {
 	return false, ""
 }
@@ -133,12 +137,7 @@ func (s *mlwhServeGasAuthServer) StartHTTP(ctx context.Context, addr string) err
 	}
 	defer func() { _ = listener.Close() }()
 
-	httpServer := &http.Server{
-		Handler:           s.Router(),
-		ReadHeaderTimeout: 30 * time.Second,
-	}
-
-	return serveHTTPUntilCancelled(ctx, httpServer, listener)
+	return serveHTTPUntilCancelled(ctx, newServeHTTPServer(s.Router()), listener)
 }
 
 // serveHTTPUntilCancelled serves httpServer on listener until ctx is cancelled,
@@ -163,6 +162,12 @@ func serveHTTPUntilCancelled(ctx context.Context, httpServer *http.Server, liste
 	}
 
 	return err
+}
+
+// newServeHTTPServer returns the plain-HTTP server the serve commands share,
+// with a read-header timeout so slow clients cannot hold connections open.
+func newServeHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{Handler: handler, ReadHeaderTimeout: serveHTTPReadHeaderTimeout}
 }
 
 type mlwhServeConfig struct {

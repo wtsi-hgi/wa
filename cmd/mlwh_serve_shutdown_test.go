@@ -27,7 +27,9 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -248,4 +250,146 @@ func TestMLWHDiffServeWaitsForInFlightRequests(t *testing.T) {
 		convey.So(response.err, convey.ShouldBeNil)
 		convey.So(response.status, convey.ShouldEqual, http.StatusOK)
 	})
+}
+
+func TestMLWHServeStartHTTPClosesSlowHeaderConnections(t *testing.T) {
+	shortenServeHTTPReadHeaderTimeoutForTest(t)
+
+	convey.Convey("Given plain mlwh serve, when a client never finishes its request header, then the server closes the connection after the read-header timeout", t, func() {
+		authServer := &mlwhServeGasAuthServer{Server: gas.New(io.Discard)}
+		addr := freeLocalAddrForTest(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		served := make(chan error, 1)
+		go func() { served <- authServer.StartHTTP(ctx, addr) }()
+
+		closed, err := slowHeaderConnectionClosedForTest(addr)
+
+		cancel()
+
+		var serveErr error
+		returned := false
+		select {
+		case serveErr = <-served:
+			returned = true
+		case <-time.After(5 * time.Second):
+		}
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(closed, convey.ShouldBeTrue)
+		convey.So(returned, convey.ShouldBeTrue)
+		convey.So(serveErr, convey.ShouldBeNil)
+	})
+}
+
+func TestMLWHDiffServeClosesSlowHeaderConnections(t *testing.T) {
+	setMLWHDiffMLWHEnvForTest(t)
+	shortenServeHTTPReadHeaderTimeoutForTest(t)
+
+	originalListen := listenFunc
+	defer func() { listenFunc = originalListen }()
+	originalOpen := openMLWHDiffClientFunc
+	defer func() { openMLWHDiffClientFunc = originalOpen }()
+
+	convey.Convey("Given mlwhdiff serve, when a client never finishes its request header, then the server closes the connection after the read-header timeout", t, func() {
+		openMLWHDiffClientFunc = func(_ context.Context, _ mlwhdiffMLWHConfig) (mlwhdiffMLWHHandle, error) {
+			return &mlwhdiffTestClient{provider: &mlwhdiffMockProvider{}}, nil
+		}
+
+		addrCh := make(chan string, 1)
+		listenFunc = resultsServeListenFuncForTest(addrCh)
+
+		cmd := NewRootCommand()
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs([]string{"mlwhdiff", "serve", "--port", "0", "--db", t.TempDir() + "/mlwhdiff.db"})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		executed := make(chan error, 1)
+		go func() { executed <- cmd.ExecuteContext(ctx) }()
+
+		var addr string
+		select {
+		case addr = <-addrCh:
+		case <-time.After(5 * time.Second):
+		}
+		convey.So(addr, convey.ShouldNotBeEmpty)
+
+		closed, err := slowHeaderConnectionClosedForTest(addr)
+
+		cancel()
+
+		var executeErr error
+		returned := false
+		select {
+		case executeErr = <-executed:
+			returned = true
+		case <-time.After(5 * time.Second):
+		}
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(closed, convey.ShouldBeTrue)
+		convey.So(returned, convey.ShouldBeTrue)
+		convey.So(executeErr, convey.ShouldBeNil)
+	})
+}
+
+// shortenServeHTTPReadHeaderTimeoutForTest makes the serve commands' read-header
+// timeout short enough to observe in a test, restoring it afterwards.
+func shortenServeHTTPReadHeaderTimeoutForTest(t *testing.T) {
+	t.Helper()
+
+	original := serveHTTPReadHeaderTimeout
+	serveHTTPReadHeaderTimeout = 150 * time.Millisecond
+
+	t.Cleanup(func() { serveHTTPReadHeaderTimeout = original })
+}
+
+// slowHeaderConnectionClosedForTest connects to addr, sends a request header
+// without its terminating blank line, and reports whether the server closes
+// the connection within 2 seconds.
+func slowHeaderConnectionClosedForTest(addr string) (bool, error) {
+	conn, err := dialWithRetryForTest(addr)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err = io.WriteString(conn, "GET / HTTP/1.1\r\nHost: x\r\n"); err != nil {
+		return false, err
+	}
+
+	if err = conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return false, err
+	}
+
+	_, err = io.ReadAll(conn)
+
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func dialWithRetryForTest(addr string) (net.Conn, error) {
+	var err error
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var conn net.Conn
+
+		conn, err = net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			return conn, nil
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return nil, err
 }

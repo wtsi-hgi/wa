@@ -93,10 +93,35 @@
       across the cancel and asserts that the command returns, and the
       provider closes, only after the handler finishes.
 
-- [ ] The `http.Server` in `wa mlwhdiff serve` (`cmd/mlwhdiff.go`, around
+- [x] The `http.Server` in `wa mlwhdiff serve` (`cmd/mlwhdiff.go`, around
       line 254) sets no `ReadHeaderTimeout`, while `wa mlwh serve`'s
       `StartHTTP` uses 30 s, so slow-header clients can hold connections open.
       Same server setup as the item above, so it shares this branch.
     - Source: bugfix of the item above, reported as incidental.
     - Evidence: code inspection; `.golangci.yml` does not enable gosec, so
       the linter does not flag it.
+    - Red command (exit 1, deterministic over 3 runs):
+      `CGO_ENABLED=1 go test -tags netgo --count 1 -run 'TestMLWHDiffServeClosesSlowHeaderConnections|TestMLWHServeStartHTTPClosesSlowHeaderConnections' ./cmd/`
+
+        ```text
+        * cmd/mlwh_serve_shutdown_test.go
+        Line 334:
+        Expected: true
+        Actual:   false
+        --- FAIL: TestMLWHDiffServeClosesSlowHeaderConnections (2.01s)
+        ```
+
+        Line 334 asserts the server closed a connection that sent an
+        incomplete request header. With the shared read-header timeout
+        shortened to 150 ms for the test, `mlwhdiff serve` still held the
+        connection open after 2 s. The `mlwh serve` check passes.
+
+    - Files: `cmd/mlwh.go`, `cmd/mlwhdiff.go`,
+      `cmd/mlwh_serve_shutdown_test.go`.
+    - Approach: the new helper `newServeHTTPServer` in `cmd/mlwh.go` builds
+      the plain-HTTP server for both `mlwh serve` and `mlwhdiff serve`. It
+      sets `ReadHeaderTimeout` from `serveHTTPReadHeaderTimeout`, which
+      defaults to the 30 s that `mlwh serve` already used, so `mlwh serve`
+      behaviour is unchanged. The regression tests send an incomplete
+      request header to each command's server, with the timeout shortened
+      to 150 ms, and assert that the server closes the connection.

@@ -33,7 +33,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
@@ -263,7 +262,7 @@ func newMLWHDiffServeCommand(options *mlwhdiffOptions) *cobra.Command {
 			}
 			defer func() { _ = listener.Close() }()
 
-			httpServer := &http.Server{Handler: mlwhdiff.NewServer(provider, store).Handler()}
+			httpServer := newServeHTTPServer(mlwhdiff.NewServer(provider, store).Handler())
 
 			return serveHTTPUntilCancelled(commandContext(cmd), httpServer, listener)
 		},
