@@ -57,7 +57,7 @@ function buildResultSet(pipelineName: string, index: number): ResultSet {
     };
 }
 
-async function click(target: Element | null): Promise<void> {
+async function click(target: Element | null | undefined): Promise<void> {
     if (!(target instanceof HTMLElement)) {
         throw new Error("Expected clickable HTMLElement");
     }

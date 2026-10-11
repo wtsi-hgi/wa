@@ -216,8 +216,7 @@ async function collectLayoutMetric(page: Page): Promise<LayoutMetric> {
             }
 
             const scroller = Array.from(latestBox.querySelectorAll("div")).find(
-                (candidate): candidate is HTMLElement =>
-                    candidate instanceof HTMLElement &&
+                (candidate) =>
                     candidate.querySelector("table") instanceof
                         HTMLTableElement &&
                     window.getComputedStyle(candidate).overflowX === "auto",
