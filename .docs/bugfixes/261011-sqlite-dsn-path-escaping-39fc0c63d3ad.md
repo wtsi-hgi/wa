@@ -23,3 +23,27 @@
     the data went to `<tmp>/u`, `u-wal` and `u-shm` with mode 0644.
   - Impact: databases holding usernames, IPs and agent feedback can become
     world-readable, and data lands at an unexpected path.
+  - Sibling builders with the same flaw: `sqliteLockDSN` and
+    `sqliteReadOnlyDSN` in `mlwh/cache.go`, and `resultsSQLiteDSN` in
+    `cmd/results.go` (the `wa results` database). A `%23` in a name is
+    also percent-decoded, so `f%231.sqlite` opens `f#1.sqlite`.
+  - Red command (throwaway harnesses, not committed, that open the
+    feedback store, MLWH cache and results DB at `f#1.sqlite`, `f?1.sqlite`
+    and `f%231.sqlite` in a temp dir and assert the data lands in that
+    exact file):
+    `CGO_ENABLED=1 go test -tags netgo --count 1 -run 'TestRed.*DSNPathEscaping' ./mlwh/ ./cmd/`
+    exited 1:
+
+    ```text
+    feedback "f#1.sqlite": files=[f f#1.sqlite] size=0 err=<nil>
+    cache "f#1.sqlite": files=[f] size=-1 err=stat <tmp>/f#1.sqlite: no such file or directory
+    feedback "f?1.sqlite": files=[f f?1.sqlite] size=0 err=<nil>
+    cache "f?1.sqlite": files=[f] size=-1 err=stat <tmp>/f?1.sqlite: no such file or directory
+    feedback "f%231.sqlite": files=[f#1.sqlite f%231.sqlite] size=0 err=<nil>
+    cache "f%231.sqlite": files=[f#1.sqlite] size=-1 err=stat <tmp>/f%231.sqlite: no such file or directory
+    FAIL	github.com/wtsi-hgi/wa/mlwh
+    results "r#1.db": files=[r] err=stat <tmp>/r#1.db: no such file or directory
+    results "r?1.db": files=[r] err=stat <tmp>/r?1.db: no such file or directory
+    results "r%231.db": files=[r#1.db] err=stat <tmp>/r%231.db: no such file or directory
+    FAIL	github.com/wtsi-hgi/wa/cmd
+    ```
