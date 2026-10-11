@@ -1277,6 +1277,106 @@ func TestOpenCacheSQLitePathWithURISpecialCharacters(t *testing.T) {
 	}
 }
 
+func TestOpenCacheSQLiteFileURI(t *testing.T) {
+	convey.Convey("Given a relative file: URI cache path, when opened and sync-locked, then the named file is used", t, func() {
+		dir := t.TempDir()
+		t.Chdir(dir)
+
+		assertFileURICacheUsesPath(dir, "file:x.db", "x.db")
+	})
+
+	convey.Convey("Given an absolute file: URI cache path, when opened and sync-locked, then the named file is used", t, func() {
+		dir := t.TempDir()
+
+		sqlite := assertFileURICacheUsesPath(dir, "file:"+filepath.Join(dir, "x.db"), "x.db")
+
+		var journalMode string
+		convey.So(sqlite.DB().QueryRow(`PRAGMA journal_mode`).Scan(&journalMode), convey.ShouldBeNil)
+		convey.So(journalMode, convey.ShouldEqual, "wal")
+
+		var timeout int
+		convey.So(sqlite.DB().QueryRow(`PRAGMA busy_timeout`).Scan(&timeout), convey.ShouldBeNil)
+		convey.So(timeout, convey.ShouldEqual, 5000)
+	})
+
+	convey.Convey("Given a file: URI cache path with its own query params", t, func() {
+		dir := t.TempDir()
+		uri := "file:" + filepath.Join(dir, "x.db") + "?mode=rwc&_pragma=busy_timeout(3000)"
+
+		sqlite := assertFileURICacheUsesPath(dir, uri, "x.db")
+
+		convey.Convey("then both cache handles keep the user's params alongside the cache's own", func() {
+			var journalMode string
+			convey.So(sqlite.DB().QueryRow(`PRAGMA journal_mode`).Scan(&journalMode), convey.ShouldBeNil)
+			convey.So(journalMode, convey.ShouldEqual, "wal")
+
+			var timeout int
+			convey.So(sqlite.DB().QueryRow(`PRAGMA busy_timeout`).Scan(&timeout), convey.ShouldBeNil)
+			convey.So(timeout, convey.ShouldEqual, 3000)
+			convey.So(sqlite.ReadDB().QueryRow(`PRAGMA busy_timeout`).Scan(&timeout), convey.ShouldBeNil)
+			convey.So(timeout, convey.ShouldEqual, 3000)
+		})
+
+		convey.Convey("then the read handle is still read-only", func() {
+			_, err := sqlite.ReadDB().Exec(`INSERT INTO probe VALUES (2)`)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "readonly")
+		})
+
+		convey.Convey("then a second sync lock fails at once instead of waiting", func() {
+			release, err := sqlite.acquireSyncLock(context.Background())
+			convey.So(err, convey.ShouldBeNil)
+			convey.Reset(func() { _ = release() })
+
+			start := time.Now()
+			_, err = sqlite.acquireSyncLock(context.Background())
+			convey.So(err, convey.ShouldEqual, ErrSyncAlreadyRunning)
+			convey.So(time.Since(start), convey.ShouldBeLessThan, time.Second)
+		})
+	})
+}
+
+// assertFileURICacheUsesPath opens a cache at uri, writes, reads and takes the
+// sync lock, then asserts that only name and its siblings exist in dir.
+func assertFileURICacheUsesPath(dir, uri, name string) *sqliteCache {
+	cache, err := OpenCache(context.Background(), CacheConfig{Path: uri})
+	convey.So(err, convey.ShouldBeNil)
+	convey.Reset(func() { _ = cache.Close() })
+
+	_, err = cache.DB().Exec(`CREATE TABLE probe (a INTEGER); INSERT INTO probe VALUES (1)`)
+	convey.So(err, convey.ShouldBeNil)
+
+	var count int
+	convey.So(cacheReadDB(cache).QueryRow(`SELECT COUNT(*) FROM probe`).Scan(&count), convey.ShouldBeNil)
+	convey.So(count, convey.ShouldEqual, 1)
+
+	sqlite, ok := cache.(*sqliteCache)
+	convey.So(ok, convey.ShouldBeTrue)
+
+	release, err := sqlite.acquireSyncLock(context.Background())
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(release(), convey.ShouldBeNil)
+
+	info, err := os.Stat(filepath.Join(dir, name))
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(info.Size(), convey.ShouldBeGreaterThan, 0)
+
+	_, err = os.Stat(filepath.Join(dir, name+".sync-lock"))
+	convey.So(err, convey.ShouldBeNil)
+
+	entries, err := os.ReadDir(dir)
+	convey.So(err, convey.ShouldBeNil)
+
+	for _, entry := range entries {
+		convey.So(entry.Name(), convey.ShouldBeIn, []string{
+			name, name + "-wal", name + "-shm",
+			name + ".sync-lock", name + ".sync-lock-wal", name + ".sync-lock-shm",
+		})
+	}
+
+	return sqlite
+}
+
 func cacheReadDB(cache Cache) *sql.DB {
 	reader, ok := cache.(interface{ ReadDB() *sql.DB })
 	if !ok {
