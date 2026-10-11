@@ -252,7 +252,7 @@ function TrendStrip({
     return (
         <div
             aria-label={`${label}: latest ${latest}, previous ${previous}, ${formatPeriods(series.length)}`}
-            className="flex h-10 w-full min-w-48 items-end justify-end gap-0.5 border-b border-border"
+            className="flex h-10 w-full min-w-48 items-end justify-end gap-px border-b border-border"
             role="img"
         >
             {series.map((period, index) => {
@@ -260,7 +260,7 @@ function TrendStrip({
 
                 return (
                     <span
-                        className="flex h-full max-w-6 min-w-1 flex-1 items-end rounded-t-[4px] hover:bg-muted"
+                        className="flex h-full max-w-6 min-w-px flex-1 items-end rounded-t-[4px] hover:bg-muted"
                         key={period.end}
                         title={`${period.start} to ${period.end}: ${formatCount(count)}`}
                     >
