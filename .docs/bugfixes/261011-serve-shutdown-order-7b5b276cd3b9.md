@@ -54,3 +54,14 @@
       `mlwh serve` and `results serve` paths use go-authserver's graceful
       server, whose `Serve` waits for connections to drain, so they are not
       affected.
+
+- [ ] `wa mlwh-diff serve` (`cmd/mlwhdiff.go`, `RunE`, around lines 257-266)
+      has the same shutdown-order flaw in its own code: it calls
+      `httpServer.Shutdown(context.Background())` in a goroutine and returns on
+      `http.ErrServerClosed` without waiting, so the deferred `store.Close()`
+      and `provider.Close()` can run under live requests; its shutdown also has
+      no timeout. Same root cause as the item above, so it shares this branch.
+    - Source: bugfix of the item above on this branch, reported as
+      incidental.
+    - Evidence: code inspection only; needs a red test like
+      `TestMLWHServeStartHTTPWaitsForInFlightRequests`.
