@@ -45,6 +45,7 @@ const latestResultSetsInitialPageSize = 10;
 const dashboardActivityDays = 30;
 const anonymousSession: CurrentSession = {
     authenticated: false,
+    isAdmin: false,
     username: null,
 };
 

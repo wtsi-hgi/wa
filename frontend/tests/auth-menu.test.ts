@@ -25,6 +25,9 @@ const authActionMocks = vi.hoisted(() => ({
     loginAction: vi.fn(),
     logoutAction: vi.fn(),
 }));
+const headerMocks = vi.hoisted(() => ({
+    cookies: vi.fn(),
+}));
 const navigationMocks = vi.hoisted(() => ({
     pathname: "/",
     push: vi.fn(),
@@ -39,6 +42,9 @@ vi.mock("@/app/(results)/auth/actions", () => ({
     currentSession: authActionMocks.currentSession,
     loginAction: authActionMocks.loginAction,
     logoutAction: authActionMocks.logoutAction,
+}));
+vi.mock("next/headers", () => ({
+    cookies: headerMocks.cookies,
 }));
 vi.mock("next/navigation", () => ({
     usePathname: () => navigationMocks.pathname,
@@ -84,21 +90,13 @@ beforeEach(() => {
     }));
 });
 
-function renderAuthMenu(
-    initialSession: CurrentSession,
-    showFeedbackLink?: boolean,
-    showUsageLink?: boolean,
-) {
+function renderAuthMenu(initialSession: CurrentSession) {
     return import("@/components/auth-menu").then(({ AuthMenu }) =>
         render(
             createElement(
                 AppProviders,
                 undefined,
-                createElement(AuthMenu, {
-                    initialSession,
-                    showFeedbackLink,
-                    showUsageLink,
-                }),
+                createElement(AuthMenu, { initialSession }),
             ),
         ),
     );
@@ -112,6 +110,31 @@ function stubSessionRefresh(session: CurrentSession) {
     return fetchMock;
 }
 
+// The browser session refresh never answers, so whatever the menu shows can
+// only come from the login result itself.
+function stubPendingSessionRefresh() {
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    return fetchMock;
+}
+
+async function submitLogin(username: string): Promise<void> {
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    fireEvent.change(screen.getByLabelText("Username"), {
+        target: { value: username },
+    });
+    fireEvent.change(screen.getByLabelText("Password"), {
+        target: { value: "secret" },
+    });
+    fireEvent.submit(screen.getByRole("form", { name: "Log in" }));
+
+    await screen.findByRole("button", {
+        name: new RegExp(`^${username} account$`),
+    });
+}
+
 function openAccountMenu(username: string): HTMLElement {
     fireEvent.click(
         screen.getByRole("button", {
@@ -122,8 +145,35 @@ function openAccountMenu(username: string): HTMLElement {
     return screen.getByRole("menu");
 }
 
+// serverSession runs the real currentSession() against a stubbed results
+// backend, so the server's admin decision (WA_FEEDBACK_ADMINS, OS user) is
+// the one the layout hands to the menu.
+async function serverSession(username: string): Promise<CurrentSession> {
+    const { currentSession } = await vi.importActual<
+        typeof import("@/app/(results)/auth/actions")
+    >("@/app/(results)/auth/actions");
+
+    vi.stubEnv("WA_RESULTS_BACKEND_URL", "https://results.example/api");
+    vi.stubEnv("WA_RESULTS_BACKEND_CA_CERT", undefined);
+    headerMocks.cookies.mockResolvedValue({ get: () => ({ value: "jwt" }) });
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(() =>
+            Promise.resolve(
+                Response.json({
+                    authenticated: true,
+                    is_owner: false,
+                    username,
+                }),
+            ),
+        ),
+    );
+
+    return currentSession();
+}
+
 async function renderResultsLayoutMenu(username: string): Promise<HTMLElement> {
-    const session = { authenticated: true, username };
+    const session = await serverSession(username);
 
     authActionMocks.currentSession.mockResolvedValueOnce(session);
     stubSessionRefresh(session);
@@ -146,7 +196,11 @@ describe("E3 auth menu", () => {
     });
 
     it("shows a Log in button for anonymous sessions", async () => {
-        await renderAuthMenu({ authenticated: false, username: null });
+        await renderAuthMenu({
+            authenticated: false,
+            isAdmin: false,
+            username: null,
+        });
 
         expect(screen.getByRole("button", { name: "Log in" })).toBeTruthy();
     });
@@ -154,6 +208,7 @@ describe("E3 auth menu", () => {
     it("seeds the results layout auth menu from the current session", async () => {
         authActionMocks.currentSession.mockResolvedValueOnce({
             authenticated: false,
+            isAdmin: false,
             username: null,
         });
 
@@ -175,6 +230,7 @@ describe("E3 auth menu", () => {
     it("reserves layout space for the auth menu before page content", async () => {
         authActionMocks.currentSession.mockResolvedValueOnce({
             authenticated: false,
+            isAdmin: false,
             username: null,
         });
 
@@ -202,12 +258,17 @@ describe("E3 auth menu", () => {
             vi.fn().mockResolvedValue(
                 Response.json({
                     authenticated: true,
+                    isAdmin: false,
                     username: "alice",
                 }),
             ),
         );
 
-        await renderAuthMenu({ authenticated: true, username: "alice" });
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: false,
+            username: "alice",
+        });
 
         const accountButton = screen.getByRole("button", {
             name: /alice account/i,
@@ -246,13 +307,18 @@ describe("E3 auth menu", () => {
             vi.fn().mockResolvedValue(
                 Response.json({
                     authenticated: true,
+                    isAdmin: false,
                     username: "alice",
                 }),
             ),
         );
         navigationMocks.searchParams = new URLSearchParams("user=alice");
 
-        await renderAuthMenu({ authenticated: true, username: "alice" });
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: false,
+            username: "alice",
+        });
 
         const accessToggle = screen.getByRole("checkbox", {
             name: "Only show accessible result sets",
@@ -273,6 +339,7 @@ describe("E3 auth menu", () => {
             vi.fn().mockResolvedValue(
                 Response.json({
                     authenticated: true,
+                    isAdmin: false,
                     username: "alice",
                 }),
             ),
@@ -281,7 +348,11 @@ describe("E3 auth menu", () => {
             "user=alice&show_locked=1",
         );
 
-        await renderAuthMenu({ authenticated: true, username: "alice" });
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: false,
+            username: "alice",
+        });
 
         const accessToggle = screen.getByRole("checkbox", {
             name: "Only show accessible result sets",
@@ -300,12 +371,17 @@ describe("E3 auth menu", () => {
             vi.fn().mockResolvedValue(
                 Response.json({
                     authenticated: true,
+                    isAdmin: false,
                     username: "alice",
                 }),
             ),
         );
 
-        await renderAuthMenu({ authenticated: true, username: "alice" });
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: false,
+            username: "alice",
+        });
 
         await waitFor(() => {
             expect(fetch).toHaveBeenCalledWith(
@@ -324,7 +400,11 @@ describe("E3 auth menu", () => {
             new Error("authentication failed"),
         );
 
-        await renderAuthMenu({ authenticated: false, username: null });
+        await renderAuthMenu({
+            authenticated: false,
+            isAdmin: false,
+            username: null,
+        });
 
         fireEvent.click(screen.getByRole("button", { name: "Log in" }));
 
@@ -349,10 +429,15 @@ describe("E3 auth menu", () => {
     it("shows the signed-in account menu after anonymous login succeeds", async () => {
         authActionMocks.loginAction.mockResolvedValueOnce({
             authenticated: true,
+            isAdmin: false,
             username: "alice",
         });
 
-        await renderAuthMenu({ authenticated: false, username: null });
+        await renderAuthMenu({
+            authenticated: false,
+            isAdmin: false,
+            username: null,
+        });
 
         fireEvent.click(screen.getByRole("button", { name: "Log in" }));
         fireEvent.change(screen.getByLabelText("Username"), {
@@ -391,10 +476,12 @@ describe("E3 auth menu", () => {
                     url === "/api/auth/refresh"
                         ? {
                               authenticated: true,
+                              isAdmin: false,
                               username: "alice",
                           }
                         : {
                               authenticated: false,
+                              isAdmin: false,
                               username: null,
                           },
                 ),
@@ -403,10 +490,15 @@ describe("E3 auth menu", () => {
         vi.stubGlobal("fetch", fetchMock);
         authActionMocks.logoutAction.mockResolvedValueOnce({
             authenticated: false,
+            isAdmin: false,
             username: null,
         });
 
-        await renderAuthMenu({ authenticated: true, username: "alice" });
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: false,
+            username: "alice",
+        });
 
         await waitFor(() => {
             expect(fetchMock).toHaveBeenCalledWith(
@@ -438,7 +530,11 @@ describe("E3 auth menu", () => {
             new Error("results backend request failed"),
         );
 
-        await renderAuthMenu({ authenticated: true, username: "alice" });
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: false,
+            username: "alice",
+        });
 
         fireEvent.click(screen.getByRole("button", { name: /alice account/i }));
         await act(async () => {
@@ -462,10 +558,18 @@ describe("E5 auth menu feedback link", () => {
         vi.unstubAllEnvs();
     });
 
-    it("shows a Feedback menu link to /feedback above Log out when enabled", async () => {
-        stubSessionRefresh({ authenticated: true, username: "alice" });
+    it("shows a Feedback menu link to /feedback above Log out for an admin session", async () => {
+        stubSessionRefresh({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
 
-        await renderAuthMenu({ authenticated: true, username: "alice" }, true);
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
 
         const menu = openAccountMenu("alice");
         const feedback = within(menu).getByRole("menuitem", {
@@ -478,22 +582,27 @@ describe("E5 auth menu feedback link", () => {
             within(menu)
                 .getAllByRole("menuitem")
                 .map((item) => item.textContent),
-        ).toEqual(["Feedback", "Log out"]);
+        ).toEqual(["Feedback", "Usage", "Log out"]);
     });
 
     it("closes the account menu when navigation changes the route", async () => {
-        stubSessionRefresh({ authenticated: true, username: "alice" });
+        stubSessionRefresh({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
 
-        const session = { authenticated: true, username: "alice" };
+        const session = {
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        };
         const { AuthMenu } = await import("@/components/auth-menu");
         const tree = () =>
             createElement(
                 AppProviders,
                 undefined,
-                createElement(AuthMenu, {
-                    initialSession: session,
-                    showFeedbackLink: true,
-                }),
+                createElement(AuthMenu, { initialSession: session }),
             );
         const { rerender } = render(tree());
 
@@ -506,9 +615,17 @@ describe("E5 auth menu feedback link", () => {
 
     it("closes the account menu when Feedback is chosen on /feedback", async () => {
         navigationMocks.pathname = "/feedback";
-        stubSessionRefresh({ authenticated: true, username: "alice" });
+        stubSessionRefresh({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
 
-        await renderAuthMenu({ authenticated: true, username: "alice" }, true);
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
 
         const menu = openAccountMenu("alice");
 
@@ -519,10 +636,18 @@ describe("E5 auth menu feedback link", () => {
         expect(screen.queryByRole("menu")).toBeNull();
     });
 
-    it("hides the Feedback link from an authenticated menu without the prop", async () => {
-        stubSessionRefresh({ authenticated: true, username: "alice" });
+    it("hides the Feedback link from a non-admin authenticated session", async () => {
+        stubSessionRefresh({
+            authenticated: true,
+            isAdmin: false,
+            username: "alice",
+        });
 
-        await renderAuthMenu({ authenticated: true, username: "alice" });
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: false,
+            username: "alice",
+        });
 
         const menu = openAccountMenu("alice");
 
@@ -535,8 +660,12 @@ describe("E5 auth menu feedback link", () => {
         expect(document.querySelector('a[href="/feedback"]')).toBeNull();
     });
 
-    it("hides the Feedback link from anonymous sessions even with the prop", async () => {
-        await renderAuthMenu({ authenticated: false, username: null }, true);
+    it("hides the Feedback link from anonymous sessions even when flagged admin", async () => {
+        await renderAuthMenu({
+            authenticated: false,
+            isAdmin: true,
+            username: null,
+        });
 
         expect(screen.queryByText("Feedback")).toBeNull();
 
@@ -587,15 +716,21 @@ describe("E5 auth menu feedback link", () => {
     it("refreshes the route once after a successful login and not after a failed one", async () => {
         const fetchMock = stubSessionRefresh({
             authenticated: true,
+            isAdmin: false,
             username: "alice",
         });
 
         authActionMocks.loginAction.mockResolvedValueOnce({
             authenticated: true,
+            isAdmin: false,
             username: "alice",
         });
 
-        await renderAuthMenu({ authenticated: false, username: null });
+        await renderAuthMenu({
+            authenticated: false,
+            isAdmin: false,
+            username: null,
+        });
 
         fireEvent.click(screen.getByRole("button", { name: "Log in" }));
         fireEvent.change(screen.getByLabelText("Username"), {
@@ -623,7 +758,11 @@ describe("E5 auth menu feedback link", () => {
             new Error("authentication failed"),
         );
 
-        await renderAuthMenu({ authenticated: false, username: null });
+        await renderAuthMenu({
+            authenticated: false,
+            isAdmin: false,
+            username: null,
+        });
 
         fireEvent.click(screen.getByRole("button", { name: "Log in" }));
         fireEvent.submit(screen.getByRole("form", { name: "Log in" }));
@@ -631,6 +770,87 @@ describe("E5 auth menu feedback link", () => {
         await screen.findByText("Authentication failed");
 
         expect(navigationMocks.refresh).not.toHaveBeenCalled();
+    });
+
+    it("shows the Feedback link to an admin as soon as login completes, before the layout re-renders", async () => {
+        const fetchMock = stubPendingSessionRefresh();
+        authActionMocks.loginAction.mockResolvedValueOnce({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
+
+        await renderAuthMenu({
+            authenticated: false,
+            isAdmin: false,
+            username: null,
+        });
+        await submitLogin("alice");
+
+        const menu = openAccountMenu("alice");
+
+        expect(
+            within(menu)
+                .getAllByRole("menuitem")
+                .map((item) => item.textContent),
+        ).toEqual(["Feedback", "Usage", "Log out"]);
+        expect(navigationMocks.refresh).toHaveBeenCalledOnce();
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/auth/refresh",
+            expect.any(Object),
+        );
+    });
+
+    it("hides the Feedback link from a non-admin straight after login", async () => {
+        const fetchMock = stubPendingSessionRefresh();
+        authActionMocks.loginAction.mockResolvedValueOnce({
+            authenticated: true,
+            isAdmin: false,
+            username: "bob",
+        });
+
+        await renderAuthMenu({
+            authenticated: false,
+            isAdmin: false,
+            username: null,
+        });
+        await submitLogin("bob");
+
+        const menu = openAccountMenu("bob");
+
+        expect(
+            within(menu)
+                .getAllByRole("menuitem")
+                .map((item) => item.textContent),
+        ).toEqual(["Log out"]);
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/auth/refresh",
+            expect.any(Object),
+        );
+    });
+
+    it("drops the Feedback link when the browser session refresh reports the user is no longer an admin", async () => {
+        stubSessionRefresh({
+            authenticated: true,
+            isAdmin: false,
+            username: "alice",
+        });
+
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
+
+        const menu = openAccountMenu("alice");
+
+        await waitFor(() => {
+            expect(
+                within(menu)
+                    .getAllByRole("menuitem")
+                    .map((item) => item.textContent),
+            ).toEqual(["Log out"]);
+        });
     });
 
     it("renders the layout when the OS user lookup throws", async () => {
@@ -670,13 +890,17 @@ describe("E5 auth menu usage link", () => {
     });
 
     it("shows a Usage menu link to /usage after Feedback and before Log out", async () => {
-        stubSessionRefresh({ authenticated: true, username: "alice" });
+        stubSessionRefresh({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
 
-        await renderAuthMenu(
-            { authenticated: true, username: "alice" },
-            true,
-            true,
-        );
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
 
         const menu = openAccountMenu("alice");
         const usage = within(menu).getByRole("menuitem", { name: "Usage" });
@@ -691,10 +915,18 @@ describe("E5 auth menu usage link", () => {
         ).toEqual(["Feedback", "Usage", "Log out"]);
     });
 
-    it("hides the Usage link from an authenticated menu without the prop", async () => {
-        stubSessionRefresh({ authenticated: true, username: "alice" });
+    it("hides the Usage link from a non-admin authenticated session", async () => {
+        stubSessionRefresh({
+            authenticated: true,
+            isAdmin: false,
+            username: "alice",
+        });
 
-        await renderAuthMenu({ authenticated: true, username: "alice" }, true);
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: false,
+            username: "alice",
+        });
 
         const menu = openAccountMenu("alice");
 
@@ -702,16 +934,16 @@ describe("E5 auth menu usage link", () => {
             within(menu)
                 .getAllByRole("menuitem")
                 .map((item) => item.textContent),
-        ).toEqual(["Feedback", "Log out"]);
+        ).toEqual(["Log out"]);
         expect(document.querySelector('a[href="/usage"]')).toBeNull();
     });
 
-    it("hides the Usage link from anonymous sessions even with the prop", async () => {
-        await renderAuthMenu(
-            { authenticated: false, username: null },
-            true,
-            true,
-        );
+    it("hides the Usage link from anonymous sessions even when flagged admin", async () => {
+        await renderAuthMenu({
+            authenticated: false,
+            isAdmin: true,
+            username: null,
+        });
 
         expect(screen.queryByText("Usage")).toBeNull();
 

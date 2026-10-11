@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import type { CurrentSession } from "@/app/(results)/auth/actions";
 import { resultsRaw } from "@/lib/backend-client";
+import { isMLWHAdmin } from "@/lib/feedback-admin";
 import {
     resultsAuthCookieName as authCookieName,
     resultsAuthCookieOptions as authCookieOptions,
@@ -16,14 +18,10 @@ const backendSessionSchema = z.object({
     username: z.string().nullable().optional(),
 });
 
-type CurrentSession = {
-    authenticated: boolean;
-    username: string | null;
-};
-
 function anonymousSession(): CurrentSession {
     return {
         authenticated: false,
+        isAdmin: false,
         username: null,
     };
 }
@@ -35,9 +33,12 @@ function parseSession(body: unknown): CurrentSession {
         return anonymousSession();
     }
 
+    const username = parsed.data.username ?? null;
+
     return {
         authenticated: true,
-        username: parsed.data.username ?? null,
+        isAdmin: isMLWHAdmin(username),
+        username,
     };
 }
 

@@ -16,6 +16,7 @@ describe("E1 auth API route handlers", () => {
     beforeEach(() => {
         process.env.WA_RESULTS_BACKEND_URL = "https://results.example/api";
         delete process.env.WA_RESULTS_BACKEND_CA_CERT;
+        vi.stubEnv("WA_FEEDBACK_ADMINS", undefined);
         vi.stubGlobal("fetch", vi.fn());
     });
 
@@ -23,6 +24,7 @@ describe("E1 auth API route handlers", () => {
         delete process.env.WA_RESULTS_BACKEND_URL;
         delete process.env.WA_RESULTS_BACKEND_CA_CERT;
         vi.resetModules();
+        vi.unstubAllEnvs();
         vi.unstubAllGlobals();
     });
 
@@ -79,6 +81,7 @@ describe("E1 auth API route handlers", () => {
         expect(response.status).toBe(200);
         await expect(response.json()).resolves.toEqual({
             authenticated: true,
+            isAdmin: false,
             username: "alice",
         });
         expect(fetch).toHaveBeenNthCalledWith(
@@ -93,6 +96,33 @@ describe("E1 auth API route handlers", () => {
         );
         expect(setCookieHeader(response)).toContain("wa_results_jwt=jwt-new");
         expect(setCookieHeader(response)).toContain("Max-Age=86400");
+    });
+
+    it("flags a WA_FEEDBACK_ADMINS user as admin in the refreshed session", async () => {
+        vi.stubEnv("WA_FEEDBACK_ADMINS", "alice");
+        vi.mocked(fetch)
+            .mockResolvedValueOnce(Response.json("jwt-new"))
+            .mockResolvedValueOnce(
+                Response.json({
+                    authenticated: true,
+                    is_owner: false,
+                    username: "alice",
+                }),
+            );
+
+        const { POST } = await import("@/app/api/auth/refresh/route");
+        const response = await POST(
+            makeRequest("/api/auth/refresh", {
+                headers: { cookie: "wa_results_jwt=jwt-old" },
+                method: "POST",
+            }),
+        );
+
+        await expect(response.json()).resolves.toEqual({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
     });
 
     it("expires the JWT cookie even when the backend logout endpoint is unavailable", async () => {

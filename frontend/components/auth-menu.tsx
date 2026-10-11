@@ -40,8 +40,6 @@ import { showLockedResultsParam } from "@/lib/search-params";
 
 type AuthMenuProps = {
     initialSession: CurrentSession;
-    showFeedbackLink?: boolean;
-    showUsageLink?: boolean;
 };
 
 const accessFilterLabel = "Only show accessible result sets";
@@ -49,6 +47,7 @@ const accessFilterLabel = "Only show accessible result sets";
 function anonymousSession(): CurrentSession {
     return {
         authenticated: false,
+        isAdmin: false,
         username: null,
     };
 }
@@ -71,11 +70,7 @@ async function refreshFromBrowser(): Promise<CurrentSession> {
     return body?.authenticated ? body : anonymousSession();
 }
 
-export function AuthMenu({
-    initialSession,
-    showFeedbackLink = false,
-    showUsageLink = false,
-}: AuthMenuProps): ReactNode {
+export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
@@ -129,7 +124,8 @@ export function AuthMenu({
                 setSession((currentSession) =>
                     currentSession.authenticated ===
                         nextSession.authenticated &&
-                    currentSession.username === nextSession.username
+                    currentSession.username === nextSession.username &&
+                    currentSession.isAdmin === nextSession.isAdmin
                         ? currentSession
                         : nextSession,
                 );
@@ -237,7 +233,7 @@ export function AuthMenu({
                             </Badge>
                         </div>
                         <div className="my-1 h-px bg-border" />
-                        {showFeedbackLink ? (
+                        {session.isAdmin ? (
                             <DropdownMenuLinkItem
                                 href="/feedback"
                                 className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
@@ -249,7 +245,7 @@ export function AuthMenu({
                                 <span>Feedback</span>
                             </DropdownMenuLinkItem>
                         ) : null}
-                        {showUsageLink ? (
+                        {session.isAdmin ? (
                             <DropdownMenuLinkItem
                                 href="/usage"
                                 className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
