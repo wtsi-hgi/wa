@@ -13,7 +13,7 @@
 
 ## Items
 
-- [ ] The SQLite DSN builders in `mlwh/cache.go` (`sqliteWritableDSN`,
+- [x] The SQLite DSN builders in `mlwh/cache.go` (`sqliteWritableDSN`,
       `sqliteReadOnlyDSN`, `sqliteLockDSN`) do not pass `file:` inputs
       through, although `looksLikeMySQLDSN` and `cmd/mlwh.go` accept a
       `file:` MLWH cache path as SQLite. A probe on branch
@@ -48,3 +48,39 @@
       `ensureMLWHSyncCacheDirectory` already treat `file:` as a SQLite cache,
       and the `--mlwh-cache` help and README promise only "a path or MySQL
       DSN", so accepting `file:` keeps current documented behaviour.
+
+    - Fixed. Files: `mlwh/cache.go`, `mlwh/cache_test.go`,
+      `mlwh/feedback_store.go`, `mlwh/feedback_store_test.go`,
+      `mlwh/usage_store.go`, `mlwh/usage_store_test.go`.
+    - Approach: the three builders pass `file:` URIs through, drop any
+      `#fragment`, keep the user's query, and merge per-handle params with
+      `mergeSQLiteURIParams`. Params match by key, and `_pragma` params by
+      case-insensitive pragma name after percent-decoding. The user's params
+      win over the writable defaults (`mode=rwc`, `journal_mode(WAL)`,
+      `busy_timeout(5000)`). The read handle forces `mode=ro`. The lock
+      handle opens `<path>.sync-lock` and forces `mode=rwc` and
+      `busy_timeout(0)`. Merging is needed because modernc.org/sqlite
+      v1.48.0 orders duplicate `busy_timeout` pragmas unstably and rejects a
+      repeated `mode` that widens access. Plain paths and `:memory:` are
+      unchanged. The feedback and usage stores now call
+      `sqliteWritablePathDSN`, so they keep opening the exact 0600 file they
+      create; the CLI still rejects `file:` for `--feedback-db` and
+      `--usage-db`.
+    - Regression tests: `TestOpenCacheSQLiteFileURI` (relative, absolute,
+      fragments, user params on an existing cache, unrelated pragma on a new
+      cache, percent-encoded pragma keys and values), plus `file:` cases in
+      `TestFeedbackStoreA2` and
+      `TestUsageStoreSQLitePathWithURISpecialCharacters`. Mutants of each
+      merge rule fail these tests.
+    - The red command exits 0 after the fix:
+
+        ```text
+        relative: exit=124 files=x.db
+        absolute: exit=124 output:
+        ```
+
+    - Incidental, reported to the queue owner and not fixed here:
+      `--mlwh-cache file::memory:` is not treated as `:memory:`, so the read
+      and write handles probably open separate in-memory databases and the
+      lock opens a disk file named `:memory:.sync-lock`; `mlwh.OpenCache`
+      does not trim whitespace from library callers' paths (the CLI does).
