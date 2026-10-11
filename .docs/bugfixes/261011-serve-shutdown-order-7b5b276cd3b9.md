@@ -92,3 +92,11 @@
       is unchanged. The regression test holds `GET /diff/sample/S1` in flight
       across the cancel and asserts that the command returns, and the
       provider closes, only after the handler finishes.
+
+- [ ] The `http.Server` in `wa mlwhdiff serve` (`cmd/mlwhdiff.go`, around
+      line 254) sets no `ReadHeaderTimeout`, while `wa mlwh serve`'s
+      `StartHTTP` uses 30 s, so slow-header clients can hold connections open.
+      Same server setup as the item above, so it shares this branch.
+    - Source: bugfix of the item above, reported as incidental.
+    - Evidence: code inspection; `.golangci.yml` does not enable gosec, so
+      the linter does not flag it.
