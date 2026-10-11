@@ -55,7 +55,7 @@
       server, whose `Serve` waits for connections to drain, so they are not
       affected.
 
-- [ ] `wa mlwhdiff serve` (`cmd/mlwhdiff.go`, `RunE`, around lines 257-266)
+- [x] `wa mlwhdiff serve` (`cmd/mlwhdiff.go`, `RunE`, around lines 257-266)
       has the same shutdown-order flaw in its own code: it calls
       `httpServer.Shutdown(context.Background())` in a goroutine and returns on
       `http.ErrServerClosed` without waiting, so the deferred `store.Close()`
@@ -65,3 +65,30 @@
       incidental.
     - Evidence: code inspection only; needs a red test like
       `TestMLWHServeStartHTTPWaitsForInFlightRequests`.
+    - Red command (exit 1, deterministic over 3 runs):
+      `CGO_ENABLED=1 go test -tags netgo --count 1 -run TestMLWHDiffServeWaitsForInFlightRequests ./cmd/`
+
+        ```text
+        * cmd/mlwh_serve_shutdown_test.go
+        Line 245:
+        Expected: false
+        Actual:   true
+        --- FAIL: TestMLWHDiffServeWaitsForInFlightRequests (0.01s)
+        ```
+
+        Line 245 asserts `returnedEarly` is false: with a
+        `GET /diff/sample/S1` handler blocked in flight, `ExecuteContext`
+        returned within 500 ms of the context cancel. `GET /diff/study/all`
+        does not show the bug, because its handler holds the store mutex
+        that `Store.Close` also takes.
+
+    - Files: `cmd/mlwh.go`, `cmd/mlwhdiff.go`,
+      `cmd/mlwh_serve_shutdown_test.go`.
+    - Approach: the serve-and-wait code from `StartHTTP` moved unchanged into
+      `serveHTTPUntilCancelled` in `cmd/mlwh.go`, and the shutdown helper is
+      now `shutdownHTTPOnCancel`. `mlwh serve` and `mlwhdiff serve` both call
+      it, so `mlwhdiff serve` returns only after in-flight requests drain,
+      with the same 5 s timeout and `Close` fallback. `mlwh serve` behaviour
+      is unchanged. The regression test holds `GET /diff/sample/S1` in flight
+      across the cancel and asserts that the command returns, and the
+      provider closes, only after the handler finishes.

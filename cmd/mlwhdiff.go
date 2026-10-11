@@ -264,19 +264,8 @@ func newMLWHDiffServeCommand(options *mlwhdiffOptions) *cobra.Command {
 			defer func() { _ = listener.Close() }()
 
 			httpServer := &http.Server{Handler: mlwhdiff.NewServer(provider, store).Handler()}
-			ctx := commandContext(cmd)
 
-			go func() {
-				<-ctx.Done()
-				_ = httpServer.Shutdown(context.Background())
-			}()
-
-			err = httpServer.Serve(listener)
-			if errors.Is(err, http.ErrServerClosed) {
-				return nil
-			}
-
-			return err
+			return serveHTTPUntilCancelled(commandContext(cmd), httpServer, listener)
 		},
 	}
 
