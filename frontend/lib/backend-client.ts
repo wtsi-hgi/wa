@@ -8,13 +8,16 @@ import {
     BackendRequestError,
     BackendUnavailableError,
 } from "@/lib/backend-shared";
-import { mlwhWebUserAgent } from "@/lib/usage-session-cookie";
 
 export {
     BackendRequestError,
     BackendUnavailableError,
     resultsAuthCookieName,
 } from "@/lib/backend-shared";
+
+// mlwhWebUserAgent is the User-Agent product wa's Go server maps to the web
+// category (mlwh.UserAgentProductWeb).
+const mlwhWebUserAgent = "wa-web";
 
 type BackendEnvVar = "WA_RESULTS_BACKEND_URL" | "WA_MLWH_BACKEND_URL";
 type BackendFetchOptions = Omit<RequestInit, "headers"> & {

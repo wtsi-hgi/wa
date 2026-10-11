@@ -6,4 +6,3 @@ export const usageSessionCookieOptions = {
     sameSite: "lax",
     secure: true,
 } as const;
-export const mlwhWebUserAgent = "wa-web";
