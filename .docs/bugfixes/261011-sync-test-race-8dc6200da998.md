@@ -61,3 +61,14 @@
       item above, so it shares this branch.
     - Source: bugfix of the item above, reported as incidental.
     - Evidence: code reading; no test hits it today.
+    - Red harness: a throwaway copy of `TestClientSyncFiveTableParallelReports`
+      that calls `client.SetSyncReportWriter(&out)` with a plain
+      `strings.Builder` before `client.Sync`, built with
+      `CGO_ENABLED=1 go test -tags netgo -race -c ./mlwh` and run with
+      `-test.run '^TestScratchSyncReportWriterRace$' -test.count 1`.
+    - Rate on `f8e8fc5`: 20/20 processes failed (exit 1) with
+      `WARNING: DATA RACE` / `strings.(*Builder).WriteString()` /
+      `io.WriteString()` / `mlwh.(*Client).emitSyncReport()`
+      (`mlwh/sync.go:2638`) / `syncTablesInParallel.func1()`
+      (`mlwh/sync.go:2462`), against a previous write from another table's
+      goroutine on the same path.
