@@ -8,17 +8,18 @@
 
 ## Deliver queue
 
-| Branch                   | Worktree              | PR   | Target    | Depends on | Head      | Status     | Waits on                  | Next action                     |
-| ------------------------ | --------------------- | ---- | --------- | ---------- | --------- | ---------- | ------------------------- | ------------------------------- |
-| `usage`                  | `.`                   | none | `develop` | none       | `9f3d79b` | PR reviews | spec-aware review pass 2  | converge reviews, push, open PR |
-| `syncrace-bd100063`      | `../wa-syncrace`      | none | `develop` | none       | `18cf0b6` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
-| `resultswal-867e6b0f`    | `../wa-resultswal`    | none | `develop` | none       | `1c8afaa` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
-| `frontendtsc-69d13e03`   | `../wa-frontendtsc`   | none | `develop` | none       | `87fd1d6` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
-| `verifyrev-45b2c5f7`     | `../wa-verifyrev`     | none | `develop` | none       | `2b7eae0` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
-| `menurace-39ecd8d1`      | `../wa-menurace`      | none | `develop` | none       | `b7565f2` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
-| `serveshutdown-cf1cb518` | `../wa-serveshutdown` | none | `develop` | none       | `a5e6c44` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
-| `rundevstate-64ed3f75`   | `../wa-rundevstate`   | none | `develop` | none       | `3281ef9` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
-| `pnpmfilter-90a8f24a`    | `../wa-pnpmfilter`    | none | `develop` | none       | `c469daa` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
+| Branch                   | Worktree              | PR   | Target    | Depends on | Head      | Status                  | Waits on                  | Next action                        |
+| ------------------------ | --------------------- | ---- | --------- | ---------- | --------- | ----------------------- | ------------------------- | ---------------------------------- |
+| `usage`                  | `.`                   | none | `develop` | none       | `9f3d79b` | PR reviews              | spec-aware review pass 2  | converge reviews, push, open PR    |
+| `syncrace-bd100063`      | `../wa-syncrace`      | none | `develop` | none       | `18cf0b6` | recorded                | owner completion boundary | reproduce and fix via bugfix       |
+| `resultswal-867e6b0f`    | `../wa-resultswal`    | none | `develop` | none       | `1c8afaa` | recorded                | owner completion boundary | reproduce and fix via bugfix       |
+| `frontendtsc-69d13e03`   | `../wa-frontendtsc`   | none | `develop` | none       | `87fd1d6` | recorded                | owner completion boundary | reproduce and fix via bugfix       |
+| `verifyrev-45b2c5f7`     | `../wa-verifyrev`     | none | `develop` | none       | `2b7eae0` | recorded                | owner completion boundary | reproduce and fix via bugfix       |
+| `menurace-39ecd8d1`      | `../wa-menurace`      | none | `develop` | none       | `b7565f2` | recorded                | owner completion boundary | reproduce and fix via bugfix       |
+| `serveshutdown-cf1cb518` | `../wa-serveshutdown` | none | `develop` | none       | `a5e6c44` | recorded                | owner completion boundary | reproduce and fix via bugfix       |
+| `rundevstate-64ed3f75`   | `../wa-rundevstate`   | none | `develop` | none       | `3281ef9` | recorded                | owner completion boundary | reproduce and fix via bugfix       |
+| `pnpmfilter-90a8f24a`    | `../wa-pnpmfilter`    | none | `develop` | none       | `c469daa` | recorded                | owner completion boundary | reproduce and fix via bugfix       |
+| `sqlitedsn-723fb158`     | `../wa-sqlitedsn`     | none | `develop` | none       | `a1d73c4` | recorded, high priority | owner completion boundary | reproduce and fix via bugfix first |
 
 ## Incidental handoffs
 
@@ -67,3 +68,9 @@
     - Branch: `pnpmfilter-90a8f24a`
     - Checklist: `.docs/bugfixes/261011-pnpm-test-filter-110fa8768b88.md`
     - Entry commit: `c469daa456fdb4fc8d4130986eb9b44fa63d70d3`
+- Spec-aware PR review pass 9: `sqliteWritableDSN` does not escape the path,
+  so `#` or `?` in a DB file name sends data to a different, 0644 file
+  (privacy; high priority).
+    - Branch: `sqlitedsn-723fb158`
+    - Checklist: `.docs/bugfixes/261011-sqlite-dsn-path-escaping-39fc0c63d3ad.md`
+    - Entry commit: `a1d73c49b1ec721bbe0ee84b2b4140993882efa9`
