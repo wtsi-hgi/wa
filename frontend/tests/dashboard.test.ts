@@ -22,7 +22,12 @@ import {
 } from "vitest";
 
 import { AppProviders } from "@/components/app-providers";
-import type { ResultSet, SearchResult, StatsResult } from "@/lib/contracts";
+import type {
+    FileEntry,
+    ResultSet,
+    SearchResult,
+    StatsResult,
+} from "@/lib/contracts";
 
 const fetchStatsMock = vi.fn();
 const searchResultsMock = vi.fn();

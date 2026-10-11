@@ -5,7 +5,8 @@
         "dev": "next dev",
         "build": "next build",
         "start": "next start",
-        "lint": "prettier --check . && eslint .",
+        "lint": "prettier --check . && eslint . && pnpm typecheck",
+        "typecheck": "tsc --noEmit -p .",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "test": "vitest run --exclude tests/scaffold.test.ts && vitest run --config vitest.custom.config.ts tests/scaffold.test.ts --poolOptions.forks.singleFork"

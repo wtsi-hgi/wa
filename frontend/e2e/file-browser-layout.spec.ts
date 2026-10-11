@@ -1342,15 +1342,14 @@ test.describe("File Browser single preview layout", () => {
             const frameRect = rectMetrics(frame);
             const handleRect = rectMetrics(handle);
             const lineElement = handle.firstElementChild;
-            const lineRect =
-                lineElement instanceof HTMLElement
-                    ? lineElement.getBoundingClientRect()
-                    : null;
 
             return {
                 frameRect,
                 handleRect,
-                lineRect: lineRect ? rectMetrics(lineElement) : null,
+                lineRect:
+                    lineElement instanceof HTMLElement
+                        ? rectMetrics(lineElement)
+                        : null,
                 scrollContainers,
                 visibleSurface,
             };
@@ -2860,7 +2859,7 @@ test.describe("File Browser single preview layout", () => {
                 );
                 const fileKind = fileButton?.querySelector("[data-file-kind]");
 
-                function textStyle(element: Element | undefined) {
+                function textStyle(element: Element | null | undefined) {
                     if (!(element instanceof HTMLElement)) {
                         return null;
                     }

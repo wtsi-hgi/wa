@@ -142,7 +142,10 @@ describe("E1 auth API route handlers", () => {
             }),
         ]);
 
-        expect(response).not.toBe("timed out");
+        if (response === "timed out") {
+            throw new Error("logout POST did not answer within 50ms");
+        }
+
         expect(response.status).toBe(200);
         await expect(response.json()).resolves.toEqual({
             authenticated: false,
