@@ -530,6 +530,17 @@ describe("E4 usage admin view", () => {
         ]);
     });
 
+    it("names each unmatched path row by its path, not its method", async () => {
+        await renderView(a3Summary(), "24h");
+
+        const unmatched = section("Unmatched paths");
+        expect(
+            within(unmatched)
+                .getAllByRole("rowheader")
+                .map((cell) => cell.textContent),
+        ).toEqual(["/bogus"]);
+    });
+
     it("renders map cells for unmatched tools and agents", async () => {
         await renderView(
             a3Summary({

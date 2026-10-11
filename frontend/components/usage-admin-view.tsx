@@ -162,23 +162,24 @@ type Column<Row> = {
 };
 
 // UsageTable renders rows as a horizontally scrolling table, or "None." when
-// there are no rows. The first column is the row header. Text columns keep a
-// minimum width and break only between words, so on narrow screens the table
-// scrolls rather than splitting labels such as routes into tall rows.
+// there are no rows. The column at rowHeader (the first by default) is the
+// row header. Text columns keep a minimum width and break only between words,
+// so on narrow screens the table scrolls rather than splitting labels such as
+// routes into tall rows.
 function UsageTable<Row>({
     columns,
+    rowHeader = 0,
     rowKey,
     rows,
 }: {
     columns: Array<Column<Row>>;
+    rowHeader?: number;
     rowKey: (row: Row, index: number) => string;
     rows: Row[];
 }) {
     if (rows.length === 0) {
         return <EmptyNote>None.</EmptyNote>;
     }
-
-    const [first, ...rest] = columns;
 
     return (
         <div className="rounded-xl border border-border/70 bg-card text-card-foreground shadow-sm">
@@ -202,25 +203,29 @@ function UsageTable<Row>({
                 <TableBody>
                     {rows.map((row, index) => (
                         <TableRow key={rowKey(row, index)}>
-                            <th
-                                className="min-w-40 px-4 py-2 text-left align-middle font-medium break-words"
-                                scope="row"
-                            >
-                                {first.render(row)}
-                            </th>
-                            {rest.map((column) => (
-                                <TableCell
-                                    className={cn(
-                                        "py-2",
-                                        column.numeric
-                                            ? "text-right whitespace-nowrap tabular-nums"
-                                            : "min-w-40 break-words",
-                                    )}
-                                    key={column.header}
-                                >
-                                    {column.render(row)}
-                                </TableCell>
-                            ))}
+                            {columns.map((column, columnIndex) =>
+                                columnIndex === rowHeader ? (
+                                    <th
+                                        className="min-w-40 px-4 py-2 text-left align-middle font-medium break-words"
+                                        key={column.header}
+                                        scope="row"
+                                    >
+                                        {column.render(row)}
+                                    </th>
+                                ) : (
+                                    <TableCell
+                                        className={cn(
+                                            "py-2",
+                                            column.numeric
+                                                ? "text-right whitespace-nowrap tabular-nums"
+                                                : "min-w-40 break-words",
+                                        )}
+                                        key={column.header}
+                                    >
+                                        {column.render(row)}
+                                    </TableCell>
+                                ),
+                            )}
                         </TableRow>
                     ))}
                 </TableBody>
@@ -576,6 +581,7 @@ export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
                             render: (row) => formatCounts(row.by_agent),
                         },
                     ]}
+                    rowHeader={1}
                     rowKey={(row) => `${row.method} ${row.path}`}
                     rows={summary.unmatched}
                 />
