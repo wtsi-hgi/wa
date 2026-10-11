@@ -379,6 +379,11 @@ Known limits:
 - gin answers a trailing-slash request such as `GET /studies/` with a
   redirect before any handler runs, so the redirect records no row. A client
   that follows it is counted under the target route.
+- The trend has one bar per window back to the earliest stored row, on every
+  category and endpoint row, so the page grows with stored history. The 24h
+  window grows most: a year of rows gives about 366 bars per row, several
+  megabytes of HTML that load slowly. Lower `--usage-retention-days` to bound
+  it.
 
 ### Poll for metadata changes
 

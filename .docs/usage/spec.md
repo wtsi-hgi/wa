@@ -236,6 +236,10 @@ a row's period index is `k = floor((now_ms - ts_ms) / W_ms)`, with rows where
   route handler or `NoRoute` runs, so the redirect itself records no row,
   neither under the target route nor as unmatched. Only a client that
   follows it is counted, under the target route.
+- The Trend section's size grows with stored history, because `series`
+  reaches back to the earliest row on every category and endpoint row. At
+  the default 365-day retention, `24h` gives about 366 periods, several MB
+  of page HTML that loads slowly. Lowering `--usage-retention-days` bounds it.
 
 ## A. Usage Model and Store
 
