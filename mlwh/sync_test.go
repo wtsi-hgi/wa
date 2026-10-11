@@ -336,6 +336,27 @@ func withSyncCompositeRecoveryChunkSizeForTest(t *testing.T, size int) {
 	})
 }
 
+// lockedBufferForTest is a strings.Builder safe for writes from the
+// goroutines Client.Sync runs per table.
+type lockedBufferForTest struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBufferForTest) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.Write(p)
+}
+
+func (b *lockedBufferForTest) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
+}
+
 func syncSelectedTablesForTest(ctx context.Context, client *Client, tables ...string) ([]SyncReport, error) {
 	reports := make([]SyncReport, 0, len(tables))
 	for _, table := range tables {
@@ -4479,8 +4500,10 @@ func TestClientSyncTwoTablesReconnectIndependently(t *testing.T) {
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
 		base := time.Date(2026, time.May, 11, 19, 30, 0, 0, time.UTC)
+		var stderr lockedBufferForTest
+		var waitsMu sync.Mutex
 		var waits []time.Duration
-		var stderr strings.Builder
+		bothRetrying := make(chan struct{})
 		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
 			syncTableSample: {
 				columns: sampleSyncSourceColumns,
@@ -4511,9 +4534,24 @@ func TestClientSyncTwoTablesReconnectIndependently(t *testing.T) {
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
+		// Hold each retry until both tables are retrying, so the two
+		// retries always overlap and share stderr and waits concurrently.
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true, syncRetryWriter: &stderr, syncRetrySleep: func(ctx context.Context, delay time.Duration) error {
+			waitsMu.Lock()
 			waits = append(waits, delay)
-			return nil
+			if len(waits) == 2 {
+				close(bothRetrying)
+			}
+			waitsMu.Unlock()
+
+			select {
+			case <-bothRetrying:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(10 * time.Second):
+				return errors.New("timed out waiting for both tables to retry")
+			}
 		}}
 
 		reports, err := client.Sync(context.Background())

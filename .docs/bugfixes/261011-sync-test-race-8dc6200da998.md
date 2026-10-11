@@ -9,7 +9,7 @@
 
 ## Items
 
-- [ ] `TestClientSyncTwoTablesReconnectIndependently` (`mlwh/sync_test.go`)
+- [x] `TestClientSyncTwoTablesReconnectIndependently` (`mlwh/sync_test.go`)
       has a data race under `-race`: the test passes one `strings.Builder` as
       `syncRetryWriter` and appends to an unguarded `waits` slice in
       `syncRetrySleep`, while `Client.Sync` syncs tables in parallel, so
@@ -43,3 +43,12 @@
       reconnect-budget test) sync only `sample` through
       `syncSelectedTablesForTest`, which calls `syncTable` sequentially, so
       their hooks run on one goroutine.
+    - Fixed in `mlwh/sync_test.go` (test-only; production unchanged): a
+      mutex-guarded `lockedBufferForTest` replaces the shared
+      `strings.Builder`, a mutex guards `waits`, and the sleep hook holds
+      each retry until both tables are retrying (10 s timeout fails the
+      test instead of hanging), so the retries always overlap.
+    - After: the red command exits 0 with no `DATA RACE` at `-cpu` 1, 2, 4
+      and 8. With the barrier, removing the `waits` guard fails 10/10 at
+      `-count 1` and removing the writer guard fails 14/20 (the `fmt`
+      printer pool sometimes orders the two writes for the race detector).
