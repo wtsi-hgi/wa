@@ -1293,6 +1293,49 @@ func TestRunDevFeedbackDB(t *testing.T) {
 	})
 }
 
+func TestRunDevTestModeRemovesResultsDBSidecars(t *testing.T) {
+	convey.Convey("run-dev.sh --mode test removes the ephemeral results DB and its -wal and -shm files on SIGINT", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		ports := runDevFeedbackPortsForTest(t)
+		binDir := t.TempDir()
+
+		writeRunDevMLWHServeToolchainForTest(t, binDir, filepath.Join(t.TempDir(), "wa-invocations.log"))
+
+		env := runDevFeedbackFrontendEnvForTest(t, repoRoot, binDir, ports)
+		env["WA_RUN_DEV_RESULTS_HEALTH_URL"] = fmt.Sprintf("https://127.0.0.1:%d/rest/v1/results/stats", ports.results)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "test",
+			frontendPort: ports.frontend,
+			resultsPort:  ports.results,
+			seqmetaPort:  ports.seqmeta,
+			unsetEnv:     runDevUnsetRemoteMLWHEnvForTest(),
+			env:          env,
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		dbPath := waitForRunDevSnapshotForTest(t, process, env["WA_RUN_DEV_ENV_SNAPSHOT"]).ResultsDBPath
+
+		t.Cleanup(func() { removeRunDevSQLiteFilesForTest(dbPath) })
+
+		convey.So(dbPath, convey.ShouldNotBeBlank)
+		convey.So(runDevPathExistsForTest(dbPath), convey.ShouldBeTrue)
+
+		// A real SQLite results server in WAL mode keeps these beside the DB.
+		for _, suffix := range []string{"-wal", "-shm"} {
+			convey.So(os.WriteFile(dbPath+suffix, nil, 0o600), convey.ShouldBeNil)
+		}
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			convey.So(runDevPathExistsForTest(dbPath+suffix), convey.ShouldBeFalse)
+		}
+	})
+}
+
 func runDevFeedbackPortsForTest(t *testing.T) runDevFeedbackPorts {
 	t.Helper()
 

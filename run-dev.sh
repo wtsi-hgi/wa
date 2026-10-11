@@ -929,7 +929,7 @@ cleanup() {
   done
 
   if (( DB_EPHEMERAL )) && [[ -n "$DB_PATH" ]]; then
-    rm -f "$DB_PATH"
+    rm -f "$DB_PATH" "$DB_PATH-wal" "$DB_PATH-shm"
   fi
 
   if (( MLWH_CACHE_EPHEMERAL )) && [[ -n "$MLWH_CACHE_PATH" ]]; then
