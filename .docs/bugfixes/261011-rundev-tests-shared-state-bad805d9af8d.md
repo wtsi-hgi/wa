@@ -63,3 +63,24 @@
     - Files: `run-dev.sh`, `cmd/run_dev_test.go`,
       `cmd/run_dev_modes_test.go`, `cmd/run_dev_tmp_dir_test.go`,
       `DEVELOPING.md`.
+
+- [ ] The run-dev tests don't set `WA_RUN_DEV_LOG_DIR`, so they replace a
+      `make dev` session's `logs/results.log`, `logs/mlwh.log` and
+      `logs/frontend.log` in the checkout, and one test asserts those files
+      exist (around `cmd/run_dev_test.go` lines 2551-2553). Same shared-state
+      theme as the item above, so it shares this branch.
+    - Source: bugfix of the item above, reported as incidental.
+    - Evidence: code reading of the tests and `run-dev.sh`'s log directory
+      default.
+- [ ] `make test`'s Playwright step runs a real `run-dev.sh --mode test` with
+      the default `.tmp`, and `frontend/e2e/results-auth-helpers.ts` reads
+      `.tmp/state-test`; afterwards `clean-test-tmp` deletes `.tmp/wa`. So
+      `make test` can still break a verify-wa stack in the same checkout.
+    - Source: bugfix of the item above, reported as incidental.
+    - Evidence: code reading of the Makefile `test-e2e` target and the e2e
+      helpers.
+- [ ] Dev-mode run-dev tests that don't set `XDG_STATE_HOME` inherit the
+      caller's, so a real results server started by one could write its token
+      into the user's real state directory. Unconfirmed: most of those tests
+      use a fake server. Confirm before fixing; record the evidence either way.
+    - Source: bugfix of the item above, reported as incidental.
