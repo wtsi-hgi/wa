@@ -104,7 +104,7 @@ type mlwhInfoClient interface {
 
 func openMLWHInfoConfiguredClient(ctx context.Context, serverURL string) (mlwhInfoClient, error) {
 	if trimmedServerURL := strings.TrimSpace(serverURL); trimmedServerURL != "" {
-		return openMLWHInfoRemoteClient(ctx, mlwh.RemoteConfig{BaseURL: trimmedServerURL})
+		return openMLWHInfoRemoteClient(ctx, mlwhCLIRemoteConfig(trimmedServerURL))
 	}
 
 	cfg, err := resolveMLWHInfoLocalConfig()

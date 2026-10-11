@@ -488,7 +488,7 @@ type resultsServeMLWHHandle interface {
 
 func openResultsServeMLWHClientWithConfig(ctx context.Context, cfg resultsServeMLWHConfig) (resultsServeMLWHHandle, error) {
 	if strings.TrimSpace(cfg.ServerURL) != "" {
-		return mlwh.NewRemoteClient(mlwh.RemoteConfig{BaseURL: cfg.ServerURL})
+		return mlwh.NewRemoteClient(mlwhServerRemoteConfig(cfg.ServerURL, mlwh.UserAgentProductResultsServer))
 	}
 
 	client, err := mlwh.OpenCacheOnly(ctx, mlwh.CacheConfig{

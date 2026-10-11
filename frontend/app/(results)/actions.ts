@@ -33,6 +33,7 @@ import { buildSearchQuery } from "@/lib/search-params";
 import { MLWHCache } from "@/lib/mlwh-cache-core";
 import { primeMLWHCacheEntry } from "@/lib/mlwh-enrichment";
 import { getStudies } from "@/lib/studies-cache";
+import { mlwhIdentityHeaders } from "@/lib/usage-identity";
 
 function buildQueryString(params: Record<string, string[]>): string {
     const rendered = buildSearchQuery(params).toString();
@@ -214,6 +215,7 @@ export async function validateIdentifier(
         return await mlwhJson(
             `/classify/${encodeURIComponent(trimmed)}`,
             identifierResultSchema,
+            { headers: await mlwhIdentityHeaders() },
         );
     } catch (error) {
         if (error instanceof BackendRequestError && error.status === 404) {
@@ -227,6 +229,13 @@ export async function validateIdentifier(
 export async function enrichIdentifier(
     value: string,
 ): Promise<EnrichmentResult | null> {
+    return enrichIdentifierWithHeaders(value, await mlwhIdentityHeaders());
+}
+
+async function enrichIdentifierWithHeaders(
+    value: string,
+    headers: Record<string, string>,
+): Promise<EnrichmentResult | null> {
     const trimmed = value.trim();
     if (!trimmed) {
         return null;
@@ -236,6 +245,7 @@ export async function enrichIdentifier(
         return await mlwhJson(
             `/enrich/${encodeURIComponent(trimmed)}`,
             enrichmentResultSchema,
+            { headers },
         );
     } catch (error) {
         if (error instanceof BackendRequestError && error.status === 404) {
@@ -260,6 +270,7 @@ export async function enrichIdentifiers(
     );
     const cache = new MLWHCache();
     const results: EnrichmentLookupResult[] = [];
+    const headers = await mlwhIdentityHeaders();
 
     for (const value of uniqueValues) {
         const cached = cache.get(value);
@@ -277,7 +288,10 @@ export async function enrichIdentifiers(
         }
 
         try {
-            const enrichment = await enrichIdentifier(value);
+            const enrichment = await enrichIdentifierWithHeaders(
+                value,
+                headers,
+            );
 
             if (enrichment === null) {
                 cache.set(value, null);
@@ -313,6 +327,7 @@ export async function fetchStudySamples(studyId: string): Promise<string[]> {
     const samples = await mlwhJson(
         `/study/${encodeURIComponent(studyId)}/samples`,
         samplesSchema,
+        { headers: await mlwhIdentityHeaders() },
     );
 
     return samples.map((sample) => sample.sanger_id);
@@ -325,11 +340,13 @@ export async function fetchStudyLibrarySamples(
 ) {
     const idLibraryLims = filters.idLibraryLims?.trim();
     const libraryId = filters.libraryId?.trim();
+    const options = { headers: await mlwhIdentityHeaders() };
 
     if (idLibraryLims) {
         return mlwhJson(
             `/library-lims-id/${encodeURIComponent(idLibraryLims)}/samples`,
             enrichmentSamplesSchema,
+            options,
         );
     }
 
@@ -337,12 +354,14 @@ export async function fetchStudyLibrarySamples(
         return mlwhJson(
             `/library-id/${encodeURIComponent(libraryId)}/samples`,
             enrichmentSamplesSchema,
+            options,
         );
     }
 
     return mlwhJson(
         `/library/${encodeURIComponent(libraryType)}/study/${encodeURIComponent(studyId)}/samples`,
         enrichmentSamplesSchema,
+        options,
     );
 }
 

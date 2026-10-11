@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -175,12 +176,14 @@ port_arg() {
 	printf '0'
 }
 
-feedback_db_arg() {
+flag_arg() {
+	local flag="$1"
 	local previous=""
 	local arg
 
+	shift
 	for arg in "$@"; do
-		if [[ "$previous" == "--feedback-db" ]]; then
+		if [[ "$previous" == "$flag" ]]; then
 			printf '%%s' "$arg"
 			return
 		fi
@@ -204,13 +207,14 @@ case "${1:-} ${2:-}" in
 		;;
 	"mlwh serve")
 		port="$(port_arg "$@")"
-		feedback_db="$(feedback_db_arg "$@")"
-		if [[ -n "$feedback_db" ]]; then
-			: >"$feedback_db"
-			: >"$feedback_db-wal"
-			: >"$feedback_db-shm"
-		fi
-		exec node -e 'const http = require("node:http"); const port = Number(process.argv[1]); const tables = ["study","sample","iseq_flowcell","iseq_product_metrics","seq_product_irods_locations"]; const server = http.createServer((request, response) => { if (request.url === "/freshness") { response.writeHead(200, {"content-type":"application/json"}); response.end(JSON.stringify({tables: tables.map((table) => ({table, high_water: "2026-05-15T10:00:00Z", last_run: "2026-05-15T10:00:00Z", ever_synced: true}))})); return; } if (request.url === "/studies") { response.writeHead(200, {"content-type":"application/json"}); response.end("[]"); return; } response.writeHead(404); response.end(); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(port, "127.0.0.1");' "$port"
+		for db in "$(flag_arg --feedback-db "$@")" "$(flag_arg --usage-db "$@")"; do
+			if [[ -n "$db" ]]; then
+				: >"$db"
+				: >"$db-wal"
+				: >"$db-shm"
+			fi
+		done
+		exec node -e 'const fs = require("node:fs"); const http = require("node:http"); const port = Number(process.argv[1]); const tables = ["study","sample","iseq_flowcell","iseq_product_metrics","seq_product_irods_locations"]; const server = http.createServer((request, response) => { fs.appendFileSync(process.argv[2], (request.headers["user-agent"] ?? "") + "\t" + request.url + "\n"); if (request.url === "/freshness") { response.writeHead(200, {"content-type":"application/json"}); response.end(JSON.stringify({tables: tables.map((table) => ({table, high_water: "2026-05-15T10:00:00Z", last_run: "2026-05-15T10:00:00Z", ever_synced: true}))})); return; } if (request.url === "/studies") { response.writeHead(200, {"content-type":"application/json"}); response.end("[]"); return; } response.writeHead(404); response.end(); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(port, "127.0.0.1");' "$port" "$invocations_path.requests"
 		;;
 esac
 
@@ -369,7 +373,7 @@ case "${1:-} ${2:-}" in
 	"mlwh serve")
 		port="$(port_arg "$@")"
 		WA_MLWH_SYNCED_MARKER="${WA_MLWH_CACHE_PATH}.synced" \
-			exec node -e 'const fs = require("node:fs"); const http = require("node:http"); const port = Number(process.argv[1]); const marker = process.env.WA_MLWH_SYNCED_MARKER; const tables = ["study","sample","iseq_flowcell","iseq_product_metrics","seq_product_irods_locations"]; const synced = () => { try { fs.accessSync(marker); return true; } catch { return false; } }; const server = http.createServer((request, response) => { if (request.url === "/freshness") { const ever = synced(); response.writeHead(200, {"content-type":"application/json"}); response.end(JSON.stringify({tables: tables.map((table) => ({table, high_water: ever ? "2026-05-15T10:00:00Z" : "", last_run: ever ? "2026-05-15T10:00:00Z" : "", ever_synced: ever}))})); return; } if (request.url === "/studies") { if (!synced()) { response.writeHead(503, {"content-type":"application/json"}); response.end(JSON.stringify({error: {code: "cache_never_synced"}})); return; } response.writeHead(200, {"content-type":"application/json"}); response.end("[]"); return; } response.writeHead(404); response.end(); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(port, "127.0.0.1");' "$port"
+			exec node -e 'const fs = require("node:fs"); const http = require("node:http"); const port = Number(process.argv[1]); const marker = process.env.WA_MLWH_SYNCED_MARKER; const tables = ["study","sample","iseq_flowcell","iseq_product_metrics","seq_product_irods_locations"]; const synced = () => { try { fs.accessSync(marker); return true; } catch { return false; } }; const server = http.createServer((request, response) => { fs.appendFileSync(process.argv[2], (request.headers["user-agent"] ?? "") + "\t" + request.url + "\n"); if (request.url === "/freshness") { const ever = synced(); response.writeHead(200, {"content-type":"application/json"}); response.end(JSON.stringify({tables: tables.map((table) => ({table, high_water: ever ? "2026-05-15T10:00:00Z" : "", last_run: ever ? "2026-05-15T10:00:00Z" : "", ever_synced: ever}))})); return; } if (request.url === "/studies") { if (!synced()) { response.writeHead(503, {"content-type":"application/json"}); response.end(JSON.stringify({error: {code: "cache_never_synced"}})); return; } response.writeHead(200, {"content-type":"application/json"}); response.end("[]"); return; } response.writeHead(404); response.end(); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(port, "127.0.0.1");' "$port" "$invocations_path.requests"
 		;;
 esac
 
@@ -819,10 +823,22 @@ func runDevTCPPortClosesWithinForTest(port int, timeout time.Duration) bool {
 	return false
 }
 
-// startRunDevDevModeFeedbackForTest starts run-dev.sh --mode dev with a
-// configured MLWH cache, setting WA_MLWH_FEEDBACK_PATH only when feedbackPath
-// is non-empty, and waits until the environment is ready.
-func startRunDevDevModeFeedbackForTest(t *testing.T, repoRoot string, invocationsPath string, feedbackPath string) *runDevProcess {
+// runDevFlagValueForTest returns the value following flag in a recorded
+// invocation, or "" when the flag is absent.
+func runDevFlagValueForTest(invocation string, flag string) string {
+	fields := strings.Fields(invocation)
+
+	index := slices.Index(fields, flag)
+	if index < 0 || index+1 >= len(fields) {
+		return ""
+	}
+
+	return fields[index+1]
+}
+
+// startRunDevDevModeForTest starts run-dev.sh --mode dev with a configured
+// MLWH cache plus extraEnv, and waits until the environment is ready.
+func startRunDevDevModeForTest(t *testing.T, repoRoot string, invocationsPath string, extraEnv map[string]string) *runDevProcess {
 	t.Helper()
 
 	ports := runDevFeedbackPortsForTest(t)
@@ -838,9 +854,7 @@ func startRunDevDevModeFeedbackForTest(t *testing.T, repoRoot string, invocation
 	env["WA_RESULTS_LDAP_DN"] = "uid=%s,ou=people,dc=example,dc=org"
 	env["WA_RUN_DEV_RESULTS_HEALTH_URL"] = fmt.Sprintf("http://127.0.0.1:%d/rest/v1/results/stats", ports.results)
 
-	if feedbackPath != "" {
-		env["WA_MLWH_FEEDBACK_PATH"] = feedbackPath
-	}
+	maps.Copy(env, extraEnv)
 
 	process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 		mode:         "dev",
@@ -854,6 +868,236 @@ func startRunDevDevModeFeedbackForTest(t *testing.T, repoRoot string, invocation
 	convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
 
 	return process
+}
+
+func TestRunDevUsageDB(t *testing.T) {
+	convey.Convey("D3.1: run-dev.sh --mode test passes an ephemeral .tmp usage DB to mlwh serve and removes it on SIGINT", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+
+		process := startRunDevTestModeForTest(t, repoRoot, invocationsPath, map[string]string{
+			"WA_MLWH_USAGE_PATH": filepath.Join(t.TempDir(), "ignored-in-test-mode.sqlite"),
+		})
+
+		serve := runDevMLWHServeInvocationForTest(t, invocationsPath)
+		usagePath := runDevFlagValueForTest(serve, "--usage-db")
+
+		t.Cleanup(func() { removeRunDevSQLiteFilesForTest(usagePath) })
+
+		convey.So(usagePath, convey.ShouldNotBeBlank)
+		convey.So(filepath.Dir(usagePath), convey.ShouldEqual, filepath.Join(repoRoot, ".tmp"))
+		convey.So(filepath.Base(usagePath), convey.ShouldStartWith, "mlwh-usage-test.")
+		convey.So(filepath.Base(usagePath), convey.ShouldEndWith, ".sqlite")
+
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			convey.So(runDevPathExistsForTest(usagePath+suffix), convey.ShouldBeTrue)
+		}
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			convey.So(runDevPathExistsForTest(usagePath+suffix), convey.ShouldBeFalse)
+		}
+	})
+
+	convey.Convey("D3.2: run-dev.sh --mode dev with a configured cache and no WA_MLWH_USAGE_PATH passes no --usage-db", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+
+		process := startRunDevDevModeForTest(t, repoRoot, invocationsPath, nil)
+
+		serve := runDevMLWHServeInvocationForTest(t, invocationsPath)
+
+		convey.So(serve, convey.ShouldContainSubstring, "--mlwh-cache ")
+		convey.So(serve, convey.ShouldNotContainSubstring, "--usage-db")
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("D3.2: run-dev.sh --mode dev passes WA_MLWH_USAGE_PATH, creates its parent directory, and keeps it on shutdown", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+		usageDir := filepath.Join(t.TempDir(), "u")
+		usagePath := filepath.Join(usageDir, "dev.sqlite")
+
+		process := startRunDevDevModeForTest(t, repoRoot, invocationsPath, map[string]string{"WA_MLWH_USAGE_PATH": usagePath})
+
+		serve := runDevMLWHServeInvocationForTest(t, invocationsPath)
+
+		convey.So(runDevFlagValueForTest(serve, "--usage-db"), convey.ShouldEqual, usagePath)
+		convey.So(strings.Count(serve, "--usage-db"), convey.ShouldEqual, 1)
+
+		info, err := os.Stat(usageDir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(info.IsDir(), convey.ShouldBeTrue)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+
+		convey.So(runDevPathExistsForTest(usagePath), convey.ShouldBeTrue)
+	})
+
+	convey.Convey("D3.3: run-dev.sh passes no --usage-db to a WA_RUN_DEV_SEQMETA_CMD backend", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		ports := runDevFeedbackPortsForTest(t)
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+		seqmetaArgsPath := filepath.Join(t.TempDir(), "seqmeta-args.log")
+		binDir := t.TempDir()
+
+		writeRunDevMLWHServeToolchainForTest(t, binDir, invocationsPath)
+
+		env := runDevFeedbackFrontendEnvForTest(t, repoRoot, binDir, ports)
+		env["WA_RUN_DEV_RESULTS_HEALTH_URL"] = fmt.Sprintf("https://127.0.0.1:%d/rest/v1/results/stats", ports.results)
+		env["WA_RUN_DEV_SEQMETA_CMD"] = writeRunDevArgRecordingSeqmetaStubForTest(t, binDir, seqmetaArgsPath, ports.seqmeta)
+		env["WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS"] = "60"
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "test",
+			frontendPort: ports.frontend,
+			resultsPort:  ports.results,
+			seqmetaPort:  ports.seqmeta,
+			unsetEnv:     runDevUnsetRemoteMLWHEnvForTest(),
+			env:          env,
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		seqmetaArgs, err := os.ReadFile(seqmetaArgsPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(seqmetaArgs), convey.ShouldNotContainSubstring, "--usage-db")
+		convey.So(string(seqmetaArgs), convey.ShouldNotContainSubstring, "mlwh-usage-test.")
+
+		invocations := strings.Join(waitForRunDevStepsForTest(t, invocationsPath, 1), "\n")
+		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh serve")
+		convey.So(invocations, convey.ShouldNotContainSubstring, "--usage-db")
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("D3.4: run-dev.sh probes the MLWH server as wa-run-dev in test mode", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+
+		process := startRunDevTestModeForTest(t, repoRoot, invocationsPath, nil)
+
+		requests := runDevMLWHProbeRequestsForTest(t, invocationsPath+".requests")
+
+		convey.So(requests["/freshness"], convey.ShouldNotBeEmpty)
+		convey.So(runDevNonRunDevUserAgentsForTest(requests), convey.ShouldBeEmpty)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("D3.4: run-dev.sh probes and freshness-checks a cold MLWH cache as wa-run-dev in dev mode", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		ports := runDevFeedbackPortsForTest(t)
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+		binDir := t.TempDir()
+
+		writeRunDevColdMLWHServeToolchainForTest(t, binDir, invocationsPath)
+
+		env := runDevFeedbackFrontendEnvForTest(t, repoRoot, binDir, ports)
+		env["WA_ENV"] = "development"
+		env["WA_RESULTS_DB_PATH"] = filepath.Join(t.TempDir(), "results-dev.sqlite")
+		env["WA_MLWH_DSN"] = "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test"
+		env["WA_MLWH_CACHE_PATH"] = filepath.Join(t.TempDir(), "mlwh-cache.sqlite")
+		env["WA_RESULTS_LDAP_SERVER"] = "ldap.example.org"
+		env["WA_RESULTS_LDAP_DN"] = "uid=%s,ou=people,dc=example,dc=org"
+		env["WA_RUN_DEV_RESULTS_HEALTH_URL"] = fmt.Sprintf("http://127.0.0.1:%d/rest/v1/results/stats", ports.results)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "dev",
+			frontendPort: ports.frontend,
+			resultsPort:  ports.results,
+			seqmetaPort:  ports.seqmeta,
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
+			env:          env,
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		requests := runDevMLWHProbeRequestsForTest(t, invocationsPath+".requests")
+
+		convey.So(len(requests["/freshness"]), convey.ShouldBeGreaterThanOrEqualTo, 2)
+		convey.So(requests["/studies"], convey.ShouldNotBeEmpty)
+		convey.So(runDevNonRunDevUserAgentsForTest(requests), convey.ShouldBeEmpty)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+}
+
+// startRunDevTestModeForTest starts run-dev.sh --mode test against the fake
+// mlwh serve toolchain plus extraEnv, and waits until the environment is ready.
+func startRunDevTestModeForTest(t *testing.T, repoRoot string, invocationsPath string, extraEnv map[string]string) *runDevProcess {
+	t.Helper()
+
+	ports := runDevFeedbackPortsForTest(t)
+	binDir := t.TempDir()
+
+	writeRunDevMLWHServeToolchainForTest(t, binDir, invocationsPath)
+
+	env := runDevFeedbackFrontendEnvForTest(t, repoRoot, binDir, ports)
+	env["WA_RUN_DEV_RESULTS_HEALTH_URL"] = fmt.Sprintf("https://127.0.0.1:%d/rest/v1/results/stats", ports.results)
+	maps.Copy(env, extraEnv)
+
+	process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+		mode:         "test",
+		frontendPort: ports.frontend,
+		resultsPort:  ports.results,
+		seqmetaPort:  ports.seqmeta,
+		unsetEnv:     runDevUnsetRemoteMLWHEnvForTest(),
+		env:          env,
+	})
+
+	convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+	return process
+}
+
+// runDevMLWHProbeRequestsForTest reads the fake mlwh serve request log, whose
+// lines are "<user-agent>\t<url>", and returns the User-Agents of each
+// /freshness and /studies request keyed by URL.
+func runDevMLWHProbeRequestsForTest(t *testing.T, logPath string) map[string][]string {
+	t.Helper()
+
+	data, err := os.ReadFile(logPath)
+	convey.So(err, convey.ShouldBeNil)
+
+	requests := map[string][]string{}
+
+	for line := range strings.Lines(string(data)) {
+		userAgent, url, found := strings.Cut(strings.TrimSuffix(line, "\n"), "\t")
+		if !found {
+			t.Fatalf("malformed request log line %q", line)
+		}
+
+		if url == "/freshness" || url == "/studies" {
+			requests[url] = append(requests[url], userAgent)
+		}
+	}
+
+	return requests
+}
+
+// runDevNonRunDevUserAgentsForTest returns every logged User-Agent that is not
+// wa-run-dev.
+func runDevNonRunDevUserAgentsForTest(requests map[string][]string) []string {
+	var others []string
+
+	for _, userAgents := range requests {
+		for _, userAgent := range userAgents {
+			if userAgent != "wa-run-dev" {
+				others = append(others, userAgent)
+			}
+		}
+	}
+
+	return others
 }
 
 func (process *runDevProcess) Terminate() {
@@ -949,7 +1193,7 @@ func TestRunDevFeedbackDB(t *testing.T) {
 		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
 
 		serve := runDevMLWHServeInvocationForTest(t, invocationsPath)
-		feedbackPath := runDevFeedbackDBArgForTest(serve)
+		feedbackPath := runDevFlagValueForTest(serve, "--feedback-db")
 
 		t.Cleanup(func() { removeRunDevSQLiteFilesForTest(feedbackPath) })
 
@@ -974,7 +1218,7 @@ func TestRunDevFeedbackDB(t *testing.T) {
 		repoRoot := runDevRepoRootForTest(t)
 		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
 
-		process := startRunDevDevModeFeedbackForTest(t, repoRoot, invocationsPath, "")
+		process := startRunDevDevModeForTest(t, repoRoot, invocationsPath, nil)
 
 		serve := runDevMLWHServeInvocationForTest(t, invocationsPath)
 
@@ -991,11 +1235,11 @@ func TestRunDevFeedbackDB(t *testing.T) {
 		feedbackDir := filepath.Join(t.TempDir(), "fb")
 		feedbackPath := filepath.Join(feedbackDir, "dev.sqlite")
 
-		process := startRunDevDevModeFeedbackForTest(t, repoRoot, invocationsPath, feedbackPath)
+		process := startRunDevDevModeForTest(t, repoRoot, invocationsPath, map[string]string{"WA_MLWH_FEEDBACK_PATH": feedbackPath})
 
 		serve := runDevMLWHServeInvocationForTest(t, invocationsPath)
 
-		convey.So(runDevFeedbackDBArgForTest(serve), convey.ShouldEqual, feedbackPath)
+		convey.So(runDevFlagValueForTest(serve, "--feedback-db"), convey.ShouldEqual, feedbackPath)
 		convey.So(strings.Count(serve, "--feedback-db"), convey.ShouldEqual, 1)
 
 		info, err := os.Stat(feedbackDir)
@@ -1093,19 +1337,6 @@ func runDevMLWHServeInvocationForTest(t *testing.T, invocationsPath string) stri
 	convey.So(serves, convey.ShouldHaveLength, 1)
 
 	return serves[0]
-}
-
-// runDevFeedbackDBArgForTest returns the value following --feedback-db in a
-// recorded invocation, or "" when the flag is absent.
-func runDevFeedbackDBArgForTest(invocation string) string {
-	fields := strings.Fields(invocation)
-
-	index := slices.Index(fields, "--feedback-db")
-	if index < 0 || index+1 >= len(fields) {
-		return ""
-	}
-
-	return fields[index+1]
 }
 
 func removeRunDevSQLiteFilesForTest(path string) {
@@ -2907,6 +3138,7 @@ func runDevEnvForTest(unsetKeys []string) []string {
 		"WA_MLWH_CACHE_PATH",
 		"WA_MLWH_CACHE_PASSWORD",
 		"WA_MLWH_FEEDBACK_PATH",
+		"WA_MLWH_USAGE_PATH",
 		// Strip every WA_MLWH_* server selector inherited from the developer's
 		// shell so these tests exercise the same MLWH branch CI does. A
 		// developer who exports WA_MLWH_SERVER_URL (or WA_MLWH_BACKEND_URL) to a

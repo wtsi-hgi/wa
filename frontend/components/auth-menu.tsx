@@ -7,7 +7,13 @@ import {
     useRef,
     useState,
 } from "react";
-import { LogIn, LogOut, LockKeyhole, MessageSquareText } from "lucide-react";
+import {
+    ChartColumn,
+    LogIn,
+    LogOut,
+    LockKeyhole,
+    MessageSquareText,
+} from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Alert } from "@/components/ui/alert";
@@ -35,6 +41,7 @@ import { showLockedResultsParam } from "@/lib/search-params";
 type AuthMenuProps = {
     initialSession: CurrentSession;
     showFeedbackLink?: boolean;
+    showUsageLink?: boolean;
 };
 
 const accessFilterLabel = "Only show accessible result sets";
@@ -67,6 +74,7 @@ async function refreshFromBrowser(): Promise<CurrentSession> {
 export function AuthMenu({
     initialSession,
     showFeedbackLink = false,
+    showUsageLink = false,
 }: AuthMenuProps): ReactNode {
     const router = useRouter();
     const pathname = usePathname();
@@ -239,6 +247,18 @@ export function AuthMenu({
                                     className="h-4 w-4"
                                 />
                                 <span>Feedback</span>
+                            </DropdownMenuLinkItem>
+                        ) : null}
+                        {showUsageLink ? (
+                            <DropdownMenuLinkItem
+                                href="/usage"
+                                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                            >
+                                <ChartColumn
+                                    aria-hidden="true"
+                                    className="h-4 w-4"
+                                />
+                                <span>Usage</span>
                             </DropdownMenuLinkItem>
                         ) : null}
                         <button

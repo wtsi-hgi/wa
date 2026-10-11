@@ -134,7 +134,7 @@ type mlwhExportClient interface {
 
 func openMLWHExportConfiguredClient(ctx context.Context, serverURL string) (mlwhExportClient, error) {
 	if trimmedServerURL := strings.TrimSpace(serverURL); trimmedServerURL != "" {
-		return openMLWHExportRemoteClient(ctx, mlwh.RemoteConfig{BaseURL: trimmedServerURL})
+		return openMLWHExportRemoteClient(ctx, mlwhCLIRemoteConfig(trimmedServerURL))
 	}
 
 	cfg, err := resolveMLWHInfoLocalConfig()

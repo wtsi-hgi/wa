@@ -39,6 +39,9 @@ import (
 
 const mlwhServerFetchAllLimit = 1_000_000
 
+// mlwhOpenAPIPath is the plain route serving the OpenAPI document.
+const mlwhOpenAPIPath = "/openapi.json"
+
 // mlwhSearchDefaultLimit is the default page size for the substring-search
 // endpoints when no limit query param is supplied. Unlike the other endpoints
 // (which default to mlwhServerFetchAllLimit), search is its own pagination
@@ -170,6 +173,38 @@ func countIRODSPathsForStudyResult(c *gin.Context, queryer Queryer, id string, o
 	}
 
 	return queryer.CountIRODSPathsForStudy(c.Request.Context(), id)
+}
+
+// registerMLWHPlainRoutes registers the operational routes that are not Registry
+// (Queryer) endpoints: GET /health, a cheap liveness probe that returns
+// {"status":"ok"} without consulting the queryer, so readiness checks stay
+// inexpensive and never surface a never-synced 503; and GET /openapi.json, the
+// self-describing OpenAPI 3.1.0 document. Both are plain routes, so in secured
+// mode they stay on the unauthenticated router and remain reachable without a
+// token. Only /openapi.json is counted.
+func (s *Server) registerMLWHPlainRoutes(router *gin.Engine) {
+	router.GET("/health", mlwhHealthHandler)
+	router.GET(mlwhOpenAPIPath, s.countedHandlers(mlwhOpenAPIPath, mlwhOpenAPIHandler)...)
+}
+
+func (s *Server) registerMLWHEndpoints(registrar mlwhRouteRegistrar) {
+	for _, entry := range Registry {
+		registrar.Handle(entry.Verb, entry.Path,
+			s.countedHandlers(entry.Path, mlwhEndpointHandler(s.queryer, entry.Method))...)
+	}
+}
+
+// WithUsage enables usage tracking. store may be nil (disabled). adminToken
+// is the admin Bearer token; ignored when store is nil.
+func WithUsage(store *UsageStore, adminToken []byte) ServerOption {
+	return func(s *Server) {
+		s.usage = store
+		s.usageAdminToken = nil
+
+		if store != nil {
+			s.usageAdminToken = adminToken
+		}
+	}
 }
 
 func mlwhRunAggregationOptionsFromQuery(c *gin.Context) (RunAggregationOptions, bool) {
@@ -383,6 +418,8 @@ type Server struct {
 	queryer            Queryer
 	feedback           *FeedbackStore
 	feedbackAdminToken []byte
+	usage              *UsageStore
+	usageAdminToken    []byte
 }
 
 // NewServer constructs an MLWH API server.
@@ -407,7 +444,11 @@ func NewServer(q Queryer, opts ...ServerOption) *Server {
 // OpenAPI document remain reachable and unauthenticated. The feedback routes
 // register whether or not feedback is enabled: submit (POST /feedback)
 // alongside the Registry endpoints, and the admin routes, which check their
-// own token, always on the router. None of them is a Registry entry.
+// own token, always on the router. GET /usage, which also checks its own
+// token, registers on the router whether or not usage is enabled. None of
+// these is a Registry entry. When usage is enabled, the Registry endpoints,
+// /openapi.json, POST /feedback, and unmatched requests are counted; /health,
+// GET /usage, and the feedback admin routes are not.
 func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
 	if s == nil {
 		return
@@ -415,17 +456,22 @@ func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
 
 	if router != nil {
 		configureMLWHRouter(router)
-		registerMLWHPlainRoutes(router)
+		s.registerMLWHPlainRoutes(router)
 		s.registerFeedbackAdminRoutes(router)
+		s.registerUsageAdminRoute(router)
 
 		if auth == nil {
-			registerMLWHEndpoints(router, s.queryer)
+			s.registerMLWHEndpoints(router)
 			s.registerFeedbackSubmitRoute(router)
+		}
+
+		if s.usage != nil {
+			router.NoRoute(s.usageMiddleware(""))
 		}
 	}
 
 	if auth != nil {
-		registerMLWHEndpoints(auth, s.queryer)
+		s.registerMLWHEndpoints(auth)
 		s.registerFeedbackSubmitRoute(auth)
 	}
 }
@@ -433,24 +479,6 @@ func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
 func configureMLWHRouter(router *gin.Engine) {
 	router.UseRawPath = true
 	router.UnescapePathValues = false
-}
-
-// registerMLWHPlainRoutes registers the operational routes that are not Registry
-// (Queryer) endpoints: GET /health, a cheap liveness probe that returns
-// {"status":"ok"} without consulting the queryer, so readiness checks stay
-// inexpensive and never surface a never-synced 503; and GET /openapi.json, the
-// self-describing OpenAPI 3.1.0 document. Both are plain routes, so in secured
-// mode they stay on the unauthenticated router and remain reachable without a
-// token.
-func registerMLWHPlainRoutes(router *gin.Engine) {
-	router.GET("/health", mlwhHealthHandler)
-	router.GET("/openapi.json", mlwhOpenAPIHandler)
-}
-
-func registerMLWHEndpoints(registrar mlwhRouteRegistrar, queryer Queryer) {
-	for _, entry := range Registry {
-		registrar.Handle(entry.Verb, entry.Path, mlwhEndpointHandler(queryer, entry.Method))
-	}
 }
 
 // ServerOption configures a Server.

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 import { AuthMenu } from "@/components/auth-menu";
-import { isFeedbackAdmin } from "@/lib/feedback-admin";
+import { isMLWHAdmin } from "@/lib/feedback-admin";
 import { MLWHCacheProvider } from "@/lib/mlwh-cache";
 import { currentSession } from "@/app/(results)/auth/actions";
 
@@ -11,8 +11,7 @@ export default async function ResultsLayout({
     children: ReactNode;
 }) {
     const session = await currentSession();
-    const showFeedbackLink =
-        session.authenticated && isFeedbackAdmin(session.username);
+    const isAdmin = session.authenticated && isMLWHAdmin(session.username);
 
     return (
         <MLWHCacheProvider>
@@ -28,7 +27,8 @@ export default async function ResultsLayout({
                     <div className="flex min-w-0 justify-end">
                         <AuthMenu
                             initialSession={session}
-                            showFeedbackLink={showFeedbackLink}
+                            showFeedbackLink={isAdmin}
+                            showUsageLink={isAdmin}
                         />
                     </div>
                 </header>

@@ -66,7 +66,7 @@ type mlwhRunsClient interface {
 
 func openMLWHRunsConfiguredClient(ctx context.Context, serverURL string) (mlwhRunsClient, error) {
 	if trimmedServerURL := strings.TrimSpace(serverURL); trimmedServerURL != "" {
-		return openMLWHRunsRemoteClient(ctx, mlwh.RemoteConfig{BaseURL: trimmedServerURL})
+		return openMLWHRunsRemoteClient(ctx, mlwhCLIRemoteConfig(trimmedServerURL))
 	}
 
 	cfg, err := resolveMLWHInfoLocalConfig()

@@ -15,6 +15,10 @@ export {
     resultsAuthCookieName,
 } from "@/lib/backend-shared";
 
+// mlwhWebUserAgent is the User-Agent product wa's Go server maps to the web
+// category (mlwh.UserAgentProductWeb).
+const mlwhWebUserAgent = "wa-web";
+
 type BackendEnvVar = "WA_RESULTS_BACKEND_URL" | "WA_MLWH_BACKEND_URL";
 type BackendFetchOptions = Omit<RequestInit, "headers"> & {
     headers?: HeadersInit;
@@ -292,7 +296,14 @@ export async function mlwhJson<T>(
     schema: ZodType<T>,
     options?: BackendFetchOptions,
 ): Promise<T> {
-    return backendJson("mlwh", "WA_MLWH_BACKEND_URL", path, schema, options);
+    const headers = new Headers(options?.headers);
+
+    headers.set("user-agent", mlwhWebUserAgent);
+
+    return backendJson("mlwh", "WA_MLWH_BACKEND_URL", path, schema, {
+        ...options,
+        headers,
+    });
 }
 
 export async function resultsRaw(

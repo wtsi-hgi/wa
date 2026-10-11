@@ -281,6 +281,110 @@ depends on how that server was started, so stop it first if you want
 `make dev` to start one with feedback on. A remote `WA_MLWH_SERVER_URL` or a
 `WA_RUN_DEV_SEQMETA_CMD` server never gets the flag.
 
+#### Usage metrics
+
+`wa mlwh serve` can record one row per request in its own SQLite file, so an
+admin can see who uses the MLWH API and whether use is rising or falling.
+Usage tracking is off by default. To turn it on, name a SQLite file:
+
+```bash
+wa mlwh serve --port 8091 --usage-db /var/lib/wa/mlwh-usage.sqlite
+```
+
+`--usage-db` defaults to `WA_MLWH_USAGE_PATH`. As with `--feedback-db`, the
+server creates the file at mode 0600 and its parent directory, and rejects a
+MySQL DSN, `:memory:`, and `file:` URIs. The usage database is separate from
+the MLWH cache and the feedback database. The server deletes rows
+older than `--usage-retention-days` days at startup and every hour. The flag
+defaults to `WA_MLWH_USAGE_RETENTION_DAYS`, else 365, and must be at least 1.
+An explicit flag overrides the env var.
+
+`GET /usage?window=24h|7d|30d|all` (default `7d`) returns the aggregates. It
+sits at the server root in both modes and needs the same
+`Authorization: Bearer <token>` as the feedback admin routes, read from the
+same token file. With usage on and feedback off, `wa mlwh serve` still
+creates or reads that token file. With usage off, `GET /usage` answers 503
+`usage_disabled`.
+
+The frontend `/usage` page shows the aggregates: totals, a per-category
+table, a trend over consecutive windows back to the earliest row, endpoints
+with latency percentiles, MCP tools and agents, other API user agents,
+unmatched paths, top users and clients, and requests per UTC day. It has the
+same setup and admin rule as the `/feedback` page above: a user in
+`WA_FEEDBACK_ADMINS` or the OS user running Next.js. Admins see a Usage link
+in the account menu.
+
+Callers identify themselves with optional request headers. Servers older than
+MLWH API 1.10.0 ignore them.
+
+| Header               | Sent by             | Value                                                                    |
+| -------------------- | ------------------- | ------------------------------------------------------------------------ |
+| `User-Agent`         | all wa clients      | `<product>/<version>` (products below)                                   |
+| `X-WA-Client-ID`     | CLI, web, MCP       | CLI: per-process run ID. Web: hashed browser cookie. MCP: hashed session |
+| `X-WA-Client-User`   | CLI, web, MCP stdio | self-declared username                                                   |
+| `X-WA-MCP-Transport` | MCP                 | `stdio` or `http`                                                        |
+| `X-WA-MCP-Agent`     | MCP                 | stdio: clientInfo `<name>/<version>`. HTTP: the agent's User-Agent       |
+| `X-WA-MCP-Tool`      | MCP                 | MCP tool name                                                            |
+
+The User-Agent product, the text before the first `/` or space, decides the
+category:
+
+| Product              | Category          | Sender                                                                                 |
+| -------------------- | ----------------- | -------------------------------------------------------------------------------------- |
+| `wa-cli`             | `cli`             | `wa mlwh info/latest/search/runs/export/studies/programmes/people`, `wa mlwhdiff diff` |
+| `mlwh-mcp-server`    | `mcp`             | the MLWH MCP server                                                                    |
+| `wa-web`             | `web`             | the Next.js server                                                                     |
+| `wa-results-server`  | `results_server`  | `wa results serve`, which also carries `wa results register` traffic                   |
+| `wa-mlwhdiff-server` | `mlwhdiff_server` | `wa mlwhdiff serve`                                                                    |
+| `wa-run-dev`         | not counted       | `run-dev.sh` readiness checks                                                          |
+| anything else, none  | `other`           | unidentified callers, such as `curl`                                                   |
+
+The CLI sends the local OS username, the web sends the logged-in username,
+and the MCP stdio server sends its user's name. These usernames are
+self-declared: the server does not check them. CLI and MCP users cannot opt
+out of sending theirs. `wa results serve` and `wa mlwhdiff serve` send no
+client ID or username, so their rows do not name the end user.
+
+The web client ID comes from the `wa_usage_session` cookie: a random UUID
+that Next.js sets for a year on each browser. It is anonymous, holds nothing
+else, and is used only for usage counting. Next.js sends a hash of it, never
+the cookie itself.
+
+Requests that are counted: every data endpoint, `GET /openapi.json`,
+`POST /feedback`, and requests that match no route (stored as unmatched
+paths). Not counted: `GET /health`, the feedback admin routes, `GET /usage`,
+requests with User-Agent product `wa-run-dev`, and, in secured mode, requests
+the gas JWT middleware rejects. Web lookups served from the browser's
+`wa-seqmeta-cache` cookie or the Next.js `/studies` cache never reach the
+server, so these cache hits are not counted.
+
+`make dev` wires `--usage-db` the same way as `--feedback-db` (see Agent
+feedback above). Test mode always enables usage with a throwaway database
+under `.tmp/` that is removed on shutdown. Dev and production modes enable it
+when `WA_MLWH_USAGE_PATH` is set. A reused, remote, or
+`WA_RUN_DEV_SEQMETA_CMD` MLWH server never gets the flag. The readiness
+probes in `run-dev.sh` send User-Agent `wa-run-dev`, so they are not counted.
+
+Known limits:
+
+- Usernames, client IDs, and User-Agents are self-declared and spoofable. Any
+  caller can send `wa-run-dev` to avoid being counted.
+- Web counts are requests that reached the MLWH server, not page views.
+- The Next.js `/studies` cache fetch carries no session or user.
+- Clients by IP are distinct socket IPs among rows with no client ID, so
+  callers behind one host merge. All MCP HTTP users share the MCP host's IP.
+- Each row stores the socket IP, never `X-Forwarded-For`.
+- The server queues rows for one writer goroutine. If the queue of 4096 rows
+  fills, new rows are dropped; the page reports how many since server start.
+- gin answers a trailing-slash request such as `GET /studies/` with a
+  redirect before any handler runs, so the redirect records no row. A client
+  that follows it is counted under the target route.
+- The trend has one bar per window back to the earliest stored row, on every
+  category and endpoint row, so the page grows with stored history. The 24h
+  window grows most: a year of rows gives about 366 bars per row, several
+  megabytes of HTML that load slowly. Lower `--usage-retention-days` to bound
+  it.
+
 ### Poll for metadata changes
 
 ```bash

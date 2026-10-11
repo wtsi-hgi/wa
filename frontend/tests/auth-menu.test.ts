@@ -87,13 +87,18 @@ beforeEach(() => {
 function renderAuthMenu(
     initialSession: CurrentSession,
     showFeedbackLink?: boolean,
+    showUsageLink?: boolean,
 ) {
     return import("@/components/auth-menu").then(({ AuthMenu }) =>
         render(
             createElement(
                 AppProviders,
                 undefined,
-                createElement(AuthMenu, { initialSession, showFeedbackLink }),
+                createElement(AuthMenu, {
+                    initialSession,
+                    showFeedbackLink,
+                    showUsageLink,
+                }),
             ),
         ),
     );
@@ -653,5 +658,96 @@ describe("E5 auth menu feedback link", () => {
         expect(
             within(bobMenu).queryByRole("menuitem", { name: "Feedback" }),
         ).toBeNull();
+    });
+});
+
+describe("E5 auth menu usage link", () => {
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
+    });
+
+    it("shows a Usage menu link to /usage after Feedback and before Log out", async () => {
+        stubSessionRefresh({ authenticated: true, username: "alice" });
+
+        await renderAuthMenu(
+            { authenticated: true, username: "alice" },
+            true,
+            true,
+        );
+
+        const menu = openAccountMenu("alice");
+        const usage = within(menu).getByRole("menuitem", { name: "Usage" });
+
+        expect(usage.tagName).toBe("A");
+        expect(usage.getAttribute("href")).toBe("/usage");
+        expect(usage.querySelector("svg.lucide-chart-column")).not.toBeNull();
+        expect(
+            within(menu)
+                .getAllByRole("menuitem")
+                .map((item) => item.textContent),
+        ).toEqual(["Feedback", "Usage", "Log out"]);
+    });
+
+    it("hides the Usage link from an authenticated menu without the prop", async () => {
+        stubSessionRefresh({ authenticated: true, username: "alice" });
+
+        await renderAuthMenu({ authenticated: true, username: "alice" }, true);
+
+        const menu = openAccountMenu("alice");
+
+        expect(
+            within(menu)
+                .getAllByRole("menuitem")
+                .map((item) => item.textContent),
+        ).toEqual(["Feedback", "Log out"]);
+        expect(document.querySelector('a[href="/usage"]')).toBeNull();
+    });
+
+    it("hides the Usage link from anonymous sessions even with the prop", async () => {
+        await renderAuthMenu(
+            { authenticated: false, username: null },
+            true,
+            true,
+        );
+
+        expect(screen.queryByText("Usage")).toBeNull();
+
+        fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+
+        expect(screen.getByRole("form", { name: "Log in" })).toBeTruthy();
+        expect(screen.queryByText("Usage")).toBeNull();
+        expect(document.querySelector('a[href="/usage"]')).toBeNull();
+    });
+
+    it("shows the layout Usage and Feedback links to the server's OS user", async () => {
+        vi.stubEnv("WA_FEEDBACK_ADMINS", undefined);
+
+        const menu = await renderResultsLayoutMenu("svc");
+
+        expect(
+            within(menu)
+                .getByRole("menuitem", { name: "Usage" })
+                .getAttribute("href"),
+        ).toBe("/usage");
+        expect(
+            within(menu)
+                .getByRole("menuitem", { name: "Feedback" })
+                .getAttribute("href"),
+        ).toBe("/feedback");
+    });
+
+    it("hides the layout Usage and Feedback links from a non-admin user", async () => {
+        vi.stubEnv("WA_FEEDBACK_ADMINS", undefined);
+
+        const menu = await renderResultsLayoutMenu("bob");
+
+        expect(
+            within(menu)
+                .getAllByRole("menuitem")
+                .map((item) => item.textContent),
+        ).toEqual(["Log out"]);
     });
 });

@@ -2,7 +2,6 @@
 
 import { type ZodType, z } from "zod";
 
-import { currentSession } from "@/app/(results)/auth/actions";
 import { BackendRequestError, mlwhJson } from "@/lib/backend-client";
 import {
     feedbackDeleteResponseSchema,
@@ -13,11 +12,9 @@ import {
     type FeedbackListInput,
     type FeedbackPage,
 } from "@/lib/contracts";
-import {
-    feedbackPageSize,
-    isFeedbackAdmin,
-    readMLWHServerToken,
-} from "@/lib/feedback-admin";
+import { feedbackPageSize } from "@/lib/feedback-admin";
+import { authorizeMLWHAdmin, type MLWHAdminAuth } from "@/lib/mlwh-admin-gate";
+import { mlwhIdentityHeaders } from "@/lib/usage-identity";
 
 export type FeedbackUnavailableReason =
     | "no_token"
@@ -47,49 +44,12 @@ export type FeedbackMutationState =
       }
     | FeedbackUnavailableState;
 
-type FeedbackGateState =
-    | { status: "unauthenticated" | "forbidden" | "invalid_input" }
-    | FeedbackUnavailableState;
-
-type ParseResult<T> = { success: true; data: T } | { success: false };
-
 const waErrorCodeSchema = z.object({ code: z.string() });
 const acknowledgeArgsSchema = z.tuple([feedbackIdSchema, z.boolean()]);
 const unsupportedState: FeedbackUnavailableState = {
     status: "unavailable",
     reason: "unsupported",
 };
-
-// authorizeFeedback runs the session, allowlist, and argument checks in that
-// order, then reads the MLWH server token, all before any fetch. It returns
-// the token and parsed arguments, or the state to return without calling wa.
-async function authorizeFeedback<T>(
-    parseArgs: () => ParseResult<T>,
-): Promise<{ token: string; args: T } | FeedbackGateState> {
-    const session = await currentSession();
-
-    if (!session.authenticated) {
-        return { status: "unauthenticated" };
-    }
-
-    if (!isFeedbackAdmin(session.username)) {
-        return { status: "forbidden" };
-    }
-
-    const parsed = parseArgs();
-
-    if (!parsed.success) {
-        return { status: "invalid_input" };
-    }
-
-    const token = readMLWHServerToken();
-
-    if (token === null) {
-        return { status: "unavailable", reason: "no_token" };
-    }
-
-    return { token, args: parsed.data };
-}
 
 // feedbackErrorState maps a failed wa request to a returned state. notFound
 // is the state for a 404 carrying wa's not_found envelope.
@@ -122,12 +82,13 @@ function feedbackErrorState<N>(
 }
 
 async function feedbackRequest<T>(
-    token: string,
+    { token, username }: MLWHAdminAuth,
     path: string,
     schema: ZodType<T>,
     init: { method?: string; body?: string } = {},
 ): Promise<T> {
     const headers: Record<string, string> = {
+        ...(await mlwhIdentityHeaders(username)),
         authorization: `Bearer ${token}`,
     };
 
@@ -158,7 +119,7 @@ function feedbackListPath(input: FeedbackListInput): string {
 export async function listFeedbackAction(
     input: FeedbackListInput,
 ): Promise<FeedbackListState> {
-    const gate = await authorizeFeedback(() =>
+    const gate = await authorizeMLWHAdmin(() =>
         feedbackListInputSchema.safeParse(input),
     );
 
@@ -168,7 +129,7 @@ export async function listFeedbackAction(
 
     try {
         const page = await feedbackRequest(
-            gate.token,
+            gate,
             feedbackListPath(gate.args),
             feedbackPageSchema,
         );
@@ -181,13 +142,13 @@ export async function listFeedbackAction(
 }
 
 async function mutateFeedback<T>(
-    token: string,
+    auth: MLWHAdminAuth,
     id: number,
     schema: ZodType<T>,
     init: { method: string; body?: string },
 ): Promise<FeedbackMutationState> {
     try {
-        await feedbackRequest(token, `/feedback/${id}`, schema, init);
+        await feedbackRequest(auth, `/feedback/${id}`, schema, init);
 
         return { status: "ok" };
     } catch (error) {
@@ -199,7 +160,7 @@ export async function setFeedbackAcknowledgedAction(
     id: number,
     acknowledged: boolean,
 ): Promise<FeedbackMutationState> {
-    const gate = await authorizeFeedback(() =>
+    const gate = await authorizeMLWHAdmin(() =>
         acknowledgeArgsSchema.safeParse([id, acknowledged]),
     );
 
@@ -209,7 +170,7 @@ export async function setFeedbackAcknowledgedAction(
 
     const [parsedId, parsedAcknowledged] = gate.args;
 
-    return mutateFeedback(gate.token, parsedId, feedbackReportSchema, {
+    return mutateFeedback(gate, parsedId, feedbackReportSchema, {
         method: "PATCH",
         body: JSON.stringify({ acknowledged: parsedAcknowledged }),
     });
@@ -218,13 +179,13 @@ export async function setFeedbackAcknowledgedAction(
 export async function deleteFeedbackAction(
     id: number,
 ): Promise<FeedbackMutationState> {
-    const gate = await authorizeFeedback(() => feedbackIdSchema.safeParse(id));
+    const gate = await authorizeMLWHAdmin(() => feedbackIdSchema.safeParse(id));
 
     if (!("token" in gate)) {
         return gate;
     }
 
-    return mutateFeedback(gate.token, gate.args, feedbackDeleteResponseSchema, {
+    return mutateFeedback(gate, gate.args, feedbackDeleteResponseSchema, {
         method: "DELETE",
     });
 }

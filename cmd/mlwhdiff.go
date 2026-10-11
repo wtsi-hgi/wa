@@ -52,6 +52,8 @@ type mlwhdiffMLWHConfig struct {
 	ServerURL     string
 	CachePath     string
 	CachePassword string
+	// AsServer makes a remote MLWH server see the mlwhdiff server, not a CLI user.
+	AsServer bool
 }
 
 func resolveMLWHDiffMLWHConfig(options *mlwhdiffOptions, cacheFlagChanged bool) (mlwhdiffMLWHConfig, error) {
@@ -80,7 +82,12 @@ type mlwhdiffMLWHHandle interface {
 
 func openMLWHDiffClientWithConfig(ctx context.Context, cfg mlwhdiffMLWHConfig) (mlwhdiffMLWHHandle, error) {
 	if strings.TrimSpace(cfg.ServerURL) != "" {
-		return mlwh.NewRemoteClient(mlwh.RemoteConfig{BaseURL: cfg.ServerURL})
+		remoteConfig := mlwhCLIRemoteConfig(cfg.ServerURL)
+		if cfg.AsServer {
+			remoteConfig = mlwhServerRemoteConfig(cfg.ServerURL, mlwh.UserAgentProductMLWHDiffServer)
+		}
+
+		return mlwh.NewRemoteClient(remoteConfig)
 	}
 
 	client, err := openMLWHDiffMLWHCacheOnlyClient(ctx, mlwh.CacheConfig{
@@ -94,11 +101,16 @@ func openMLWHDiffClientWithConfig(ctx context.Context, cfg mlwhdiffMLWHConfig) (
 	return client, nil
 }
 
-func openMLWHDiffClient(ctx context.Context, options *mlwhdiffOptions, cacheFlagChanged bool) (mlwhdiffMLWHHandle, error) {
+// openMLWHDiffClient opens the MLWH source for an mlwhdiff command. asServer
+// is true for wa mlwhdiff serve, so a remote MLWH server sees it as the
+// mlwhdiff server rather than as a CLI user.
+func openMLWHDiffClient(ctx context.Context, options *mlwhdiffOptions, cacheFlagChanged, asServer bool) (mlwhdiffMLWHHandle, error) {
 	cfg, err := resolveMLWHDiffMLWHConfig(options, cacheFlagChanged)
 	if err != nil {
 		return nil, err
 	}
+
+	cfg.AsServer = asServer
 
 	return openMLWHDiffClientFunc(ctx, cfg)
 }
@@ -116,7 +128,7 @@ func newMLWHDiffDiffCommand(options *mlwhdiffOptions) *cobra.Command {
 				return usageError("usage: specify exactly one of --study or --sample")
 			}
 
-			provider, err := openMLWHDiffClient(commandContext(cmd), options, mlwhdiffFlagChanged(cmd, "mlwh-cache"))
+			provider, err := openMLWHDiffClient(commandContext(cmd), options, mlwhdiffFlagChanged(cmd, "mlwh-cache"), false)
 			if err != nil {
 				return err
 			}
@@ -233,7 +245,7 @@ func newMLWHDiffServeCommand(options *mlwhdiffOptions) *cobra.Command {
 		Args:  cobra.ExactArgs(0),
 		Short: "Serve the mlwhdiff HTTP API",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			provider, err := openMLWHDiffClient(commandContext(cmd), options, mlwhdiffFlagChanged(cmd, "mlwh-cache"))
+			provider, err := openMLWHDiffClient(commandContext(cmd), options, mlwhdiffFlagChanged(cmd, "mlwh-cache"), true)
 			if err != nil {
 				return err
 			}

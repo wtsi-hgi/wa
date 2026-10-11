@@ -1,6 +1,6 @@
 # wa mlwh API endpoint reference
 
-**API version:** `1.9.0`
+**API version:** `1.10.0`
 
 This catalogue lists every endpoint of the cache-backed, read-only `wa mlwh
 serve` REST API. It is **generated** from the same enriched `Registry`

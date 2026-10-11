@@ -95,7 +95,7 @@ type mlwhSearchClient interface {
 
 func openMLWHSearchConfiguredClient(ctx context.Context, serverURL string) (mlwhSearchClient, error) {
 	if trimmedServerURL := strings.TrimSpace(serverURL); trimmedServerURL != "" {
-		return openMLWHSearchRemoteClient(ctx, mlwh.RemoteConfig{BaseURL: trimmedServerURL})
+		return openMLWHSearchRemoteClient(ctx, mlwhCLIRemoteConfig(trimmedServerURL))
 	}
 
 	cfg, err := resolveMLWHInfoLocalConfig()

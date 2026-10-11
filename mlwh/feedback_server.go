@@ -48,10 +48,10 @@ const (
 	feedbackReceivedLogMessage   = "mlwh feedback received"
 	feedbackPath                 = "/feedback"
 	feedbackBodyTooLargeTemplate = "request body exceeds %d bytes"
-	feedbackAdminTokenMessage    = "admin token required"
+	adminTokenMessage            = "admin token required"
 	feedbackAdminItemPath        = "/feedback/:id"
 	feedbackListFailedMessage    = "could not list feedback"
-	feedbackBearerPrefix         = "Bearer "
+	bearerPrefix                 = "Bearer "
 	feedbackDefaultListLimit     = 50
 	feedbackMaxListLimit         = 500
 	feedbackAcknowledgedParam    = "acknowledged"
@@ -75,7 +75,7 @@ var errFeedbackInvalidJSON = errors.New(feedbackInvalidJSONMessage)
 func feedbackIDParam(c *gin.Context) (int64, bool) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		writeFeedbackError(c, http.StatusBadRequest, httpErrorCodeBadRequest, feedbackInvalidIDMessage)
+		writeErrorEnvelope(c, http.StatusBadRequest, httpErrorCodeBadRequest, feedbackInvalidIDMessage)
 
 		return 0, false
 	}
@@ -90,7 +90,7 @@ func decodeFeedbackBody(c *gin.Context, maxBytes int64, target any) bool {
 	tooLarge := fmt.Sprintf(feedbackBodyTooLargeTemplate, maxBytes)
 
 	if c.Request.ContentLength > maxBytes {
-		writeFeedbackError(c, http.StatusRequestEntityTooLarge, httpErrorCodePayloadTooLarge, tooLarge)
+		writeErrorEnvelope(c, http.StatusRequestEntityTooLarge, httpErrorCodePayloadTooLarge, tooLarge)
 
 		return false
 	}
@@ -101,12 +101,12 @@ func decodeFeedbackBody(c *gin.Context, maxBytes int64, target any) bool {
 	}
 
 	if maxBytesErr := (*http.MaxBytesError)(nil); errors.As(err, &maxBytesErr) {
-		writeFeedbackError(c, http.StatusRequestEntityTooLarge, httpErrorCodePayloadTooLarge, tooLarge)
+		writeErrorEnvelope(c, http.StatusRequestEntityTooLarge, httpErrorCodePayloadTooLarge, tooLarge)
 
 		return false
 	}
 
-	writeFeedbackError(c, http.StatusBadRequest, httpErrorCodeBadRequest, feedbackInvalidJSONMessage)
+	writeErrorEnvelope(c, http.StatusBadRequest, httpErrorCodeBadRequest, feedbackInvalidJSONMessage)
 
 	return false
 }
@@ -115,25 +115,26 @@ func decodeFeedbackBody(c *gin.Context, maxBytes int64, target any) bool {
 // ErrNotFound, else 500 internal_error with failedMessage.
 func writeFeedbackStoreItemError(c *gin.Context, id int64, err error, failedMessage string) {
 	if errors.Is(err, ErrNotFound) {
-		writeFeedbackError(c, http.StatusNotFound, httpErrorCodeNotFound, fmt.Sprintf(feedbackNotFoundTemplate, id))
+		writeErrorEnvelope(c, http.StatusNotFound, httpErrorCodeNotFound, fmt.Sprintf(feedbackNotFoundTemplate, id))
 
 		return
 	}
 
-	writeFeedbackError(c, http.StatusInternalServerError, httpErrorCodeInternal, failedMessage)
+	writeErrorEnvelope(c, http.StatusInternalServerError, httpErrorCodeInternal, failedMessage)
 }
 
 func writeFeedbackValidationError(c *gin.Context, err error) {
 	if errors.Is(err, ErrFeedbackTooLarge) {
-		writeFeedbackError(c, http.StatusRequestEntityTooLarge, httpErrorCodePayloadTooLarge, err.Error())
+		writeErrorEnvelope(c, http.StatusRequestEntityTooLarge, httpErrorCodePayloadTooLarge, err.Error())
 
 		return
 	}
 
-	writeFeedbackError(c, http.StatusBadRequest, httpErrorCodeBadRequest, err.Error())
+	writeErrorEnvelope(c, http.StatusBadRequest, httpErrorCodeBadRequest, err.Error())
 }
 
-func writeFeedbackError(c *gin.Context, status int, code, message string) {
+// writeErrorEnvelope writes status with the shared {code, message} error body.
+func writeErrorEnvelope(c *gin.Context, status int, code, message string) {
 	c.JSON(status, httpErrorEnvelope{Code: code, Message: message})
 }
 
@@ -158,10 +159,10 @@ func decodeSingleJSONValue(body io.Reader, target any) error {
 	return nil
 }
 
-// feedbackRemoteHost returns the host part of the connection's remote
-// address, or the raw value when it cannot be split. Forwarded headers are
-// never consulted.
-func feedbackRemoteHost(remoteAddr string) string {
+// remoteHost returns the host part of the connection's remote address, or the
+// raw value when it cannot be split. Forwarded headers are never consulted.
+// Feedback submission and usage recording both use it.
+func remoteHost(remoteAddr string) string {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
 		return remoteAddr
@@ -170,11 +171,11 @@ func feedbackRemoteHost(remoteAddr string) string {
 	return host
 }
 
-// feedbackAdminTokenMatches reports whether authorization is "Bearer " plus a
-// value equal to token, comparing whitespace-trimmed bytes in constant time.
-// A blank token never matches.
-func feedbackAdminTokenMatches(authorization string, token []byte) bool {
-	presented, ok := strings.CutPrefix(authorization, feedbackBearerPrefix)
+// adminTokenMatches reports whether authorization is "Bearer " plus a value
+// equal to token, comparing whitespace-trimmed bytes in constant time. A blank
+// token never matches. The feedback and usage admin routes both use it.
+func adminTokenMatches(authorization string, token []byte) bool {
+	presented, ok := strings.CutPrefix(authorization, bearerPrefix)
 	if !ok {
 		return false
 	}
@@ -256,14 +257,14 @@ func (s *Server) registerFeedbackAdminRoutes(registrar mlwhRouteRegistrar) {
 // 401 unless the request carries the admin Bearer token.
 func (s *Server) requireFeedbackAdmin(c *gin.Context) {
 	if s.feedback == nil {
-		writeFeedbackError(c, http.StatusServiceUnavailable, httpErrorCodeFeedbackDisabled, feedbackDisabledMessage)
+		writeErrorEnvelope(c, http.StatusServiceUnavailable, httpErrorCodeFeedbackDisabled, feedbackDisabledMessage)
 		c.Abort()
 
 		return
 	}
 
-	if !feedbackAdminTokenMatches(c.GetHeader("Authorization"), s.feedbackAdminToken) {
-		writeFeedbackError(c, http.StatusUnauthorized, httpErrorCodeUnauthorized, feedbackAdminTokenMessage)
+	if !adminTokenMatches(c.GetHeader("Authorization"), s.feedbackAdminToken) {
+		writeErrorEnvelope(c, http.StatusUnauthorized, httpErrorCodeUnauthorized, adminTokenMessage)
 		c.Abort()
 	}
 }
@@ -278,7 +279,7 @@ func (s *Server) handleFeedbackList(c *gin.Context) {
 
 	page, err := s.feedback.List(c.Request.Context(), filter, pagination.limit, pagination.offset)
 	if err != nil {
-		writeFeedbackError(c, http.StatusInternalServerError, httpErrorCodeInternal, feedbackListFailedMessage)
+		writeErrorEnvelope(c, http.StatusInternalServerError, httpErrorCodeInternal, feedbackListFailedMessage)
 
 		return
 	}
@@ -305,7 +306,7 @@ func (s *Server) handleFeedbackAcknowledge(c *gin.Context) {
 
 	var acknowledged *bool
 	if json.Unmarshal(patch.Acknowledged, &acknowledged) != nil || acknowledged == nil {
-		writeFeedbackError(c, http.StatusBadRequest, httpErrorCodeBadRequest, feedbackAckNotBoolMessage)
+		writeErrorEnvelope(c, http.StatusBadRequest, httpErrorCodeBadRequest, feedbackAckNotBoolMessage)
 
 		return
 	}
@@ -337,14 +338,14 @@ func (s *Server) handleFeedbackDelete(c *gin.Context) {
 }
 
 func (s *Server) registerFeedbackSubmitRoute(registrar mlwhRouteRegistrar) {
-	registrar.Handle(http.MethodPost, feedbackPath, s.handleFeedbackSubmit)
+	registrar.Handle(http.MethodPost, feedbackPath, s.countedHandlers(feedbackPath, s.handleFeedbackSubmit)...)
 }
 
 // handleFeedbackSubmit stores one agent feedback report. Checks run in the
 // wire-contract order: disabled, body size, JSON shape, validation, store.
 func (s *Server) handleFeedbackSubmit(c *gin.Context) {
 	if s.feedback == nil {
-		writeFeedbackError(c, http.StatusServiceUnavailable, httpErrorCodeFeedbackDisabled, feedbackDisabledMessage)
+		writeErrorEnvelope(c, http.StatusServiceUnavailable, httpErrorCodeFeedbackDisabled, feedbackDisabledMessage)
 
 		return
 	}
@@ -360,11 +361,11 @@ func (s *Server) handleFeedbackSubmit(c *gin.Context) {
 		return
 	}
 
-	addr := feedbackRemoteHost(c.Request.RemoteAddr)
+	addr := remoteHost(c.Request.RemoteAddr)
 
 	report, err := s.feedback.Add(c.Request.Context(), submission, addr)
 	if err != nil {
-		writeFeedbackError(c, http.StatusInternalServerError, httpErrorCodeInternal, feedbackStoreFailedMessage)
+		writeErrorEnvelope(c, http.StatusInternalServerError, httpErrorCodeInternal, feedbackStoreFailedMessage)
 
 		return
 	}

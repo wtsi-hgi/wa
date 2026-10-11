@@ -1,14 +1,14 @@
 ---
 name: verify-wa
-description: "Verify user-visible wa changes through the real app: launch an isolated stack, doctor it, drive and capture evidence for wa mlwh serve agent feedback, the /feedback admin page, the results web UI, the MLWH query API, and the results/mlwh CLIs. Use when proving a wa change works or reproducing a wa bug end to end."
+description: "Verify user-visible wa changes through the real app: launch an isolated stack, doctor it, drive and capture evidence for wa mlwh serve agent feedback, the /feedback and /usage admin pages, the results web UI, the MLWH query API, and the results/mlwh CLIs. Use when proving a wa change works or reproducing a wa bug end to end."
 ---
 
 # Verify wa
 
 The stack is three processes started by the repo's own `run-dev.sh --mode
-test`: the results API (HTTPS), a real `wa mlwh serve` with feedback on
-(HTTP), and the Next.js dev frontend (HTTPS, self-signed). Test mode is
-hermetic: it seeds a fixture MLWH cache and results fixtures, uses throwaway
+test`: the results API (HTTPS), a real `wa mlwh serve` with feedback and
+usage on (HTTP), and the Next.js dev frontend (HTTPS, self-signed). Test mode
+is hermetic: it seeds a fixture MLWH cache and results fixtures, uses throwaway
 DBs under `.tmp/`, and refuses real MLWH credentials. No MLWH database, LDAP,
 or network access is needed.
 
@@ -47,20 +47,21 @@ SKILL=<checkout>/.agents/skills/verify-wa
 ```
 
 It checks run-dev is alive, the stack's revision is this checkout's HEAD,
-results/MLWH/frontend health, feedback is on (unauthenticated
-`GET /feedback` is 401, not 503), and both token files exist. Run it before
-the first drive and after any failed drive.
+results/MLWH/frontend health, feedback and usage are on (unauthenticated
+`GET /feedback` and `GET /usage` are 401, not 503), and both token files
+exist. Run it before the first drive and after any failed drive.
 
 ## Drive
 
 Each feature file gives its recipe. Shared facts:
 
-- **Login** (results web and `/feedback`): the account menu's `Log in`
-  button opens `form[aria-label="Log in"]`. Username is the OS user
+- **Login** (results web, `/feedback`, and `/usage`): the account menu's
+  `Log in` button opens `form[aria-label="Log in"]`. Username is the OS user
   (`id -un`); password is the contents of
   `$STATE_HOME/.wa-results-server.token`. That is the results server's
   owner-token login. Test mode has no LDAP, so real LDAP accounts cannot be
-  driven here. The OS user running Next.js is always a feedback admin.
+  driven here. The OS user running Next.js is always a feedback and usage
+  admin.
 - **Browser**: Playwright from `frontend/node_modules` (already a repo
   dependency). Load it with
   `createRequire("<checkout>/frontend/package.json")("@playwright/test")`, launch
@@ -74,8 +75,8 @@ Each feature file gives its recipe. Shared facts:
 
 Evidence goes in `$RUN/evidence/` under the repo's gitignored `.tmp/`. Leave
 it uncommitted. It survives Cleanup and `make test`'s `clean-test-tmp`.
-Test-mode feedback and cache DBs are deleted on shutdown, so capture rows
-through the admin API (the drive scripts do) before Cleanup.
+Test-mode feedback, usage, and cache DBs are deleted on shutdown, so capture
+rows through the admin API (the drive scripts do) before Cleanup.
 
 ## Cleanup
 

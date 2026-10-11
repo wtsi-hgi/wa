@@ -437,6 +437,341 @@ func closeMLWHFeedbackStoreForTest(t *testing.T, store *mlwh.FeedbackStore) {
 	})
 }
 
+func TestOpenMLWHServeUsageD1(t *testing.T) {
+	convey.Convey("D1.1: Given a blank usageDB, then it returns nil store and nil error", t, func() {
+		dir := t.TempDir()
+		t.Chdir(dir)
+
+		store, err := openMLWHServeUsage(context.Background(), "  ", 365)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(store, convey.ShouldBeNil)
+
+		entries, err := os.ReadDir(dir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(entries, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("D1.2: Given <tmp>/sub/u.sqlite and retention 365, then sub/ and the 0600 DB exist and the store keeps 365 days", t, func() {
+		dbPath := filepath.Join(t.TempDir(), "sub", "u.sqlite")
+
+		store, err := openMLWHServeUsage(context.Background(), dbPath, 365)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(store, convey.ShouldNotBeNil)
+		t.Cleanup(func() { _ = store.Close() })
+
+		convey.So(store.RetentionDays(), convey.ShouldEqual, 365)
+
+		info, err := os.Stat(dbPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(info.Mode().Perm(), convey.ShouldEqual, os.FileMode(0o600))
+	})
+
+	convey.Convey("D1.3: Given a MySQL-looking DSN, :memory:, or a file: URI, then the error names --usage-db and SQLite file path", t, func() {
+		for _, usageDB := range []string{"user@tcp(db:3306)/u", ":memory:", "file:x.db"} {
+			store, err := openMLWHServeUsage(context.Background(), usageDB, 365)
+			convey.So(store, convey.ShouldBeNil)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "--usage-db")
+			convey.So(err.Error(), convey.ShouldContainSubstring, "SQLite file path")
+		}
+	})
+
+	convey.Convey("D1.4: Given retention 0, then the error says --usage-retention-days must be at least 1 and neither the DB nor its parent directory is created", t, func() {
+		parentDir := filepath.Join(t.TempDir(), "sub")
+		dbPath := filepath.Join(parentDir, "u.sqlite")
+
+		store, err := openMLWHServeUsage(context.Background(), dbPath, 0)
+		convey.So(store, convey.ShouldBeNil)
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "--usage-retention-days must be at least 1")
+
+		_, err = os.Stat(parentDir)
+		convey.So(errors.Is(err, os.ErrNotExist), convey.ShouldBeTrue)
+	})
+
+	convey.Convey("D1.5: Given WA_MLWH_USAGE_PATH, then it is the --usage-db default", t, func() {
+		envPath := filepath.Join(t.TempDir(), "u.sqlite")
+		t.Setenv("WA_MLWH_USAGE_PATH", envPath)
+
+		convey.So(mlwhServeStringFlagForTest(t, "usage-db", nil), convey.ShouldEqual, envPath)
+	})
+
+	convey.Convey("D1.5: Given WA_MLWH_USAGE_RETENTION_DAYS values, then resolveMLWHServeUsageRetentionDays applies the env only when the flag is unchanged", t, func() {
+		for envValue, want := range map[string]int{"30": 30, " 30 ": 30, "": 365} {
+			t.Setenv("WA_MLWH_USAGE_RETENTION_DAYS", envValue)
+
+			got, err := resolveMLWHServeUsageRetentionDays(365, false)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(got, convey.ShouldEqual, want)
+		}
+
+		unsetMLWHServeEnvForTest(t, "WA_MLWH_USAGE_RETENTION_DAYS")
+		got, err := resolveMLWHServeUsageRetentionDays(365, false)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(got, convey.ShouldEqual, 365)
+
+		t.Setenv("WA_MLWH_USAGE_RETENTION_DAYS", "30")
+		got, err = resolveMLWHServeUsageRetentionDays(90, true)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(got, convey.ShouldEqual, 90)
+
+		t.Setenv("WA_MLWH_USAGE_RETENTION_DAYS", "abc")
+		_, err = resolveMLWHServeUsageRetentionDays(365, false)
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldEqual, `invalid WA_MLWH_USAGE_RETENTION_DAYS "abc"`)
+
+		got, err = resolveMLWHServeUsageRetentionDays(90, true)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(got, convey.ShouldEqual, 90)
+	})
+
+	convey.Convey("D1.6: Given the mlwh serve command, then its Long documents usage and names both writes on one line", t, func() {
+		serve, _, err := NewRootCommand().Find([]string{"mlwh", "serve"})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(serve.Long, convey.ShouldContainSubstring, "--usage-db")
+		convey.So(serve.Long, convey.ShouldContainSubstring, "WA_MLWH_USAGE_PATH")
+		convey.So(serve.Long, convey.ShouldContainSubstring, "--usage-retention-days")
+		convey.So(serve.Long, convey.ShouldContainSubstring, "GET /usage")
+		convey.So(serve.Long, convey.ShouldContainSubstring, "the only writes are POST /feedback and usage metrics")
+		convey.So(serve.Long, convey.ShouldNotContainSubstring, "is the only write")
+	})
+}
+
+func mlwhServeStringFlagForTest(t *testing.T, name string, args []string) string {
+	t.Helper()
+
+	serve, _, err := NewRootCommand().Find([]string{"mlwh", "serve"})
+	if err != nil {
+		t.Fatalf("find mlwh serve: %v", err)
+	}
+
+	if err = serve.ParseFlags(args); err != nil {
+		t.Fatalf("parse mlwh serve flags: %v", err)
+	}
+
+	value, err := serve.Flags().GetString(name)
+	if err != nil {
+		t.Fatalf("get --%s: %v", name, err)
+	}
+
+	return value
+}
+
+// unsetMLWHServeEnvForTest unsets name for the rest of the test, restoring
+// its original value afterwards.
+func unsetMLWHServeEnvForTest(t *testing.T, name string) {
+	t.Helper()
+
+	t.Setenv(name, "")
+
+	if err := os.Unsetenv(name); err != nil {
+		t.Fatalf("unset %s: %v", name, err)
+	}
+}
+
+func TestMLWHServeUsageEndToEndD1(t *testing.T) {
+	convey.Convey("D1.7: Given --usage-db only, when a CLI request is served, then GET /usage counts it with the admin token and rejects no token, and a request after /usage is flushed on shutdown so both rows persist", t, func() {
+		stateDir := t.TempDir()
+		dbPath := filepath.Join(stateDir, "u.sqlite")
+		baseURL, stop := startMLWHServeEndToEndForTest(t, stateDir, "--usage-db", dbPath)
+
+		studies := doMLWHServeHTTPRequestWithHeaderForTest(t, http.MethodGet, baseURL+"/studies", "",
+			http.Header{"User-Agent": {"wa-cli/x"}})
+		convey.So(studies.status, convey.ShouldEqual, http.StatusOK)
+
+		token, err := os.ReadFile(filepath.Join(stateDir, ".wa-mlwh-server.token"))
+		convey.So(err, convey.ShouldBeNil)
+
+		usage := doMLWHServeHTTPRequestForTest(t, http.MethodGet, baseURL+"/usage?window=24h", "", "Bearer "+string(token))
+		convey.So(usage.status, convey.ShouldEqual, http.StatusOK)
+
+		var summary mlwh.UsageSummary
+		convey.So(json.Unmarshal(usage.body, &summary), convey.ShouldBeNil)
+		convey.So(summary.Totals.Requests, convey.ShouldEqual, 1)
+		convey.So(mlwhUsageCategoryRequestsForTest(summary, mlwh.UsageCategoryCLI), convey.ShouldEqual, 1)
+
+		unauthorized := doMLWHServeHTTPRequestForTest(t, http.MethodGet, baseURL+"/usage?window=24h", "", "")
+		convey.So(unauthorized.status, convey.ShouldEqual, http.StatusUnauthorized)
+
+		// Only shutdown flushes this request, so it proves the store is closed.
+		studies = doMLWHServeHTTPRequestWithHeaderForTest(t, http.MethodGet, baseURL+"/studies", "",
+			http.Header{"User-Agent": {"wa-cli/x"}})
+		convey.So(studies.status, convey.ShouldEqual, http.StatusOK)
+
+		convey.So(stop(), convey.ShouldBeNil)
+
+		db, err := sql.Open("sqlite", dbPath)
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		var rows int
+		convey.So(db.QueryRow("SELECT COUNT(*) FROM usage_requests").Scan(&rows), convey.ShouldBeNil)
+		convey.So(rows, convey.ShouldEqual, 2)
+	})
+
+	convey.Convey("D1 wiring: Given WA_MLWH_USAGE_RETENTION_DAYS=30 and no flag, then GET /usage reports retention_days 30", t, func() {
+		stateDir := t.TempDir()
+		baseURL, stop := startMLWHServeEndToEndWithEnvForTest(t, stateDir,
+			map[string]string{"WA_MLWH_USAGE_RETENTION_DAYS": "30"},
+			"--usage-db", filepath.Join(stateDir, "u.sqlite"))
+
+		token, err := os.ReadFile(filepath.Join(stateDir, ".wa-mlwh-server.token"))
+		convey.So(err, convey.ShouldBeNil)
+
+		usage := doMLWHServeHTTPRequestForTest(t, http.MethodGet, baseURL+"/usage", "", "Bearer "+string(token))
+		convey.So(usage.status, convey.ShouldEqual, http.StatusOK)
+
+		var summary mlwh.UsageSummary
+		convey.So(json.Unmarshal(usage.body, &summary), convey.ShouldBeNil)
+		convey.So(summary.RetentionDays, convey.ShouldEqual, 30)
+
+		convey.So(stop(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("D1 wiring: Given no WA_MLWH_USAGE_RETENTION_DAYS and no flag, then GET /usage reports the default retention_days 365", t, func() {
+		stateDir := t.TempDir()
+		baseURL, stop := startMLWHServeEndToEndForTest(t, stateDir, "--usage-db", filepath.Join(stateDir, "u.sqlite"))
+
+		token, err := os.ReadFile(filepath.Join(stateDir, ".wa-mlwh-server.token"))
+		convey.So(err, convey.ShouldBeNil)
+
+		usage := doMLWHServeHTTPRequestForTest(t, http.MethodGet, baseURL+"/usage", "", "Bearer "+string(token))
+		convey.So(usage.status, convey.ShouldEqual, http.StatusOK)
+
+		var summary mlwh.UsageSummary
+		convey.So(json.Unmarshal(usage.body, &summary), convey.ShouldBeNil)
+		convey.So(summary.RetentionDays, convey.ShouldEqual, 365)
+
+		convey.So(stop(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("D1.8: Given --usage-db and --feedback-db, then the same admin token reads GET /usage and GET /feedback", t, func() {
+		stateDir := t.TempDir()
+		baseURL, stop := startMLWHServeEndToEndForTest(t, stateDir,
+			"--usage-db", filepath.Join(stateDir, "u.sqlite"),
+			"--feedback-db", filepath.Join(stateDir, "fb.sqlite"))
+
+		token, err := os.ReadFile(filepath.Join(stateDir, ".wa-mlwh-server.token"))
+		convey.So(err, convey.ShouldBeNil)
+
+		usage := doMLWHServeHTTPRequestForTest(t, http.MethodGet, baseURL+"/usage", "", "Bearer "+string(token))
+		convey.So(usage.status, convey.ShouldEqual, http.StatusOK)
+
+		feedback := doMLWHServeHTTPRequestForTest(t, http.MethodGet, baseURL+"/feedback", "", "Bearer "+string(token))
+		convey.So(feedback.status, convey.ShouldEqual, http.StatusOK)
+
+		convey.So(stop(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("D1.9: Given no extra args, then GET /usage is 503 usage_disabled and no token file is created", t, func() {
+		stateDir := t.TempDir()
+		baseURL, stop := startMLWHServeEndToEndForTest(t, stateDir)
+
+		usage := doMLWHServeHTTPRequestForTest(t, http.MethodGet, baseURL+"/usage", "", "")
+		convey.So(usage.status, convey.ShouldEqual, http.StatusServiceUnavailable)
+		convey.So(mlwhServeEnvelopeCodeForTest(t, usage.body), convey.ShouldEqual, "usage_disabled")
+
+		convey.So(stop(), convey.ShouldBeNil)
+
+		_, err := os.Stat(filepath.Join(stateDir, ".wa-mlwh-server.token"))
+		convey.So(errors.Is(err, os.ErrNotExist), convey.ShouldBeTrue)
+	})
+}
+
+// startMLWHServeEndToEndWithEnvForTest is startMLWHServeEndToEndForTest with
+// env applied after the serve-related variables are cleared.
+func startMLWHServeEndToEndWithEnvForTest(t *testing.T, stateDir string, env map[string]string, extraArgs ...string) (string, func() error) {
+	t.Helper()
+
+	t.Setenv("XDG_STATE_HOME", stateDir)
+	t.Setenv("WA_MLWH_SERVER_TOKEN", "")
+	t.Setenv("WA_MLWH_SERVER_CERT", "")
+	t.Setenv("WA_MLWH_SERVER_KEY", "")
+	t.Setenv("WA_MLWH_FEEDBACK_PATH", "")
+	t.Setenv("WA_MLWH_USAGE_PATH", "")
+	t.Setenv("WA_MLWH_USAGE_RETENTION_DAYS", "")
+
+	for name, value := range env {
+		t.Setenv(name, value)
+	}
+
+	cachePath := prepareMLWHServeCacheForTest(t, true)
+	addr := freeLocalAddrForTest(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	command := NewRootCommand()
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs(append([]string{"mlwh", "serve", "--url", addr, "--mlwh-cache", cachePath}, extraArgs...))
+
+	done := make(chan error, 1)
+	go func() {
+		done <- command.ExecuteContext(ctx)
+	}()
+
+	stopped := false
+	stop := func() error {
+		if stopped {
+			return nil
+		}
+		stopped = true
+		cancel()
+
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(10 * time.Second):
+			return errors.New("mlwh serve did not return within 10s of cancellation")
+		}
+	}
+	t.Cleanup(func() { _ = stop() })
+
+	baseURL := "http://" + addr
+	if err := waitForMLWHServeHealthForTest(baseURL, done); err != nil {
+		t.Fatalf("mlwh serve not healthy: %v", err)
+	}
+
+	return baseURL, stop
+}
+
+// doMLWHServeHTTPRequestWithHeaderForTest sends a JSON request carrying header
+// and returns its status and body.
+func doMLWHServeHTTPRequestWithHeaderForTest(t *testing.T, method, target, body string, header http.Header) mlwhServeHTTPResponseForTest {
+	t.Helper()
+
+	request, err := http.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+
+	request.Header = header.Clone()
+	request.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, target, err)
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+
+	return mlwhServeHTTPResponseForTest{status: response.StatusCode, body: responseBody}
+}
+
+func mlwhUsageCategoryRequestsForTest(summary mlwh.UsageSummary, category mlwh.UsageCategory) int64 {
+	for _, stats := range summary.Categories {
+		if stats.Category == category {
+			return stats.Requests
+		}
+	}
+
+	return -1
+}
+
 // prepareMLWHServeMalariaCacheForTest builds a synced SQLite cache seeded with a
 // study whose name contains "malar", so GET /search/study/malar matches at least
 // one row over the served cache. It is used by the G3 reachability tests, which
@@ -822,6 +1157,40 @@ func (f *fakeMLWHServeAuthServer) Start(addr, certFile, keyFile string) error {
 }
 
 func (f *fakeMLWHServeAuthServer) Stop() {}
+
+func TestMLWHServeUsageRetentionEnvD1(t *testing.T) {
+	convey.Convey("D1.5: Given mlwh serve run via the root command with WA_MLWH_USAGE_RETENTION_DAYS=abc", t, func() {
+		installFakeMLWHServeAuthServer(t, newFakeMLWHServeAuthServer())
+		t.Setenv("WA_MLWH_USAGE_RETENTION_DAYS", "abc")
+
+		cachePath := prepareMLWHServeCacheForTest(t, true)
+
+		// --feedback-db :memory: fails after retention is resolved, so a run
+		// that gets past retention returns instead of serving.
+		run := func(extraArgs ...string) error {
+			command := NewRootCommand()
+			command.SetOut(io.Discard)
+			command.SetErr(io.Discard)
+			command.SetArgs(append([]string{"mlwh", "serve", "--port", "0", "--mlwh-cache", cachePath,
+				"--feedback-db", ":memory:"}, extraArgs...))
+
+			return command.Execute()
+		}
+
+		convey.Convey("and no --usage-retention-days, then it fails with exactly the invalid env error", func() {
+			err := run()
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldEqual, `invalid WA_MLWH_USAGE_RETENTION_DAYS "abc"`)
+		})
+
+		convey.Convey("and --usage-retention-days 90, then the flag wins and the env is not parsed", func() {
+			err := run("--usage-retention-days", "90")
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldNotContainSubstring, "WA_MLWH_USAGE_RETENTION_DAYS")
+			convey.So(err.Error(), convey.ShouldContainSubstring, "--feedback-db must be a SQLite file path")
+		})
+	})
+}
 
 func TestMLWHServeColdCacheReturnsNeverSynced(t *testing.T) {
 	convey.Convey("E4.1: Given wa mlwh serve with WA_MLWH_CACHE_PATH set to a never-synced cache, when GET /studies is requested, then status is 503 with code cache_never_synced", t, func() {
@@ -1247,6 +1616,36 @@ func TestMLWHStartupErrorsPrintedOnceOnStderr(t *testing.T) {
 			convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 0)
 		})
 
+		// The fake auth server's StartHTTP returns at once, so a run that
+		// wrongly gets past the --usage-db check returns rather than serving.
+		convey.Convey("serve with --usage-db :memory: rejects it", func() {
+			cachePath := prepareMLWHServeCacheForTest(t, true)
+
+			stdout, stderr, err := run("mlwh", "serve", "--port", "0", "--mlwh-cache", cachePath, "--usage-db", ":memory:")
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldEqual, "--usage-db must be a SQLite file path, not :memory: or a file: URI")
+			convey.So(stdout, convey.ShouldEqual, "")
+			convey.So(strings.Count(stderr, "--usage-db must be a SQLite file path"), convey.ShouldEqual, 1)
+			convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 0)
+		})
+
+		convey.Convey("serve with --usage-db whose admin token path is a directory reports the usage admin token error", func() {
+			cachePath := prepareMLWHServeCacheForTest(t, true)
+			stateDir := t.TempDir()
+			t.Setenv("XDG_STATE_HOME", stateDir)
+			convey.So(os.Mkdir(filepath.Join(stateDir, ".wa-mlwh-server.token"), 0o700), convey.ShouldBeNil)
+
+			stdout, stderr, err := run("mlwh", "serve", "--port", "0", "--mlwh-cache", cachePath,
+				"--usage-db", filepath.Join(stateDir, "u.sqlite"))
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldStartWith, "usage admin token: ")
+			convey.So(stdout, convey.ShouldEqual, "")
+			convey.So(strings.Count(stderr, "usage admin token: "), convey.ShouldEqual, 1)
+			convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 0)
+		})
+
 		convey.Convey("serve with an unknown flag reports it", func() {
 			_, stderr, err := run("mlwh", "serve", "--no-such-flag")
 
@@ -1277,9 +1676,11 @@ func TestMLWHStartupErrorsPrintedOnceOnStderr(t *testing.T) {
 func installFakeMLWHServeAuthServer(t *testing.T, fake *fakeMLWHServeAuthServer) {
 	t.Helper()
 
-	// A developer's exported feedback path must not make these tests open a
-	// store or write a token file under the real XDG_STATE_HOME.
+	// A developer's exported feedback or usage path must not make these tests
+	// open a store or write a token file under the real XDG_STATE_HOME.
 	t.Setenv("WA_MLWH_FEEDBACK_PATH", "")
+	t.Setenv("WA_MLWH_USAGE_PATH", "")
+	t.Setenv("WA_MLWH_USAGE_RETENTION_DAYS", "")
 
 	originalNewAuthServer := mlwhServeNewAuthServer
 	mlwhServeNewAuthServer = func(io.Writer) mlwhServeAuthServer {
@@ -1298,29 +1699,12 @@ type mlwhServeHTTPResponseForTest struct {
 func doMLWHServeHTTPRequestForTest(t *testing.T, method, target, body, authorization string) mlwhServeHTTPResponseForTest {
 	t.Helper()
 
-	request, err := http.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
-
-	request.Header.Set("Content-Type", "application/json")
+	header := http.Header{}
 	if authorization != "" {
-		request.Header.Set("Authorization", authorization)
+		header.Set("Authorization", authorization)
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	response, err := client.Do(request)
-	if err != nil {
-		t.Fatalf("%s %s: %v", method, target, err)
-	}
-	defer func() { _ = response.Body.Close() }()
-
-	responseBody, err := io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatalf("read response body: %v", err)
-	}
-
-	return mlwhServeHTTPResponseForTest{status: response.StatusCode, body: responseBody}
+	return doMLWHServeHTTPRequestWithHeaderForTest(t, method, target, body, header)
 }
 
 func TestMLWHServeFeedbackEndToEndD1(t *testing.T) {
@@ -1395,49 +1779,7 @@ func TestMLWHServeFeedbackEndToEndD1(t *testing.T) {
 func startMLWHServeEndToEndForTest(t *testing.T, stateDir string, extraArgs ...string) (string, func() error) {
 	t.Helper()
 
-	t.Setenv("XDG_STATE_HOME", stateDir)
-	t.Setenv("WA_MLWH_SERVER_TOKEN", "")
-	t.Setenv("WA_MLWH_SERVER_CERT", "")
-	t.Setenv("WA_MLWH_SERVER_KEY", "")
-	t.Setenv("WA_MLWH_FEEDBACK_PATH", "")
-
-	cachePath := prepareMLWHServeCacheForTest(t, true)
-	addr := freeLocalAddrForTest(t)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	command := NewRootCommand()
-	command.SetOut(io.Discard)
-	command.SetErr(io.Discard)
-	command.SetArgs(append([]string{"mlwh", "serve", "--url", addr, "--mlwh-cache", cachePath}, extraArgs...))
-
-	done := make(chan error, 1)
-	go func() {
-		done <- command.ExecuteContext(ctx)
-	}()
-
-	stopped := false
-	stop := func() error {
-		if stopped {
-			return nil
-		}
-		stopped = true
-		cancel()
-
-		select {
-		case err := <-done:
-			return err
-		case <-time.After(10 * time.Second):
-			return errors.New("mlwh serve did not return within 10s of cancellation")
-		}
-	}
-	t.Cleanup(func() { _ = stop() })
-
-	baseURL := "http://" + addr
-	if err := waitForMLWHServeHealthForTest(baseURL, done); err != nil {
-		t.Fatalf("mlwh serve not healthy: %v", err)
-	}
-
-	return baseURL, stop
+	return startMLWHServeEndToEndWithEnvForTest(t, stateDir, nil, extraArgs...)
 }
 
 func TestMLWHServeFeedbackCreatesMissingStateDir(t *testing.T) {
@@ -1614,31 +1956,17 @@ func TestMLWHServeFeedbackDBFlagD1(t *testing.T) {
 		convey.So(serve.Long, convey.ShouldContainSubstring, ".wa-mlwh-server.token")
 	})
 
-	convey.Convey("Given the mlwh serve command from NewRootCommand, then its Long says only MLWH data is read-only and names POST /feedback as the write", t, func() {
+	convey.Convey("Given the mlwh serve command from NewRootCommand, then its Long says only MLWH data is read-only and names the writes", t, func() {
 		serve, _, err := NewRootCommand().Find([]string{"mlwh", "serve"})
 		convey.So(err, convey.ShouldBeNil)
 		long := strings.Join(strings.Fields(serve.Long), " ")
 		convey.So(long, convey.ShouldNotContainSubstring, "read-only HTTP API")
-		convey.So(long, convey.ShouldContainSubstring, "MLWH data is read-only; POST /feedback")
+		convey.So(long, convey.ShouldContainSubstring, "MLWH data is read-only; the only writes are POST /feedback")
 	})
 }
 
 func mlwhServeFeedbackDBFlagForTest(t *testing.T, args []string) string {
 	t.Helper()
 
-	serve, _, err := NewRootCommand().Find([]string{"mlwh", "serve"})
-	if err != nil {
-		t.Fatalf("find mlwh serve: %v", err)
-	}
-
-	if err = serve.ParseFlags(args); err != nil {
-		t.Fatalf("parse mlwh serve flags: %v", err)
-	}
-
-	value, err := serve.Flags().GetString("feedback-db")
-	if err != nil {
-		t.Fatalf("get --feedback-db: %v", err)
-	}
-
-	return value
+	return mlwhServeStringFlagForTest(t, "feedback-db", args)
 }

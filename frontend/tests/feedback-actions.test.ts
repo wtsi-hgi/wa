@@ -326,6 +326,39 @@ describe("E3 feedback actions: requests to wa", () => {
         expect(new Headers(init.headers).get("authorization")).toBe("Bearer T");
     });
 
+    it("sends the web User-Agent and the gate's user with one session lookup (E1 test 12)", async () => {
+        vi.mocked(fetch).mockResolvedValue(jsonResponse(page, 200));
+        const { listFeedbackAction } = await actions();
+
+        await expect(
+            listFeedbackAction({ show: "all", category: null, offset: 0 }),
+        ).resolves.toEqual({ status: "ok", page });
+
+        const headers = new Headers(fetchCall().init.headers);
+        expect(headers.get("authorization")).toBe("Bearer T");
+        expect(headers.get("user-agent")).toBe("wa-web");
+        expect(headers.get("x-wa-client-user")).toBe("alice");
+        expect(mocks.currentSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("sends the gate's user on feedback mutations", async () => {
+        vi.mocked(fetch)
+            .mockResolvedValueOnce(jsonResponse(report, 200))
+            .mockResolvedValueOnce(new Response(null, { status: 204 }));
+        const { deleteFeedbackAction, setFeedbackAcknowledgedAction } =
+            await actions();
+
+        await setFeedbackAcknowledgedAction(3, true);
+        await deleteFeedbackAction(3);
+
+        for (const index of [0, 1]) {
+            const headers = new Headers(fetchCall(index).init.headers);
+            expect(headers.get("authorization")).toBe("Bearer T");
+            expect(headers.get("x-wa-client-user")).toBe("alice");
+        }
+        expect(mocks.currentSession).toHaveBeenCalledTimes(2);
+    });
+
     it("lists all reports without filters (test 5)", async () => {
         vi.mocked(fetch).mockResolvedValue(jsonResponse(page, 200));
         const { listFeedbackAction } = await actions();

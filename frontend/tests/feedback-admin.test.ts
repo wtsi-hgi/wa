@@ -6,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
     defaultMLWHServerTokenBasename,
-    feedbackAdmins,
     feedbackPageSize,
-    isFeedbackAdmin,
+    isMLWHAdmin,
+    mlwhAdmins,
     mlwhServerTokenPath,
     readMLWHServerToken,
 } from "@/lib/feedback-admin";
@@ -224,21 +224,21 @@ describe("E2 feedback admins", () => {
     it("parses WA_FEEDBACK_ADMINS and adds the OS user (test 4)", () => {
         const env = processEnv({ WA_FEEDBACK_ADMINS: " alice, ,bob " });
 
-        expect(feedbackAdmins(env, "svc")).toEqual(
+        expect(mlwhAdmins(env, "svc")).toEqual(
             new Set(["alice", "bob", "svc"]),
         );
-        expect(isFeedbackAdmin("bob", env, "svc")).toBe(true);
-        expect(isFeedbackAdmin("alice", env, "svc")).toBe(true);
-        expect(isFeedbackAdmin("svc", env, "svc")).toBe(true);
-        expect(isFeedbackAdmin("Bob", env, "svc")).toBe(false);
-        expect(isFeedbackAdmin(" bob", env, "svc")).toBe(false);
-        expect(isFeedbackAdmin("", env, "svc")).toBe(false);
-        expect(isFeedbackAdmin(null, env, "svc")).toBe(false);
+        expect(isMLWHAdmin("bob", env, "svc")).toBe(true);
+        expect(isMLWHAdmin("alice", env, "svc")).toBe(true);
+        expect(isMLWHAdmin("svc", env, "svc")).toBe(true);
+        expect(isMLWHAdmin("Bob", env, "svc")).toBe(false);
+        expect(isMLWHAdmin(" bob", env, "svc")).toBe(false);
+        expect(isMLWHAdmin("", env, "svc")).toBe(false);
+        expect(isMLWHAdmin(null, env, "svc")).toBe(false);
     });
 
     it("drops empty entries from leading, trailing, and doubled commas", () => {
         expect(
-            feedbackAdmins(
+            mlwhAdmins(
                 processEnv({ WA_FEEDBACK_ADMINS: ",,alice,,,bob," }),
                 "svc",
             ),
@@ -246,31 +246,31 @@ describe("E2 feedback admins", () => {
     });
 
     it("admits only the OS user when WA_FEEDBACK_ADMINS is unset (test 5)", () => {
-        expect(feedbackAdmins(processEnv({}), "svc")).toEqual(new Set(["svc"]));
-        expect(isFeedbackAdmin("svc", processEnv({}), "svc")).toBe(true);
-        expect(isFeedbackAdmin("alice", processEnv({}), "svc")).toBe(false);
-        expect(isFeedbackAdmin("", processEnv({}), "svc")).toBe(false);
+        expect(mlwhAdmins(processEnv({}), "svc")).toEqual(new Set(["svc"]));
+        expect(isMLWHAdmin("svc", processEnv({}), "svc")).toBe(true);
+        expect(isMLWHAdmin("alice", processEnv({}), "svc")).toBe(false);
+        expect(isMLWHAdmin("", processEnv({}), "svc")).toBe(false);
     });
 
     it("defaults osUsername to userInfo().username only when omitted", () => {
         const env = processEnv({ WA_FEEDBACK_ADMINS: "alice" });
 
-        expect(feedbackAdmins(env)).toEqual(new Set(["alice", "os-user"]));
-        expect(isFeedbackAdmin("os-user", env)).toBe(true);
+        expect(mlwhAdmins(env)).toEqual(new Set(["alice", "os-user"]));
+        expect(isMLWHAdmin("os-user", env)).toBe(true);
 
         osMocks.userInfo.mockClear();
-        expect(feedbackAdmins(env, "svc")).toEqual(new Set(["alice", "svc"]));
-        expect(isFeedbackAdmin("os-user", env, "svc")).toBe(false);
+        expect(mlwhAdmins(env, "svc")).toEqual(new Set(["alice", "svc"]));
+        expect(isMLWHAdmin("os-user", env, "svc")).toBe(false);
         expect(osMocks.userInfo).not.toHaveBeenCalled();
     });
 
     it("defaults env to process.env", () => {
         vi.stubEnv("WA_FEEDBACK_ADMINS", "carol, dave");
 
-        expect(feedbackAdmins(undefined, "svc")).toEqual(
+        expect(mlwhAdmins(undefined, "svc")).toEqual(
             new Set(["carol", "dave", "svc"]),
         );
-        expect(isFeedbackAdmin("dave", undefined, "svc")).toBe(true);
+        expect(isMLWHAdmin("dave", undefined, "svc")).toBe(true);
     });
 
     it("survives a throwing userInfo() (test 6)", () => {
@@ -282,11 +282,11 @@ describe("E2 feedback admins", () => {
 
         const env = processEnv({ WA_FEEDBACK_ADMINS: "alice" });
 
-        expect(feedbackAdmins(env)).toEqual(new Set(["alice"]));
-        expect(isFeedbackAdmin("alice", env)).toBe(true);
-        expect(isFeedbackAdmin("svc", env)).toBe(false);
-        expect(feedbackAdmins(processEnv({}))).toEqual(new Set());
-        expect(isFeedbackAdmin("alice", processEnv({}))).toBe(false);
+        expect(mlwhAdmins(env)).toEqual(new Set(["alice"]));
+        expect(isMLWHAdmin("alice", env)).toBe(true);
+        expect(isMLWHAdmin("svc", env)).toBe(false);
+        expect(mlwhAdmins(processEnv({}))).toEqual(new Set());
+        expect(isMLWHAdmin("alice", processEnv({}))).toBe(false);
         expect(osMocks.userInfo).toHaveBeenCalled();
     });
 });

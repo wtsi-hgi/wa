@@ -49,7 +49,9 @@ function defaultOSUsername(): string | undefined {
     }
 }
 
-export function feedbackAdmins(
+// mlwhAdmins is the allowlist (WA_FEEDBACK_ADMINS plus the OS user running
+// Next.js) that gates both the /feedback and /usage admin pages.
+export function mlwhAdmins(
     env: NodeJS.ProcessEnv = process.env,
     osUsername?: string,
 ): Set<string> {
@@ -68,10 +70,10 @@ export function feedbackAdmins(
     return admins;
 }
 
-export function isFeedbackAdmin(
+export function isMLWHAdmin(
     username: string | null,
     env: NodeJS.ProcessEnv = process.env,
     osUsername?: string,
 ): boolean {
-    return username !== null && feedbackAdmins(env, osUsername).has(username);
+    return username !== null && mlwhAdmins(env, osUsername).has(username);
 }

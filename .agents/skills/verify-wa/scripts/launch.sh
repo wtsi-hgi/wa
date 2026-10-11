@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Start an isolated wa stack (results API + real `wa mlwh serve` with feedback
-# on + Next.js dev frontend) via `run-dev.sh --mode test`, in its own session.
+# and usage on + Next.js dev frontend) via `run-dev.sh --mode test`, in its own
+# session.
 #
 # Usage: launch.sh            (ports from WA_VERIFY_PORT_BASE, default 47690)
 # Prints RUN=<run dir>. Everything for this run lives under that directory.

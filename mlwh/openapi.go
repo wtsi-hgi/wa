@@ -35,13 +35,14 @@ import (
 // APIVersion is the semantic version of the served MLWH REST API, surfaced as
 // info.version in the OpenAPI document. Its minor component moves with each
 // schema or contract change: it tracked the cache schema-version lineage
-// (CacheSchemaVersion) through 1.8, and 1.9 adds the documented POST /feedback
-// endpoint without a cache schema change. The patch component is reserved for
-// documentation-only revisions. It is a compiled-in constant: reading it never
-// contacts a live server, letting an external consumer (such as an MCP server
-// importing this package) read the targeted API version with compile-time
-// safety.
-const APIVersion = "1.9.0"
+// (CacheSchemaVersion) through 1.8, 1.9 adds the documented POST /feedback
+// endpoint without a cache schema change, and 1.10 documents the optional
+// client identification headers that usage tracking records. The patch
+// component is reserved for documentation-only revisions. It is a compiled-in
+// constant: reading it never contacts a live server, letting an external
+// consumer (such as an MCP server importing this package) read the targeted API
+// version with compile-time safety.
+const APIVersion = "1.10.0"
 
 // mlwhAPIVersion is the unexported alias of APIVersion retained for internal
 // references; it shares APIVersion's single source of truth so the served
@@ -317,11 +318,12 @@ func OpenAPIDocument() map[string]any {
 		"info": map[string]any{
 			"title":       "wa mlwh API",
 			"version":     mlwhAPIVersion,
-			"description": "Cache-backed REST API mirroring Multi-LIMS Warehouse (MLWH) study, sample, run, and library metadata. MLWH data is read-only; the only documented write endpoint is POST /feedback, which stores agent feedback in a separate database. Unauthenticated by default; the network boundary is the access-control boundary.",
+			"description": "Cache-backed REST API mirroring Multi-LIMS Warehouse (MLWH) study, sample, run, and library metadata. MLWH data is read-only; the only documented write endpoint is POST /feedback, which stores agent feedback in a separate database. Callers may identify themselves with the optional headers in components.parameters; when usage tracking is enabled the server records them with each request's route, status, and latency in a separate usage database. Unauthenticated by default; the network boundary is the access-control boundary.",
 		},
 		"paths": paths,
 		"components": map[string]any{
-			"schemas": schemas,
+			"schemas":    schemas,
+			"parameters": openAPIIdentificationHeaderParameters(),
 		},
 	}
 }
@@ -343,6 +345,42 @@ func openAPIErrorSchema() map[string]any {
 			},
 		},
 		"required": []any{"code", "message"},
+	}
+}
+
+// openAPIIdentificationHeaderParameters returns the optional client
+// identification headers as reusable components.parameters entries, each
+// capped at the length the usage store keeps. No operation references them.
+func openAPIIdentificationHeaderParameters() map[string]any {
+	header := func(name string, maxLength int, description string) map[string]any {
+		return map[string]any{
+			"name":        name,
+			"in":          "header",
+			"required":    false,
+			"description": description,
+			"schema":      map[string]any{"type": "string", "maxLength": maxLength},
+		}
+	}
+
+	return map[string]any{
+		"UserAgentHeader": header("User-Agent", UsageMaxUserAgentBytes,
+			"Client product and version as <product>/<version>. wa clients send "+
+				strings.Join([]string{
+					UserAgentProductCLI, UserAgentProductMCP, UserAgentProductWeb,
+					UserAgentProductResultsServer, UserAgentProductMLWHDiffServer,
+				}, ", ")+"; "+UserAgentProductRunDev+" is not recorded; any other product is recorded as other."),
+		"ClientIDHeader": header(HeaderClientID, UsageMaxClientIDBytes,
+			"Opaque identifier grouping one client's requests, such as a CLI run ID, "+
+				"a hashed browser cookie, or a hashed MCP session."),
+		"ClientUserHeader": header(HeaderClientUser, UsageMaxUsernameBytes,
+			"The caller's username, self-declared and not verified by the server."),
+		"MCPTransportHeader": header(HeaderMCPTransport, UsageMaxMCPTransportBytes,
+			"MCP transport the request arrived through: stdio or http."),
+		"MCPAgentHeader": header(HeaderMCPAgent, UsageMaxMCPAgentBytes,
+			"Agent behind an MCP request: the stdio clientInfo <name>/<version>, or "+
+				"the agent's User-Agent over HTTP."),
+		"MCPToolHeader": header(HeaderMCPTool, UsageMaxMCPToolBytes,
+			"Name of the MCP tool that made the request."),
 	}
 }
 

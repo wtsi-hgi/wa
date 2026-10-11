@@ -47,6 +47,7 @@ const (
 	historicalDocsReadmePath      = "../.docs/mcp/README.md"
 	glossaryDocPath               = "../.docs/mcp/glossary.md"
 	securityPostureDocPath        = "../.docs/mcp/security-posture.md"
+	verifyWAFeatureMapDocPath     = "../.agents/skills/verify-wa/features/README.md"
 )
 
 func TestEndpointReferenceCoversEveryRegistryEntryG1(t *testing.T) {
@@ -97,13 +98,14 @@ func TestEndpointReferenceIncludesAPIVersion(t *testing.T) {
 	})
 }
 
-func TestEndpointReferenceCommittedAtFeedbackVersionB7(t *testing.T) {
-	// B7 acceptance test 6: the committed reference was regenerated for the
-	// 1.9.0 API version that documents POST /feedback.
-	convey.Convey("Given the committed MLWH reference, then it carries the 1.9.0 API version line", t, func() {
+func TestEndpointReferenceCommittedAtUsageVersionC2(t *testing.T) {
+	// Usage C2 acceptance test 6: the committed reference was regenerated for
+	// the 1.10.0 API version that documents the identification headers. The
+	// no-drift half is TestEndpointReferenceMatchesCommittedDocumentG1.
+	convey.Convey("Given the committed MLWH reference, then it carries the 1.10.0 API version line", t, func() {
 		committed, err := os.ReadFile(apiReferenceDocPath)
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(string(committed), convey.ShouldContainSubstring, "**API version:** `1.9.0`")
+		convey.So(string(committed), convey.ShouldContainSubstring, "**API version:** `1.10.0`")
 	})
 }
 
@@ -135,6 +137,54 @@ func TestSecurityPostureDocumentsFeedbackWriteF1(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(string(posture), convey.ShouldContainSubstring, "POST /feedback")
 		convey.So(string(posture), convey.ShouldNotContainSubstring, "The server is a read-only, internal backend")
+	})
+}
+
+func TestReadmeDocumentsUsageMetricsF1(t *testing.T) {
+	// Usage F1 acceptance test 1: the README tells operators how to enable and
+	// retain usage metrics, which identity headers callers send, the anonymous
+	// web cookie, that usernames are self-declared, and that make dev's own
+	// probes are not counted.
+	convey.Convey("Given README.md, then it documents usage flags, env vars, headers, cookie, and exclusions", t, func() {
+		readme, err := os.ReadFile(readmeDocPath)
+		convey.So(err, convey.ShouldBeNil)
+
+		for _, want := range []string{
+			"--usage-db",
+			"WA_MLWH_USAGE_PATH",
+			"--usage-retention-days",
+			"WA_MLWH_USAGE_RETENTION_DAYS",
+			"X-WA-Client-ID",
+			"X-WA-Client-User",
+			"wa_usage_session",
+			"self-declared",
+			"wa-run-dev",
+		} {
+			convey.So(string(readme), convey.ShouldContainSubstring, want)
+		}
+	})
+}
+
+func TestSecurityPostureDocumentsUsageMetricsF1(t *testing.T) {
+	// Usage F1 acceptance test 2: the security posture has a Usage metrics
+	// section naming the self-declared username header and the web cookie.
+	convey.Convey("Given the security posture document, then it covers usage metrics, the username header, and the cookie", t, func() {
+		posture, err := os.ReadFile(securityPostureDocPath)
+		convey.So(err, convey.ShouldBeNil)
+
+		for _, want := range []string{"Usage metrics", "X-WA-Client-User", "wa_usage_session"} {
+			convey.So(string(posture), convey.ShouldContainSubstring, want)
+		}
+	})
+}
+
+func TestVerifyWAFeatureMapLinksUsageAdminPageF1(t *testing.T) {
+	// Usage F1 acceptance test 3: the verify-wa feature map links the /usage
+	// admin page recipe.
+	convey.Convey("Given the verify-wa feature map, then it links the usage admin page recipe", t, func() {
+		featureMap, err := os.ReadFile(verifyWAFeatureMapDocPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(featureMap), convey.ShouldContainSubstring, "](usage-admin-page.md)")
 	})
 }
 
