@@ -13,6 +13,7 @@
 | `usage` | `.` | none | `develop` | none | in progress | implementing phases | phases 3-6 | finish phases, PR reviews |
 | `syncrace-bd100063` | `../wa-syncrace` | none | `develop` | none | `18cf0b6` | recorded | owner completion boundary | reproduce and fix via bugfix |
 | `resultswal-867e6b0f` | `../wa-resultswal` | none | `develop` | none | `46270cb` | recorded | owner completion boundary | reproduce and fix via bugfix |
+| `frontendtsc-69d13e03` | `../wa-frontendtsc` | none | `develop` | none | `87fd1d6` | recorded | owner completion boundary | reproduce and fix via bugfix |
 
 ## Incidental handoffs
 
@@ -26,3 +27,8 @@
   - Branch: `resultswal-867e6b0f`
   - Checklist: `.docs/bugfixes/261011-results-db-wal-leak-56bf2e73f24d.md`
   - Entry commit: `46270cb99761ad9c332fca516310a5bd2d561ae2`
+- Phase 4 items 4.1/4.2: 12 pre-existing `tsc --noEmit` errors in frontend
+  test and e2e files, with no typecheck gate.
+  - Branch: `frontendtsc-69d13e03`
+  - Checklist: `.docs/bugfixes/261011-frontend-tsc-errors-67a818f2fe4e.md`
+  - Entry commit: `87fd1d69e7586bfc0918a075544ef29ac4f5cb3b`
