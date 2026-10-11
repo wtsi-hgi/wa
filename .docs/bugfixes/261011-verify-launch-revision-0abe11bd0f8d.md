@@ -147,3 +147,13 @@
       `features/mlwh-query-api.md`. `red2.sh` now ends `ALL OK` and exits 0
       for `wa repo` and `plainrepo`; `red.sh` still prints `OK`. No committed
       regression test, for the same reason as the item above.
+
+- [ ] `features/usage-admin-page.md`, added by PR #39 (branch `usage`), runs
+      `$RUN/wa mlwh info 6568 --type study --server $MLWH_URL` with `$RUN/wa`
+      unquoted, the same flaw as the item above. The file exists only on
+      `usage`, so fix it after #39 merges and this branch is rebased onto
+      `develop`.
+    - Source: bugfix of the item above, reported as incidental.
+    - Dependency: PR #39 must merge first. Hold this branch unpublished until
+      then; PR #39 also edits `SKILL.md` and `features/mlwh-query-api.md`, so
+      expect small rebase conflicts.
