@@ -13,11 +13,8 @@ vi.mock("@/app/(results)/auth/actions", () => ({
     currentSession: mocks.currentSession,
 }));
 
-import {
-    mlwhIdentityHeaders,
-    usageClientId,
-    usageSessionCookieName,
-} from "@/lib/usage-identity";
+import { mlwhIdentityHeaders, usageClientId } from "@/lib/usage-identity";
+import { usageSessionCookieName } from "@/lib/usage-session-cookie";
 
 const abcClientId = "ba7816bf8f01cfea414140de5dae2223";
 

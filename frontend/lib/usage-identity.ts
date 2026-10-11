@@ -5,12 +5,6 @@ import { cookies } from "next/headers";
 import { currentSession } from "@/app/(results)/auth/actions";
 import { usageSessionCookieName } from "@/lib/usage-session-cookie";
 
-export {
-    mlwhWebUserAgent,
-    usageSessionCookieName,
-    usageSessionCookieOptions,
-} from "@/lib/usage-session-cookie";
-
 // maxUsernameBytes matches wa's UsageMaxUsernameBytes. The client ID is
 // always 32 hex chars, well within UsageMaxClientIDBytes.
 const maxUsernameBytes = 128;
