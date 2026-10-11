@@ -1293,6 +1293,68 @@ func TestRunDevFeedbackDB(t *testing.T) {
 	})
 }
 
+func TestRunDevTestModeRemovesEphemeralSQLiteSidecars(t *testing.T) {
+	convey.Convey("run-dev.sh --mode test removes the ephemeral results DB and MLWH test cache with their -wal and -shm files on SIGINT", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		ports := runDevFeedbackPortsForTest(t)
+		binDir := t.TempDir()
+
+		writeRunDevMLWHServeToolchainForTest(t, binDir, filepath.Join(t.TempDir(), "wa-invocations.log"))
+
+		env := runDevFeedbackFrontendEnvForTest(t, repoRoot, binDir, ports)
+		env["WA_RUN_DEV_RESULTS_HEALTH_URL"] = fmt.Sprintf("https://127.0.0.1:%d/rest/v1/results/stats", ports.results)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "test",
+			frontendPort: ports.frontend,
+			resultsPort:  ports.results,
+			seqmetaPort:  ports.seqmeta,
+			unsetEnv:     runDevUnsetRemoteMLWHEnvForTest(),
+			env:          env,
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		snapshot := waitForRunDevSnapshotForTest(t, process, env["WA_RUN_DEV_ENV_SNAPSHOT"])
+		dbPath, cachePath := snapshot.ResultsDBPath, snapshot.MLWHCachePath
+
+		t.Cleanup(func() {
+			removeRunDevSQLiteFilesForTest(dbPath)
+			removeRunDevSQLiteFilesForTest(cachePath)
+		})
+
+		// Real SQLite servers in WAL mode keep -wal and -shm beside each DB.
+		for _, path := range []string{dbPath, cachePath} {
+			convey.So(path, convey.ShouldNotBeBlank)
+			convey.So(runDevPathExistsForTest(path), convey.ShouldBeTrue)
+
+			for _, suffix := range []string{"-wal", "-shm"} {
+				convey.So(os.WriteFile(path+suffix, nil, 0o600), convey.ShouldBeNil)
+			}
+		}
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+
+		convey.So(runDevSQLiteFilesLeftForTest(dbPath), convey.ShouldBeEmpty)
+		convey.So(runDevSQLiteFilesLeftForTest(cachePath), convey.ShouldBeEmpty)
+	})
+}
+
+// runDevSQLiteFilesLeftForTest returns which of the SQLite DB at path and its
+// -wal and -shm files still exist.
+func runDevSQLiteFilesLeftForTest(path string) []string {
+	var left []string
+
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if runDevPathExistsForTest(path + suffix) {
+			left = append(left, path+suffix)
+		}
+	}
+
+	return left
+}
+
 func runDevFeedbackPortsForTest(t *testing.T) runDevFeedbackPorts {
 	t.Helper()
 
