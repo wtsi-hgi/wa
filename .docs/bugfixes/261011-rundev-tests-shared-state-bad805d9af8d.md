@@ -64,7 +64,7 @@
       `cmd/run_dev_modes_test.go`, `cmd/run_dev_tmp_dir_test.go`,
       `DEVELOPING.md`.
 
-- [ ] The run-dev tests don't set `WA_RUN_DEV_LOG_DIR`, so they replace a
+- [x] The run-dev tests don't set `WA_RUN_DEV_LOG_DIR`, so they replace a
       `make dev` session's `logs/results.log`, `logs/mlwh.log` and
       `logs/frontend.log` in the checkout, and one test asserts those files
       exist (around `cmd/run_dev_test.go` lines 2551-2553). Same shared-state
@@ -72,6 +72,41 @@
     - Source: bugfix of the item above, reported as incidental.
     - Evidence: code reading of the tests and `run-dev.sh`'s log directory
       default.
+    - Red command (from the checkout root):
+
+        ```bash
+        mkdir -p logs
+        for f in results frontend mlwh; do
+          printf 'sentinel-%s\n' "$f" > "logs/$f.log"
+        done
+        CGO_ENABLED=1 go test -tags netgo -count 1 -run TestRunDevUsageDB ./cmd/
+        for f in results frontend mlwh; do
+          grep -qx "sentinel-$f" "logs/$f.log" || echo "CLOBBERED: logs/$f.log"
+        done
+        ```
+
+    - Red result on `29de3f2`: `go test` passed (exit 0) but all three
+      sentinels were replaced (check exit 1):
+
+        ```text
+        CLOBBERED: logs/results.log ()
+        CLOBBERED: logs/frontend.log ( [dev] )
+        CLOBBERED: logs/mlwh.log ()
+        ```
+
+    - Fixed. `runDevEnvForTest`, which builds every run-dev invocation's
+      environment in the cmd tests, now replaces any inherited
+      `WA_RUN_DEV_LOG_DIR` with a `logs` directory inside the per-test
+      `WA_RUN_DEV_TMP_DIR`; a test's own override still wins.
+      `TestRunDevScript` checks the three logs there. `run-dev.sh` is
+      unchanged.
+    - Regression test: `TestRunDevLogDirOverride` checks run-dev reports
+      and writes its logs in the per-test directory; it fails without the
+      env change. The red command passes with `TestRunDevUsageDB` and the
+      full `TestRunDev` suite.
+    - Files: `cmd/run_dev_test.go`, `cmd/run_dev_tmp_dir_test.go`,
+      `DEVELOPING.md`.
+
 - [ ] `make test`'s Playwright step runs a real `run-dev.sh --mode test` with
       the default `.tmp`, and `frontend/e2e/results-auth-helpers.ts` reads
       `.tmp/state-test`; afterwards `clean-test-tmp` deletes `.tmp/wa`. So

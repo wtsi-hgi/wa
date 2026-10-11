@@ -2614,9 +2614,9 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(snapshot.MLWHCachePath, convey.ShouldNotBeBlank)
 		convey.So(snapshot.MLWHCachePath, convey.ShouldStartWith, runDevTmpDirForTest(t)+string(os.PathSeparator))
 		convey.So(runDevPathExistsForTest(snapshot.ResultsDBPath), convey.ShouldBeTrue)
-		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "results.log")), convey.ShouldBeTrue)
-		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "frontend.log")), convey.ShouldBeTrue)
-		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "mlwh.log")), convey.ShouldBeTrue)
+		convey.So(runDevPathExistsForTest(filepath.Join(runDevLogDirForTest(t), "results.log")), convey.ShouldBeTrue)
+		convey.So(runDevPathExistsForTest(filepath.Join(runDevLogDirForTest(t), "frontend.log")), convey.ShouldBeTrue)
+		convey.So(runDevPathExistsForTest(filepath.Join(runDevLogDirForTest(t), "mlwh.log")), convey.ShouldBeTrue)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -3211,7 +3211,8 @@ exec %q "$@"
 }
 
 // runDevEnvForTest returns the inherited environment minus unsetKeys and the
-// keys below, plus WA_RUN_DEV_TMP_DIR pointing at t's own run-dev temp dir.
+// keys below, plus WA_RUN_DEV_TMP_DIR and WA_RUN_DEV_LOG_DIR pointing at t's
+// own run-dev temp and log dirs.
 func runDevEnvForTest(t *testing.T, unsetKeys []string) []string {
 	t.Helper()
 
@@ -3222,6 +3223,7 @@ func runDevEnvForTest(t *testing.T, unsetKeys []string) []string {
 		"WA_RESULTS_SERVER_CERT",
 		"WA_RESULTS_SERVER_KEY",
 		"WA_RUN_DEV_TMP_DIR",
+		"WA_RUN_DEV_LOG_DIR",
 		"WA_RUN_DEV_SEQMETA_CMD",
 		"WA_RUN_DEV_SEQMETA_HEALTH_URL",
 		"WA_MLWH_DSN",
@@ -3262,7 +3264,10 @@ func runDevEnvForTest(t *testing.T, unsetKeys []string) []string {
 		filtered = append(filtered, entry)
 	}
 
-	return append(filtered, "WA_RUN_DEV_TMP_DIR="+runDevTmpDirForTest(t))
+	return append(filtered,
+		"WA_RUN_DEV_TMP_DIR="+runDevTmpDirForTest(t),
+		"WA_RUN_DEV_LOG_DIR="+runDevLogDirForTest(t),
+	)
 }
 
 func signalRunDevProcessGroupForTest(command *exec.Cmd, signal syscall.Signal) {

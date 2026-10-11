@@ -100,6 +100,34 @@ func TestRunDevTmpDirOverride(t *testing.T) {
 	})
 }
 
+func TestRunDevLogDirOverride(t *testing.T) {
+	convey.Convey("run-dev.sh --mode test writes its service logs under WA_RUN_DEV_LOG_DIR, not the checkout's logs", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		logDir := runDevLogDirForTest(t)
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+
+		process := startRunDevTestModeForTest(t, repoRoot, invocationsPath, nil)
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Logs: "+logDir+"\n"), convey.ShouldBeTrue)
+		convey.So(process.stdout.String(), convey.ShouldNotContainSubstring, "Logs: "+filepath.Join(repoRoot, "logs"))
+
+		for _, name := range []string{"results.log", "frontend.log", "mlwh.log"} {
+			convey.So(runDevPathExistsForTest(filepath.Join(logDir, name)), convey.ShouldBeTrue)
+		}
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+}
+
+// runDevLogDirForTest returns the directory t's run-dev.sh runs use as
+// WA_RUN_DEV_LOG_DIR, inside t's run-dev temp dir.
+func runDevLogDirForTest(t *testing.T) string {
+	t.Helper()
+
+	return filepath.Join(runDevTmpDirForTest(t), "logs")
+}
+
 // runDevTmpDirForTest returns t's run-dev.sh temp directory, creating it on
 // first use.
 func runDevTmpDirForTest(t *testing.T) string {
