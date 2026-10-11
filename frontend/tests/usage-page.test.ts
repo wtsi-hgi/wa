@@ -800,6 +800,65 @@ describe("E4 usage admin view", () => {
         expect(wrapOf("Endpoints", "GET /studies")).toBe("break-words");
     });
 
+    it("renders rows whose values collide after U+FFFD replacement", async () => {
+        // Go's JSON encoder writes invalid UTF-8 as U+FFFD, so distinct
+        // stored values such as /a%FF and /a%FE arrive identical.
+        const consoleError = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => undefined);
+        const replaced = "/a\uFFFD";
+        const unmatchedRow = {
+            method: "GET",
+            path: replaced,
+            requests: 1,
+            by_category: { cli: 1 },
+            by_tool: {},
+            by_agent: {},
+        };
+        const nameRow = {
+            name: "\uFFFD",
+            by_ip: false,
+            requests: 1,
+            by_category: { cli: 1 },
+        };
+        const valueRow = { value: "\uFFFD", requests: 1 };
+
+        try {
+            await renderView(
+                a3Summary({
+                    mcp_tools: [valueRow, valueRow],
+                    mcp_agents: [valueRow, valueRow],
+                    other_user_agents: [valueRow, valueRow],
+                    unmatched: [unmatchedRow, unmatchedRow],
+                    users: [nameRow, nameRow],
+                    clients: [nameRow, nameRow],
+                }),
+                "24h",
+            );
+
+            for (const [region, text] of [
+                ["MCP tools", "\uFFFD"],
+                ["MCP agents", "\uFFFD"],
+                ["Other API user agents", "\uFFFD"],
+                ["Unmatched paths", replaced],
+                ["Top users (self-declared)", "\uFFFD"],
+                ["Top clients", "\uFFFD"],
+            ]) {
+                expect(
+                    within(section(region)).getAllByText(text),
+                    region,
+                ).toHaveLength(2);
+            }
+
+            const keyErrors = consoleError.mock.calls.filter((args) =>
+                String(args[0]).includes("two children with the same key"),
+            );
+            expect(keyErrors).toEqual([]);
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+
     it("shows the note on every ok render", async () => {
         for (const window of ["24h", "7d", "30d", "all"] as const) {
             await renderView(a3Summary({ window }), window);

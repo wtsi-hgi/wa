@@ -180,6 +180,8 @@ function UsageTable<Row>({
 }: {
     columns: Array<Column<Row>>;
     rowHeader?: number;
+    // rowKey must be unique per row. Values the server turned into U+FFFD
+    // can repeat, so keys for caller-supplied values include the index.
     rowKey: (row: Row, index: number) => string;
     rows: Row[];
 }) {
@@ -375,7 +377,7 @@ function valueCountSection(id: string, title: string, rows: ValueCount[]) {
                         render: (row) => formatCount(row.requests),
                     },
                 ]}
-                rowKey={(row) => row.value}
+                rowKey={(row, index) => `${index} ${row.value}`}
                 rows={rows}
             />
         </UsageSection>
@@ -597,7 +599,9 @@ export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
                         },
                     ]}
                     rowHeader={1}
-                    rowKey={(row) => `${row.method} ${row.path}`}
+                    rowKey={(row, index) =>
+                        `${index} ${row.method} ${row.path}`
+                    }
                     rows={summary.unmatched}
                 />
             </UsageSection>
@@ -620,7 +624,7 @@ export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
                             render: (row) => formatCategories(row.by_category),
                         },
                     ]}
-                    rowKey={(row) => row.name}
+                    rowKey={(row, index) => `${index} ${row.name}`}
                     rows={summary.users}
                 />
             </UsageSection>
@@ -644,7 +648,7 @@ export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
                             render: (row) => formatCategories(row.by_category),
                         },
                     ]}
-                    rowKey={(row) => `${row.by_ip ? "ip" : "id"}:${row.name}`}
+                    rowKey={(row, index) => `${index} ${row.name}`}
                     rows={summary.clients}
                 />
             </UsageSection>
