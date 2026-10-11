@@ -92,3 +92,39 @@
       as the item above, so it shares this branch.
     - Source: bugfix of the item above, reported as incidental.
     - Evidence: reading the files on this base.
+    - Red command: a throwaway harness (`red2.sh`, not committed) builds the
+      same stubbed temporary repository as `red.sh` above under `wa repo`,
+      runs the real `launch.sh`, and replaces `$RUN/wa`, `node` and
+      `drive-feedback-modes.sh` with stubs that log their argv. It then runs,
+      as written in the docs and after `. "$RUN/stack.env"`: the
+      `results-cli.md` drive block (`<id>` replaced by `fakeid`); every inline
+      command span in the other feature files starting with `node`, `$SKILL`,
+      `$RUN/wa` or `WA_MLWH_SERVER_URL=` (spans with `<placeholders>`
+      skipped); and every `$(cat ...)` span. It fails when a command exits
+      non-zero, when no `--cert` argument equals `$CERT`, or when a logged
+      path argument is not an existing path. Before the fix it exits 1:
+
+        ```text
+        === results-cli.md drive block
+          ! bash: line 7: /tmp/verifyrev-red2.cZ4way/wa: No such file or directory
+          exit=127
+        === feedback-admin-page.md: node $SKILL/scripts/drive-feedback.mjs "$RUN"
+          exit=0
+        === mlwh-feedback-submit.md: $SKILL/scripts/drive-feedback-modes.sh "$RUN"
+          exit=127
+        === mlwh-query-api.md: WA_MLWH_SERVER_URL=$MLWH_URL $RUN/wa mlwh info 6568 --type study
+          exit=127
+        === mlwh-feedback-submit.md: echo $(cat $STATE_HOME/.wa-mlwh-server.token)
+          ! cat: repo/.tmp/state-test/.wa-mlwh-server.token: No such file or directory
+          exit=1
+        === argv check
+        no --cert arg equal to CERT
+        split path args:
+          /tmp/verifyrev-red2.cZ4way/wa
+        repo/.agents/skills/verify-wa/scripts/drive-feedback.mjs
+        RED
+        ```
+
+        The `node $SKILL/...` spans exit 0 only because the stub `node`
+        accepts the split words; its argv log shows the script path split
+        in two.
