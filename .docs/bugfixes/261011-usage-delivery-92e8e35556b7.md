@@ -8,14 +8,16 @@
 
 ## Deliver queue
 
-| Branch                 | Worktree            | PR   | Target    | Depends on | Head        | Status              | Waits on                  | Next action                  |
-| ---------------------- | ------------------- | ---- | --------- | ---------- | ----------- | ------------------- | ------------------------- | ---------------------------- |
-| `usage`                | `.`                 | none | `develop` | none       | in progress | implementing phases | phases 3-6                | finish phases, PR reviews    |
-| `syncrace-bd100063`    | `../wa-syncrace`    | none | `develop` | none       | `18cf0b6`   | recorded            | owner completion boundary | reproduce and fix via bugfix |
-| `resultswal-867e6b0f`  | `../wa-resultswal`  | none | `develop` | none       | `1c8afaa`   | recorded            | owner completion boundary | reproduce and fix via bugfix |
-| `frontendtsc-69d13e03` | `../wa-frontendtsc` | none | `develop` | none       | `87fd1d6`   | recorded            | owner completion boundary | reproduce and fix via bugfix |
-| `verifyrev-45b2c5f7`   | `../wa-verifyrev`   | none | `develop` | none       | `2b7eae0`   | recorded            | owner completion boundary | reproduce and fix via bugfix |
-| `menurace-39ecd8d1`    | `../wa-menurace`    | none | `develop` | none       | `b7565f2`   | recorded            | owner completion boundary | reproduce and fix via bugfix |
+| Branch                   | Worktree              | PR   | Target    | Depends on | Head      | Status     | Waits on                  | Next action                     |
+| ------------------------ | --------------------- | ---- | --------- | ---------- | --------- | ---------- | ------------------------- | ------------------------------- |
+| `usage`                  | `.`                   | none | `develop` | none       | `9f3d79b` | PR reviews | spec-aware review pass 2  | converge reviews, push, open PR |
+| `syncrace-bd100063`      | `../wa-syncrace`      | none | `develop` | none       | `18cf0b6` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
+| `resultswal-867e6b0f`    | `../wa-resultswal`    | none | `develop` | none       | `1c8afaa` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
+| `frontendtsc-69d13e03`   | `../wa-frontendtsc`   | none | `develop` | none       | `87fd1d6` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
+| `verifyrev-45b2c5f7`     | `../wa-verifyrev`     | none | `develop` | none       | `2b7eae0` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
+| `menurace-39ecd8d1`      | `../wa-menurace`      | none | `develop` | none       | `b7565f2` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
+| `serveshutdown-cf1cb518` | `../wa-serveshutdown` | none | `develop` | none       | `a5e6c44` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
+| `rundevstate-64ed3f75`   | `../wa-rundevstate`   | none | `develop` | none       | `3281ef9` | recorded   | owner completion boundary | reproduce and fix via bugfix    |
 
 ## Incidental handoffs
 
@@ -49,3 +51,13 @@
     - Branch: `menurace-39ecd8d1`
     - Checklist: `.docs/bugfixes/261011-auth-menu-admin-links-delay-e00507b6b184.md`
     - Entry commit: `b7565f2847702177885dbc5b851d8f83542ea634`
+- Spec-aware PR review pass 1: `wa mlwh serve` closes its stores before
+  in-flight requests finish (`StartHTTP` does not wait for `Shutdown`).
+    - Branch: `serveshutdown-cf1cb518`
+    - Checklist: `.docs/bugfixes/261011-serve-shutdown-order-7b5b276cd3b9.md`
+    - Entry commit: `a5e6c446eb6d4f5751edbf9cd5a6de41d8df1d20`
+- Spec-aware PR review pass 1: `TestRunDev*` tests clobber a running
+  verify-wa stack's `.tmp` state in the same checkout.
+    - Branch: `rundevstate-64ed3f75`
+    - Checklist: `.docs/bugfixes/261011-rundev-tests-shared-state-bad805d9af8d.md`
+    - Entry commit: `3281ef92624abd9f218c9a3f0395d46fc91adbeb`
