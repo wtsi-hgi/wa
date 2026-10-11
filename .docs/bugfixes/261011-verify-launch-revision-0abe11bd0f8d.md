@@ -82,3 +82,13 @@
       `$` and a backtick. No committed regression test: no test harness
       covers the verify-wa scripts, and a Go test in `cmd/` would couple
       product tests to agent tooling.
+
+- [ ] verify-wa docs break or mislead with unusual checkout paths:
+      `features/results-cli.md` sets `C="--server $RESULTS_URL --cert $CERT"`
+      and uses `$C` unquoted, so a `CERT` path with a space splits; lines
+      26-30 run `$RUN/wa results ...` unquoted, so a checkout path with a space
+      splits too; and `SKILL.md` (around line 38) says the PID goes into
+      `stack.env` when it is written to `$RUN/run-dev.pid`. Same quoting theme
+      as the item above, so it shares this branch.
+    - Source: bugfix of the item above, reported as incidental.
+    - Evidence: reading the files on this base.
