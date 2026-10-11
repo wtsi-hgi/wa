@@ -80,7 +80,7 @@ func OpenFeedbackStore(ctx context.Context, path string) (*FeedbackStore, error)
 		return nil, err
 	}
 
-	db, err := sql.Open("sqlite", sqliteWritableDSN(path))
+	db, err := sql.Open("sqlite", sqliteWritablePathDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("mlwh: open feedback store: %w", err)
 	}

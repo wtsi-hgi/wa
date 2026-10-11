@@ -73,8 +73,8 @@ var (
 
 const (
 	sqliteWritableParams = "mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
-	sqliteLockParams     = "mode=rwc&_pragma=journal_mode(WAL)"
-	sqliteLockTimeout    = "_pragma=busy_timeout(0)"
+	sqliteLockParams     = "_pragma=journal_mode(WAL)"
+	sqliteLockForced     = "mode=rwc&_pragma=busy_timeout(0)"
 	sqliteReadOnlyParams = "mode=ro"
 )
 
@@ -1627,15 +1627,11 @@ func looksLikeMySQLDSN(path string) bool {
 }
 
 func sqliteWritableDSN(path string) string {
-	if path == ":memory:" {
-		return path
-	}
-
 	if strings.HasPrefix(path, "file:") {
 		return mergeSQLiteURIParams(path, sqliteWritableParams, "")
 	}
 
-	return sqliteuri.File(path, sqliteWritableParams)
+	return sqliteWritablePathDSN(path)
 }
 
 func sqliteLockDSN(path string) string {
@@ -1644,12 +1640,12 @@ func sqliteLockDSN(path string) string {
 	}
 
 	if strings.HasPrefix(path, "file:") {
-		uriPath, query, _ := strings.Cut(path, "?")
+		uriPath, query, _ := strings.Cut(withoutURIFragment(path), "?")
 
-		return mergeSQLiteURIParams(uriPath+".sync-lock?"+query, sqliteLockParams, sqliteLockTimeout)
+		return mergeSQLiteURIParams(uriPath+".sync-lock?"+query, sqliteLockParams, sqliteLockForced)
 	}
 
-	return sqliteuri.File(path+".sync-lock", sqliteLockParams+"&"+sqliteLockTimeout)
+	return sqliteuri.File(path+".sync-lock", sqliteLockParams+"&"+sqliteLockForced)
 }
 
 func sqliteReadOnlyDSN(path string) string {
@@ -1670,7 +1666,7 @@ func sqliteReadOnlyDSN(path string) string {
 // pragma name, because SQLite rejects a repeated mode that widens access and
 // the driver runs repeated pragmas in an unspecified order.
 func mergeSQLiteURIParams(uri, defaults, forced string) string {
-	base, query, _ := strings.Cut(uri, "?")
+	base, query, _ := strings.Cut(withoutURIFragment(uri), "?")
 	forcedKeys := sqliteParamKeys(forced)
 	userKeys := map[string]bool{}
 
@@ -1696,6 +1692,14 @@ func mergeSQLiteURIParams(uri, defaults, forced string) string {
 	}
 
 	return base + "?" + strings.Join(params, "&")
+}
+
+// withoutURIFragment drops a URI's #fragment, which SQLite ignores, so params
+// we add land in the query rather than after the '#'.
+func withoutURIFragment(uri string) string {
+	uri, _, _ = strings.Cut(uri, "#")
+
+	return uri
 }
 
 func sqliteParamKeys(query string) map[string]bool {
@@ -1731,4 +1735,14 @@ func sqliteParamKey(param string) string {
 	}
 
 	return "_pragma:" + strings.ToLower(strings.TrimSpace(value))
+}
+
+// sqliteWritablePathDSN opens path as a literal file name, even one starting
+// "file:", for stores that create that exact file at mode 0600 first.
+func sqliteWritablePathDSN(path string) string {
+	if path == ":memory:" {
+		return path
+	}
+
+	return sqliteuri.File(path, sqliteWritableParams)
 }

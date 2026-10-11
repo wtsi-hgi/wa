@@ -1299,9 +1299,14 @@ func TestOpenCacheSQLiteFileURI(t *testing.T) {
 		convey.So(timeout, convey.ShouldEqual, 5000)
 	})
 
-	convey.Convey("Given a file: URI cache path with its own query params", t, func() {
+	convey.Convey("Given an existing cache opened by a file: URI with its own query params", t, func() {
 		dir := t.TempDir()
-		uri := "file:" + filepath.Join(dir, "x.db") + "?mode=rwc&_pragma=busy_timeout(3000)"
+		path := filepath.Join(dir, "x.db")
+		existing, err := OpenCache(context.Background(), CacheConfig{Path: path})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(existing.Close(), convey.ShouldBeNil)
+
+		uri := "file:" + path + "?mode=rw&_pragma=BUSY_TIMEOUT(3000)"
 
 		sqlite := assertFileURICacheUsesPath(dir, uri, "x.db")
 
@@ -1334,6 +1339,19 @@ func TestOpenCacheSQLiteFileURI(t *testing.T) {
 			convey.So(time.Since(start), convey.ShouldBeLessThan, time.Second)
 		})
 	})
+
+	for _, suffix := range []string{"#frag", "?cache=private#frag"} {
+		convey.Convey("Given a file: URI cache path ending "+suffix+", when opened and sync-locked, "+
+			"then the named file is used and the read handle is read-only", t, func() {
+			dir := t.TempDir()
+
+			sqlite := assertFileURICacheUsesPath(dir, "file:"+filepath.Join(dir, "x.db")+suffix, "x.db")
+
+			_, err := sqlite.ReadDB().Exec(`INSERT INTO probe VALUES (2)`)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "readonly")
+		})
+	}
 }
 
 // assertFileURICacheUsesPath opens a cache at uri, writes, reads and takes the

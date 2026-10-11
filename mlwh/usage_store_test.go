@@ -446,6 +446,19 @@ func (c *usageLockConnForTest) Close() error {
 func TestUsageStoreSQLitePathWithURISpecialCharacters(t *testing.T) {
 	clock := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
 
+	convey.Convey("Given a new relative usage store path starting file:, when an event is recorded and flushed, "+
+		"then the data lands in that exact file readable only by the owner", t, func() {
+		dir := t.TempDir()
+		t.Chdir(dir)
+
+		store := openTestUsageStore(t, "file:u.db", 30, usageQueueSize, clock)
+
+		store.Record(fullUsageEventForTest(clock))
+		convey.So(store.Flush(context.Background()), convey.ShouldBeNil)
+
+		assertStoreFileUsed(dir, "file:u.db")
+	})
+
 	for _, name := range []string{"u#1.sqlite", "u?1.sqlite", "u%231.sqlite"} {
 		convey.Convey("Given a new usage store path named "+name+", when opened and an event is recorded and flushed, "+
 			"then the database and its WAL land at that exact path readable only by the owner", t, func() {
