@@ -35,5 +35,5 @@ passes. Do not merge, push to `main`, or tag: the user merges and tags
 confirms that verification passed and the PR is open against `develop`
 with comments resolved and CI green.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
