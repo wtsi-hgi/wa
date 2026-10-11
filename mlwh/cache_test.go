@@ -1329,16 +1329,35 @@ func TestOpenCacheSQLiteFileURI(t *testing.T) {
 		})
 
 		convey.Convey("then a second sync lock fails at once instead of waiting", func() {
-			release, err := sqlite.acquireSyncLock(context.Background())
-			convey.So(err, convey.ShouldBeNil)
-			convey.Reset(func() { _ = release() })
-
-			start := time.Now()
-			_, err = sqlite.acquireSyncLock(context.Background())
-			convey.So(err, convey.ShouldEqual, ErrSyncAlreadyRunning)
-			convey.So(time.Since(start), convey.ShouldBeLessThan, time.Second)
+			assertSecondSyncLockFailsAtOnce(sqlite)
 		})
 	})
+
+	convey.Convey("Given a new cache opened by a file: URI setting an unrelated pragma, "+
+		"when opened, then the cache's own pragmas still apply", t, func() {
+		dir := t.TempDir()
+
+		sqlite := assertFileURICacheUsesPath(dir, "file:"+filepath.Join(dir, "n.db")+"?_pragma=foreign_keys(1)", "n.db")
+
+		var journalMode string
+		convey.So(sqlite.DB().QueryRow(`PRAGMA journal_mode`).Scan(&journalMode), convey.ShouldBeNil)
+		convey.So(journalMode, convey.ShouldEqual, "wal")
+
+		var timeout int
+		convey.So(sqlite.DB().QueryRow(`PRAGMA busy_timeout`).Scan(&timeout), convey.ShouldBeNil)
+		convey.So(timeout, convey.ShouldEqual, 5000)
+	})
+
+	for _, query := range []string{"_pragma=busy_timeout%283000%29", "%5Fpragma=busy_timeout(3000)"} {
+		convey.Convey("Given a file: URI cache path with percent-encoded param "+query+
+			", when sync-locked twice, then the second lock fails at once", t, func() {
+			dir := t.TempDir()
+
+			sqlite := assertFileURICacheUsesPath(dir, "file:"+filepath.Join(dir, "x.db")+"?"+query, "x.db")
+
+			assertSecondSyncLockFailsAtOnce(sqlite)
+		})
+	}
 
 	for _, suffix := range []string{"#frag", "?cache=private#frag"} {
 		convey.Convey("Given a file: URI cache path ending "+suffix+", when opened and sync-locked, "+
@@ -1531,4 +1550,17 @@ func expectNoDroppedMirrorRepairRows(mock sqlmock.Sqlmock, table string) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 		WithArgs(table).
 		WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
+}
+
+// assertSecondSyncLockFailsAtOnce takes the cache's sync lock, then asserts a
+// second attempt returns ErrSyncAlreadyRunning without waiting on the lock.
+func assertSecondSyncLockFailsAtOnce(sqlite *sqliteCache) {
+	release, err := sqlite.acquireSyncLock(context.Background())
+	convey.So(err, convey.ShouldBeNil)
+	convey.Reset(func() { _ = release() })
+
+	start := time.Now()
+	_, err = sqlite.acquireSyncLock(context.Background())
+	convey.So(err, convey.ShouldEqual, ErrSyncAlreadyRunning)
+	convey.So(time.Since(start), convey.ShouldBeLessThan, time.Second)
 }
