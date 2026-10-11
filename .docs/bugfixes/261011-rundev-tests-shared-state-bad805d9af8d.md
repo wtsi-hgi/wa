@@ -164,8 +164,43 @@
       `frontend/tests/e2e-run-dir.test.ts`, `Makefile`, `.env.test`,
       `DEVELOPING.md`, `.agents/skills/verify-wa/SKILL.md`.
 
-- [ ] Dev-mode run-dev tests that don't set `XDG_STATE_HOME` inherit the
+- [x] Dev-mode run-dev tests that don't set `XDG_STATE_HOME` inherit the
       caller's, so a real results server started by one could write its token
       into the user's real state directory. Unconfirmed: most of those tests
       use a fake server. Confirm before fixing; record the evidence either way.
     - Source: bugfix of the item above, reported as incidental.
+    - Confirmed. Red command (from the checkout root; `$STATE` is any
+      scratch directory standing in for the caller's state directory):
+
+        ```bash
+        printf 'sentinel-token\n' > "$STATE/.wa-results-server.token"
+        XDG_STATE_HOME="$STATE" CGO_ENABLED=1 go test -tags netgo -count 1 \
+          -run '^TestRunDevScript$' ./cmd/
+        grep -qx sentinel-token "$STATE/.wa-results-server.token"
+        ```
+
+    - Red result on `1f40eb0`: `go test` passed (exit 0, 46.7s) but the
+      caller's sentinel token was deleted (`grep` exit 2, "No such file or
+      directory"). The full `-run TestRunDev` suite does the same;
+      `TestRunDevUsageDB` and `TestRunDevFeedbackDB` leave it alone.
+    - Cause: only `--mode test` points `XDG_STATE_HOME` at
+      `$TMP_DIR/state-test`. In dev and prod mode the real `wa results serve`
+      inherited the caller's value, used its `.wa-results-server.token`, and
+      go-authserver's `Server.Stop()` deleted it on shutdown. With
+      `XDG_STATE_HOME` unset it fell back to `$HOME` and deleted
+      `$HOME/.wa-results-server.token`. Eleven dev/prod-mode Convey blocks
+      across `TestRunDevScript`, `TestRunDevScriptF1DevCertificates`,
+      `TestRunDevScriptDevCertificateSubjectAltNames` and
+      `TestRunDevScriptReportsResultsBindAddress` did this.
+    - Fixed. `runDevEnvForTest` replaces any inherited `XDG_STATE_HOME` with
+      a `state` directory inside the per-test `WA_RUN_DEV_TMP_DIR`, which
+      also stops the `$HOME` fallback; a test's own value still wins. The
+      failing-MLWH dev-mode scenario moved into
+      `runRunDevDevModeWithFailingMLWHForTest` so the regression test can
+      reuse it; the original subtest keeps all its assertions. `run-dev.sh`
+      is unchanged.
+    - Regression test: `TestRunDevStateHomeOverride` plants a token in the
+      test process's `XDG_STATE_HOME`, runs that scenario, and checks the
+      token survives; it fails without the fix. The red command passes for
+      `^TestRunDevScript$` and the full `TestRunDev` suite.
+    - Files: `cmd/run_dev_test.go`, `cmd/run_dev_tmp_dir_test.go`.

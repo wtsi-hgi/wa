@@ -827,6 +827,39 @@ func runDevTCPPortClosesWithinForTest(port int, timeout time.Duration) bool {
 	return false
 }
 
+// runRunDevDevModeWithFailingMLWHForTest runs run-dev.sh --mode dev with an
+// MLWH command that exits before becoming ready, after run-dev.sh has started
+// a real wa results serve, and returns its output once it has given up.
+func runRunDevDevModeWithFailingMLWHForTest(t *testing.T) (string, string, error) {
+	t.Helper()
+
+	repoRoot := runDevRepoRootForTest(t)
+	frontendPort := runDevFreePortForTest(t)
+	resultsPort := runDevFreePortForTest(t)
+	seqmetaPort := runDevFreePortForTest(t)
+
+	return runRunDevExpectingFailureForTest(t, repoRoot, []string{
+		"--mode", "dev",
+		"--frontend-port", fmt.Sprintf("%d", frontendPort),
+		"--results-port", fmt.Sprintf("%d", resultsPort),
+		"--seqmeta-port", fmt.Sprintf("%d", seqmetaPort),
+	}, map[string]string{
+		"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results.db"),
+		"WA_MLWH_DSN":                           "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse",
+		"WA_MLWH_CACHE_PATH":                    filepath.Join(t.TempDir(), "mlwh-cache.sqlite"),
+		"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
+		"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
+		"WA_RUN_DEV_LOG_DIR":                    filepath.Join(t.TempDir(), "logs"),
+		"WA_RUN_DEV_SEQMETA_CMD":                `node -e "console.error('mlwh boot failed: source db unavailable'); process.exit(23)"`,
+		"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+		"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+		"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+	}, []string{"WA_ENV"})
+}
+
 // runDevFlagValueForTest returns the value following flag in a recorded
 // invocation, or "" when the flag is absent.
 func runDevFlagValueForTest(invocation string, flag string) string {
@@ -2741,31 +2774,7 @@ func TestRunDevScript(t *testing.T) {
 	})
 
 	convey.Convey("run-dev.sh surfaces MLWH log output when MLWH exits before becoming ready", t, func() {
-		repoRoot := runDevRepoRootForTest(t)
-		frontendPort := runDevFreePortForTest(t)
-		resultsPort := runDevFreePortForTest(t)
-		seqmetaPort := runDevFreePortForTest(t)
-
-		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{
-			"--mode", "dev",
-			"--frontend-port", fmt.Sprintf("%d", frontendPort),
-			"--results-port", fmt.Sprintf("%d", resultsPort),
-			"--seqmeta-port", fmt.Sprintf("%d", seqmetaPort),
-		}, map[string]string{
-			"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results.db"),
-			"WA_MLWH_DSN":                           "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse",
-			"WA_MLWH_CACHE_PATH":                    filepath.Join(t.TempDir(), "mlwh-cache.sqlite"),
-			"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
-			"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
-			"WA_RUN_DEV_LOG_DIR":                    filepath.Join(t.TempDir(), "logs"),
-			"WA_RUN_DEV_SEQMETA_CMD":                `node -e "console.error('mlwh boot failed: source db unavailable'); process.exit(23)"`,
-			"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
-			"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
-			"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
-			"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
-			"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
-			"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
-		}, []string{"WA_ENV"})
+		stdout, stderr, err := runRunDevDevModeWithFailingMLWHForTest(t)
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stdout, convey.ShouldContainSubstring, "Starting MLWH server")
@@ -3211,8 +3220,8 @@ exec %q "$@"
 }
 
 // runDevEnvForTest returns the inherited environment minus unsetKeys and the
-// keys below, plus WA_RUN_DEV_TMP_DIR and WA_RUN_DEV_LOG_DIR pointing at t's
-// own run-dev temp and log dirs.
+// keys below, plus WA_RUN_DEV_TMP_DIR, WA_RUN_DEV_LOG_DIR, and XDG_STATE_HOME
+// pointing at t's own run-dev temp, log, and state dirs.
 func runDevEnvForTest(t *testing.T, unsetKeys []string) []string {
 	t.Helper()
 
@@ -3224,6 +3233,10 @@ func runDevEnvForTest(t *testing.T, unsetKeys []string) []string {
 		"WA_RESULTS_SERVER_KEY",
 		"WA_RUN_DEV_TMP_DIR",
 		"WA_RUN_DEV_LOG_DIR",
+		// Outside test mode run-dev.sh keeps the caller's XDG_STATE_HOME (or
+		// HOME), where a real wa results serve writes its server token and
+		// deletes it on shutdown. Tests that need a state dir set their own.
+		"XDG_STATE_HOME",
 		"WA_RUN_DEV_SEQMETA_CMD",
 		"WA_RUN_DEV_SEQMETA_HEALTH_URL",
 		"WA_MLWH_DSN",
@@ -3267,6 +3280,7 @@ func runDevEnvForTest(t *testing.T, unsetKeys []string) []string {
 	return append(filtered,
 		"WA_RUN_DEV_TMP_DIR="+runDevTmpDirForTest(t),
 		"WA_RUN_DEV_LOG_DIR="+runDevLogDirForTest(t),
+		"XDG_STATE_HOME="+filepath.Join(runDevTmpDirForTest(t), "state"),
 	)
 }
 

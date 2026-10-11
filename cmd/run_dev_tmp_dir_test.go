@@ -42,6 +42,23 @@ import (
 // verify-wa or make dev stack running there).
 var runDevTmpDirsForTest sync.Map
 
+func TestRunDevStateHomeOverride(t *testing.T) {
+	convey.Convey("run-dev.sh --mode dev leaves the caller's XDG_STATE_HOME results server token alone", t, func() {
+		stateDir := t.TempDir()
+		tokenPath := filepath.Join(stateDir, ".wa-results-server.token")
+		convey.So(os.WriteFile(tokenPath, []byte("caller-token"), 0o600), convey.ShouldBeNil)
+		t.Setenv("XDG_STATE_HOME", stateDir)
+
+		stdout, _, err := runRunDevDevModeWithFailingMLWHForTest(t)
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout, convey.ShouldContainSubstring, "Starting results server")
+
+		token, err := os.ReadFile(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(token), convey.ShouldEqual, "caller-token")
+	})
+}
+
 func TestRunDevTmpDirOverride(t *testing.T) {
 	convey.Convey("run-dev.sh --mode test keeps its dev TLS files, state, binaries, and DBs under WA_RUN_DEV_TMP_DIR", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
