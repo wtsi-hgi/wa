@@ -87,6 +87,8 @@ type Cache interface {
 
 // OpenCache opens the configured cache backend and ensures the embedded schema exists.
 func OpenCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
+	cfg.Path = strings.TrimSpace(cfg.Path)
+
 	if looksLikeMySQLDSN(cfg.Path) {
 		return openMySQLCache(ctx, cfg)
 	}
@@ -123,7 +125,7 @@ func openSQLiteCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 	lockDSN := sqliteLockDSN(cfg.Path)
 
 	roDB := rwDB
-	if cfg.Path != ":memory:" {
+	if !isSQLiteMemoryPath(cfg.Path) {
 		roDB, err = sqlOpenFunc("sqlite", sqliteReadOnlyDSN(cfg.Path))
 		if err != nil {
 			_ = rwDB.Close()
@@ -1635,7 +1637,7 @@ func sqliteWritableDSN(path string) string {
 }
 
 func sqliteLockDSN(path string) string {
-	if path == ":memory:" {
+	if isSQLiteMemoryPath(path) {
 		return ""
 	}
 
@@ -1649,7 +1651,7 @@ func sqliteLockDSN(path string) string {
 }
 
 func sqliteReadOnlyDSN(path string) string {
-	if path == ":memory:" {
+	if isSQLiteMemoryPath(path) {
 		return path
 	}
 
@@ -1658,6 +1660,45 @@ func sqliteReadOnlyDSN(path string) string {
 	}
 
 	return sqliteuri.File(path, sqliteReadOnlyParams)
+}
+
+// isSQLiteMemoryPath reports whether SQLite opens path as an in-memory
+// database: ":memory:", a file: URI whose path is ":memory:", or a file: URI
+// whose last mode param is "memory" or whose last vfs param is "memdb". Like
+// SQLite, it percent-decodes the URI path and params and compares values
+// case-sensitively.
+func isSQLiteMemoryPath(path string) bool {
+	if path == ":memory:" {
+		return true
+	}
+
+	uri, ok := strings.CutPrefix(path, "file:")
+	if !ok {
+		return false
+	}
+
+	uriPath, query, _ := strings.Cut(withoutURIFragment(uri), "?")
+	if unescaped, err := url.PathUnescape(uriPath); err == nil && unescaped == ":memory:" {
+		return true
+	}
+
+	last := map[string]string{}
+
+	for param := range strings.SplitSeq(query, "&") {
+		key := sqliteParamKey(param)
+		if key != "mode" && key != "vfs" {
+			continue
+		}
+
+		_, value, _ := strings.Cut(param, "=")
+		if unescaped, err := url.QueryUnescape(value); err == nil {
+			value = unescaped
+		}
+
+		last[key] = value
+	}
+
+	return last["mode"] == "memory" || last["vfs"] == "memdb"
 }
 
 // mergeSQLiteURIParams adds our handle params to a user's SQLite file: URI.

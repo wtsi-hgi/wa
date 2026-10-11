@@ -1359,7 +1359,7 @@ func TestOpenCacheSQLiteFileURI(t *testing.T) {
 		})
 	}
 
-	for _, suffix := range []string{"#frag", "?cache=private#frag"} {
+	for _, suffix := range []string{"#frag", "?cache=private#frag", "?vfs=unix", "?MODE=memory", "?VFS=memdb"} {
 		convey.Convey("Given a file: URI cache path ending "+suffix+", when opened and sync-locked, "+
 			"then the named file is used and the read handle is read-only", t, func() {
 			dir := t.TempDir()
@@ -1392,6 +1392,7 @@ func assertFileURICacheUsesPath(dir, uri, name string) *sqliteCache {
 
 	release, err := sqlite.acquireSyncLock(context.Background())
 	convey.So(err, convey.ShouldBeNil)
+	convey.So(release, convey.ShouldNotBeNil)
 	convey.So(release(), convey.ShouldBeNil)
 
 	info, err := os.Stat(filepath.Join(dir, name))
@@ -1412,6 +1413,90 @@ func assertFileURICacheUsesPath(dir, uri, name string) *sqliteCache {
 	}
 
 	return sqlite
+}
+
+func TestOpenCacheSQLiteMemoryURI(t *testing.T) {
+	for _, path := range []string{
+		":memory:",
+		"file::memory:",
+		"file::memory:?cache=shared",
+		"file::memory:#frag",
+		"file:x?mode=memory",
+		"file:x?cache=shared&mode=memory",
+		"file:x?%6Dode=memory",
+		"file:x?mode=%6Demory",
+		"file:%3Amemory%3A",
+		"file:x?mode=rwc&mode=memory",
+		"file:x?vfs=memdb",
+		"file:/x?vfs=memdb",
+	} {
+		convey.Convey("Given the in-memory SQLite cache path "+path+", when opened, written, read and sync-locked, "+
+			"then the read handle sees the write and no file is created", t, func() {
+			dir := t.TempDir()
+			t.Chdir(dir)
+
+			cache, err := OpenCache(context.Background(), CacheConfig{Path: path})
+			convey.So(err, convey.ShouldBeNil)
+			convey.Reset(func() { _ = cache.Close() })
+
+			_, err = cache.DB().Exec(`CREATE TABLE probe (a INTEGER); INSERT INTO probe VALUES (1)`)
+			convey.So(err, convey.ShouldBeNil)
+
+			var count int
+			convey.So(cacheReadDB(cache).QueryRow(`SELECT COUNT(*) FROM probe`).Scan(&count), convey.ShouldBeNil)
+			convey.So(count, convey.ShouldEqual, 1)
+
+			sqlite, ok := cache.(*sqliteCache)
+			convey.So(ok, convey.ShouldBeTrue)
+
+			release, err := sqlite.acquireSyncLock(context.Background())
+			convey.So(err, convey.ShouldBeNil)
+
+			if release != nil {
+				convey.So(release(), convey.ShouldBeNil)
+			}
+
+			entries, err := os.ReadDir(dir)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(entries, convey.ShouldBeEmpty)
+		})
+	}
+}
+
+func TestOpenCacheTrimsPathWhitespace(t *testing.T) {
+	convey.Convey("Given a SQLite cache path padded with whitespace, when opened, "+
+		"then the unpadded file is created", t, func() {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "x.db")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: " \t" + path + "\n "})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		_, err = os.Stat(path)
+		convey.So(err, convey.ShouldBeNil)
+	})
+
+	convey.Convey("Given the in-memory cache path padded with whitespace, when opened and written, "+
+		"then it behaves as :memory: and creates no file", t, func() {
+		dir := t.TempDir()
+		t.Chdir(dir)
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: " :memory: "})
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = cache.Close() })
+
+		_, err = cache.DB().Exec(`CREATE TABLE probe (a INTEGER); INSERT INTO probe VALUES (1)`)
+		convey.So(err, convey.ShouldBeNil)
+
+		var count int
+		convey.So(cacheReadDB(cache).QueryRow(`SELECT COUNT(*) FROM probe`).Scan(&count), convey.ShouldBeNil)
+		convey.So(count, convey.ShouldEqual, 1)
+
+		entries, err := os.ReadDir(dir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(entries, convey.ShouldBeEmpty)
+	})
 }
 
 func cacheReadDB(cache Cache) *sql.DB {

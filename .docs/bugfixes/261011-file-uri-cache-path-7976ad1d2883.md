@@ -84,3 +84,56 @@
       and write handles probably open separate in-memory databases and the
       lock opens a disk file named `:memory:.sync-lock`; `mlwh.OpenCache`
       does not trim whitespace from library callers' paths (the CLI does).
+- [x] PR #49 makes `file:` URI MLWH cache paths pass through to SQLite
+      (`mlwh/cache.go`). But `--mlwh-cache file::memory:` (and any `file:`
+      URI with `mode=memory`) is not treated like `:memory:`: the read and
+      write handles likely open separate in-memory databases and the sync
+      lock becomes a disk file `:memory:.sync-lock`. Also trim surrounding
+      whitespace in `mlwh.OpenCache`'s path if trivial and consistent with
+      the CLI (which already trims).
+    - Source: incidental from the item above, routed back by the queue
+      owner.
+    - Confirmed on `da94daa`. Red command: a script that builds `wa`, serves
+      each of `:memory:`, `file::memory:`, `file:x?mode=memory` and
+      `file::memory:?cache=shared` with `timeout 6 wa mlwh serve
+      --mlwh-cache <p>`, and expects `GET /studies` to return the same
+      `cache_never_synced` error as `:memory:`. Exit 1:
+
+        ```text
+        :memory: exit=124 body={"code":"cache_never_synced",...}
+        file::memory: exit=124 body={"code":"upstream_impaired","message":"mlwh: upstream database impaired: query study cache: SQL logic error: no such table: study_mirror (1)"}
+        FAIL file::memory:
+        file:x?mode=memory exit=1 body=<none> Error: open mlwh cache: mlwh: ping sqlite read-only cache: unable to open database file: out of memory (14)
+        FAIL file:x?mode=memory
+        file::memory:?cache=shared exit=124 body={"code":"cache_never_synced",...}
+        ```
+
+      `serve` never takes the sync lock, so the `:memory:.sync-lock` part is
+      covered by a unit test on `sqliteLockDSN` rather than the CLI.
+    - Decision: treat in-memory `file:` URIs exactly as `:memory:` (one
+      shared handle, no sync lock) instead of rejecting them. `cache.go`
+      accepts `:memory:` as a cache, the `--mlwh-cache` CLI accepts both
+      `:memory:` and `file:` URIs, and SQLite defines these URIs as the same
+      in-memory database, so rejecting only the URI spelling would be the
+      more surprising choice.
+    - Fixed. Files: `mlwh/cache.go`, `mlwh/cache_test.go`.
+    - Approach: a new `isSQLiteMemoryPath` replaces the `== ":memory:"`
+      checks in `openSQLiteCache`, `sqliteLockDSN` and `sqliteReadOnlyDSN`,
+      so an in-memory path gets one shared handle and no sync lock. It
+      matches `:memory:`, a `file:` URI whose percent-decoded path (before
+      `?` or `#`) is `:memory:`, and a `file:` URI whose last
+      percent-decoded `mode` param is `memory` or last `vfs` param is
+      `memdb`. Keys and values are case-sensitive, as in SQLite.
+      `OpenCache` now trims whitespace from `cfg.Path`, as the CLI does.
+    - Regression tests: `TestOpenCacheSQLiteMemoryURI` (each in-memory
+      spelling shares data between the write and read handles and leaves the
+      working directory empty), `TestOpenCacheTrimsPathWhitespace`, and
+      `?vfs=unix`, `?MODE=memory` and `?VFS=memdb` disk cases in
+      `TestOpenCacheSQLiteFileURI`, which must keep a `.sync-lock` file.
+      Mutants of each predicate rule fail these tests.
+    - The red command exits 0 after the fix; every spelling returns
+      `cache_never_synced` and no stray files appear.
+    - Incidental, not fixed here: `file:x?mode=memory&mode=rwc` is a disk
+      file to SQLite (last `mode` wins), but `OpenCache` fails with
+      "unable to open database file: out of memory (14)" because the
+      writable DSN keeps both user `mode` params.
