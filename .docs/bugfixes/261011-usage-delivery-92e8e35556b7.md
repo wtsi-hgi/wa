@@ -12,6 +12,7 @@
 | ------ | -------- | -- | ------ | ---------- | ---- | ------ | -------- | ----------- |
 | `usage` | `.` | none | `develop` | none | in progress | implementing phases | phases 3-6 | finish phases, PR reviews |
 | `syncrace-bd100063` | `../wa-syncrace` | none | `develop` | none | `18cf0b6` | recorded | owner completion boundary | reproduce and fix via bugfix |
+| `resultswal-867e6b0f` | `../wa-resultswal` | none | `develop` | none | `46270cb` | recorded | owner completion boundary | reproduce and fix via bugfix |
 
 ## Incidental handoffs
 
@@ -20,3 +21,8 @@
   - Branch: `syncrace-bd100063`
   - Checklist: `.docs/bugfixes/261011-sync-test-race-8dc6200da998.md`
   - Entry commit: `18cf0b660783df7043ba4cd3ff40aa77ab7e0549`
+- Phase 3 item 3.3: `run-dev.sh` and `make clean-test-tmp` leave the
+  ephemeral results DB's `-wal`/`-shm` files behind.
+  - Branch: `resultswal-867e6b0f`
+  - Checklist: `.docs/bugfixes/261011-results-db-wal-leak-56bf2e73f24d.md`
+  - Entry commit: `46270cb99761ad9c332fca516310a5bd2d561ae2`
