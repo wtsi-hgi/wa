@@ -165,6 +165,8 @@ CREATE TABLE IF NOT EXISTS usage_requests (
 CREATE INDEX IF NOT EXISTS usage_requests_ts ON usage_requests (ts_ms);
 CREATE INDEX IF NOT EXISTS usage_requests_route_ts
     ON usage_requests (method, route, ts_ms);
+CREATE INDEX IF NOT EXISTS usage_requests_route_latency
+    ON usage_requests (method, route, latency_us, ts_ms);
 ```
 
 `ts_ms` is Unix milliseconds UTC. `remote_addr` uses `feedbackRemoteHost`
@@ -1512,7 +1514,10 @@ Release step, no tests.
   `Summary` flushes first so the page and tests see every recorded request.
 - **One row per request, aggregates in SQL.** Matches the settled storage
   decision; indexes on `ts_ms` and `(method, route, ts_ms)` keep window
-  queries bounded, and retention bounds the table.
+  queries bounded, and retention bounds the table. The
+  `(method, route, latency_us, ts_ms)` index lets each endpoint percentile be
+  read at its rank (`ORDER BY latency_us LIMIT 1 OFFSET`) without sorting the
+  route's rows.
 - **Error = status >= 400.** Client errors (bad parameters, unknown IDs)
   are what LLM callers most often hit, so they count. Unmatched paths are
   listed separately as well.

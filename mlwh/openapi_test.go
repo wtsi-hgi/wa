@@ -37,8 +37,9 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
-// openAPIB7InfoDescription is the exact info.description B7 requires.
-const openAPIB7InfoDescription = "Cache-backed REST API mirroring Multi-LIMS Warehouse (MLWH) study, sample, run, and library metadata. MLWH data is read-only; the only documented write endpoint is POST /feedback, which stores agent feedback in a separate database. Unauthenticated by default; the network boundary is the access-control boundary."
+// openAPIB7InfoDescription is the exact info.description B7 requires, as
+// revised by usage C2 to mention the identification headers.
+const openAPIB7InfoDescription = "Cache-backed REST API mirroring Multi-LIMS Warehouse (MLWH) study, sample, run, and library metadata. MLWH data is read-only; the only documented write endpoint is POST /feedback, which stores agent feedback in a separate database. Callers may identify themselves with the optional headers in components.parameters; when usage tracking is enabled the server records them with each request's route, status, and latency in a separate usage database. Unauthenticated by default; the network boundary is the access-control boundary."
 
 func TestServerOpenAPIRouteC2(t *testing.T) {
 	// C2 acceptance test 6: GET /openapi.json served with no auth returns 200,
@@ -108,20 +109,20 @@ func TestServerOpenAPIRouteServesDocumentC2(t *testing.T) {
 }
 
 func TestAPIVersionIsThePhase1DocumentationPatch(t *testing.T) {
-	// B7 acceptance test 1: documenting the new POST /feedback contract is a
-	// minor API change, so the version moves from 1.8.1 to 1.9.0 and the served
-	// info.version follows it.
-	convey.Convey("Given the public APIVersion constant, then it equals 1.9.0 and the served info.version equals it", t, func() {
-		convey.So(APIVersion, convey.ShouldEqual, "1.9.0")
+	// Usage C2 acceptance test 1: documenting the optional identification
+	// headers is a minor API change, so the version moves from 1.9.0 to 1.10.0
+	// and the served info.version follows it.
+	convey.Convey("Given the public APIVersion constant, then it equals 1.10.0 and the served info.version equals it", t, func() {
+		convey.So(APIVersion, convey.ShouldEqual, "1.10.0")
 
 		info := servedOpenAPIInfoForTest(t)
-		convey.So(info["version"], convey.ShouldEqual, "1.9.0")
+		convey.So(info["version"], convey.ShouldEqual, "1.10.0")
 	})
 }
 
 func TestOpenAPIServedInfoDescriptionB7(t *testing.T) {
-	// B7 acceptance test 8.
-	convey.Convey("Given the served /openapi.json, then info.description is the B7 text naming POST /feedback", t, func() {
+	// B7 acceptance test 8 and usage C2 acceptance test 2.
+	convey.Convey("Given the served /openapi.json, then info.description is the C2 text naming POST /feedback", t, func() {
 		info := servedOpenAPIInfoForTest(t)
 
 		convey.So(info["description"], convey.ShouldEqual, openAPIB7InfoDescription)
@@ -657,6 +658,125 @@ func TestOpenAPIFeedbackAdminRoutesUndocumentedB7(t *testing.T) {
 	})
 }
 
+func TestOpenAPIIdentificationHeaderParametersC2(t *testing.T) {
+	// Usage C2 acceptance test 3.
+	convey.Convey("Given components.parameters, then it holds exactly the six optional identification headers with their caps", t, func() {
+		doc := decodedOpenAPIDocForTest(t)
+		params := openAPIComponentParametersForTest(t, doc)
+
+		convey.So(slices.Sorted(maps.Keys(params)), convey.ShouldResemble, []string{
+			"ClientIDHeader", "ClientUserHeader", "MCPAgentHeader",
+			"MCPToolHeader", "MCPTransportHeader", "UserAgentHeader",
+		})
+
+		clientID, ok := params["ClientIDHeader"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(clientID["description"], convey.ShouldNotBeBlank)
+		delete(clientID, "description")
+		convey.So(clientID, convey.ShouldResemble, map[string]any{
+			"name":     "X-WA-Client-ID",
+			"in":       "header",
+			"required": false,
+			"schema":   map[string]any{"type": "string", "maxLength": float64(128)},
+		})
+
+		wantHeaders := map[string]struct {
+			name string
+			cap  float64
+		}{
+			"UserAgentHeader":    {"User-Agent", 512},
+			"ClientIDHeader":     {"X-WA-Client-ID", 128},
+			"ClientUserHeader":   {"X-WA-Client-User", 128},
+			"MCPTransportHeader": {"X-WA-MCP-Transport", 32},
+			"MCPAgentHeader":     {"X-WA-MCP-Agent", 256},
+			"MCPToolHeader":      {"X-WA-MCP-Tool", 128},
+		}
+
+		for key, want := range wantHeaders {
+			param, isMap := params[key].(map[string]any)
+			convey.So(isMap, convey.ShouldBeTrue)
+			convey.So(param["name"], convey.ShouldEqual, want.name)
+			convey.So(param["in"], convey.ShouldEqual, "header")
+			convey.So(param["required"], convey.ShouldEqual, false)
+			convey.So(param["schema"], convey.ShouldResemble,
+				map[string]any{"type": "string", "maxLength": want.cap})
+		}
+
+		userAgent, ok := params["UserAgentHeader"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		for _, product := range []string{
+			UserAgentProductCLI, UserAgentProductMCP, UserAgentProductWeb,
+			UserAgentProductResultsServer, UserAgentProductMLWHDiffServer,
+		} {
+			convey.So(userAgent["description"], convey.ShouldContainSubstring, product)
+		}
+		convey.So(userAgent["description"], convey.ShouldContainSubstring,
+			UserAgentProductRunDev+" is not recorded")
+
+		clientUser, ok := params["ClientUserHeader"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(clientUser["description"], convey.ShouldContainSubstring, "self-declared")
+	})
+}
+
+func TestOpenAPIOperationsDeclareNoHeaderParametersC2(t *testing.T) {
+	// Usage C2 acceptance test 4.
+	convey.Convey("Given every operation in paths, then none declares an in: header parameter", t, func() {
+		doc := decodedOpenAPIDocForTest(t)
+		operations, headerParams := 0, 0
+
+		for _, rawItem := range openAPIPathsForTest(t, doc) {
+			item, ok := rawItem.(map[string]any)
+			convey.So(ok, convey.ShouldBeTrue)
+
+			for _, rawOperation := range item {
+				operation, isMap := rawOperation.(map[string]any)
+				convey.So(isMap, convey.ShouldBeTrue)
+
+				operations++
+				headerParams += len(openAPIParameterNames(operation, "header"))
+			}
+		}
+
+		convey.So(operations, convey.ShouldBeGreaterThan, 0)
+		convey.So(headerParams, convey.ShouldEqual, 0)
+	})
+}
+
+func TestOpenAPIComponentSchemasUnchangedByUsageC2(t *testing.T) {
+	// Usage C2 acceptance test 5: the key set before the usage feature.
+	convey.Convey("Given components.schemas, then its key set equals the pre-usage key set", t, func() {
+		schemas := openAPISchemas(t, decodedOpenAPIDocForTest(t))
+
+		convey.So(slices.Sorted(maps.Keys(schemas)), convey.ShouldResemble, []string{
+			"Count", "DateRange", "EnrichmentGraph", "EnrichmentResult", "Error",
+			"ExportResult", "FeedbackReceipt", "FeedbackSubmission", "Freshness",
+			"IRODSPath", "Lane", "Library", "LibraryDetail", "LibraryLink", "Match",
+			"Milestone", "MissingHop", "MonthlyRunCount", "PersonCandidate",
+			"PersonStudy", "PhaseLadder", "PlatformPhaseLadder", "Programme",
+			"RecentDataRow", "Run", "RunDetail", "RunListingRow", "RunOverview",
+			"RunStatusEvent", "RunStatusTimeline", "Sample", "SampleCRAM",
+			"SampleDetail", "SampleProgress", "SampleWithData", "SearchValues",
+			"SequencingAggregateRow", "StatusBreakdown", "Study", "StudyDetail",
+			"StudyOverview", "StudyQCBreakdown", "StudyUser", "TableFreshness",
+			"TaggedID",
+		})
+	})
+}
+
+// openAPIComponentParametersForTest returns doc's components.parameters.
+func openAPIComponentParametersForTest(t *testing.T, doc map[string]any) map[string]any {
+	t.Helper()
+
+	components, ok := doc["components"].(map[string]any)
+	convey.So(ok, convey.ShouldBeTrue)
+
+	params, ok := components["parameters"].(map[string]any)
+	convey.So(ok, convey.ShouldBeTrue)
+
+	return params
+}
+
 // decodedOpenAPIDocForTest marshals the generated document to JSON and decodes
 // it back into a generic map, exercising the same path the served route uses so
 // the tests assert the wire shape rather than the in-memory Go value.
@@ -949,7 +1069,7 @@ func openAPIDocumentFromRegistry(entries []Endpoint) map[string]any {
 }
 
 // openAPIParameterNames returns the names of the operation's parameters that
-// live in the given location ("path" or "query").
+// live in the given location ("path", "query", or "header").
 func openAPIParameterNames(operation map[string]any, in string) []string {
 	rawParams, ok := operation["parameters"].([]any)
 	if !ok {

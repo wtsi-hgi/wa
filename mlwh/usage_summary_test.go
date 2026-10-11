@@ -1,0 +1,749 @@
+/*******************************************************************************
+ * Copyright (c) 2026 Genome Research Ltd.
+ *
+ * Author: Sendu Bala <sb10@sanger.ac.uk>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included
+ * in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+package mlwh
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/smartystreets/goconvey/convey"
+)
+
+const (
+	usageSummaryTestLatestStudies = "GET /studies"
+	usageSummaryTestClassify      = "GET /classify/:id"
+	usageSummaryTestRouteStudies  = "/studies"
+	usageSummaryTestAgent         = "claude-code/2.1.0"
+)
+
+var usageSummaryTestNow = time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+
+func TestUsageSummaryA3(t *testing.T) {
+	convey.Convey("A3.1: Given F and window 24h", t, func() {
+		summary := summariseFixtureFForTest(t, UsageWindow24h)
+
+		convey.Convey("then the window metadata is set", func() {
+			convey.So(summary.Window, convey.ShouldEqual, UsageWindow24h)
+			convey.So(summary.WindowStart, convey.ShouldEqual, "2026-10-09T12:00:00Z")
+			convey.So(summary.EarliestRecord, convey.ShouldEqual, "2026-10-01T00:00:00Z")
+			convey.So(summary.RetentionDays, convey.ShouldEqual, 365)
+			convey.So(summary.GeneratedAt, convey.ShouldEqual, "2026-10-10T12:00:00Z")
+		})
+
+		convey.Convey("then the totals count the window's rows", func() {
+			convey.So(summary.Totals, convey.ShouldResemble, UsageTotals{
+				Requests: 6, Errors: 3, ErrorRate: 0.5, Sessions: 3, IPClients: 1, Users: 2,
+			})
+		})
+
+		convey.Convey("then categories list all six in order", func() {
+			cats := summary.Categories
+			convey.So(len(cats), convey.ShouldEqual, 6)
+
+			convey.So(cats[0].ErrorRate, convey.ShouldAlmostEqual, 1.0/3)
+			cats[0].ErrorRate = 0
+			convey.So(cats[0], convey.ShouldResemble, UsageCategoryStats{
+				Category: UsageCategoryCLI, Requests: 3, Errors: 1, Sessions: 2, Users: 2,
+				RequestsPerSessionMedian: 1, RequestsPerSessionMax: 2,
+			})
+			convey.So(cats[1], convey.ShouldResemble, UsageCategoryStats{
+				Category: UsageCategoryMCP, Requests: 1, Sessions: 1,
+				RequestsPerSessionMedian: 1, RequestsPerSessionMax: 1,
+			})
+			convey.So(cats[2], convey.ShouldResemble, UsageCategoryStats{Category: UsageCategoryWeb})
+			convey.So(cats[3], convey.ShouldResemble, UsageCategoryStats{Category: UsageCategoryResultsServer})
+			convey.So(cats[4], convey.ShouldResemble, UsageCategoryStats{Category: UsageCategoryMLWHDiffServer})
+			convey.So(cats[5], convey.ShouldResemble, UsageCategoryStats{
+				Category: UsageCategoryOther, Requests: 2, Errors: 2, ErrorRate: 1.0, IPClients: 1,
+			})
+		})
+
+		convey.Convey("then endpoints hold matched routes with latency percentiles", func() {
+			convey.So(summary.Endpoints, convey.ShouldResemble, []UsageEndpointStats{
+				{
+					Method: "GET", Route: usageSummaryTestRouteStudies, Requests: 4, Errors: 1, ErrorRate: 0.25,
+					P50Ms: 20, P95Ms: 40, ByCategory: map[string]int64{"cli": 2, "mcp": 1, "other": 1},
+				},
+				{
+					Method: "GET", Route: "/classify/:id", Requests: 1, Errors: 1, ErrorRate: 1.0,
+					P50Ms: 5, P95Ms: 5, ByCategory: map[string]int64{"cli": 1},
+				},
+			})
+		})
+
+		convey.Convey("then MCP tools, agents, and other User-Agents are counted", func() {
+			convey.So(summary.MCPTools, convey.ShouldResemble, []UsageCount{{Value: "mlwh_list_studies", Requests: 1}})
+			convey.So(summary.MCPAgents, convey.ShouldResemble, []UsageCount{{Value: usageSummaryTestAgent, Requests: 1}})
+			convey.So(summary.OtherUserAgents, convey.ShouldResemble, []UsageCount{{Value: "curl/8.5.0", Requests: 2}})
+		})
+
+		convey.Convey("then unmatched paths are listed", func() {
+			convey.So(summary.Unmatched, convey.ShouldResemble, []UsageUnmatched{{
+				Method: "GET", Path: "/bogus", Requests: 1, ByCategory: map[string]int64{"other": 1},
+				ByTool: map[string]int64{}, ByAgent: map[string]int64{},
+			}})
+		})
+
+		convey.Convey("then users and clients are ranked with ties by name", func() {
+			convey.So(summary.Users, convey.ShouldResemble, []UsageActor{
+				{Name: "alice", Requests: 2, ByCategory: map[string]int64{"cli": 2}},
+				{Name: "bob", Requests: 1, ByCategory: map[string]int64{"cli": 1}},
+			})
+			convey.So(summary.Clients, convey.ShouldResemble, []UsageActor{
+				{Name: "10.0.0.9", ByIP: true, Requests: 2, ByCategory: map[string]int64{"other": 2}},
+				{Name: "run-a", Requests: 2, ByCategory: map[string]int64{"cli": 2}},
+				{Name: "run-b", Requests: 1, ByCategory: map[string]int64{"cli": 1}},
+				{Name: "sess-1", Requests: 1, ByCategory: map[string]int64{"mcp": 1}},
+			})
+		})
+
+		convey.Convey("then days count only rows inside the window", func() {
+			convey.So(summary.Days, convey.ShouldResemble, []UsageDay{
+				{Date: "2026-10-09", ByCategory: map[string]int64{}},
+				{Date: "2026-10-10", Requests: 6, ByCategory: map[string]int64{"cli": 3, "mcp": 1, "other": 2}},
+			})
+		})
+	})
+
+	convey.Convey("A3.2: Given F and 24h, then series has 10 periods back to the earliest row", t, func() {
+		series := summariseFixtureFForTest(t, UsageWindow24h).Series
+		convey.So(len(series), convey.ShouldEqual, 10)
+
+		convey.So(series[9], convey.ShouldResemble, UsagePeriod{
+			Start: "2026-10-09T12:00:00Z", End: "2026-10-10T12:00:00Z", Requests: 6,
+			ByCategory: map[string]int64{"cli": 3, "mcp": 1, "other": 2},
+			ByEndpoint: map[string]int64{usageSummaryTestLatestStudies: 4, usageSummaryTestClassify: 1},
+		})
+		convey.So(series[8].Requests, convey.ShouldEqual, 1)
+		convey.So(series[8].ByCategory, convey.ShouldResemble, map[string]int64{"cli": 1})
+		convey.So(series[7].Requests, convey.ShouldEqual, 1)
+		convey.So(series[7].ByCategory, convey.ShouldResemble, map[string]int64{"web": 1})
+		convey.So(series[0].Start, convey.ShouldEqual, "2026-09-30T12:00:00Z")
+		convey.So(series[0].End, convey.ShouldEqual, "2026-10-01T12:00:00Z")
+		convey.So(series[0].Requests, convey.ShouldEqual, 1)
+		convey.So(series[0].ByCategory, convey.ShouldResemble, map[string]int64{"cli": 1})
+
+		empty := 0
+
+		for _, period := range series[1:7] {
+			if period.Requests == 0 && len(period.ByCategory) == 0 && len(period.ByEndpoint) == 0 &&
+				period.ByCategory != nil && period.ByEndpoint != nil {
+				empty++
+			}
+		}
+
+		convey.So(empty, convey.ShouldEqual, 6)
+	})
+
+	convey.Convey("A3.3: Given F and 7d, then the week's rows are summarised", t, func() {
+		summary := summariseFixtureFForTest(t, UsageWindow7d)
+
+		convey.So(summary.Totals.Requests, convey.ShouldEqual, 8)
+		convey.So(summary.Totals.Sessions, convey.ShouldEqual, 4)
+		convey.So(summary.Totals.Users, convey.ShouldEqual, 2)
+
+		web := summary.Categories[2]
+		convey.So(web.Category, convey.ShouldEqual, UsageCategoryWeb)
+		convey.So(web.Requests, convey.ShouldEqual, 1)
+		convey.So(web.Sessions, convey.ShouldEqual, 1)
+		convey.So(web.Users, convey.ShouldEqual, 1)
+
+		convey.So(summary.Users, convey.ShouldResemble, []UsageActor{
+			{Name: "alice", Requests: 4, ByCategory: map[string]int64{"cli": 3, "web": 1}},
+			{Name: "bob", Requests: 1, ByCategory: map[string]int64{"cli": 1}},
+		})
+
+		convey.So(len(summary.Days), convey.ShouldEqual, 8)
+		convey.So(summary.Days[0].Date, convey.ShouldEqual, "2026-10-03")
+		convey.So(summary.Days[7].Date, convey.ShouldEqual, "2026-10-10")
+		convey.So(summary.Days[6], convey.ShouldResemble, UsageDay{
+			Date: "2026-10-09", Requests: 1, ByCategory: map[string]int64{"cli": 1},
+		})
+		convey.So(sumUsageDaysForTest(summary.Days), convey.ShouldEqual, 8)
+
+		convey.So(usagePeriodRequestsForTest(summary.Series), convey.ShouldResemble, []int64{1, 8})
+	})
+
+	convey.Convey("A3.4: Given F and all, then every row is summarised with no series", t, func() {
+		summary := summariseFixtureFForTest(t, UsageWindowAll)
+
+		convey.So(summary.WindowStart, convey.ShouldEqual, "")
+		convey.So(summary.Totals.Requests, convey.ShouldEqual, 9)
+		convey.So(summary.Totals.Users, convey.ShouldEqual, 3)
+		convey.So(summary.Series, convey.ShouldResemble, []UsagePeriod{})
+
+		convey.So(len(summary.Days), convey.ShouldEqual, 10)
+		convey.So(summary.Days[0].Date, convey.ShouldEqual, "2026-10-01")
+		convey.So(summary.Days[0].Requests, convey.ShouldEqual, 1)
+		convey.So(summary.Days[8].Date, convey.ShouldEqual, "2026-10-09")
+		convey.So(summary.Days[8].Requests, convey.ShouldEqual, 1)
+		convey.So(summary.Days[9].Date, convey.ShouldEqual, "2026-10-10")
+		convey.So(summary.Days[9].Requests, convey.ShouldEqual, 6)
+	})
+
+	convey.Convey("A3.5: Given F and 30d, then every row falls in one period", t, func() {
+		summary := summariseFixtureFForTest(t, UsageWindow30d)
+
+		convey.So(summary.Totals.Requests, convey.ShouldEqual, 9)
+		convey.So(usagePeriodRequestsForTest(summary.Series), convey.ShouldResemble, []int64{9})
+	})
+
+	convey.Convey("A3.6: Given F plus a row at now+1h, when 24h is summarised, then period 0 includes it", t, func() {
+		store := openTestUsageStore(t, filepath.Join(t.TempDir(), "u.sqlite"), 365, usageQueueSize, usageSummaryTestNow)
+		recordUsageEventsForTest(store, append(usageFixtureFForTest(), UsageEvent{
+			Time: usageSummaryTestNow.Add(time.Hour), Category: UsageCategoryCLI, Method: "GET",
+			Route: usageSummaryTestRouteStudies, RemoteAddr: "10.0.0.1", Status: 200,
+		}))
+
+		summary, err := store.Summary(context.Background(), UsageWindow24h)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(summary.Totals.Requests, convey.ShouldEqual, 7)
+		convey.So(summary.Series[len(summary.Series)-1].Requests, convey.ShouldEqual, 7)
+		convey.So(summary.Days[len(summary.Days)-1], convey.ShouldResemble, UsageDay{
+			Date: "2026-10-10", Requests: 7, ByCategory: map[string]int64{"cli": 4, "mcp": 1, "other": 2},
+		})
+	})
+
+	convey.Convey("A3.7: Given an empty store", t, func() {
+		store := openTestUsageStore(t, filepath.Join(t.TempDir(), "u.sqlite"), 365, usageQueueSize, usageSummaryTestNow)
+
+		convey.Convey("when 7d is summarised, then everything is zero or empty except days", func() {
+			summary, err := store.Summary(context.Background(), UsageWindow7d)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(summary.Totals, convey.ShouldResemble, UsageTotals{})
+			convey.So(summary.EarliestRecord, convey.ShouldEqual, "")
+
+			wantCategories := make([]UsageCategoryStats, 0, 6)
+			for _, category := range UsageCategories() {
+				wantCategories = append(wantCategories, UsageCategoryStats{Category: category})
+			}
+
+			convey.So(summary.Categories, convey.ShouldResemble, wantCategories)
+			convey.So(summary.Endpoints, convey.ShouldResemble, []UsageEndpointStats{})
+			convey.So(summary.MCPTools, convey.ShouldResemble, []UsageCount{})
+			convey.So(summary.MCPAgents, convey.ShouldResemble, []UsageCount{})
+			convey.So(summary.OtherUserAgents, convey.ShouldResemble, []UsageCount{})
+			convey.So(summary.Unmatched, convey.ShouldResemble, []UsageUnmatched{})
+			convey.So(summary.Users, convey.ShouldResemble, []UsageActor{})
+			convey.So(summary.Clients, convey.ShouldResemble, []UsageActor{})
+			convey.So(summary.Series, convey.ShouldResemble, []UsagePeriod{})
+
+			convey.So(len(summary.Days), convey.ShouldEqual, 8)
+			convey.So(sumUsageDaysForTest(summary.Days), convey.ShouldEqual, 0)
+		})
+
+		convey.Convey("when all is summarised, then days is empty", func() {
+			summary, err := store.Summary(context.Background(), UsageWindowAll)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(summary.Days, convey.ShouldResemble, []UsageDay{})
+		})
+	})
+
+	convey.Convey("A3.8: Given 30 distinct MCP tools with 1-30 requests, then mcp_tools holds the top 25", t, func() {
+		var events []UsageEvent
+
+		for tool := 1; tool <= 30; tool++ {
+			for range tool {
+				events = append(events, UsageEvent{
+					Time: usageSummaryTestNow.Add(-time.Hour), Category: UsageCategoryMCP, Method: "GET",
+					Route: usageSummaryTestRouteStudies, MCPTool: fmt.Sprintf("tool-%02d", tool), Status: 200,
+				})
+			}
+		}
+
+		summary := summariseEventsForTest(t, events, UsageWindow24h)
+		convey.So(len(summary.MCPTools), convey.ShouldEqual, 25)
+		convey.So(summary.MCPTools[0], convey.ShouldResemble, UsageCount{Value: "tool-30", Requests: 30})
+		convey.So(summary.MCPTools[24], convey.ShouldResemble, UsageCount{Value: "tool-06", Requests: 6})
+
+		convey.Convey("given 30 tools tied at 1 request, then the cap keeps the first 25 by name", func() {
+			tied := make([]UsageEvent, 0, 30)
+
+			for tool := 30; tool >= 1; tool-- {
+				tied = append(tied, UsageEvent{
+					Time: usageSummaryTestNow.Add(-time.Hour), Category: UsageCategoryMCP, Method: "GET",
+					Route: usageSummaryTestRouteStudies, MCPTool: fmt.Sprintf("tool-%02d", tool), Status: 200,
+				})
+			}
+
+			tools := summariseEventsForTest(t, tied, UsageWindow24h).MCPTools
+			convey.So(len(tools), convey.ShouldEqual, 25)
+			convey.So(tools[0].Value, convey.ShouldEqual, "tool-01")
+			convey.So(tools[24].Value, convey.ShouldEqual, "tool-25")
+		})
+	})
+
+	convey.Convey("A3.8: Given 30 distinct values for each capped list, then each holds 25 entries", t, func() {
+		capped := []struct {
+			name string
+			set  func(ev *UsageEvent, value string)
+			size func(s UsageSummary) int
+		}{
+			{
+				"mcp_agents",
+				func(ev *UsageEvent, v string) { ev.MCPAgent = v },
+				func(s UsageSummary) int { return len(s.MCPAgents) },
+			},
+			{
+				"other_user_agents",
+				func(ev *UsageEvent, v string) { ev.Category, ev.UserAgent = UsageCategoryOther, v },
+				func(s UsageSummary) int { return len(s.OtherUserAgents) },
+			},
+			{
+				"unmatched",
+				func(ev *UsageEvent, v string) { ev.Route, ev.Path = "", "/"+v },
+				func(s UsageSummary) int { return len(s.Unmatched) },
+			},
+			{
+				"users",
+				func(ev *UsageEvent, v string) { ev.Username = v },
+				func(s UsageSummary) int { return len(s.Users) },
+			},
+			{
+				"clients",
+				func(ev *UsageEvent, v string) { ev.ClientID = v },
+				func(s UsageSummary) int { return len(s.Clients) },
+			},
+		}
+
+		for _, list := range capped {
+			convey.Convey("then "+list.name+" is capped at 25", func() {
+				events := make([]UsageEvent, 0, 30)
+
+				for i := range 30 {
+					ev := UsageEvent{
+						Time: usageSummaryTestNow.Add(-time.Hour), Category: UsageCategoryMCP, Method: "GET",
+						Route: usageSummaryTestRouteStudies, RemoteAddr: "10.0.0.1", Status: 200,
+					}
+					list.set(&ev, fmt.Sprintf("v-%02d", i))
+					events = append(events, ev)
+				}
+
+				convey.So(list.size(summariseEventsForTest(t, events, UsageWindow24h)), convey.ShouldEqual, 25)
+			})
+		}
+
+		convey.Convey("then endpoints lists all 30 matched routes", func() {
+			events := make([]UsageEvent, 0, 30)
+
+			for i := range 30 {
+				events = append(events, UsageEvent{
+					Time: usageSummaryTestNow.Add(-time.Hour), Category: UsageCategoryCLI, Method: "GET",
+					Route: fmt.Sprintf("/r-%02d", i), Status: 200,
+				})
+			}
+
+			convey.So(len(summariseEventsForTest(t, events, UsageWindow24h).Endpoints), convey.ShouldEqual, 30)
+		})
+	})
+
+	convey.Convey("A3.9: Given one endpoint with latencies 1-100 ms, then p50 50 and p95 95", t, func() {
+		events := make([]UsageEvent, 0, 100)
+
+		for ms := 100; ms >= 1; ms-- {
+			events = append(events, latencyUsageEventForTest(ms))
+		}
+
+		endpoints := summariseEventsForTest(t, events, UsageWindow24h).Endpoints
+		convey.So(len(endpoints), convey.ShouldEqual, 1)
+		convey.So(endpoints[0].P50Ms, convey.ShouldEqual, 50)
+		convey.So(endpoints[0].P95Ms, convey.ShouldEqual, 95)
+
+		convey.Convey("given one row of 7 ms, then p50 7 and p95 7", func() {
+			single := summariseEventsForTest(t, []UsageEvent{latencyUsageEventForTest(7)}, UsageWindow24h).Endpoints
+			convey.So(single[0].P50Ms, convey.ShouldEqual, 7)
+			convey.So(single[0].P95Ms, convey.ShouldEqual, 7)
+		})
+	})
+
+	convey.Convey("A3.10: Given cli sessions with counts [1, 2, 3, 10], then median 2 and max 10", t, func() {
+		var events []UsageEvent
+
+		for i, count := range []int{10, 1, 3, 2} {
+			for range count {
+				events = append(events, UsageEvent{
+					Time: usageSummaryTestNow.Add(-time.Hour), Category: UsageCategoryCLI, Method: "GET",
+					Route: usageSummaryTestRouteStudies, ClientID: fmt.Sprintf("run-%d", i), Status: 200,
+				})
+			}
+		}
+
+		cli := summariseEventsForTest(t, events, UsageWindow24h).Categories[0]
+		convey.So(cli.Sessions, convey.ShouldEqual, 4)
+		convey.So(cli.RequestsPerSessionMedian, convey.ShouldEqual, 2)
+		convey.So(cli.RequestsPerSessionMax, convey.ShouldEqual, 10)
+	})
+
+	convey.Convey("A3.11: Given 2 recorded events with no Flush, when Summary runs, then both are counted", t, func() {
+		store := openTestUsageStore(t, filepath.Join(t.TempDir(), "u.sqlite"), 365, usageQueueSize, usageSummaryTestNow)
+		fixture := usageFixtureFForTest()
+		store.Record(fixture[0])
+		store.Record(fixture[1])
+
+		summary, err := store.Summary(context.Background(), UsageWindow24h)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(summary.Totals.Requests, convey.ShouldEqual, 2)
+	})
+
+	convey.Convey("A3.12: Given window 1h, then Summary returns ErrUsageWindowInvalid", t, func() {
+		store := openTestUsageStore(t, filepath.Join(t.TempDir(), "u.sqlite"), 365, usageQueueSize, usageSummaryTestNow)
+
+		_, err := store.Summary(context.Background(), UsageWindow("1h"))
+		convey.So(errors.Is(err, ErrUsageWindowInvalid), convey.ShouldBeTrue)
+	})
+
+	convey.Convey("A3.13: Given F plus an unmatched MCP row, when 24h is summarised, "+
+		"then the unmatched entry breaks down by category, tool, and agent", t, func() {
+		events := append(usageFixtureFForTest(), UsageEvent{
+			Time: usageSummaryTestNow.Add(-30 * time.Minute), Category: UsageCategoryMCP, Method: "GET",
+			Path: "/bogus", ClientID: "sess-1", RemoteAddr: "10.0.0.2", MCPTool: "mlwh_bogus",
+			MCPAgent: usageSummaryTestAgent, Status: 404,
+		})
+
+		summary := summariseEventsForTest(t, events, UsageWindow24h)
+		convey.So(summary.Unmatched, convey.ShouldResemble, []UsageUnmatched{{
+			Method: "GET", Path: "/bogus", Requests: 2,
+			ByCategory: map[string]int64{"mcp": 1, "other": 1},
+			ByTool:     map[string]int64{"mlwh_bogus": 1},
+			ByAgent:    map[string]int64{usageSummaryTestAgent: 1},
+		}})
+	})
+
+	convey.Convey("A3.14: Given F with 3 drops recorded, then dropped_events is 3", t, func() {
+		store := openTestUsageStore(t, filepath.Join(t.TempDir(), "u.sqlite"), 365, usageQueueSize, usageSummaryTestNow)
+		recordUsageEventsForTest(store, usageFixtureFForTest())
+		store.dropped.Add(3)
+
+		summary, err := store.Summary(context.Background(), UsageWindow24h)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(summary.DroppedEvents, convey.ShouldEqual, 3)
+	})
+
+	convey.Convey("A3.15: Given F and 24h, when JSON-marshalled, then maps are objects and lists are arrays", t, func() {
+		data, err := json.Marshal(summariseFixtureFForTest(t, UsageWindow24h))
+		convey.So(err, convey.ShouldBeNil)
+
+		var doc map[string]any
+
+		convey.So(json.Unmarshal(data, &doc), convey.ShouldBeNil)
+
+		lists := []string{
+			"categories", "endpoints", "mcp_tools", "mcp_agents", "other_user_agents",
+			"unmatched", "users", "clients", "days", "series",
+		}
+		convey.So(countNonArraysForTest(doc, lists), convey.ShouldEqual, 0)
+		convey.So(countNonObjectByMapsForTest(doc, lists), convey.ShouldEqual, 0)
+	})
+
+	convey.Convey("A3.15: Given an empty store and 7d, when JSON-marshalled, then every list is an array", t, func() {
+		store := openTestUsageStore(t, filepath.Join(t.TempDir(), "u.sqlite"), 365, usageQueueSize, usageSummaryTestNow)
+
+		summary, err := store.Summary(context.Background(), UsageWindow7d)
+		convey.So(err, convey.ShouldBeNil)
+
+		data, err := json.Marshal(summary)
+		convey.So(err, convey.ShouldBeNil)
+
+		var doc map[string]any
+
+		convey.So(json.Unmarshal(data, &doc), convey.ShouldBeNil)
+		convey.So(countNonArraysForTest(doc, []string{
+			"categories", "endpoints", "mcp_tools", "mcp_agents", "other_user_agents",
+			"unmatched", "users", "clients", "days", "series",
+		}), convey.ShouldEqual, 0)
+		convey.So(countNonObjectByMapsForTest(doc, []string{"days"}), convey.ShouldEqual, 0)
+	})
+}
+
+func summariseFixtureFForTest(t *testing.T, w UsageWindow) UsageSummary {
+	t.Helper()
+
+	return summariseEventsForTest(t, usageFixtureFForTest(), w)
+}
+
+func sumUsageDaysForTest(days []UsageDay) int64 {
+	var total int64
+
+	for _, day := range days {
+		total += day.Requests
+	}
+
+	return total
+}
+
+func TestUsageSummarySemantics(t *testing.T) {
+	convey.Convey("Given a status 400 row and a status 200 row, then the 400 counts as an error", t, func() {
+		events := make([]UsageEvent, 0, 2)
+
+		for _, status := range []int{400, 200} {
+			events = append(events, UsageEvent{
+				Time: usageSummaryTestNow.Add(-time.Hour), Category: UsageCategoryCLI, Method: "GET",
+				Route: usageSummaryTestRouteStudies, Status: status,
+			})
+		}
+
+		summary := summariseEventsForTest(t, events, UsageWindow24h)
+		convey.So(summary.Totals.Errors, convey.ShouldEqual, 1)
+		convey.So(summary.Categories[0].Errors, convey.ShouldEqual, 1)
+		convey.So(summary.Endpoints[0].Errors, convey.ShouldEqual, 1)
+		convey.So(summary.Endpoints[0].ErrorRate, convey.ShouldEqual, 0.5)
+	})
+
+	convey.Convey("Given rows at exactly now-24h and now-24h+1ms, when 24h is summarised", t, func() {
+		edge := usageSummaryTestNow.Add(-24 * time.Hour)
+		event := func(at time.Time, name string, status, latencyMs int) UsageEvent {
+			return UsageEvent{
+				Time: at, Category: UsageCategoryCLI, Method: "GET", Route: usageSummaryTestRouteStudies,
+				ClientID: "run-a", Username: name, MCPTool: name, Status: status,
+				Latency: time.Duration(latencyMs) * time.Millisecond,
+			}
+		}
+
+		summary := summariseEventsForTest(t, []UsageEvent{
+			event(edge, "outside", 500, 90),
+			event(edge.Add(time.Millisecond), "inside", 200, 10),
+		}, UsageWindow24h)
+
+		convey.Convey("then only the later row is inside the window", func() {
+			convey.So(summary.Totals, convey.ShouldResemble, UsageTotals{Requests: 1, Sessions: 1, Users: 1})
+			convey.So(summary.Categories[0].Requests, convey.ShouldEqual, 1)
+			convey.So(summary.Categories[0].RequestsPerSessionMax, convey.ShouldEqual, 1)
+			convey.So(summary.Endpoints, convey.ShouldResemble, []UsageEndpointStats{{
+				Method: "GET", Route: usageSummaryTestRouteStudies, Requests: 1,
+				P50Ms: 10, P95Ms: 10, ByCategory: map[string]int64{"cli": 1},
+			}})
+			convey.So(summary.MCPTools, convey.ShouldResemble, []UsageCount{{Value: "inside", Requests: 1}})
+			convey.So(summary.Users, convey.ShouldResemble, []UsageActor{
+				{Name: "inside", Requests: 1, ByCategory: map[string]int64{"cli": 1}},
+			})
+			convey.So(summary.Days, convey.ShouldResemble, []UsageDay{
+				{Date: "2026-10-09", Requests: 1, ByCategory: map[string]int64{"cli": 1}},
+				{Date: "2026-10-10", ByCategory: map[string]int64{}},
+			})
+		})
+
+		convey.Convey("then the row at now-24h is in the previous period", func() {
+			convey.So(usagePeriodRequestsForTest(summary.Series), convey.ShouldResemble, []int64{1, 1})
+			convey.So(summary.Series[0].End, convey.ShouldEqual, "2026-10-09T12:00:00Z")
+		})
+	})
+
+	convey.Convey("Given only a row at now+49h, when 24h is summarised, then series is one period holding it", t, func() {
+		summary := summariseEventsForTest(t, []UsageEvent{{
+			Time: usageSummaryTestNow.Add(49 * time.Hour), Category: UsageCategoryCLI, Method: "GET",
+			Route: usageSummaryTestRouteStudies, Status: 200,
+		}}, UsageWindow24h)
+
+		convey.So(summary.Totals.Requests, convey.ShouldEqual, 1)
+		convey.So(usagePeriodRequestsForTest(summary.Series), convey.ShouldResemble, []int64{1})
+	})
+
+	convey.Convey("Given two unmatched paths each with its own tool and agent, "+
+		"then each entry breaks down by its own tool and agent", t, func() {
+		event := func(path, tool, agent string, hoursAgo int) UsageEvent {
+			return UsageEvent{
+				Time:     usageSummaryTestNow.Add(-time.Duration(hoursAgo) * time.Hour),
+				Category: UsageCategoryMCP, Method: "GET", Path: path, MCPTool: tool, MCPAgent: agent, Status: 404,
+			}
+		}
+
+		summary := summariseEventsForTest(t, []UsageEvent{
+			event("/a", "tool_a", "agent-a", 1), event("/a", "tool_a", "agent-a", 2),
+			event("/b", "tool_b", "agent-b", 3),
+		}, UsageWindow24h)
+
+		convey.So(summary.Unmatched, convey.ShouldResemble, []UsageUnmatched{
+			{
+				Method: "GET", Path: "/a", Requests: 2, ByCategory: map[string]int64{"mcp": 2},
+				ByTool: map[string]int64{"tool_a": 2}, ByAgent: map[string]int64{"agent-a": 2},
+			},
+			{
+				Method: "GET", Path: "/b", Requests: 1, ByCategory: map[string]int64{"mcp": 1},
+				ByTool: map[string]int64{"tool_b": 1}, ByAgent: map[string]int64{"agent-b": 1},
+			},
+		})
+	})
+
+	convey.Convey("Given GET and POST rows on one route, then each method has its own latency percentiles", t, func() {
+		get, post := latencyUsageEventForTest(10), latencyUsageEventForTest(30)
+		post.Method = "POST"
+
+		endpoints := summariseEventsForTest(t, []UsageEvent{get, post}, UsageWindow24h).Endpoints
+		convey.So(endpoints, convey.ShouldHaveLength, 2)
+		convey.So(endpoints[0].Method, convey.ShouldEqual, "GET")
+		convey.So(endpoints[0].P95Ms, convey.ShouldEqual, 10)
+		convey.So(endpoints[1].Method, convey.ShouldEqual, "POST")
+		convey.So(endpoints[1].P50Ms, convey.ShouldEqual, 30)
+	})
+
+	convey.Convey("Given one row of 1500us latency, then p50 and p95 are 1.5 ms", t, func() {
+		event := latencyUsageEventForTest(0)
+		event.Latency = 1500 * time.Microsecond
+
+		endpoints := summariseEventsForTest(t, []UsageEvent{event}, UsageWindow24h).Endpoints
+		convey.So(endpoints[0].P50Ms, convey.ShouldEqual, 1.5)
+		convey.So(endpoints[0].P95Ms, convey.ShouldEqual, 1.5)
+	})
+}
+
+// usageFixtureFForTest returns the nine rows of spec fixture F.
+func usageFixtureFForTest() []UsageEvent {
+	type row struct {
+		hoursAgo  int
+		category  UsageCategory
+		route     string
+		path      string
+		clientID  string
+		username  string
+		ip        string
+		userAgent string
+		tool      string
+		agent     string
+		status    int
+		latencyMs int
+	}
+
+	cliUA, mcpUA, curlUA := "wa-cli/v0.11.0", "mlwh-mcp-server/0.5.0", "curl/8.5.0"
+	studies := usageSummaryTestRouteStudies
+
+	rows := []row{
+		{1, UsageCategoryCLI, studies, "", "run-a", "alice", "10.0.0.1", cliUA, "", "", 200, 10},
+		{2, UsageCategoryCLI, studies, "", "run-a", "alice", "10.0.0.1", cliUA, "", "", 200, 30},
+		{3, UsageCategoryCLI, "/classify/:id", "", "run-b", "bob", "10.0.0.1", cliUA, "", "", 404, 5},
+		{
+			4, UsageCategoryMCP, studies, "", "sess-1", "", "10.0.0.2", mcpUA,
+			"mlwh_list_studies", usageSummaryTestAgent, 200, 20,
+		},
+		{5, UsageCategoryOther, studies, "", "", "", "10.0.0.9", curlUA, "", "", 500, 40},
+		{6, UsageCategoryOther, "", "/bogus", "", "", "10.0.0.9", curlUA, "", "", 404, 1},
+		{30, UsageCategoryCLI, studies, "", "run-a", "alice", "10.0.0.1", cliUA, "", "", 200, 10},
+		{60, UsageCategoryWeb, studies, "", "web-1", "alice", "10.0.0.3", "wa-web", "", "", 200, 50},
+		{228, UsageCategoryCLI, studies, "", "run-c", "carol", "10.0.0.1", cliUA, "", "", 200, 10},
+	}
+
+	events := make([]UsageEvent, 0, len(rows))
+
+	for _, r := range rows {
+		events = append(events, UsageEvent{
+			Time:       usageSummaryTestNow.Add(-time.Duration(r.hoursAgo) * time.Hour),
+			Category:   r.category,
+			Method:     "GET",
+			Route:      r.route,
+			Path:       r.path,
+			ClientID:   r.clientID,
+			Username:   r.username,
+			RemoteAddr: r.ip,
+			UserAgent:  r.userAgent,
+			MCPTool:    r.tool,
+			MCPAgent:   r.agent,
+			Status:     r.status,
+			Latency:    time.Duration(r.latencyMs) * time.Millisecond,
+		})
+	}
+
+	return events
+}
+
+// summariseEventsForTest writes events to a new store with retention 365 and
+// the clock fixed at usageSummaryTestNow, then summarises window w.
+func summariseEventsForTest(t *testing.T, events []UsageEvent, w UsageWindow) UsageSummary {
+	t.Helper()
+
+	store := openTestUsageStore(t, filepath.Join(t.TempDir(), "u.sqlite"), 365, usageQueueSize, usageSummaryTestNow)
+	recordUsageEventsForTest(store, events)
+
+	summary, err := store.Summary(context.Background(), w)
+	convey.So(err, convey.ShouldBeNil)
+
+	return summary
+}
+
+func usagePeriodRequestsForTest(series []UsagePeriod) []int64 {
+	requests := make([]int64, 0, len(series))
+
+	for _, period := range series {
+		requests = append(requests, period.Requests)
+	}
+
+	return requests
+}
+
+func recordUsageEventsForTest(store *UsageStore, events []UsageEvent) {
+	for _, ev := range events {
+		store.Record(ev)
+	}
+
+	convey.So(store.Flush(context.Background()), convey.ShouldBeNil)
+}
+
+func latencyUsageEventForTest(ms int) UsageEvent {
+	return UsageEvent{
+		Time: usageSummaryTestNow.Add(-time.Hour), Category: UsageCategoryCLI, Method: "GET",
+		Route: usageSummaryTestRouteStudies, Status: 200, Latency: time.Duration(ms) * time.Millisecond,
+	}
+}
+
+// countNonArraysForTest counts the named keys of doc that are not JSON arrays.
+func countNonArraysForTest(doc map[string]any, keys []string) int {
+	bad := 0
+
+	for _, key := range keys {
+		if _, ok := doc[key].([]any); !ok {
+			bad++
+		}
+	}
+
+	return bad
+}
+
+// countNonObjectByMapsForTest counts by_* fields, in the entries of the named
+// list keys of doc, that are not JSON objects.
+func countNonObjectByMapsForTest(doc map[string]any, lists []string) int {
+	bad := 0
+
+	for _, list := range lists {
+		entries, _ := doc[list].([]any)
+
+		for _, entry := range entries {
+			fields, _ := entry.(map[string]any)
+
+			for _, key := range []string{"by_category", "by_endpoint", "by_tool", "by_agent"} {
+				value, present := fields[key]
+				if _, isObject := value.(map[string]any); present && !isObject {
+					bad++
+				}
+			}
+		}
+	}
+
+	return bad
+}

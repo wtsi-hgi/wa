@@ -52,6 +52,8 @@ type RemoteClient struct {
 	baseURL    string
 	httpClient *http.Client
 	token      string
+	userAgent  string
+	identity   ClientIdentity
 	endpoints  map[string]Endpoint
 }
 
@@ -76,6 +78,8 @@ func NewRemoteClient(cfg RemoteConfig) (*RemoteClient, error) {
 		baseURL:    baseURL,
 		httpClient: httpClient,
 		token:      cfg.Token,
+		userAgent:  cfg.UserAgent,
+		identity:   cfg.Identity,
 		endpoints:  remoteEndpointMap(),
 	}, nil
 }
@@ -1321,6 +1325,8 @@ func (rc *RemoteClient) do(ctx context.Context, method string, pathParams []stri
 		request.Header.Set("Authorization", "Bearer "+rc.token)
 	}
 
+	rc.setIdentityHeaders(request)
+
 	proxyURL := selectedRemoteProxyURL(rc.httpClient, request)
 	response, err := rc.httpClient.Do(request)
 	if err != nil {
@@ -1490,6 +1496,11 @@ type RemoteConfig struct {
 	Token    string
 	CACert   string
 	CacheTTL time.Duration
+	// UserAgent is sent on every request; "" keeps Go's default.
+	UserAgent string
+	// Identity is sent on every request. Fields set by WithClientIdentity on a
+	// request's context override it one by one.
+	Identity ClientIdentity
 }
 
 // decodeRemoteErrorWithFallback is decodeRemoteError with fallback wrapped in

@@ -305,13 +305,16 @@ func TestUsageStoreA2(t *testing.T) {
 		convey.So(store.Close(), convey.ShouldBeNil)
 	})
 
-	convey.Convey("A2.10: Given a closed store, then Flush returns nil within 1 s", t, func() {
+	convey.Convey("A2.10: Given a closed store, then Flush returns nil within 1 s and Summary errors", t, func() {
 		store := openTestUsageStore(t, filepath.Join(t.TempDir(), "u.sqlite"), 30, usageQueueSize, clock)
 		convey.So(store.Close(), convey.ShouldBeNil)
 
 		start := time.Now()
 		convey.So(store.Flush(context.Background()), convey.ShouldBeNil)
 		convey.So(time.Since(start), convey.ShouldBeLessThan, time.Second)
+
+		_, err := store.Summary(context.Background(), UsageWindow7d)
+		convey.So(err, convey.ShouldNotBeNil)
 	})
 }
 

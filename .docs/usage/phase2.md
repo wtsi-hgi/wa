@@ -35,8 +35,8 @@ Tests go in `mlwh/usage_summary_test.go`, building fixture F with
 A2 test 10 to `mlwh/usage_store_test.go`. Depends on phase 1. Covering
 all 15 acceptance tests from A3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.2: B1 - Counting middleware [parallel with 2.1]
 
@@ -56,8 +56,8 @@ Test 6's `GET /usage` request needs the route from B2; write that part of
 test 6 in item 2.3 and the `/health` and `/feedback` parts here. Depends on
 phase 1. Covering all 14 acceptance tests from B1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item under the
 `subagents` skill's shared concurrency limits.
@@ -81,8 +81,8 @@ Absent or empty `window` means `7d`; `ErrUsageWindowInvalid` maps to 400
 with no sentinel. Also add the `GET /usage` part of B1 test 6. Depends on
 items 2.1 and 2.2. Covering all 7 acceptance tests from B2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.4: C1 - RemoteClient identity headers [parallel with 2.3]
 
@@ -99,8 +99,8 @@ Tests go in `mlwh/client_identity_test.go`; test 8 is a round trip through
 the real `NewServer(q, WithUsage(store, T))`. Depends on items 1.1 and 2.2.
 Covering all 8 acceptance tests from C1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item under the
 `subagents` skill's shared concurrency limits.
@@ -119,8 +119,8 @@ on the root router, always registered, with no `Registry` entry and no
 OpenAPI path. Tests go in `mlwh/usage_server_test.go`. Depends on item 2.3.
 Covering all 3 acceptance tests from B3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.6: C2 - OpenAPI header parameters and API version [parallel with 2.5]
 
@@ -139,8 +139,8 @@ to `TestEndpointReferenceCommittedAtUsageVersionC2`. Regenerate
 its version line changes. Depends on item 2.4. Covering all 6 acceptance
 tests from C2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item under the
 `subagents` skill's shared concurrency limits.

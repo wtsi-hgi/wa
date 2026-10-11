@@ -134,6 +134,8 @@ func (rc *RemoteClient) SubmitFeedback(ctx context.Context, submission FeedbackS
 		request.Header.Set("Authorization", "Bearer "+rc.token)
 	}
 
+	rc.setIdentityHeaders(request)
+
 	proxyURL := selectedRemoteProxyURL(rc.httpClient, request)
 
 	response, err := rc.httpClient.Do(request)

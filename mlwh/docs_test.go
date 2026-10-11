@@ -97,13 +97,14 @@ func TestEndpointReferenceIncludesAPIVersion(t *testing.T) {
 	})
 }
 
-func TestEndpointReferenceCommittedAtFeedbackVersionB7(t *testing.T) {
-	// B7 acceptance test 6: the committed reference was regenerated for the
-	// 1.9.0 API version that documents POST /feedback.
-	convey.Convey("Given the committed MLWH reference, then it carries the 1.9.0 API version line", t, func() {
+func TestEndpointReferenceCommittedAtUsageVersionC2(t *testing.T) {
+	// Usage C2 acceptance test 6: the committed reference was regenerated for
+	// the 1.10.0 API version that documents the identification headers. The
+	// no-drift half is TestEndpointReferenceMatchesCommittedDocumentG1.
+	convey.Convey("Given the committed MLWH reference, then it carries the 1.10.0 API version line", t, func() {
 		committed, err := os.ReadFile(apiReferenceDocPath)
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(string(committed), convey.ShouldContainSubstring, "**API version:** `1.9.0`")
+		convey.So(string(committed), convey.ShouldContainSubstring, "**API version:** `1.10.0`")
 	})
 }
 

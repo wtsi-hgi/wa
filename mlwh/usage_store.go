@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS usage_requests (
 CREATE INDEX IF NOT EXISTS usage_requests_ts ON usage_requests (ts_ms);
 CREATE INDEX IF NOT EXISTS usage_requests_route_ts
     ON usage_requests (method, route, ts_ms);
+CREATE INDEX IF NOT EXISTS usage_requests_route_latency
+    ON usage_requests (method, route, latency_us, ts_ms);
 `
 
 const usageInsertSQL = `INSERT INTO usage_requests (ts_ms, category, method, route, path,

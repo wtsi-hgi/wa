@@ -41,6 +41,7 @@ const (
 	httpErrorCodePayloadTooLarge       = "payload_too_large"
 	httpErrorCodeInternal              = "internal_error"
 	httpErrorCodeFeedbackDisabled      = "feedback_disabled"
+	httpErrorCodeUsageDisabled         = "usage_disabled"
 )
 
 // Feedback sentinels. Validation and the HTTP handlers wrap the first three;
