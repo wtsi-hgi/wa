@@ -54,3 +54,29 @@
       `Test Files  1 passed (1)`, in about 5s, with no scaffold run.
       `pnpm test -- tests/scaffold.test.ts` runs only the scaffold run, and a
       nonexistent filter exits 1.
+
+- [x] `pnpm test` and `make test` fail with a cryptic
+      `ERR_UNKNOWN_FILE_EXTENSION` on Node.js 22.0 to 22.17. The
+      `frontend/package.json` `test` script is `node scripts/run-tests.mts`,
+      which needs Node's default TypeScript type stripping, unflagged only
+      from Node.js 22.18.0. The `DEVELOPING.md` Prerequisites table said
+      Node.js `22+`, and `frontend/package.json` had no `engines` field.
+    - Source: Copilot review on PR #48 head `f60f738`, thread
+      `PRRT_kwDORrF2pM6rSDIN`.
+    - Red command (from the repo root):
+
+        ```bash
+        node -e 'const p=require("./frontend/package.json");const d=require("fs").readFileSync("DEVELOPING.md","utf8");if(p.engines?.node!==">=22.18"||!/\| \*\*Node\.js\*\* \| 22\.18\+/.test(d)){console.error("engines.node=",p.engines?.node,"; DEVELOPING.md Node row:",d.split("\n").find(l=>l.includes("Node.js")));process.exit(1)}'
+        ```
+
+        Exit 1 before the fix:
+
+        ```text
+        engines.node= undefined ; DEVELOPING.md Node row: | **Node.js** | 22+       | Frontend dev server and build                                |
+        ```
+
+    - Fixed: `frontend/package.json` declares `"engines": { "node": ">=22.18" }`,
+      so pnpm warns `Unsupported engine` on older Node.js, and the
+      `DEVELOPING.md` Prerequisites table lists Node.js `22.18+`.
+    - Files: `frontend/package.json`, `DEVELOPING.md`.
+    - Green: the red command exits 0 with no output.

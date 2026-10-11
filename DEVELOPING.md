@@ -5,7 +5,7 @@
 | Dependency  | Version   | Purpose                                                      |
 | ----------- | --------- | ------------------------------------------------------------ |
 | **Go**      | 1.25+     | Backend, CLI, all server components                          |
-| **Node.js** | 22+       | Frontend dev server and build                                |
+| **Node.js** | 22.18+    | Frontend dev server and build                                |
 | **pnpm**    | 10+       | Frontend package management                                  |
 | **SQLite**  | (bundled) | Dev/test database via `modernc.org/sqlite` (pure Go, no CGo) |
 | **MySQL**   | 8+        | Production database (optional for dev)                       |
