@@ -38,8 +38,8 @@ command on a free local port as feedback D1 tests 8 and 9 do. Tests go in
 `cmd/mlwh_test.go`. Depends on phase 2. Covering all 9 acceptance tests
 from D1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.2: D2 - CLI and internal-server identities [parallel with 3.1]
 
@@ -62,8 +62,8 @@ Create `cmd/mlwh_identity.go` with `waBuildVersion`,
 `cmd/mlwh_identity_test.go`. Depends on item 2.4. Covering all 6
 acceptance tests from D2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item under the
 `subagents` skill's shared concurrency limits.
@@ -86,5 +86,5 @@ appends `--usage-db`, and only when the path is non-empty. Add
 fake `mlwh serve` stub to log each request's User-Agent and URL for test
 4. Depends on item 3.1. Covering all 4 acceptance tests from D3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

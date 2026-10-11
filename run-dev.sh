@@ -806,6 +806,8 @@ MLWH_CACHE_PATH=""
 MLWH_CACHE_EPHEMERAL=0
 FEEDBACK_DB_PATH=""
 FEEDBACK_DB_EPHEMERAL=0
+USAGE_DB_PATH=""
+USAGE_DB_EPHEMERAL=0
 CLEANED_UP=0
 
 process_is_running() {
@@ -938,6 +940,10 @@ cleanup() {
     rm -f "$FEEDBACK_DB_PATH" "$FEEDBACK_DB_PATH-wal" "$FEEDBACK_DB_PATH-shm"
   fi
 
+  if (( USAGE_DB_EPHEMERAL )) && [[ -n "$USAGE_DB_PATH" ]]; then
+    rm -f "$USAGE_DB_PATH" "$USAGE_DB_PATH-wal" "$USAGE_DB_PATH-shm"
+  fi
+
   cleanup_stable_bin_symlink
   rm -f "$BIN_PATH"
 
@@ -996,7 +1002,7 @@ print_service_wait_diagnostics() {
 curl_probe() {
   local url="$1"
   local ca_cert="${2:-}"
-  local -a args=(-fsS --max-time 2 -o /dev/null)
+  local -a args=(-fsS --max-time 2 -A wa-run-dev -o /dev/null)
 
   if [[ "$url" == https://* && -n "$ca_cert" ]]; then
     args+=(--cacert "$ca_cert")
@@ -1061,7 +1067,7 @@ mlwh_freshness_is_cold() {
   local url="$1"
   local body
 
-  if ! body="$(curl -fsS --max-time 5 "$url" 2>/dev/null)"; then
+  if ! body="$(curl -fsS --max-time 5 -A wa-run-dev "$url" 2>/dev/null)"; then
     return 2
   fi
 
@@ -1612,6 +1618,20 @@ else
   fi
 fi
 
+# Usage DB for the auto-managed MLWH server, wired like the feedback DB: test
+# gets a throwaway file under .tmp/ that is removed on shutdown; dev/prod enable
+# usage only when WA_MLWH_USAGE_PATH is set.
+if [[ "$scenario" == "test" ]]; then
+  USAGE_DB_PATH="$(mktemp "$TMP_DIR/mlwh-usage-test.XXXXXX.sqlite")"
+  USAGE_DB_EPHEMERAL=1
+else
+  USAGE_DB_PATH="${WA_MLWH_USAGE_PATH:-}"
+  USAGE_DB_EPHEMERAL=0
+  if [[ -n "$USAGE_DB_PATH" ]]; then
+    mkdir -p "$(dirname "$USAGE_DB_PATH")"
+  fi
+fi
+
 if ! has_nonblank_value "${WA_MLWH_SERVER_URL:-}" && \
    ! has_nonblank_value "$MLWH_CACHE_PATH" && \
    has_nonblank_value "$SEQMETA_CMD"; then
@@ -1724,6 +1744,9 @@ elif [[ -n "${WA_MLWH_DSN:-}" || -n "$MLWH_CACHE_PATH" ]]; then
     fi
     if [[ -n "$FEEDBACK_DB_PATH" ]]; then
       mlwh_args+=(--feedback-db "$FEEDBACK_DB_PATH")
+    fi
+    if [[ -n "$USAGE_DB_PATH" ]]; then
+      mlwh_args+=(--usage-db "$USAGE_DB_PATH")
     fi
     "${BIN_PATH}" "${mlwh_args[@]}" >>"$SEQMETA_LOG" 2>&1 &
     seqmeta_pid="$!"

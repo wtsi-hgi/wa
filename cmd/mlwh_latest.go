@@ -61,7 +61,7 @@ type mlwhLatestClient interface {
 
 func openMLWHLatestConfiguredClient(ctx context.Context, serverURL string) (mlwhLatestClient, error) {
 	if trimmedServerURL := strings.TrimSpace(serverURL); trimmedServerURL != "" {
-		return openMLWHLatestRemoteClient(ctx, mlwh.RemoteConfig{BaseURL: trimmedServerURL})
+		return openMLWHLatestRemoteClient(ctx, mlwhCLIRemoteConfig(trimmedServerURL))
 	}
 
 	cfg, err := resolveMLWHInfoLocalConfig()

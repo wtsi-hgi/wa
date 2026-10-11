@@ -142,7 +142,7 @@ type mlwhStudiesClient interface {
 
 func openMLWHStudiesConfiguredClient(ctx context.Context, serverURL string) (mlwhStudiesClient, error) {
 	if trimmedServerURL := strings.TrimSpace(serverURL); trimmedServerURL != "" {
-		return openMLWHStudiesRemoteClient(ctx, mlwh.RemoteConfig{BaseURL: trimmedServerURL})
+		return openMLWHStudiesRemoteClient(ctx, mlwhCLIRemoteConfig(trimmedServerURL))
 	}
 
 	cfg, err := resolveMLWHInfoLocalConfig()

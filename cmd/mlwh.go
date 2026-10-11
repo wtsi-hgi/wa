@@ -197,6 +197,8 @@ func newMLWHServeCommand() *cobra.Command {
 	var serverToken string
 	var mlwhCache string
 	var feedbackDB string
+	var usageDB string
+	var usageRetentionDays int
 
 	command := &cobra.Command{
 		Use:   "serve",
@@ -205,7 +207,8 @@ func newMLWHServeCommand() *cobra.Command {
 		Long: strings.Join([]string{
 			"Serve the local Sanger Multi-LIMS Warehouse (MLWH) metadata cache as",
 			"the registry-backed HTTP API used by other wa services. MLWH data is",
-			"read-only; POST /feedback (below) is the only write.",
+			"read-only; the only writes are POST /feedback and usage metrics (both",
+			"below, both optional), each to its own SQLite file.",
 			"",
 			"The server opens only the local cache and never contacts the upstream",
 			"MLWH database or runs a sync; WA_MLWH_DSN is intentionally unused here.",
@@ -228,6 +231,12 @@ func newMLWHServeCommand() *cobra.Command {
 			"of .wa-mlwh-server.token in $XDG_STATE_HOME (default: your home",
 			"directory), created at mode 0600 on first use and reused afterwards.",
 			"",
+			"Usage metrics (per-request counts by client category, summarised by the",
+			"admin GET /usage) are off unless --usage-db or WA_MLWH_USAGE_PATH names",
+			"a SQLite file. --usage-retention-days (else WA_MLWH_USAGE_RETENTION_DAYS,",
+			"default 365) sets how many days of rows are kept. GET /usage requires",
+			"the same admin Bearer token as the feedback admin routes.",
+			"",
 			"Example:",
 			"  WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite wa --env production mlwh serve",
 		}, "\n"),
@@ -244,6 +253,14 @@ func newMLWHServeCommand() *cobra.Command {
 				cert,
 				key,
 				serverToken,
+			)
+			if err != nil {
+				return err
+			}
+
+			retentionDays, err := resolveMLWHServeUsageRetentionDays(
+				usageRetentionDays,
+				cmd.Flags().Changed("usage-retention-days"),
 			)
 			if err != nil {
 				return err
@@ -280,7 +297,27 @@ func newMLWHServeCommand() *cobra.Command {
 				defer func() { _ = feedbackStore.Close() }()
 			}
 
-			server := mlwh.NewServer(client, mlwh.WithFeedback(feedbackStore, feedbackToken))
+			usageStore, err := openMLWHServeUsage(commandContext(cmd), usageDB, retentionDays)
+			if err != nil {
+				return err
+			}
+
+			if usageStore != nil {
+				defer func() { _ = usageStore.Close() }()
+			}
+
+			adminToken := feedbackToken
+			if usageStore != nil && adminToken == nil {
+				if adminToken, err = mlwhServeAdminToken(serveConfig); err != nil {
+					return fmt.Errorf("usage admin token: %w", err)
+				}
+			}
+
+			server := mlwh.NewServer(
+				client,
+				mlwh.WithFeedback(feedbackStore, feedbackToken),
+				mlwh.WithUsage(usageStore, adminToken),
+			)
 			if serveConfig.secured {
 				server.RegisterRoutes(authServer.Router(), authServer.AuthRouter())
 			} else {
@@ -297,6 +334,8 @@ func newMLWHServeCommand() *cobra.Command {
 	command.Flags().StringVarP(&key, "key", "k", firstEnv("WA_MLWH_SERVER_KEY"), "TLS private key path")
 	command.Flags().StringVar(&serverToken, "server-token", firstEnv("WA_MLWH_SERVER_TOKEN"), "Server token basename or absolute path")
 	command.Flags().StringVar(&feedbackDB, "feedback-db", firstEnv("WA_MLWH_FEEDBACK_PATH"), "SQLite path for agent feedback; feedback is disabled when unset")
+	command.Flags().StringVar(&usageDB, "usage-db", firstEnv("WA_MLWH_USAGE_PATH"), "SQLite path for usage metrics; usage tracking is disabled when unset")
+	command.Flags().IntVar(&usageRetentionDays, "usage-retention-days", 365, "days of usage rows to keep; overrides WA_MLWH_USAGE_RETENTION_DAYS")
 	command.Flags().StringVar(&mlwhCache, "mlwh-cache", "", "MLWH cache backend path or MySQL DSN without a password; defaults to WA_MLWH_CACHE_PATH when unset")
 
 	return command
@@ -347,6 +386,28 @@ func validateMLWHServeCachePath(cachePath string, sourceName string) error {
 	return nil
 }
 
+// resolveMLWHServeUsageRetentionDays returns flagValue when flagChanged.
+// Otherwise it returns the trimmed WA_MLWH_USAGE_RETENTION_DAYS parsed with
+// strconv.Atoi, or flagValue when that is blank; a parse failure returns
+// `invalid WA_MLWH_USAGE_RETENTION_DAYS "<v>"`.
+func resolveMLWHServeUsageRetentionDays(flagValue int, flagChanged bool) (int, error) {
+	if flagChanged {
+		return flagValue, nil
+	}
+
+	envValue := strings.TrimSpace(firstEnv("WA_MLWH_USAGE_RETENTION_DAYS"))
+	if envValue == "" {
+		return flagValue, nil
+	}
+
+	days, err := strconv.Atoi(envValue)
+	if err != nil {
+		return 0, fmt.Errorf("invalid WA_MLWH_USAGE_RETENTION_DAYS %q", envValue)
+	}
+
+	return days, nil
+}
+
 func configureMLWHServeRouter(router *gin.Engine) {
 	if router == nil {
 		return
@@ -354,6 +415,36 @@ func configureMLWHServeRouter(router *gin.Engine) {
 
 	router.UseRawPath = true
 	router.UnescapePathValues = false
+}
+
+// openMLWHServeUsage returns (nil, nil) when usageDB is blank. It rejects
+// a MySQL-looking DSN, :memory:, and file: URIs with the same messages as
+// feedback but naming --usage-db, rejects retentionDays < 1 with
+// "--usage-retention-days must be at least 1", creates the parent
+// directory, and opens the store.
+func openMLWHServeUsage(ctx context.Context, usageDB string, retentionDays int) (*mlwh.UsageStore, error) {
+	dbPath := strings.TrimSpace(usageDB)
+	if dbPath == "" {
+		return nil, nil
+	}
+
+	if mlwhSyncCachePathLooksMySQL(dbPath) {
+		return nil, errors.New("--usage-db must be a SQLite file path, not a MySQL DSN")
+	}
+
+	if dbPath == ":memory:" || strings.HasPrefix(dbPath, "file:") {
+		return nil, errors.New("--usage-db must be a SQLite file path, not :memory: or a file: URI")
+	}
+
+	if retentionDays < 1 {
+		return nil, errors.New("--usage-retention-days must be at least 1")
+	}
+
+	if err := ensureMLWHSyncCacheDirectory(dbPath); err != nil {
+		return nil, err
+	}
+
+	return mlwh.OpenUsageStore(ctx, dbPath, retentionDays)
 }
 
 // openMLWHServeFeedback returns (nil, nil, nil) when feedbackDB is blank.
@@ -384,7 +475,7 @@ func openMLWHServeFeedback(ctx context.Context, feedbackDB string, config mlwhSe
 		return nil, nil, err
 	}
 
-	token, err := mlwhServeFeedbackAdminToken(config)
+	token, err := mlwhServeAdminToken(config)
 	if err != nil {
 		_ = store.Close()
 
@@ -394,7 +485,10 @@ func openMLWHServeFeedback(ctx context.Context, feedbackDB string, config mlwhSe
 	return store, token, nil
 }
 
-func mlwhServeFeedbackAdminToken(config mlwhServeConfig) ([]byte, error) {
+// mlwhServeAdminToken returns the admin token shared by the feedback and
+// usage admin routes: the --server-token file in secured mode, else
+// mlwhServeDefaultServerTokenBasename, created if absent.
+func mlwhServeAdminToken(config mlwhServeConfig) ([]byte, error) {
 	tokenBasename := mlwhServeDefaultServerTokenBasename
 	if config.secured {
 		tokenBasename = config.serverToken
