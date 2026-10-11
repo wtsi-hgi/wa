@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/smartystreets/goconvey/convey"
@@ -81,6 +82,24 @@ func TestUsageMiddlewareB1(t *testing.T) {
 		convey.So(rows, convey.ShouldHaveLength, 1)
 		convey.So(rows[0].Route, convey.ShouldEqual, "/classify/:id")
 		convey.So(rows[0].Path, convey.ShouldEqual, "")
+	})
+
+	convey.Convey("the stored latency covers the handler's run time", t, func() {
+		const handlerDelay = 5 * time.Millisecond
+
+		router, store, path := newUsageTestRouter(t, &serverFakeQueryer{
+			classifyIdentifierFunc: func(context.Context, string) (Match, error) {
+				time.Sleep(handlerDelay)
+
+				return Match{}, nil
+			},
+		})
+
+		usageRequestForTest(router, http.MethodGet, "/classify/ABC", nil)
+
+		rows := flushedUsageRowsForTest(store, path)
+		convey.So(rows, convey.ShouldHaveLength, 1)
+		convey.So(rows[0].LatencyUS, convey.ShouldBeGreaterThanOrEqualTo, handlerDelay.Microseconds())
 	})
 
 	convey.Convey("an unmatched path is counted with its path and gin's 404 body", t, func() {
