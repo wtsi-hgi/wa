@@ -3,16 +3,13 @@ import { createHash } from "node:crypto";
 import { cookies } from "next/headers";
 
 import { currentSession } from "@/app/(results)/auth/actions";
+import { usageSessionCookieName } from "@/lib/usage-session-cookie";
 
-export const usageSessionCookieName = "wa_usage_session";
-export const usageSessionCookieOptions = {
-    httpOnly: true,
-    maxAge: 365 * 24 * 60 * 60,
-    path: "/",
-    sameSite: "lax",
-    secure: true,
-} as const;
-export const mlwhWebUserAgent = "wa-web";
+export {
+    mlwhWebUserAgent,
+    usageSessionCookieName,
+    usageSessionCookieOptions,
+} from "@/lib/usage-session-cookie";
 
 // maxUsernameBytes matches wa's UsageMaxUsernameBytes. The client ID is
 // always 32 hex chars, well within UsageMaxClientIDBytes.

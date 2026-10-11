@@ -8,7 +8,7 @@ import {
     BackendRequestError,
     BackendUnavailableError,
 } from "@/lib/backend-shared";
-import { mlwhWebUserAgent } from "@/lib/usage-identity";
+import { mlwhWebUserAgent } from "@/lib/usage-session-cookie";
 
 export {
     BackendRequestError,
