@@ -1,22 +1,65 @@
 # Bugfix: run-dev tests clobber a live verify-wa stack
 
 - Branch: `rundevstate-64ed3f75`
-- Base: `origin/develop` at `73ebdaa721d5cfe478e22e9ee504061ad30b1492`
-- Queue owner: branch `usage`, checklist
-  `.docs/bugfixes/261011-usage-delivery-92e8e35556b7.md`
+- Base: `origin/develop` at `5e851cd0f63f9f1a3ccbbfc7d7edc0e0ed9a7a83`
+  (rebased from `73ebdaa721d5cfe478e22e9ee504061ad30b1492`)
+- Queue owner: delivery checklist
+  `.docs/bugfixes/261011-usage-delivery-92e8e35556b7.md` on branch
+  `sqlitedsn-723fb158` (originally recorded from branch `usage`)
 - Worktree: `../wa-rundevstate`
 
 ## Items
 
-- [ ] Running `go test -run TestRunDev ./cmd/` in a checkout that also has
-  a verify-wa stack running breaks that stack: the tests deleted
-  `.tmp/state-test/.wa-results-server.token` and rewrote
-  `.tmp/wa-dev-key.pem`. The tests share the checkout's `.tmp` state
-  directory with real run-dev stacks, and verify-wa's one-stack-per-checkout
-  rule does not warn about this.
-  - Source: spec-aware PR review of branch `usage`, reported as
-    incidental.
-  - Evidence: observed on branch `usage` while a verify-wa stack ran in
-    the same checkout; not yet reproduced on this base.
-  - Fix direction: give the tests an isolated state and key directory, or
-    document the conflict in verify-wa.
+- [x] Running `go test -run TestRunDev ./cmd/` in a checkout that also has
+      a verify-wa stack running breaks that stack: the tests deleted
+      `.tmp/state-test/.wa-results-server.token` and rewrote
+      `.tmp/wa-dev-key.pem`. The tests share the checkout's `.tmp` state
+      directory with real run-dev stacks, and verify-wa's one-stack-per-checkout
+      rule does not warn about this.
+    - Source: spec-aware PR review of branch `usage`, reported as
+      incidental.
+    - Evidence: observed on branch `usage` while a verify-wa stack ran in
+      the same checkout; not yet reproduced on this base.
+    - Fix direction: give the tests an isolated state and key directory, or
+      document the conflict in verify-wa.
+    - Red command (from the checkout root; plants sentinels in the shared
+      `.tmp`, runs one run-dev test, then checks the sentinels):
+
+        ```bash
+        mkdir -p .tmp/state-test
+        printf 'sentinel-token\n' > .tmp/state-test/.wa-results-server.token
+        printf 'sentinel-key\n' > .tmp/wa-dev-key.pem
+        printf 'sentinel-cert\n' > .tmp/wa-dev-cert.pem
+        ln -sfn /nonexistent/sentinel-wa .tmp/wa
+        CGO_ENABLED=1 go test -tags netgo -count 1 -run TestRunDevUsageDB ./cmd/
+        grep -qx sentinel-token .tmp/state-test/.wa-results-server.token &&
+          grep -qx sentinel-key .tmp/wa-dev-key.pem &&
+          grep -qx sentinel-cert .tmp/wa-dev-cert.pem &&
+          [ "$(readlink .tmp/wa)" = /nonexistent/sentinel-wa ]
+        ```
+
+    - Red result on `5e851cd`: `go test` passed (exit 0) but every sentinel
+      was clobbered (check exit 1):
+
+        ```text
+        CLOBBERED: .tmp/state-test/.wa-results-server.token
+        CLOBBERED: .tmp/wa-dev-key.pem (-----BEGIN PRIVATE KEY-----...)
+        CLOBBERED: .tmp/wa-dev-cert.pem
+        CLOBBERED: .tmp/wa -> (symlink removed)
+        ```
+
+    - Fixed. `run-dev.sh` now reads its scratch directory from
+      `WA_RUN_DEV_TMP_DIR` (default `$REPO_ROOT/.tmp`, so real users see no
+      change); the dev TLS cert/key, `state-test`, built binaries, `wa`
+      link, `wa.lock`, and ephemeral DBs follow it, and the test-mode cache
+      guard accepts paths under it. The run-dev Go tests give each test its
+      own `t.TempDir()` for it, unset the `.env.test`
+      `WA_RESULTS_SERVER_CERT`/`KEY` paths that point at `.tmp`, and delete
+      the per-test token instead of the checkout's.
+    - Regression test: `TestRunDevTmpDirOverride` checks every artefact
+      lands in the per-test directory; it fails on the old `run-dev.sh`.
+      The red command passes with `TestRunDevUsageDB` and with the full
+      `TestRunDev` suite.
+    - Files: `run-dev.sh`, `cmd/run_dev_test.go`,
+      `cmd/run_dev_modes_test.go`, `cmd/run_dev_tmp_dir_test.go`,
+      `DEVELOPING.md`.

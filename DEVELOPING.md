@@ -149,6 +149,10 @@ The `make` recipes, `wa` startup path, and `run-dev.sh` enforce the following:
   `WA_ENV=production` plus a real `WA_RESULTS_DB_PATH` after loading.
 - `run-dev.sh --mode test` always uses an ephemeral `mktemp` SQLite DB
   beneath `.tmp/` and removes it on shutdown.
+- The Go `run-dev.sh` tests set `WA_RUN_DEV_TMP_DIR` to a per-test
+  directory, so run-dev keeps its dev TLS key and certificate, test state,
+  built binaries, `wa` link, and ephemeral DBs there instead of in `.tmp/`.
+  They leave a stack running from the same checkout alone.
 - `run-dev.sh --mode dev` and `--mode prod` use the persistent
   `WA_RESULTS_DB_PATH` and never delete the database on shutdown.
 - `make test` always cleans up its `.tmp/` artefacts (the built `wa`
