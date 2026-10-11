@@ -428,16 +428,15 @@ describe("E4 usage admin view", () => {
 
     it("orders Trend endpoint rows by series total, then key", async () => {
         const base = a3Summary();
-        const period = base.series[0];
 
         await renderView(
             a3Summary({
                 series: [
                     {
-                        ...period,
+                        ...base.series[0],
                         by_endpoint: { "GET /b": 2, "GET /a": 2, "GET /z": 1 },
                     },
-                    { ...period, by_endpoint: { "GET /z": 2 } },
+                    { ...base.series[1], by_endpoint: { "GET /z": 2 } },
                 ],
             }),
             "24h",
