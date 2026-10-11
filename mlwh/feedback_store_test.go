@@ -280,6 +280,31 @@ func TestFeedbackStoreA2(t *testing.T) {
 		}
 	})
 
+	for _, name := range []string{"f#1.sqlite", "f?1.sqlite", "f%231.sqlite"} {
+		convey.Convey("Given a new path named "+name+", when opened and written, then the database and its WAL land at that exact path readable only by the owner", t, func() {
+			dir := t.TempDir()
+			path := filepath.Join(dir, name)
+			store := openTestFeedbackStore(t, path)
+			addTestFeedback(ctx, store, FeedbackCategoryOther)
+
+			info, err := os.Stat(path)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(info.Size(), convey.ShouldBeGreaterThan, 0)
+			convey.So(info.Mode().Perm(), convey.ShouldEqual, os.FileMode(0o600))
+
+			info, err = os.Stat(path + "-wal")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(info.Mode().Perm()&0o077, convey.ShouldEqual, 0)
+
+			entries, err := os.ReadDir(dir)
+			convey.So(err, convey.ShouldBeNil)
+
+			for _, entry := range entries {
+				convey.So(entry.Name(), convey.ShouldBeIn, []string{name, name + "-wal", name + "-shm"})
+			}
+		})
+	}
+
 	convey.Convey("Given an existing database at mode 0644, when reopened, then its mode is unchanged", t, func() {
 		path := filepath.Join(t.TempDir(), "feedback.db")
 		store, err := OpenFeedbackStore(ctx, path)

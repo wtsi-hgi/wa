@@ -44,6 +44,8 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	_ "modernc.org/sqlite"
+
+	"github.com/wtsi-hgi/wa/internal/sqliteuri"
 )
 
 const (
@@ -1618,7 +1620,7 @@ func sqliteWritableDSN(path string) string {
 		return path
 	}
 
-	return fmt.Sprintf("file:%s?mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", filepath.ToSlash(path))
+	return sqliteuri.File(path, "mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 }
 
 func sqliteLockDSN(path string) string {
@@ -1626,7 +1628,7 @@ func sqliteLockDSN(path string) string {
 		return ""
 	}
 
-	return fmt.Sprintf("file:%s?mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(0)", filepath.ToSlash(path+".sync-lock"))
+	return sqliteuri.File(path+".sync-lock", "mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(0)")
 }
 
 func sqliteReadOnlyDSN(path string) string {
@@ -1634,5 +1636,5 @@ func sqliteReadOnlyDSN(path string) string {
 		return path
 	}
 
-	return fmt.Sprintf("file:%s?mode=ro", filepath.ToSlash(path))
+	return sqliteuri.File(path, "mode=ro")
 }

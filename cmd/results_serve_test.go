@@ -302,6 +302,31 @@ func TestResultsServeCommand(t *testing.T) {
 		convey.So(resultsSQLiteDSN("file:/tmp/results.db?mode=ro"), convey.ShouldEqual, "file:/tmp/results.db?mode=ro")
 	})
 
+	for _, name := range []string{"r#1.db", "r?1.db", "r%231.db"} {
+		convey.Convey("Given a SQLite results path named "+name+", when opened and written, then the data lands at that exact path", t, func() {
+			dir := t.TempDir()
+			dbPath := filepath.Join(dir, name)
+
+			db, err := openResultsDB(dbPath)
+			convey.So(err, convey.ShouldBeNil)
+
+			_, err = db.Exec("CREATE TABLE probe (a INTEGER)")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(db.Close(), convey.ShouldBeNil)
+
+			info, err := os.Stat(dbPath)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(info.Size(), convey.ShouldBeGreaterThan, 0)
+
+			entries, err := os.ReadDir(dir)
+			convey.So(err, convey.ShouldBeNil)
+
+			for _, entry := range entries {
+				convey.So(entry.Name(), convey.ShouldBeIn, []string{name, name + "-wal", name + "-shm"})
+			}
+		})
+	}
+
 	convey.Convey("E2.1: Given WA_MLWH_SERVER_URL and no cache path, when results serve boots, then remote MLWH config is selected", t, func() {
 		fakeAuth := newFakeResultsServeAuthServer()
 		installFakeResultsServeAuthServer(t, fakeAuth)
