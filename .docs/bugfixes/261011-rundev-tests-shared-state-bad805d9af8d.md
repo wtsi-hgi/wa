@@ -1,8 +1,9 @@
 # Bugfix: run-dev tests clobber a live verify-wa stack
 
 - Branch: `rundevstate-64ed3f75`
-- Base: `origin/develop` at `5e851cd0f63f9f1a3ccbbfc7d7edc0e0ed9a7a83`
-  (rebased from `73ebdaa721d5cfe478e22e9ee504061ad30b1492`)
+- Base: `origin/develop` at `d35401d11b5c142fcfd74080c8db175ed8342ec2`
+  (rebased from `5e851cd0f63f9f1a3ccbbfc7d7edc0e0ed9a7a83`, originally
+  `73ebdaa721d5cfe478e22e9ee504061ad30b1492`)
 - Queue owner: delivery checklist
   `.docs/bugfixes/261011-usage-delivery-92e8e35556b7.md` on branch
   `sqlitedsn-723fb158` (originally recorded from branch `usage`)
@@ -163,6 +164,14 @@
       `frontend/e2e/result-date-timezone-repro.spec.ts`,
       `frontend/tests/e2e-run-dir.test.ts`, `Makefile`, `.env.test`,
       `DEVELOPING.md`, `.agents/skills/verify-wa/SKILL.md`.
+    - Prior behaviour changed on purpose: `261011-results-db-wal-leak-56bf2e73f24d.md`
+      made `clean-test-tmp` delete `.tmp/results-dev.*.sqlite*` and
+      `.tmp/mlwh-test.*.sqlite*`. Those globs also match a live verify-wa or
+      `make dev` test-mode stack's databases, which is this item's bug. The
+      e2e run's own DBs and their `-wal`/`-shm` files now live in `.tmp/e2e`
+      and `rm -rf .tmp/e2e` still removes them, and `run-dev.sh` cleanup
+      still removes sidecars on shutdown. Resolved the rebase conflict with
+      that change by keeping `rm -rf .tmp/e2e`.
 
 - [x] Dev-mode run-dev tests that don't set `XDG_STATE_HOME` inherit the
       caller's, so a real results server started by one could write its token
