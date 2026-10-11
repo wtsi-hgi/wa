@@ -933,7 +933,7 @@ cleanup() {
   fi
 
   if (( MLWH_CACHE_EPHEMERAL )) && [[ -n "$MLWH_CACHE_PATH" ]]; then
-    rm -f "$MLWH_CACHE_PATH"
+    rm -f "$MLWH_CACHE_PATH" "$MLWH_CACHE_PATH-wal" "$MLWH_CACHE_PATH-shm"
   fi
 
   if (( FEEDBACK_DB_EPHEMERAL )) && [[ -n "$FEEDBACK_DB_PATH" ]]; then

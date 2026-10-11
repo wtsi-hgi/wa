@@ -116,6 +116,7 @@ clean-test-tmp:
 	@rm -f .tmp/results-dev.*.sqlite .tmp/results-dev.*.sqlite-wal .tmp/results-dev.*.sqlite-shm
 	@rm -f .tmp/mlwh-feedback-test.*.sqlite .tmp/mlwh-feedback-test.*.sqlite-wal .tmp/mlwh-feedback-test.*.sqlite-shm
 	@rm -f .tmp/mlwh-usage-test.*.sqlite .tmp/mlwh-usage-test.*.sqlite-wal .tmp/mlwh-usage-test.*.sqlite-shm
+	@rm -f .tmp/mlwh-test.*.sqlite .tmp/mlwh-test.*.sqlite-wal .tmp/mlwh-test.*.sqlite-shm
 
 # ---- Dev scenario ---------------------------------------------------------
 dev:

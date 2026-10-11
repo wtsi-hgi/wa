@@ -52,9 +52,10 @@
       in `Makefile` also removes `.tmp/results-dev.*.sqlite-wal` and
       `.tmp/results-dev.*.sqlite-shm`, mirroring the feedback DB lines.
       `TestRunDevTestModeRemovesResultsDBSidecars` in `cmd/run_dev_test.go`
-      encodes the repro. Review: PASS.
+      encoded the repro; item 2 renamed it
+      `TestRunDevTestModeRemovesEphemeralSQLiteSidecars`. Review: PASS.
 
-- [ ] `run-dev.sh` test mode removes only the ephemeral MLWH cache file
+- [x] `run-dev.sh` test mode removes only the ephemeral MLWH cache file
       (`rm -f "$MLWH_CACHE_PATH"`) and not its `-wal`/`-shm` files, and
       `make clean-test-tmp` never removes `.tmp/mlwh-test.*.sqlite*`. Same
       ephemeral-SQLite cleanup gap as the item above, so it shares this branch.
@@ -64,3 +65,39 @@
       main clone printed `152` (exit 0), for example
       `mlwh-test.0hMpbs.sqlite`, `mlwh-test.0hMpbs.sqlite-shm` and
       `mlwh-test.0hMpbs.sqlite-wal`.
+    - Red command (run-dev.sh), exit 1. Item 1's test is extended to cover
+      the MLWH test cache and renamed
+      `TestRunDevTestModeRemovesEphemeralSQLiteSidecars`:
+
+        ```bash
+        CGO_ENABLED=1 go test -tags netgo --count 1 ./cmd/ \
+          -run 'TestRunDevTestModeRemovesEphemeralSQLiteSidecars'
+        ```
+
+        ```text
+        * cmd/run_dev_test.go
+        Line 1096:
+        Expected [.tmp/mlwh-test.qi06EZ.sqlite-wal .tmp/mlwh-test.qi06EZ.sqlite-shm] to be empty (but it wasn't)!
+        --- FAIL: TestRunDevTestModeRemovesEphemeralSQLiteSidecars (1.28s)
+        ```
+
+        The results DB check on line 1095 passed.
+
+    - Red command (Makefile):
+
+        ```bash
+        touch .tmp/mlwh-test.REDX.sqlite{,-wal,-shm} &&
+          make clean-test-tmp && ls .tmp | grep REDX
+        ```
+
+        It printed `mlwh-test.REDX.sqlite`, `mlwh-test.REDX.sqlite-shm` and
+        `mlwh-test.REDX.sqlite-wal`.
+
+    - Fixed: `run-dev.sh` cleanup now runs
+      `rm -f "$MLWH_CACHE_PATH" "$MLWH_CACHE_PATH-wal" "$MLWH_CACHE_PATH-shm"`
+      inside the existing `MLWH_CACHE_EPHEMERAL` guard, and `clean-test-tmp`
+      in `Makefile` now removes `.tmp/mlwh-test.*.sqlite` and its `-wal` and
+      `-shm` files. The glob cannot match persistent caches such as
+      `.tmp/mlwh-dev.sqlite`. `TestRunDevTestModeRemovesEphemeralSQLiteSidecars`
+      in `cmd/run_dev_test.go` covers both ephemeral DBs in one run. Review:
+      PASS.

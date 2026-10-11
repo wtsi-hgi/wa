@@ -1293,8 +1293,8 @@ func TestRunDevFeedbackDB(t *testing.T) {
 	})
 }
 
-func TestRunDevTestModeRemovesResultsDBSidecars(t *testing.T) {
-	convey.Convey("run-dev.sh --mode test removes the ephemeral results DB and its -wal and -shm files on SIGINT", t, func() {
+func TestRunDevTestModeRemovesEphemeralSQLiteSidecars(t *testing.T) {
+	convey.Convey("run-dev.sh --mode test removes the ephemeral results DB and MLWH test cache with their -wal and -shm files on SIGINT", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		ports := runDevFeedbackPortsForTest(t)
 		binDir := t.TempDir()
@@ -1315,25 +1315,44 @@ func TestRunDevTestModeRemovesResultsDBSidecars(t *testing.T) {
 
 		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
 
-		dbPath := waitForRunDevSnapshotForTest(t, process, env["WA_RUN_DEV_ENV_SNAPSHOT"]).ResultsDBPath
+		snapshot := waitForRunDevSnapshotForTest(t, process, env["WA_RUN_DEV_ENV_SNAPSHOT"])
+		dbPath, cachePath := snapshot.ResultsDBPath, snapshot.MLWHCachePath
 
-		t.Cleanup(func() { removeRunDevSQLiteFilesForTest(dbPath) })
+		t.Cleanup(func() {
+			removeRunDevSQLiteFilesForTest(dbPath)
+			removeRunDevSQLiteFilesForTest(cachePath)
+		})
 
-		convey.So(dbPath, convey.ShouldNotBeBlank)
-		convey.So(runDevPathExistsForTest(dbPath), convey.ShouldBeTrue)
+		// Real SQLite servers in WAL mode keep -wal and -shm beside each DB.
+		for _, path := range []string{dbPath, cachePath} {
+			convey.So(path, convey.ShouldNotBeBlank)
+			convey.So(runDevPathExistsForTest(path), convey.ShouldBeTrue)
 
-		// A real SQLite results server in WAL mode keeps these beside the DB.
-		for _, suffix := range []string{"-wal", "-shm"} {
-			convey.So(os.WriteFile(dbPath+suffix, nil, 0o600), convey.ShouldBeNil)
+			for _, suffix := range []string{"-wal", "-shm"} {
+				convey.So(os.WriteFile(path+suffix, nil, 0o600), convey.ShouldBeNil)
+			}
 		}
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
 
-		for _, suffix := range []string{"", "-wal", "-shm"} {
-			convey.So(runDevPathExistsForTest(dbPath+suffix), convey.ShouldBeFalse)
-		}
+		convey.So(runDevSQLiteFilesLeftForTest(dbPath), convey.ShouldBeEmpty)
+		convey.So(runDevSQLiteFilesLeftForTest(cachePath), convey.ShouldBeEmpty)
 	})
+}
+
+// runDevSQLiteFilesLeftForTest returns which of the SQLite DB at path and its
+// -wal and -shm files still exist.
+func runDevSQLiteFilesLeftForTest(path string) []string {
+	var left []string
+
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if runDevPathExistsForTest(path + suffix) {
+			left = append(left, path+suffix)
+		}
+	}
+
+	return left
 }
 
 func runDevFeedbackPortsForTest(t *testing.T) runDevFeedbackPorts {
