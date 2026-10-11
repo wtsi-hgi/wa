@@ -35,6 +35,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -355,6 +356,81 @@ func (b *lockedBufferForTest) String() string {
 	defer b.mu.Unlock()
 
 	return b.buf.String()
+}
+
+func TestClientSyncReportWriterNeedNotBeConcurrencySafe(t *testing.T) {
+	convey.Convey("Given a plain strings.Builder set as the sync report writer and rows for five tables, when Client.Sync syncs every table in parallel, then the builder holds one well-formed report line per table", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		t1 := time.Date(2026, time.May, 11, 9, 0, 0, 0, time.UTC)
+		t2 := t1.Add(time.Minute)
+
+		source := openFiveTableSyncTestSourceDB(t, t1, t2)
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		var out strings.Builder
+		client.SetSyncReportWriter(&out)
+
+		reports, err := client.Sync(context.Background())
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, len(supportedSyncTables))
+
+		lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+		convey.So(lines, convey.ShouldHaveLength, len(supportedSyncTables))
+
+		linePattern := regexp.MustCompile(`^([a-z_]+) inserted=\d+ updated=\d+ high_water=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$`)
+		tables := make([]string, 0, len(lines))
+		for _, line := range lines {
+			match := linePattern.FindStringSubmatch(line)
+			if match != nil {
+				tables = append(tables, match[1])
+			}
+		}
+
+		convey.So(tables, convey.ShouldHaveLength, len(supportedSyncTables))
+		slices.Sort(tables)
+		wantTables := slices.Sorted(slices.Values(supportedSyncTables))
+		convey.So(tables, convey.ShouldResemble, wantTables)
+
+		convey.So(lines, convey.ShouldContain, "sample inserted=2 updated=0 high_water=2026-05-11T09:01:00Z")
+		convey.So(lines, convey.ShouldContain, "study inserted=1 updated=0 high_water=2026-05-11T09:00:00Z")
+	})
+}
+
+func openFiveTableSyncTestSourceDB(t *testing.T, t1, t2 time.Time) *sql.DB {
+	t.Helper()
+
+	return openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+		syncTableSample: {
+			columns: sampleSyncSourceColumns,
+			rows: [][]driver.Value{
+				{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", formatSyncTime(t1)},
+				{int64(2), "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", int64(9606), "human", "desc-b", formatSyncTime(t2)},
+			},
+		},
+		syncTableStudy: {
+			columns: studySyncSourceColumns,
+			rows: [][]driver.Value{
+				studyRowValues(10, "SQSCP", "5001", "study-uuid-1", "study-a", "acc-study-a", t1),
+			},
+		},
+		syncTableIseqFlowcell: {
+			columns: []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"},
+			rows:    [][]driver.Value{{"Standard", int64(1), "5001", formatSyncTime(t1)}},
+		},
+		syncTableIseqProductMetrics: {
+			columns: iseqProductMetricsSyncSourceColumns,
+			rows:    [][]driver.Value{{"product-1001", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(t1)}},
+		},
+		syncTableSeqProductIRODSLocations: {
+			columns: seqProductIRODSLocationsSyncSourceColumns,
+			rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(t2), formatSyncTime(t2), "illumina"}},
+		},
+	})
 }
 
 func syncSelectedTablesForTest(ctx context.Context, client *Client, tables ...string) ([]SyncReport, error) {
@@ -2041,33 +2117,7 @@ func TestClientSyncFiveTableParallelReports(t *testing.T) {
 		t1 := time.Date(2026, time.May, 11, 9, 0, 0, 0, time.UTC)
 		t2 := t1.Add(time.Minute)
 
-		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
-			syncTableSample: {
-				columns: sampleSyncSourceColumns,
-				rows: [][]driver.Value{
-					{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", formatSyncTime(t1)},
-					{int64(2), "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", int64(9606), "human", "desc-b", formatSyncTime(t2)},
-				},
-			},
-			syncTableStudy: {
-				columns: studySyncSourceColumns,
-				rows: [][]driver.Value{
-					studyRowValues(10, "SQSCP", "5001", "study-uuid-1", "study-a", "acc-study-a", t1),
-				},
-			},
-			syncTableIseqFlowcell: {
-				columns: []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"},
-				rows:    [][]driver.Value{{"Standard", int64(1), "5001", formatSyncTime(t1)}},
-			},
-			syncTableIseqProductMetrics: {
-				columns: iseqProductMetricsSyncSourceColumns,
-				rows:    [][]driver.Value{{"product-1001", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(t1)}},
-			},
-			syncTableSeqProductIRODSLocations: {
-				columns: seqProductIRODSLocationsSyncSourceColumns,
-				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(t2), formatSyncTime(t2), "illumina"}},
-			},
-		})
+		source := openFiveTableSyncTestSourceDB(t, t1, t2)
 		defer func() { _ = source.Close() }()
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}

@@ -53,7 +53,7 @@
       `-count 1` and removing the writer guard fails 14/20 (the `fmt`
       printer pool sometimes orders the two writes for the race detector).
 
-- [ ] `emitSyncReport` (`mlwh/sync.go`, around line 2633, called around line 2462) writes to `syncReportWriter` from each table's sync goroutine, but
+- [x] `emitSyncReport` (`mlwh/sync.go`, around line 2633, called around line 2462) writes to `syncReportWriter` from each table's sync goroutine, but
       `SetSyncReportWriter` (`mlwh/cache.go`, around line 268) doesn't say the
       writer must be safe for concurrent use. Production passes
       `cmd.OutOrStdout()` (normally `os.Stdout`, which is safe), but a caller
@@ -72,3 +72,13 @@
       (`mlwh/sync.go:2638`) / `syncTablesInParallel.func1()`
       (`mlwh/sync.go:2462`), against a previous write from another table's
       goroutine on the same path.
+    - Fixed in `mlwh/cache.go` and `mlwh/sync.go`: a `syncReportMu` mutex on
+      `Client` serialises the write in `emitSyncReport`, and the
+      `SetSyncReportWriter` doc comment says the writer need not be safe for
+      concurrent use.
+    - Regression test `TestClientSyncReportWriterNeedNotBeConcurrencySafe`
+      (`mlwh/sync_test.go`) passes a plain `strings.Builder` and syncs every
+      supported table in parallel, then asserts one well-formed report line
+      per table. Before the fix it failed 10/10 under `-race`; with only the
+      lock removed it fails 20/20. The B1.1 five-table fixture moved into
+      `openFiveTableSyncTestSourceDB` with unchanged assertions.
