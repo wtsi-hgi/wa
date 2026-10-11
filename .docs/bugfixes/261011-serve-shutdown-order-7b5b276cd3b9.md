@@ -125,3 +125,40 @@
       behaviour is unchanged. The regression tests send an incomplete
       request header to each command's server, with the timeout shortened
       to 150 ms, and assert that the server closes the connection.
+
+- [x] After rebasing onto `origin/develop` at
+      `a6d0876c6fba678217e4d441c5d42f5342e1d888` (which adds #39's usage
+      store), no test proves that `wa mlwh serve` keeps its usage store open
+      until in-flight requests finish. `RunE` defers `usageStore.Close()`,
+      and the usage middleware records each event after its handler returns,
+      so a request still in flight when the store closes loses its usage row
+      (`Record` after `Close` is a no-op).
+    - Source: queue owner request after the rebase: confirm the shutdown fix
+      covers the usage store close and add a cheap command-level test.
+    - Red command (exit 1 on 3 of 3 runs at `a6d0876` with only the new test
+      added, and 3 of 3 runs on this branch with `<-shutdownDone` removed
+      from `serveHTTPUntilCancelled`):
+      `CGO_ENABLED=1 go test -tags netgo --count 1 -run TestMLWHServeKeepsUsageStoreOpenForInFlightRequests ./cmd/`
+
+        ```text
+        Line 129:
+        Expected: false
+        Actual:   true
+        --- FAIL: TestMLWHServeKeepsUsageStoreOpenForInFlightRequests (0.19s)
+        ```
+
+        Line 129 is the `returnedEarly` assertion in the test file as added
+        alone at `a6d0876` (line 217 in the committed file). The command
+        returned while the request was still held. With that
+        assertion disabled at `a6d0876`, the row check failed too
+        (`Expected: 1`, `Actual: 0`): the in-flight request's usage row was
+        lost.
+
+    - Files: `cmd/mlwh_serve_shutdown_test.go`.
+    - Approach: test only; the existing `serveHTTPUntilCancelled` wait
+      already covers the usage store, because `RunE` closes it in a deferred
+      call that runs only after `startMLWHServeAuthServer` returns. The
+      regression test runs the real command with `--usage-db`, holds a
+      counted `GET /hold` in an engine-level middleware across the cancel,
+      and asserts that the command returns only after the request finishes
+      and that exactly one usage row, for `/hold`, is persisted.

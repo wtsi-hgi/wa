@@ -27,10 +27,12 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -122,6 +124,109 @@ func TestMLWHServeStartHTTPWaitsForInFlightRequests(t *testing.T) {
 		convey.So(returnedEarly, convey.ShouldBeFalse)
 		convey.So(returnedBeforeHandlerFinished.Load(), convey.ShouldBeFalse)
 		convey.So(<-responded, convey.ShouldBeNil)
+	})
+}
+
+func TestMLWHServeKeepsUsageStoreOpenForInFlightRequests(t *testing.T) {
+	originalNewAuthServer := mlwhServeNewAuthServer
+	t.Cleanup(func() { mlwhServeNewAuthServer = originalNewAuthServer })
+
+	convey.Convey("Given plain mlwh serve with --usage-db and a counted request in flight, when the command context is cancelled, then the command returns only after the request finishes and its usage row is persisted", t, func() {
+		entered := make(chan struct{})
+		enterOnce := sync.OnceFunc(func() { close(entered) })
+		release := make(chan struct{})
+		releaseHandler := sync.OnceFunc(func() { close(release) })
+		defer releaseHandler()
+
+		mlwhServeNewAuthServer = func(logWriter io.Writer) mlwhServeAuthServer {
+			authServer := &mlwhServeGasAuthServer{Server: gas.New(logWriter)}
+			authServer.Router().Use(func(c *gin.Context) {
+				if c.Request.URL.Path == "/hold" {
+					enterOnce()
+					<-release
+				}
+
+				c.Next()
+			})
+
+			return authServer
+		}
+
+		stateDir := t.TempDir()
+		dbPath := filepath.Join(stateDir, "u.sqlite")
+		baseURL, stop := startMLWHServeEndToEndForTest(t, stateDir, "--usage-db", dbPath)
+
+		type holdResponse struct {
+			status int
+			err    error
+		}
+
+		responded := make(chan holdResponse, 1)
+		go func() {
+			request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/hold", nil)
+			if err != nil {
+				responded <- holdResponse{err: err}
+
+				return
+			}
+			request.Header.Set("User-Agent", "wa-cli/x")
+
+			response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
+			if err != nil {
+				responded <- holdResponse{err: err}
+
+				return
+			}
+			_ = response.Body.Close()
+			responded <- holdResponse{status: response.StatusCode}
+		}()
+
+		handlerReached := false
+		select {
+		case <-entered:
+			handlerReached = true
+		case <-time.After(5 * time.Second):
+		}
+		convey.So(handlerReached, convey.ShouldBeTrue)
+
+		stopped := make(chan error, 1)
+		go func() { stopped <- stop() }()
+
+		var stopErr error
+		returnedEarly := false
+		select {
+		case stopErr = <-stopped:
+			returnedEarly = true
+		case <-time.After(500 * time.Millisecond):
+		}
+
+		releaseHandler()
+
+		if !returnedEarly {
+			stopErr = <-stopped
+		}
+
+		var response holdResponse
+		select {
+		case response = <-responded:
+		case <-time.After(5 * time.Second):
+			response.err = context.DeadlineExceeded
+		}
+
+		convey.So(stopErr, convey.ShouldBeNil)
+		convey.So(returnedEarly, convey.ShouldBeFalse)
+		convey.So(response.err, convey.ShouldBeNil)
+		convey.So(response.status, convey.ShouldEqual, http.StatusNotFound)
+
+		db, err := sql.Open("sqlite", dbPath)
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		var rows, holdRows int
+		convey.So(db.QueryRow("SELECT COUNT(*) FROM usage_requests").Scan(&rows), convey.ShouldBeNil)
+		convey.So(db.QueryRow("SELECT COUNT(*) FROM usage_requests WHERE path = '/hold'").Scan(&holdRows), convey.ShouldBeNil)
+		convey.So(holdRows, convey.ShouldEqual, 1)
+		convey.So(rows, convey.ShouldEqual, 1)
 	})
 }
 
