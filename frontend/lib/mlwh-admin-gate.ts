@@ -1,5 +1,5 @@
 import { currentSession } from "@/app/(results)/auth/actions";
-import { isFeedbackAdmin, readMLWHServerToken } from "@/lib/feedback-admin";
+import { isMLWHAdmin, readMLWHServerToken } from "@/lib/feedback-admin";
 
 // MLWHAdminAuth is what an admin request to wa needs from the gate: the MLWH
 // server token and the session username, sent as the usage identity.
@@ -24,7 +24,7 @@ export async function authorizeMLWHAdmin<T>(
         return { status: "unauthenticated" };
     }
 
-    if (!isFeedbackAdmin(session.username)) {
+    if (!isMLWHAdmin(session.username)) {
         return { status: "forbidden" };
     }
 
