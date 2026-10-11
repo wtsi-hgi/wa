@@ -42,11 +42,10 @@ the whole path after submitting a fresh report:
    `08-admin-list-after-ack.json`.
 
 `node $SKILL/scripts/drive-menu-after-login.mjs "$RUN"` (exit 0, `PASS`)
-checks that the `Feedback` item is in the menu opened the moment login
-finishes, with the post-login route refresh and `/api/auth/refresh` held
-back. Step 2 above waits
-for the item, so it cannot catch a late link. Evidence:
-`menu-after-login.png`.
+checks that the `Feedback` and `Usage` items are in the menu opened the
+moment login finishes, with the post-login route refresh and
+`/api/auth/refresh` held back. Step 2 above waits for the item, so it cannot
+catch a late link. Evidence: `menu-after-login.png`.
 
 Delete is not in the script. To drive it, click `Delete` on a card and
 accept the `window.confirm` dialog (`page.once("dialog", d => d.accept())`).

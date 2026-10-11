@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Drive the account menu straight after a client-side login and assert the
-// admin links are already there. Logs in as the server owner (always a
-// feedback admin), opens the account menu as soon as its button appears, and
-// reads the menu items at once. The route refresh (RSC fetch) and the browser
+// admin links (Feedback and Usage) are already there. Logs in as the server
+// owner (always an MLWH admin), opens the account menu as soon as its button
+// appears, and reads the menu items at once. The route refresh (RSC fetch) and the browser
 // session refresh (POST /api/auth/refresh) that follow login are both held
 // back for WA_VERIFY_REFRESH_DELAY_MS (default 2000), so the menu can only
 // get its links from the login result itself. The login server action is not
@@ -86,9 +86,9 @@ try {
         path: path.join(evidence, "menu-after-login.png"),
     });
     console.log(`menu items right after login: ${JSON.stringify(labels)}`);
-    ok = labels.includes("Feedback");
+    ok = labels.includes("Feedback") && labels.includes("Usage");
     console.log(
-        `${ok ? "PASS" : "FAIL"} account menu shows Feedback straight after login`,
+        `${ok ? "PASS" : "FAIL"} account menu shows Feedback and Usage straight after login`,
     );
 } catch (error) {
     await page

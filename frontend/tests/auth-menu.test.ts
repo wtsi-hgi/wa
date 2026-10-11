@@ -772,7 +772,7 @@ describe("E5 auth menu feedback link", () => {
         expect(navigationMocks.refresh).not.toHaveBeenCalled();
     });
 
-    it("shows the Feedback link to an admin as soon as login completes, before the layout re-renders", async () => {
+    it("shows the Feedback and Usage links to an admin as soon as login completes, before the layout re-renders", async () => {
         const fetchMock = stubPendingSessionRefresh();
         authActionMocks.loginAction.mockResolvedValueOnce({
             authenticated: true,
@@ -794,6 +794,16 @@ describe("E5 auth menu feedback link", () => {
                 .getAllByRole("menuitem")
                 .map((item) => item.textContent),
         ).toEqual(["Feedback", "Usage", "Log out"]);
+        expect(
+            within(menu)
+                .getByRole("menuitem", { name: "Feedback" })
+                .getAttribute("href"),
+        ).toBe("/feedback");
+        expect(
+            within(menu)
+                .getByRole("menuitem", { name: "Usage" })
+                .getAttribute("href"),
+        ).toBe("/usage");
         expect(navigationMocks.refresh).toHaveBeenCalledOnce();
         expect(fetchMock).toHaveBeenCalledWith(
             "/api/auth/refresh",
@@ -801,7 +811,7 @@ describe("E5 auth menu feedback link", () => {
         );
     });
 
-    it("hides the Feedback link from a non-admin straight after login", async () => {
+    it("hides the Feedback and Usage links from a non-admin straight after login", async () => {
         const fetchMock = stubPendingSessionRefresh();
         authActionMocks.loginAction.mockResolvedValueOnce({
             authenticated: true,
@@ -823,6 +833,8 @@ describe("E5 auth menu feedback link", () => {
                 .getAllByRole("menuitem")
                 .map((item) => item.textContent),
         ).toEqual(["Log out"]);
+        expect(document.querySelector('a[href="/feedback"]')).toBeNull();
+        expect(document.querySelector('a[href="/usage"]')).toBeNull();
         expect(fetchMock).toHaveBeenCalledWith(
             "/api/auth/refresh",
             expect.any(Object),
