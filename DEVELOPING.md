@@ -153,8 +153,10 @@ The `make` recipes, `wa` startup path, and `run-dev.sh` enforce the following:
   directory, so run-dev keeps its dev TLS key and certificate, test state,
   built binaries, `wa` link, and ephemeral DBs there instead of in `.tmp/`.
   They also set `WA_RUN_DEV_LOG_DIR` to a `logs` directory inside it, so the
-  service logs stay out of `logs/`. They leave a stack running from the same
-  checkout alone.
+  service logs stay out of `logs/`. They also give each test its own
+  `XDG_STATE_HOME`, so a real results server's token, which go-authserver
+  deletes on shutdown, never touches the caller's state directory or `$HOME`.
+  They leave a stack running from the same checkout alone.
 - Playwright does the same for its `run-dev.sh` stack with `.tmp/e2e/`,
   which also holds its port-allocation cache and the e2e helpers' CLI state.
 - `run-dev.sh --mode dev` and `--mode prod` use the persistent
