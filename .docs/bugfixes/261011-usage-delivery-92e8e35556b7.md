@@ -8,18 +8,19 @@
 
 ## Deliver queue
 
-| Branch                   | Worktree              | PR                                            | Target    | Depends on | Head      | Status                                         | Waits on                  | Next action                         |
-| ------------------------ | --------------------- | --------------------------------------------- | --------- | ---------- | --------- | ---------------------------------------------- | ------------------------- | ----------------------------------- |
-| `usage`                  | `.`                   | [#39](https://github.com/wtsi-hgi/wa/pull/39) | `develop` | none       | `e4d3fa6` | ready: CI green, Copilot 0 findings, mergeable | user merge                | user merges #39, then tag `v0.11.0` |
-| `syncrace-bd100063`      | `../wa-syncrace`      | none                                          | `develop` | none       | `18cf0b6` | recorded                                       | owner completion boundary | reproduce and fix via bugfix        |
-| `resultswal-867e6b0f`    | `../wa-resultswal`    | none                                          | `develop` | none       | `1c8afaa` | recorded                                       | owner completion boundary | reproduce and fix via bugfix        |
-| `frontendtsc-69d13e03`   | `../wa-frontendtsc`   | none                                          | `develop` | none       | `87fd1d6` | recorded                                       | owner completion boundary | reproduce and fix via bugfix        |
-| `verifyrev-45b2c5f7`     | `../wa-verifyrev`     | none                                          | `develop` | none       | `2b7eae0` | recorded                                       | owner completion boundary | reproduce and fix via bugfix        |
-| `menurace-39ecd8d1`      | `../wa-menurace`      | none                                          | `develop` | none       | `b7565f2` | recorded                                       | owner completion boundary | reproduce and fix via bugfix        |
-| `serveshutdown-cf1cb518` | `../wa-serveshutdown` | none                                          | `develop` | none       | `a5e6c44` | recorded                                       | owner completion boundary | reproduce and fix via bugfix        |
-| `rundevstate-64ed3f75`   | `../wa-rundevstate`   | none                                          | `develop` | none       | `3281ef9` | recorded                                       | owner completion boundary | reproduce and fix via bugfix        |
-| `pnpmfilter-90a8f24a`    | `../wa-pnpmfilter`    | none                                          | `develop` | none       | `c469daa` | recorded                                       | owner completion boundary | reproduce and fix via bugfix        |
-| `sqlitedsn-723fb158`     | `../wa-sqlitedsn`     | none                                          | `develop` | none       | `a1d73c4` | fixing via bugfix, high priority               | owner completion boundary | reproduce and fix via bugfix first  |
+| Branch                   | Worktree              | PR                                            | Target    | Depends on   | Head      | Status                           | Waits on                  | Next action                            |
+| ------------------------ | --------------------- | --------------------------------------------- | --------- | ------------ | --------- | -------------------------------- | ------------------------- | -------------------------------------- |
+| `usage`                  | removed after merge   | [#39](https://github.com/wtsi-hgi/wa/pull/39) | `develop` | none         | `879dcf8` | merged as `5e851cd`              | none                      | done; user tags `v0.11.0`              |
+| `syncrace-bd100063`      | `../wa-syncrace`      | none                                          | `develop` | none         | `18cf0b6` | recorded                         | owner completion boundary | reproduce and fix via bugfix           |
+| `resultswal-867e6b0f`    | `../wa-resultswal`    | [#42](https://github.com/wtsi-hgi/wa/pull/42) | `develop` | #39 (merged) | `af62e47` | open, needs rebase               | #41 merge                 | rebase, recheck                        |
+| `frontendtsc-69d13e03`   | `../wa-frontendtsc`   | [#43](https://github.com/wtsi-hgi/wa/pull/43) | `develop` | #39 (merged) | `38799d5` | open, needs recheck              | #42 merge                 | rebase, recheck typecheck on #39 code  |
+| `verifyrev-45b2c5f7`     | `../wa-verifyrev`     | none                                          | `develop` | #39 (merged) | `ca4439c` | 2 of 3 items fixed; held for #39 | rebase                    | rebase, fix usage recipe item, publish |
+| `menurace-39ecd8d1`      | `../wa-menurace`      | none                                          | `develop` | none         | `b7565f2` | fixing via bugfix                | bugfix                    | publish when fixed                     |
+| `serveshutdown-cf1cb518` | `../wa-serveshutdown` | [#41](https://github.com/wtsi-hgi/wa/pull/41) | `develop` | #39 (merged) | `135a823` | open, needs rebase               | #40 merge                 | rebase, recheck                        |
+| `rundevstate-64ed3f75`   | `../wa-rundevstate`   | none                                          | `develop` | none         | `3281ef9` | recorded                         | owner completion boundary | reproduce and fix via bugfix           |
+| `pnpmfilter-90a8f24a`    | `../wa-pnpmfilter`    | none                                          | `develop` | none         | `c469daa` | recorded                         | owner completion boundary | reproduce and fix via bugfix           |
+| `filecache-00de9195`     | `../wa-filecache`     | none                                          | `develop` | #40          | `c0ed799` | recorded, low priority           | #40 merge                 | confirm and fix via bugfix             |
+| `sqlitedsn-723fb158`     | `../wa-sqlitedsn`     | [#40](https://github.com/wtsi-hgi/wa/pull/40) | `develop` | #39 (merged) | rebased   | recheck after rebase             | CI, Copilot               | ask user to merge #40                  |
 
 ## Incidental handoffs
 
@@ -74,3 +75,7 @@
     - Branch: `sqlitedsn-723fb158`
     - Checklist: `.docs/bugfixes/261011-sqlite-dsn-path-escaping-39fc0c63d3ad.md`
     - Entry commit: `a1d73c49b1ec721bbe0ee84b2b4140993882efa9`
+- PR #40 bugfix: `file:` MLWH cache paths are opened as literal file names.
+    - Branch: `filecache-00de9195`
+    - Checklist: `.docs/bugfixes/261011-file-uri-cache-path-*.md`
+    - Entry commit: `c0ed799222bf529d5619ac3d91aad162d76dba55`
