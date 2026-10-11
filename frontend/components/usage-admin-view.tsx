@@ -69,22 +69,23 @@ function formatMs(ms: number): string {
 }
 
 // formatCategories lists the non-zero categories of byCategory in category
-// order, as "<label> <n>" joined by ", ".
+// order, as "<label> <n>" joined by ", ". <n> is a plain integer: a thousands
+// separator would be ambiguous with the ", " join.
 function formatCategories(byCategory: CountMap): string {
     return usageCategorySchema.options
         .filter((category) => (byCategory[category] ?? 0) > 0)
         .map(
-            (category) =>
-                `${categoryLabels[category]} ${formatCount(byCategory[category])}`,
+            (category) => `${categoryLabels[category]} ${byCategory[category]}`,
         )
         .join(", ");
 }
 
-// formatCounts lists every entry of counts in key order as "<key> <n>".
+// formatCounts lists every entry of counts in key order as "<key> <n>" joined
+// by ", ", with <n> a plain integer like formatCategories.
 function formatCounts(counts: CountMap): string {
     return Object.entries(counts)
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        .map(([key, value]) => `${key} ${formatCount(value)}`)
+        .map(([key, value]) => `${key} ${value}`)
         .join(", ");
 }
 

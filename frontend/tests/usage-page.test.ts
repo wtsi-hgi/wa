@@ -567,6 +567,44 @@ describe("E4 usage admin view", () => {
         ]);
     });
 
+    it("writes counts in joined map cells without thousands separators", async () => {
+        await renderView(
+            a3Summary({
+                unmatched: [
+                    {
+                        method: "GET",
+                        path: "/bogus",
+                        requests: 1239,
+                        by_category: { web: 1234, cli: 5 },
+                        by_tool: { mlwh_bogus: 1234, mlwh_other: 5 },
+                        by_agent: { "claude-code/2.1.0": 1234, curl: 5 },
+                    },
+                ],
+                users: [
+                    {
+                        name: "carol",
+                        by_ip: false,
+                        requests: 1239,
+                        by_category: { web: 1234, cli: 5 },
+                    },
+                ],
+            }),
+            "24h",
+        );
+
+        expect(rowCells(section("Unmatched paths"), "GET")).toEqual([
+            "GET",
+            "/bogus",
+            "1,239",
+            "CLI 5, Web 1234",
+            "mlwh_bogus 1234, mlwh_other 5",
+            "claude-code/2.1.0 1234, curl 5",
+        ]);
+        expect(rowCells(section("Top users (self-declared)"), "carol")).toEqual(
+            ["carol", "1,239", "CLI 5, Web 1234"],
+        );
+    });
+
     it("lists categories cells in category order, not label order", async () => {
         await renderView(
             a3Summary({
