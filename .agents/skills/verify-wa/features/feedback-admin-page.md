@@ -19,7 +19,7 @@ sees the token.
 
 ## How To Drive It
 
-`node $SKILL/scripts/drive-feedback.mjs "$RUN"` (exit 0, `ALL PASS`) runs
+`node "$SKILL/scripts/drive-feedback.mjs" "$RUN"` (exit 0, `ALL PASS`) runs
 the whole path after submitting a fresh report:
 
 1. Open `$FRONTEND_URL`, click `Log in`, fill `input[name=username]` and

@@ -83,7 +83,7 @@
       covers the verify-wa scripts, and a Go test in `cmd/` would couple
       product tests to agent tooling.
 
-- [ ] verify-wa docs break or mislead with unusual checkout paths:
+- [x] verify-wa docs break or mislead with unusual checkout paths:
       `features/results-cli.md` sets `C="--server $RESULTS_URL --cert $CERT"`
       and uses `$C` unquoted, so a `CERT` path with a space splits; lines
       26-30 run `$RUN/wa results ...` unquoted, so a checkout path with a space
@@ -128,3 +128,22 @@
         The `node $SKILL/...` spans exit 0 only because the stub `node`
         accepts the split words; its argv log shows the script path split
         in two.
+
+    - Review added one more case to this item: the `SKILL.md` launch block
+      assigned `SKILL=<checkout>/.agents/skills/verify-wa` unquoted. `red2.sh`
+      also runs each `SKILL.md` line matching `^"?SKILL=` with `<checkout>`
+      filled in and requires `SKILL` to equal the path; before the fix that
+      check fails with `SKILL: unbound variable`, exit 127. The harness also
+      copies `scripts/*.mjs` so a correctly quoted `drive-feedback.mjs` path
+      exists in the temp repo.
+    - Fixed: the recipes quote every command path (`"$RUN/wa"`,
+      `"$SKILL/scripts/..."`, `"$STATE_HOME/..."`, `SKILL="<checkout>/..."`),
+      and `results-cli.md` passes the server flags as the array
+      `C=(--server "$RESULTS_URL" --cert "$CERT")`, expanded `"${C[@]}"`.
+      `SKILL.md` now lists what `launch.sh` writes to `stack.env` and says the
+      run-dev PID is in `$RUN/run-dev.pid`. Files under
+      `.agents/skills/verify-wa/`: `SKILL.md`, `features/results-cli.md`,
+      `features/feedback-admin-page.md`, `features/mlwh-feedback-submit.md`,
+      `features/mlwh-query-api.md`. `red2.sh` now ends `ALL OK` and exits 0
+      for `wa repo` and `plainrepo`; `red.sh` still prints `OK`. No committed
+      regression test, for the same reason as the item above.

@@ -14,7 +14,7 @@ for study-based search.
 - HTTP: `$MLWH_URL/<route>`. The full contract is `GET /openapi.json`
   (`info.version` is the MLWH API version, 1.10.0 at the time of writing) and
   the generated `MLWH_API_REFERENCE.md`.
-- CLI: `WA_MLWH_SERVER_URL=$MLWH_URL $RUN/wa mlwh <subcommand>`, or
+- CLI: `WA_MLWH_SERVER_URL=$MLWH_URL "$RUN/wa" mlwh <subcommand>`, or
   `--server $MLWH_URL`.
 
 ## How To Drive It
@@ -30,7 +30,7 @@ are 0.
    `/classify/WTSI_wEMB10524782` (`"kind":"sanger_sample_name"`),
    `/resolve/study/6568`, `/programmes`, `/freshness`, and `/openapi.json`.
    Save bodies as `$RUN/evidence/20-mlwh_<route>.json`.
-2. CLI: `WA_MLWH_SERVER_URL=$MLWH_URL $RUN/wa mlwh info 6568 --type study`
+2. CLI: `WA_MLWH_SERVER_URL=$MLWH_URL "$RUN/wa" mlwh info 6568 --type study`
    exits 0 and prints a `Study  6568` card with name, accession
    `EGAS00001006568`, and 1 sample. Add `--json` for one object.
    `wa mlwh studies --programme "Human genetics"` lists study 6568.

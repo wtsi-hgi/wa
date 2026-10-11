@@ -23,7 +23,7 @@ tool calls, so set both at the top of every command.
 ## Launch
 
 ```bash
-SKILL=<checkout>/.agents/skills/verify-wa
+SKILL="<checkout>/.agents/skills/verify-wa"
 "$SKILL/scripts/launch.sh"          # last line: RUN=<checkout>/.tmp/verify-wa/<UTC stamp>
 ```
 
@@ -35,8 +35,10 @@ SKILL=<checkout>/.agents/skills/verify-wa
 - It installs `frontend/node_modules` with `pnpm install --frozen-lockfile`
   when missing, builds `$RUN/wa`, and waits for run-dev's
   `Development environment is ready.` line (first run: about a minute).
-- URLs, token dir, cert, PID, and PGID land in `$RUN/stack.env`; service logs
-  in `$RUN/logs/`, run-dev output in `$RUN/run-dev.out`.
+- `$RUN/stack.env` holds `REPO`, `REVISION`, the URLs, `SPARE_PORT`,
+  `STATE_HOME` (token dir), `CERT` and, once ready, `PGID`. The run-dev PID is
+  in `$RUN/run-dev.pid`, service logs in `$RUN/logs/`, run-dev output in
+  `$RUN/run-dev.out`.
 - Ready means `launch.sh` exited 0. Non-zero: read the tail it prints, run
   Cleanup, fix, relaunch.
 
