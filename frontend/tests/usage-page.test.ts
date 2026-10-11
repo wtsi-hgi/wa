@@ -403,6 +403,19 @@ describe("E4 usage admin view", () => {
                 (classifyBars[8].firstElementChild as HTMLElement).style.height,
             ),
         ).toBe(0);
+
+        // Category rows read each period's by_category count.
+        expect(rowCells(trend, "CLI").slice(0, 3)).toEqual(["CLI", "3", "1"]);
+        const cliHeights = Array.from(
+            within(trend)
+                .getByRole("img", {
+                    name: "CLI: latest 3, previous 1, 10 periods",
+                })
+                .querySelectorAll("[title]"),
+        ).map((bar) => (bar.firstElementChild as HTMLElement).style.height);
+        expect(cliHeights[9]).toBe("100%");
+        expect(parseFloat(cliHeights[8])).toBeCloseTo(100 / 3, 5);
+        expect(parseFloat(cliHeights[1])).toBe(0);
     });
 
     it("formats Trend bar title counts like the table cells", async () => {
