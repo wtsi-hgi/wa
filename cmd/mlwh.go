@@ -138,19 +138,43 @@ func (s *mlwhServeGasAuthServer) StartHTTP(ctx context.Context, addr string) err
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 
+	serveDone := make(chan struct{})
+	shutdownDone := make(chan struct{})
+
 	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
+		defer close(shutdownDone)
+
+		shutdownMLWHServeHTTPOnCancel(ctx, serveDone, httpServer)
 	}()
 
 	err = httpServer.Serve(listener)
+	close(serveDone)
+	<-shutdownDone
+
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
 
 	return err
+}
+
+// shutdownMLWHServeHTTPOnCancel gracefully shuts httpServer down once ctx is
+// cancelled, returning when in-flight requests have drained or, after the
+// shutdown timeout, once remaining connections have been closed. It returns
+// without shutting down if serveDone closes first.
+func shutdownMLWHServeHTTPOnCancel(ctx context.Context, serveDone <-chan struct{}, httpServer *http.Server) {
+	select {
+	case <-ctx.Done():
+	case <-serveDone:
+		return
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		_ = httpServer.Close()
+	}
 }
 
 type mlwhServeConfig struct {
