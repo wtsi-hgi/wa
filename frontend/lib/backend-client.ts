@@ -8,6 +8,7 @@ import {
     BackendRequestError,
     BackendUnavailableError,
 } from "@/lib/backend-shared";
+import { mlwhWebUserAgent } from "@/lib/usage-identity";
 
 export {
     BackendRequestError,
@@ -292,7 +293,14 @@ export async function mlwhJson<T>(
     schema: ZodType<T>,
     options?: BackendFetchOptions,
 ): Promise<T> {
-    return backendJson("mlwh", "WA_MLWH_BACKEND_URL", path, schema, options);
+    const headers = new Headers(options?.headers);
+
+    headers.set("user-agent", mlwhWebUserAgent);
+
+    return backendJson("mlwh", "WA_MLWH_BACKEND_URL", path, schema, {
+        ...options,
+        headers,
+    });
 }
 
 export async function resultsRaw(

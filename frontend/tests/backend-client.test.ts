@@ -267,7 +267,9 @@ describe("H1 dual backend client", () => {
 
         expect(seenResultsPaths).toEqual(["/results/stats"]);
         expect(fetchMock).toHaveBeenCalledTimes(1);
-        expect(fetchMock).toHaveBeenCalledWith("https://mlwh.example/studies");
+        expect(fetchMock).toHaveBeenCalledWith("https://mlwh.example/studies", {
+            headers: { "user-agent": "wa-web" },
+        });
     });
 
     it("throws BackendUnavailableError when the MLWH backend URL is not configured", async () => {
@@ -293,7 +295,12 @@ describe("H1 dual backend client", () => {
         await expect(mlwhJson("/studies", studiesSchema)).resolves.toEqual([
             { id: "study-1" },
         ]);
-        expect(fetchMock).toHaveBeenCalledWith("http://localhost:8091/studies");
+        expect(fetchMock).toHaveBeenCalledWith(
+            "http://localhost:8091/studies",
+            {
+                headers: { "user-agent": "wa-web" },
+            },
+        );
     });
 
     it("preserves a path prefix in the configured MLWH backend URL", async () => {
@@ -311,7 +318,12 @@ describe("H1 dual backend client", () => {
         await expect(mlwhJson("/studies", studiesSchema)).resolves.toEqual([
             { id: "study-1" },
         ]);
-        expect(fetchMock).toHaveBeenCalledWith("https://host/mlwh-api/studies");
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://host/mlwh-api/studies",
+            {
+                headers: { "user-agent": "wa-web" },
+            },
+        );
     });
 
     it("throws BackendRequestError with parsed MLWH error envelopes", async () => {
@@ -362,7 +374,7 @@ describe("H1 dual backend client", () => {
             "http://localhost:8091/feedback",
             {
                 method: "PATCH",
-                headers: { authorization: "Bearer T" },
+                headers: { authorization: "Bearer T", "user-agent": "wa-web" },
                 body: "{}",
             },
         );
@@ -386,9 +398,81 @@ describe("H1 dual backend client", () => {
             "http://localhost:8091/feedback/7",
             {
                 method: "DELETE",
-                headers: { authorization: "Bearer T" },
+                headers: { authorization: "Bearer T", "user-agent": "wa-web" },
             },
         );
+    });
+
+    it("always sends user-agent wa-web on MLWH requests (E1 test 8)", async () => {
+        process.env.WA_MLWH_BACKEND_URL = "http://localhost:8091";
+
+        const fetchMock = vi
+            .fn()
+            .mockImplementation(async () =>
+                Response.json({ ok: true }, { status: 200 }),
+            );
+        vi.stubGlobal("fetch", fetchMock);
+        const schema = z.object({ ok: z.boolean() });
+
+        await mlwhJson("/studies", schema);
+        await mlwhJson("/studies", schema, {
+            headers: { "user-agent": "x", "x-other": "kept" },
+        });
+
+        const sent = fetchMock.mock.calls.map(
+            ([, init]) => new Headers((init as RequestInit).headers),
+        );
+        expect(sent.map((headers) => headers.get("user-agent"))).toEqual([
+            "wa-web",
+            "wa-web",
+        ]);
+        expect(sent[1]?.get("x-other")).toBe("kept");
+    });
+
+    it("sends only the User-Agent for the shared studies cache (E1 test 9)", async () => {
+        process.env.WA_MLWH_BACKEND_URL = "http://localhost:8091";
+        vi.resetModules();
+        vi.doMock("next/headers", () => ({
+            cookies: async () => ({
+                get: (name: string) =>
+                    name === "wa_usage_session"
+                        ? { name, value: "abc" }
+                        : undefined,
+            }),
+        }));
+        vi.doMock("@/app/(results)/auth/actions", () => ({
+            currentSession: async () => ({
+                authenticated: true,
+                username: "alice",
+            }),
+        }));
+
+        const fetchMock = vi.fn().mockResolvedValue(
+            Response.json([{ id_study_lims: "1", name: "S" }], {
+                status: 200,
+            }),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+
+        try {
+            const { getStudies, resetStudiesCache } =
+                await import("@/lib/studies-cache");
+            resetStudiesCache();
+
+            await getStudies();
+        } finally {
+            vi.doUnmock("next/headers");
+            vi.doUnmock("@/app/(results)/auth/actions");
+            vi.resetModules();
+        }
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const headers = new Headers(
+            (fetchMock.mock.calls[0]?.[1] as RequestInit).headers,
+        );
+        expect(headers.get("user-agent")).toBe("wa-web");
+        expect(headers.has("x-wa-client-id")).toBe(false);
+        expect(headers.has("x-wa-client-user")).toBe(false);
     });
 
     it("does not reference retired frontend backend client names", async () => {

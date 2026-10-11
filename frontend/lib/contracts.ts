@@ -541,3 +541,107 @@ export const feedbackListInputSchema = z.object({
     offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 });
 export type FeedbackListInput = z.infer<typeof feedbackListInputSchema>;
+
+// Usage summary from wa Go GET /usage (mlwh/usage_summary.go UsageSummary).
+export const usageWindowSchema = z.enum(["24h", "7d", "30d", "all"]);
+export type UsageWindow = z.infer<typeof usageWindowSchema>;
+export const usageCategorySchema = z.enum([
+    "cli",
+    "mcp",
+    "web",
+    "results_server",
+    "mlwhdiff_server",
+    "other",
+]);
+export type UsageCategory = z.infer<typeof usageCategorySchema>;
+const countMap = z.record(z.string(), z.number().int().nonnegative());
+const count = z.number().int().nonnegative();
+export const usageSummarySchema = z.object({
+    window: usageWindowSchema,
+    generated_at: z.string(),
+    window_start: z.string(),
+    earliest_record: z.string(),
+    retention_days: z.number().int().positive(),
+    dropped_events: count,
+    totals: z.object({
+        requests: count,
+        errors: count,
+        error_rate: z.number(),
+        sessions: count,
+        ip_clients: count,
+        users: count,
+    }),
+    categories: z.array(
+        z.object({
+            category: usageCategorySchema,
+            requests: count,
+            errors: count,
+            error_rate: z.number(),
+            sessions: count,
+            ip_clients: count,
+            users: count,
+            requests_per_session_median: count,
+            requests_per_session_max: count,
+        }),
+    ),
+    endpoints: z.array(
+        z.object({
+            method: z.string(),
+            route: z.string(),
+            requests: count,
+            errors: count,
+            error_rate: z.number(),
+            p50_ms: z.number(),
+            p95_ms: z.number(),
+            by_category: countMap,
+        }),
+    ),
+    mcp_tools: z.array(z.object({ value: z.string(), requests: count })),
+    mcp_agents: z.array(z.object({ value: z.string(), requests: count })),
+    other_user_agents: z.array(
+        z.object({ value: z.string(), requests: count }),
+    ),
+    unmatched: z.array(
+        z.object({
+            method: z.string(),
+            path: z.string(),
+            requests: count,
+            by_category: countMap,
+            by_tool: countMap,
+            by_agent: countMap,
+        }),
+    ),
+    users: z.array(
+        z.object({
+            name: z.string(),
+            by_ip: z.boolean(),
+            requests: count,
+            by_category: countMap,
+        }),
+    ),
+    clients: z.array(
+        z.object({
+            name: z.string(),
+            by_ip: z.boolean(),
+            requests: count,
+            by_category: countMap,
+        }),
+    ),
+    days: z.array(
+        z.object({
+            date: z.string(),
+            requests: count,
+            by_category: countMap,
+        }),
+    ),
+    series: z.array(
+        z.object({
+            start: z.string(),
+            end: z.string(),
+            requests: count,
+            by_category: countMap,
+            by_endpoint: countMap,
+        }),
+    ),
+});
+export type UsageSummary = z.infer<typeof usageSummarySchema>;

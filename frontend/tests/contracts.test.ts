@@ -21,6 +21,8 @@ import {
     studySchema,
 } from "@/lib/contracts";
 
+import usageSummaryA3Fixture from "./fixtures/usage-summary-a3-24h.json";
+
 type ContractsModule = typeof import("@/lib/contracts");
 
 describe("contract schemas", () => {
@@ -1035,6 +1037,54 @@ describe("E1 feedback contracts", () => {
         ]) {
             expect(
                 contracts.feedbackListInputSchema.safeParse(bad).success,
+                JSON.stringify(bad),
+            ).toBe(false);
+        }
+    });
+});
+
+describe("E2 usage contracts", () => {
+    // usageSummaryA3 is the wa Go /usage JSON for spec.md A3 test 1
+    // (fixture F, window 24h).
+    const usageSummaryA3: Record<string, unknown> = usageSummaryA3Fixture;
+
+    it("parses the A3 test 1 usage summary unchanged", () => {
+        expect(contracts.usageSummarySchema.parse(usageSummaryA3)).toEqual(
+            usageSummaryA3,
+        );
+    });
+
+    it("rejects a usage summary with a bad window, bad category or no series", () => {
+        const [firstCategory, ...otherCategories] =
+            usageSummaryA3Fixture.categories as Record<string, unknown>[];
+        const { series: _series, ...withoutSeries } = usageSummaryA3Fixture;
+
+        for (const bad of [
+            { ...usageSummaryA3, window: "1h" },
+            {
+                ...usageSummaryA3,
+                categories: [
+                    { ...firstCategory, category: "bogus" },
+                    ...otherCategories,
+                ],
+            },
+            withoutSeries,
+        ]) {
+            expect(
+                contracts.usageSummarySchema.safeParse(bad).success,
+                JSON.stringify(bad).slice(0, 80),
+            ).toBe(false);
+        }
+    });
+
+    it("accepts only the four usage windows", () => {
+        for (const window of ["24h", "7d", "30d", "all"]) {
+            expect(contracts.usageWindowSchema.parse(window)).toBe(window);
+        }
+
+        for (const bad of ["1h", "", null]) {
+            expect(
+                contracts.usageWindowSchema.safeParse(bad).success,
                 JSON.stringify(bad),
             ).toBe(false);
         }

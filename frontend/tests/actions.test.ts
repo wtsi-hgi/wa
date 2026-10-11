@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EnrichmentResult, IdentifierResult } from "@/lib/contracts";
 
 const originalMlwhBackendUrl = process.env.WA_MLWH_BACKEND_URL;
+// Outside a request scope cookies() and currentSession() fail, so MLWH
+// requests carry only the forced User-Agent.
+const userAgentOnlyInit = { headers: { "user-agent": "wa-web" } };
 
 function jsonResponse(body: unknown, status = 200): Response {
     return Response.json(body, { status });
@@ -169,6 +172,7 @@ describe("A3 MLWH-backed server actions", () => {
         );
         expect(fetchMock).toHaveBeenCalledWith(
             "https://mlwh:9000/classify/6568",
+            userAgentOnlyInit,
         );
     });
 
@@ -186,6 +190,7 @@ describe("A3 MLWH-backed server actions", () => {
         });
         expect(fetchMock).toHaveBeenCalledWith(
             "https://mlwh:9000/classify/7607STDY14643771",
+            userAgentOnlyInit,
         );
     });
 
@@ -211,7 +216,10 @@ describe("A3 MLWH-backed server actions", () => {
             type: "study_id",
             partial: false,
         });
-        expect(fetchMock).toHaveBeenCalledWith("https://mlwh:9000/enrich/6568");
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://mlwh:9000/enrich/6568",
+            userAgentOnlyInit,
+        );
     });
 
     it("preserves BackendRequestError for 502 upstream-impaired responses", async () => {
@@ -239,6 +247,7 @@ describe("A3 MLWH-backed server actions", () => {
         await expect(result).rejects.toBeInstanceOf(BackendRequestError);
         expect(fetchMock).toHaveBeenCalledWith(
             "https://mlwh:9000/enrich/flaky-id",
+            userAgentOnlyInit,
         );
     });
 
@@ -266,6 +275,7 @@ describe("A3 MLWH-backed server actions", () => {
         ]);
         expect(fetchMock).toHaveBeenCalledWith(
             "https://mlwh:9000/study/6568/samples",
+            userAgentOnlyInit,
         );
     });
 });
@@ -306,6 +316,7 @@ describe("A4 study library sample endpoint selection", () => {
         ]);
         expect(fetchMock).toHaveBeenCalledWith(
             "https://mlwh:9000/library/Standard/study/6568/samples",
+            userAgentOnlyInit,
         );
     });
 
@@ -321,6 +332,7 @@ describe("A4 study library sample endpoint selection", () => {
 
         expect(fetchMock).toHaveBeenCalledWith(
             "https://mlwh:9000/library-id/L1/samples",
+            userAgentOnlyInit,
         );
     });
 
@@ -339,6 +351,7 @@ describe("A4 study library sample endpoint selection", () => {
 
         expect(fetchMock).toHaveBeenCalledWith(
             "https://mlwh:9000/library-lims-id/DN1/samples",
+            userAgentOnlyInit,
         );
     });
 });
@@ -461,7 +474,10 @@ describe("H2 enrichIdentifier action", () => {
         ]);
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
-        expect(fetchMock).toHaveBeenCalledWith("https://mlwh:9000/enrich/7607");
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://mlwh:9000/enrich/7607",
+            userAgentOnlyInit,
+        );
         expect(
             results.map((result) => [result.value, result.enrichment?.type]),
         ).toEqual([["7607", "study_id"]]);
@@ -493,5 +509,108 @@ describe("fetchStudies server action", () => {
 
         await expect(fetchStudies()).resolves.toEqual(studiesFixture);
         expect(getStudiesMock).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("E1 MLWH identity headers from results actions", () => {
+    const currentSessionMock = vi.fn();
+    const abcClientId = "ba7816bf8f01cfea414140de5dae2223";
+
+    beforeEach(() => {
+        vi.resetModules();
+        process.env.WA_MLWH_BACKEND_URL = "https://mlwh:9000";
+        currentSessionMock
+            .mockReset()
+            .mockResolvedValue({ authenticated: true, username: "alice" });
+        vi.doMock("next/headers", () => ({
+            cookies: async () => ({
+                get: (name: string) =>
+                    name === "wa_usage_session"
+                        ? { name, value: "abc" }
+                        : undefined,
+            }),
+        }));
+        vi.doMock("@/app/(results)/auth/actions", () => ({
+            currentSession: currentSessionMock,
+        }));
+    });
+
+    afterEach(() => {
+        vi.doUnmock("next/headers");
+        vi.doUnmock("@/app/(results)/auth/actions");
+
+        if (originalMlwhBackendUrl === undefined) {
+            delete process.env.WA_MLWH_BACKEND_URL;
+        } else {
+            process.env.WA_MLWH_BACKEND_URL = originalMlwhBackendUrl;
+        }
+
+        vi.unstubAllGlobals();
+    });
+
+    const identityHeaders = {
+        "user-agent": "wa-web",
+        "x-wa-client-id": abcClientId,
+        "x-wa-client-user": "alice",
+    };
+
+    it("sends the User-Agent, client ID, and user for study samples (test 10)", async () => {
+        const fetchMock = stubFetchResponses(
+            jsonResponse([{ id_sample_lims: "SMP-1", sanger_sample_id: "S" }]),
+        );
+
+        const { fetchStudySamples } = await import("@/app/(results)/actions");
+
+        await fetchStudySamples("S1");
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://mlwh:9000/study/S1/samples",
+            { headers: identityHeaders },
+        );
+    });
+
+    it("sends identity headers from validateIdentifier, enrichIdentifier, and fetchStudyLibrarySamples", async () => {
+        const fetchMock = stubFetchResponses(
+            jsonResponse(mlwhStudyMatchPayload),
+            jsonResponse(enrichmentFixture),
+            jsonResponse(librarySamplesPayload),
+        );
+
+        const {
+            enrichIdentifier,
+            fetchStudyLibrarySamples,
+            validateIdentifier,
+        } = await import("@/app/(results)/actions");
+
+        await validateIdentifier("6568");
+        await enrichIdentifier("6568");
+        await fetchStudyLibrarySamples("6568", "Standard");
+
+        expect(fetchMock.mock.calls).toEqual([
+            ["https://mlwh:9000/classify/6568", { headers: identityHeaders }],
+            ["https://mlwh:9000/enrich/6568", { headers: identityHeaders }],
+            [
+                "https://mlwh:9000/library/Standard/study/6568/samples",
+                { headers: identityHeaders },
+            ],
+        ]);
+    });
+
+    it("computes identity once for a batch of enrichments (test 11)", async () => {
+        const fetchMock = stubFetchResponses(
+            jsonResponse({ code: "not_found", message: "a" }, 404),
+            jsonResponse({ code: "not_found", message: "b" }, 404),
+            jsonResponse({ code: "not_found", message: "c" }, 404),
+        );
+
+        const { enrichIdentifiers } = await import("@/app/(results)/actions");
+
+        await enrichIdentifiers(["a", "b", "c"]);
+
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        for (const [, init] of fetchMock.mock.calls) {
+            expect(init).toEqual({ headers: identityHeaders });
+        }
+        expect(currentSessionMock).toHaveBeenCalledTimes(1);
     });
 });

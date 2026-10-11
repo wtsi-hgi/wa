@@ -39,8 +39,8 @@ per action. Update the existing `backend-client.test.ts` and
 `actions.test.ts` assertions listed in spec.md E1. Tests go in the five
 test files named in spec.md E1. Covering all 12 acceptance tests from E1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.2: E2 - Contracts [parallel with 4.1]
 
@@ -51,8 +51,8 @@ their types to `frontend/lib/contracts.ts`, exactly as in spec.md E2.
 Tests go in `frontend/tests/contracts.test.ts`, with the A3 test 1 JSON as
 a fixture. Covering all 3 acceptance tests from E2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item under the
 `subagents` skill's shared concurrency limits.
@@ -75,8 +75,8 @@ spec.md E3, and never put the token in a returned state. Extracting
 pass unchanged. Tests go in `frontend/tests/usage-actions.test.ts`.
 Depends on items 4.1 and 4.2. Covering all 7 acceptance tests from E3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after item 4.3 is reviewed)
 
@@ -94,8 +94,8 @@ strips. Use semantic tokens and horizontally scrolling tables on narrow
 screens. Tests go in `frontend/tests/usage-page.test.ts`. Depends on item
 4.3. Covering all 9 acceptance tests from E4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.5: E5 - Auth menu link [parallel with 4.4]
 
@@ -109,8 +109,8 @@ dropdown shows a "Usage" `menuitem` link to `/usage` with the lucide
 `frontend/tests/auth-menu.test.ts`. Covering all 3 acceptance tests from
 E5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item under the
 `subagents` skill's shared concurrency limits.

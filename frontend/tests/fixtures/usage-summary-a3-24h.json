@@ -1,0 +1,301 @@
+{
+    "window": "24h",
+    "generated_at": "2026-10-10T12:00:00Z",
+    "window_start": "2026-10-09T12:00:00Z",
+    "earliest_record": "2026-10-01T00:00:00Z",
+    "retention_days": 365,
+    "dropped_events": 0,
+    "totals": {
+        "requests": 6,
+        "errors": 3,
+        "error_rate": 0.5,
+        "sessions": 3,
+        "ip_clients": 1,
+        "users": 2
+    },
+    "categories": [
+        {
+            "category": "cli",
+            "requests": 3,
+            "errors": 1,
+            "error_rate": 0.3333333333333333,
+            "sessions": 2,
+            "ip_clients": 0,
+            "users": 2,
+            "requests_per_session_median": 1,
+            "requests_per_session_max": 2
+        },
+        {
+            "category": "mcp",
+            "requests": 1,
+            "errors": 0,
+            "error_rate": 0,
+            "sessions": 1,
+            "ip_clients": 0,
+            "users": 0,
+            "requests_per_session_median": 1,
+            "requests_per_session_max": 1
+        },
+        {
+            "category": "web",
+            "requests": 0,
+            "errors": 0,
+            "error_rate": 0,
+            "sessions": 0,
+            "ip_clients": 0,
+            "users": 0,
+            "requests_per_session_median": 0,
+            "requests_per_session_max": 0
+        },
+        {
+            "category": "results_server",
+            "requests": 0,
+            "errors": 0,
+            "error_rate": 0,
+            "sessions": 0,
+            "ip_clients": 0,
+            "users": 0,
+            "requests_per_session_median": 0,
+            "requests_per_session_max": 0
+        },
+        {
+            "category": "mlwhdiff_server",
+            "requests": 0,
+            "errors": 0,
+            "error_rate": 0,
+            "sessions": 0,
+            "ip_clients": 0,
+            "users": 0,
+            "requests_per_session_median": 0,
+            "requests_per_session_max": 0
+        },
+        {
+            "category": "other",
+            "requests": 2,
+            "errors": 2,
+            "error_rate": 1,
+            "sessions": 0,
+            "ip_clients": 1,
+            "users": 0,
+            "requests_per_session_median": 0,
+            "requests_per_session_max": 0
+        }
+    ],
+    "endpoints": [
+        {
+            "method": "GET",
+            "route": "/studies",
+            "requests": 4,
+            "errors": 1,
+            "error_rate": 0.25,
+            "p50_ms": 20,
+            "p95_ms": 40,
+            "by_category": {
+                "cli": 2,
+                "mcp": 1,
+                "other": 1
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/classify/:id",
+            "requests": 1,
+            "errors": 1,
+            "error_rate": 1,
+            "p50_ms": 5,
+            "p95_ms": 5,
+            "by_category": {
+                "cli": 1
+            }
+        }
+    ],
+    "mcp_tools": [
+        {
+            "value": "mlwh_list_studies",
+            "requests": 1
+        }
+    ],
+    "mcp_agents": [
+        {
+            "value": "claude-code/2.1.0",
+            "requests": 1
+        }
+    ],
+    "other_user_agents": [
+        {
+            "value": "curl/8.5.0",
+            "requests": 2
+        }
+    ],
+    "unmatched": [
+        {
+            "method": "GET",
+            "path": "/bogus",
+            "requests": 1,
+            "by_category": {
+                "other": 1
+            },
+            "by_tool": {},
+            "by_agent": {}
+        }
+    ],
+    "users": [
+        {
+            "name": "alice",
+            "by_ip": false,
+            "requests": 2,
+            "by_category": {
+                "cli": 2
+            }
+        },
+        {
+            "name": "bob",
+            "by_ip": false,
+            "requests": 1,
+            "by_category": {
+                "cli": 1
+            }
+        }
+    ],
+    "clients": [
+        {
+            "name": "10.0.0.9",
+            "by_ip": true,
+            "requests": 2,
+            "by_category": {
+                "other": 2
+            }
+        },
+        {
+            "name": "run-a",
+            "by_ip": false,
+            "requests": 2,
+            "by_category": {
+                "cli": 2
+            }
+        },
+        {
+            "name": "run-b",
+            "by_ip": false,
+            "requests": 1,
+            "by_category": {
+                "cli": 1
+            }
+        },
+        {
+            "name": "sess-1",
+            "by_ip": false,
+            "requests": 1,
+            "by_category": {
+                "mcp": 1
+            }
+        }
+    ],
+    "days": [
+        {
+            "date": "2026-10-09",
+            "requests": 0,
+            "by_category": {}
+        },
+        {
+            "date": "2026-10-10",
+            "requests": 6,
+            "by_category": {
+                "cli": 3,
+                "mcp": 1,
+                "other": 2
+            }
+        }
+    ],
+    "series": [
+        {
+            "start": "2026-09-30T12:00:00Z",
+            "end": "2026-10-01T12:00:00Z",
+            "requests": 1,
+            "by_category": {
+                "cli": 1
+            },
+            "by_endpoint": {
+                "GET /studies": 1
+            }
+        },
+        {
+            "start": "2026-10-01T12:00:00Z",
+            "end": "2026-10-02T12:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "by_endpoint": {}
+        },
+        {
+            "start": "2026-10-02T12:00:00Z",
+            "end": "2026-10-03T12:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "by_endpoint": {}
+        },
+        {
+            "start": "2026-10-03T12:00:00Z",
+            "end": "2026-10-04T12:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "by_endpoint": {}
+        },
+        {
+            "start": "2026-10-04T12:00:00Z",
+            "end": "2026-10-05T12:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "by_endpoint": {}
+        },
+        {
+            "start": "2026-10-05T12:00:00Z",
+            "end": "2026-10-06T12:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "by_endpoint": {}
+        },
+        {
+            "start": "2026-10-06T12:00:00Z",
+            "end": "2026-10-07T12:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "by_endpoint": {}
+        },
+        {
+            "start": "2026-10-07T12:00:00Z",
+            "end": "2026-10-08T12:00:00Z",
+            "requests": 1,
+            "by_category": {
+                "web": 1
+            },
+            "by_endpoint": {
+                "GET /studies": 1
+            }
+        },
+        {
+            "start": "2026-10-08T12:00:00Z",
+            "end": "2026-10-09T12:00:00Z",
+            "requests": 1,
+            "by_category": {
+                "cli": 1
+            },
+            "by_endpoint": {
+                "GET /studies": 1
+            }
+        },
+        {
+            "start": "2026-10-09T12:00:00Z",
+            "end": "2026-10-10T12:00:00Z",
+            "requests": 6,
+            "by_category": {
+                "cli": 3,
+                "mcp": 1,
+                "other": 2
+            },
+            "by_endpoint": {
+                "GET /classify/:id": 1,
+                "GET /studies": 4
+            }
+        }
+    ]
+}

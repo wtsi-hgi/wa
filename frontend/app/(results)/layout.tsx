@@ -29,6 +29,7 @@ export default async function ResultsLayout({
                         <AuthMenu
                             initialSession={session}
                             showFeedbackLink={showFeedbackLink}
+                            showUsageLink={showFeedbackLink}
                         />
                     </div>
                 </header>

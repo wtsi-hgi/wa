@@ -1357,10 +1357,10 @@ I can see at a glance whether and how the server is used.
           series total descending then key. Columns: label, "Latest"
           (period 0), "Previous" (period 1, `-` with one period), and a bar
           strip `role="img"` with `aria-label`
-          `"<label>: latest <x>, previous <y>, <n> periods"` holding one bar
-          per period, height proportional to the row's max, each with
-          `title="<start> to <end>: <count>"`. An empty `series` shows
-          "No usage recorded yet."
+          `"<label>: latest <x>, previous <y>, <n> periods"` (`1 period`
+          when `<n>` is 1) holding one bar per period, height proportional
+          to the row's max, each with `title="<start> to <end>: <count>"`.
+          An empty `series` shows "No usage recorded yet."
         - "Endpoints": Endpoint (`<METHOD> <route>`), Requests, Errors,
           Error rate, Median latency (ms), p95 latency (ms), Categories.
         - "MCP tools", "MCP agents", "Other API user agents": Value,
