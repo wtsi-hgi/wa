@@ -47,3 +47,15 @@
     results "r%231.db": files=[r#1.db] err=stat <tmp>/r%231.db: no such file or directory
     FAIL	github.com/wtsi-hgi/wa/cmd
     ```
+  - Further sibling found during the fix: `mlwhdiff.OpenStore` in
+    `mlwhdiff/store.go` passes the raw path to `sql.Open("sqlite", path)`,
+    and the driver cuts a non-`file:` name at the first `?`. Red command
+    (throwaway harness opening the store at `d?1.db`, `d#1.db` and
+    `d%231.db`):
+    `CGO_ENABLED=1 go test -tags netgo --count 1 -run TestRedMLWHDiffStorePath ./mlwhdiff/`
+    exited 1:
+
+    ```text
+    mlwhdiff "d?1.db": files=[d] err=stat <tmp>/d?1.db: no such file or directory
+    FAIL	github.com/wtsi-hgi/wa/mlwhdiff
+    ```
