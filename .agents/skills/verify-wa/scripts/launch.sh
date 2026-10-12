@@ -34,7 +34,7 @@ fi
 CGO_ENABLED=1 go build -o "$RUN/wa" .
 
 # %q so values with spaces, quotes or `$` (checkout path, the dirty-tree
-# REVISION suffix) survive `. stack.env`; drive-feedback.mjs reads it via bash.
+# REVISION suffix) survive `. stack.env`; stack-env.mjs reads it via bash.
 REVISION="$(git rev-parse HEAD)$(git diff --quiet HEAD -- . ':!.agents' ':!.claude' || printf ' +uncommitted')"
 {
   printf 'REPO=%q\n' "$REPO"

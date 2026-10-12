@@ -6,11 +6,12 @@
 //
 // Usage: drive-feedback.mjs <run-dir>   (run-dir is the one launch.sh printed)
 
-import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { readFileSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
+
+import { readStackEnv } from "./stack-env.mjs";
 
 const run = process.argv[2];
 if (!run) {
@@ -18,30 +19,7 @@ if (!run) {
     process.exit(2);
 }
 
-// stack.env is shell-quoted by launch.sh; let bash parse it rather than
-// reimplementing printf %q unquoting. Only PATH is inherited, so every value
-// comes from stack.env (plus bash's own PWD and SHLVL).
-const env = Object.fromEntries(
-    execFileSync(
-        "bash",
-        [
-            "-c",
-            'set -a; . "$1"; exec env -0',
-            "bash",
-            path.join(run, "stack.env"),
-        ],
-        {
-            encoding: "utf8",
-            env: { PATH: process.env.PATH },
-        },
-    )
-        .split("\0")
-        .filter((entry) => entry.includes("="))
-        .map((entry) => [
-            entry.slice(0, entry.indexOf("=")),
-            entry.slice(entry.indexOf("=") + 1),
-        ]),
-);
+const env = readStackEnv(run);
 const require = createRequire(path.join(env.REPO, "frontend", "package.json"));
 const { chromium } = require("@playwright/test");
 

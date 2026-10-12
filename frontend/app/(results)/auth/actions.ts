@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { z } from "zod";
 
 import { resultsRaw } from "@/lib/backend-client";
+import { isMLWHAdmin } from "@/lib/feedback-admin";
 import {
     resultsAuthCookieName as authCookieName,
     resultsAuthCookieOptions as authCookieOptions,
@@ -16,8 +17,12 @@ const backendSessionSchema = z.object({
     username: z.string().nullable().optional(),
 });
 
+// isAdmin is decided here on the server and travels with the session, so the
+// account menu shows admin links the moment it knows the user is signed in,
+// rather than after the layout re-renders.
 export type CurrentSession = {
     authenticated: boolean;
+    isAdmin: boolean;
     username: string | null;
 };
 
@@ -29,6 +34,7 @@ type LoginInput = {
 function anonymousSession(): CurrentSession {
     return {
         authenticated: false,
+        isAdmin: false,
         username: null,
     };
 }
@@ -79,9 +85,12 @@ function parseSession(body: unknown): CurrentSession {
         return anonymousSession();
     }
 
+    const username = parsed.data.username ?? null;
+
     return {
         authenticated: true,
-        username: parsed.data.username ?? null,
+        isAdmin: isMLWHAdmin(username),
+        username,
     };
 }
 
@@ -141,6 +150,7 @@ export async function loginAction(input: LoginInput): Promise<CurrentSession> {
 
     return {
         authenticated: true,
+        isAdmin: isMLWHAdmin(input.username),
         username: input.username,
     };
 }

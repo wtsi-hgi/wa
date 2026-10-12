@@ -27,7 +27,11 @@ Next.js reads the MLWH admin token from disk on the server side and calls
 
 ## How To Drive It
 
-No helper script. Use Playwright as described in the skill.
+No helper script for the page itself. Use Playwright as described in the
+skill. `node "$SKILL/scripts/drive-menu-after-login.mjs" "$RUN"` (exit 0,
+`PASS`) checks that the `Feedback` and `Usage` items are in the menu opened
+the moment login finishes; see
+[Feedback admin page](feedback-admin-page.md).
 
 1. Record a baseline: `GET /usage?window=24h` with the token, saved as
    `$RUN/evidence/usage-00-baseline.json`. Test mode turns usage on with a
@@ -93,8 +97,6 @@ API checks, each with `curl -s -w '%{http_code}'`:
     run-dev passes no `--usage-db` to that command, so `/usage` shows "Usage
     is unavailable." and the doctor's usage check fails by design.
 
-- The account menu's admin items appear a moment after login. Wait for
-  menuitem `Usage` rather than reading the menu straight away.
 - A fresh stack has one Trend period, so multi-bar strips and the Previous
   column cannot be shown live. The frontend unit tests cover them.
 - At narrow widths (390px) the full page is about 4000px tall. Take region

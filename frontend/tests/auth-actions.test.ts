@@ -26,6 +26,7 @@ describe("E1 auth server actions", () => {
             get: headerMocks.getCookie,
             set: headerMocks.setCookie,
         });
+        vi.stubEnv("WA_FEEDBACK_ADMINS", undefined);
         vi.stubGlobal("fetch", vi.fn());
     });
 
@@ -36,6 +37,7 @@ describe("E1 auth server actions", () => {
         headerMocks.getCookie.mockReset();
         headerMocks.setCookie.mockReset();
         vi.resetModules();
+        vi.unstubAllEnvs();
         vi.unstubAllGlobals();
     });
 
@@ -46,7 +48,11 @@ describe("E1 auth server actions", () => {
 
         await expect(
             loginAction({ username: "alice", password: "secret" }),
-        ).resolves.toEqual({ authenticated: true, username: "alice" });
+        ).resolves.toEqual({
+            authenticated: true,
+            isAdmin: false,
+            username: "alice",
+        });
 
         expect(fetch).toHaveBeenCalledWith(
             "https://results.example/api/rest/v1/jwt",
@@ -103,6 +109,7 @@ describe("E1 auth server actions", () => {
 
         await expect(refreshAction()).resolves.toEqual({
             authenticated: true,
+            isAdmin: false,
             username: "alice",
         });
 
@@ -134,6 +141,7 @@ describe("E1 auth server actions", () => {
 
         await expect(logoutAction()).resolves.toEqual({
             authenticated: false,
+            isAdmin: false,
             username: null,
         });
 
@@ -176,6 +184,7 @@ describe("E1 auth server actions", () => {
         expect(response).not.toBe("timed out");
         expect(response).toEqual({
             authenticated: false,
+            isAdmin: false,
             username: null,
         });
         expect(headerMocks.setCookie).toHaveBeenCalledWith(
@@ -210,6 +219,7 @@ describe("E1 auth server actions", () => {
 
         await expect(currentSession()).resolves.toEqual({
             authenticated: true,
+            isAdmin: false,
             username: "alice",
         });
         expect(fetch).toHaveBeenCalledWith(
@@ -223,6 +233,36 @@ describe("E1 auth server actions", () => {
         );
     });
 
+    it("flags a WA_FEEDBACK_ADMINS user as admin in the login and current sessions", async () => {
+        vi.stubEnv("WA_FEEDBACK_ADMINS", "alice");
+        headerMocks.getCookie.mockReturnValue({ value: "jwt-1" });
+        vi.mocked(fetch)
+            .mockResolvedValueOnce(Response.json("jwt-1"))
+            .mockResolvedValueOnce(
+                Response.json({
+                    authenticated: true,
+                    is_owner: false,
+                    username: "alice",
+                }),
+            );
+
+        const { currentSession, loginAction } =
+            await import("@/app/(results)/auth/actions");
+
+        await expect(
+            loginAction({ username: "alice", password: "secret" }),
+        ).resolves.toEqual({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
+        await expect(currentSession()).resolves.toEqual({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
+    });
+
     it.each([404, 501])(
         "still expires the JWT cookie when backend logout returns %i",
         async (status) => {
@@ -234,6 +274,7 @@ describe("E1 auth server actions", () => {
 
             await expect(logoutAction()).resolves.toEqual({
                 authenticated: false,
+                isAdmin: false,
                 username: null,
             });
             expect(headerMocks.setCookie).toHaveBeenCalledWith(

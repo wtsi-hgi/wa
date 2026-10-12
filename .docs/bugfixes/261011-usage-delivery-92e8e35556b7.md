@@ -8,19 +8,19 @@
 
 ## Deliver queue
 
-| Branch                   | Worktree            | PR                                            | Target    | Depends on              | Head      | Status                 | Waits on                  | Next action                        |
-| ------------------------ | ------------------- | --------------------------------------------- | --------- | ----------------------- | --------- | ---------------------- | ------------------------- | ---------------------------------- |
-| `usage`                  | removed after merge | [#39](https://github.com/wtsi-hgi/wa/pull/39) | `develop` | none                    | `879dcf8` | merged as `5e851cd`    | none                      | done; user tags `v0.11.0`          |
-| `syncrace-bd100063`      | `../wa-syncrace`    | [#47](https://github.com/wtsi-hgi/wa/pull/47) | `develop` | none                    | `f9b0654` | ready on `d35401d`     | earlier merges            | recheck on current develop         |
-| `resultswal-867e6b0f`    | removed after merge | [#42](https://github.com/wtsi-hgi/wa/pull/42) | `develop` | #39 (merged)            | `a5f3e9d` | merged as `d35401d`    | none                      | done                               |
-| `frontendtsc-69d13e03`   | removed after merge | [#43](https://github.com/wtsi-hgi/wa/pull/43) | `develop` | #39 (merged)            | `47cdfd7` | merged as `407579c`    | none                      | done                               |
-| `verifyrev-45b2c5f7`     | `../wa-verifyrev`   | [#44](https://github.com/wtsi-hgi/wa/pull/44) | `develop` | #39 (merged)            | rebased   | rebased on `407579c`   | CI, Copilot               | ask user to merge #44              |
-| `menurace-39ecd8d1`      | `../wa-menurace`    | [#45](https://github.com/wtsi-hgi/wa/pull/45) | `develop` | #43, #44 (shared files) | `b9fe5c0` | ready on `5e851cd`     | #44 merge                 | rebase, recheck                    |
-| `serveshutdown-cf1cb518` | removed after merge | [#41](https://github.com/wtsi-hgi/wa/pull/41) | `develop` | #39, #40 (merged)       | `6a4d1ab` | merged as `fcefbc8`    | none                      | done                               |
-| `rundevstate-64ed3f75`   | `../wa-rundevstate` | [#46](https://github.com/wtsi-hgi/wa/pull/46) | `develop` | none                    | `ddf5bdc` | ready on `d35401d`     | earlier merges            | recheck on current develop         |
-| `pnpmfilter-90a8f24a`    | `../wa-pnpmfilter`  | none                                          | `develop` | #43 (merged)            | `c469daa` | recorded               | bugfix                    | rebase, reproduce and fix          |
-| `filecache-00de9195`     | `../wa-filecache`   | none                                          | `develop` | #40 (merged)            | `c0ed799` | recorded, low priority | owner completion boundary | rebase, confirm and fix via bugfix |
-| `sqlitedsn-723fb158`     | removed after merge | [#40](https://github.com/wtsi-hgi/wa/pull/40) | `develop` | #39 (merged)            | `8727521` | merged as `a6d0876`    | none                      | done                               |
+| Branch                   | Worktree            | PR                                            | Target    | Depends on        | Head      | Status               | Waits on       | Next action                |
+| ------------------------ | ------------------- | --------------------------------------------- | --------- | ----------------- | --------- | -------------------- | -------------- | -------------------------- |
+| `usage`                  | removed after merge | [#39](https://github.com/wtsi-hgi/wa/pull/39) | `develop` | none              | `879dcf8` | merged as `5e851cd`  | none           | done; user tags `v0.11.0`  |
+| `syncrace-bd100063`      | `../wa-syncrace`    | [#47](https://github.com/wtsi-hgi/wa/pull/47) | `develop` | none              | `f9b0654` | ready on `d35401d`   | earlier merges | recheck on current develop |
+| `resultswal-867e6b0f`    | removed after merge | [#42](https://github.com/wtsi-hgi/wa/pull/42) | `develop` | #39 (merged)      | `a5f3e9d` | merged as `d35401d`  | none           | done                       |
+| `frontendtsc-69d13e03`   | removed after merge | [#43](https://github.com/wtsi-hgi/wa/pull/43) | `develop` | #39 (merged)      | `47cdfd7` | merged as `407579c`  | none           | done                       |
+| `verifyrev-45b2c5f7`     | removed after merge | [#44](https://github.com/wtsi-hgi/wa/pull/44) | `develop` | #39 (merged)      | `2bb7e0c` | merged as `f89df69`  | none           | done                       |
+| `menurace-39ecd8d1`      | `../wa-menurace`    | [#45](https://github.com/wtsi-hgi/wa/pull/45) | `develop` | #43, #44 (merged) | rebased   | rebased on `f89df69` | CI, Copilot    | ask user to merge #45      |
+| `serveshutdown-cf1cb518` | removed after merge | [#41](https://github.com/wtsi-hgi/wa/pull/41) | `develop` | #39, #40 (merged) | `6a4d1ab` | merged as `fcefbc8`  | none           | done                       |
+| `rundevstate-64ed3f75`   | `../wa-rundevstate` | [#46](https://github.com/wtsi-hgi/wa/pull/46) | `develop` | none              | `ddf5bdc` | ready on `d35401d`   | earlier merges | recheck on current develop |
+| `pnpmfilter-90a8f24a`    | `../wa-pnpmfilter`  | [#48](https://github.com/wtsi-hgi/wa/pull/48) | `develop` | #43 (merged)      | `ee3740b` | ready on `407579c`   | earlier merges | recheck on current develop |
+| `filecache-00de9195`     | `../wa-filecache`   | [#49](https://github.com/wtsi-hgi/wa/pull/49) | `develop` | #40 (merged)      | `05b8188` | ready on `407579c`   | earlier merges | recheck on current develop |
+| `sqlitedsn-723fb158`     | removed after merge | [#40](https://github.com/wtsi-hgi/wa/pull/40) | `develop` | #39 (merged)      | `8727521` | merged as `a6d0876`  | none           | done                       |
 
 ## Incidental handoffs
 
@@ -79,3 +79,10 @@
     - Branch: `filecache-00de9195`
     - Checklist: `.docs/bugfixes/261011-file-uri-cache-path-*.md`
     - Entry commit: `c0ed799222bf529d5619ac3d91aad162d76dba55`
+
+## Deferred follow-ups
+
+- `mlwh.OpenCache`: a `file:` URI repeating `mode` with a non-memory last
+  value (for example `file:x?mode=memory&mode=rwc`) fails to open because the
+  writable DSN keeps both `mode` params. Obscure spelling; recorded in
+  `.docs/bugfixes/261011-file-uri-cache-path-7976ad1d2883.md` on PR #49.
