@@ -28,7 +28,7 @@ Next.js reads the MLWH admin token from disk on the server side and calls
 ## How To Drive It
 
 No helper script for the page itself. Use Playwright as described in the
-skill. `node $SKILL/scripts/drive-menu-after-login.mjs "$RUN"` (exit 0,
+skill. `node "$SKILL/scripts/drive-menu-after-login.mjs" "$RUN"` (exit 0,
 `PASS`) checks that the `Feedback` and `Usage` items are in the menu opened
 the moment login finishes; see
 [Feedback admin page](feedback-admin-page.md).

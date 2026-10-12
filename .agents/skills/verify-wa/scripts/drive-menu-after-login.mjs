@@ -15,21 +15,15 @@ import { readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
 
+import { readStackEnv } from "./stack-env.mjs";
+
 const run = process.argv[2];
 if (!run) {
     console.error("usage: drive-menu-after-login.mjs <run-dir>");
     process.exit(2);
 }
 
-const env = Object.fromEntries(
-    readFileSync(path.join(run, "stack.env"), "utf8")
-        .split("\n")
-        .filter((line) => line.includes("="))
-        .map((line) => [
-            line.slice(0, line.indexOf("=")),
-            line.slice(line.indexOf("=") + 1),
-        ]),
-);
+const env = readStackEnv(run);
 const require = createRequire(path.join(env.REPO, "frontend", "package.json"));
 const { chromium } = require("@playwright/test");
 

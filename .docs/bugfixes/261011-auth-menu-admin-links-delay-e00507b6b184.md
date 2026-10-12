@@ -1,8 +1,9 @@
 # Bugfix: admin menu links appear late after login
 
 - Branch: `menurace-39ecd8d1`
-- Base: `origin/develop` at `5e851cdad10a2cc9c77a8c73c08c4b263f18d34a`
-  (#39 merged), rebased from the original base
+- Base: `origin/develop` at `f89df69d91e434b33aff2586f9aed30007c8d504`
+  (#44 merged), rebased from `5e851cdad10a2cc9c77a8c73c08c4b263f18d34a`
+  (#39 merged), itself rebased from the original base
   `73ebdaa721d5cfe478e22e9ee504061ad30b1492`
 - Queue owner: branch `usage`, checklist
   `.docs/bugfixes/261011-usage-delivery-92e8e35556b7.md`
@@ -57,3 +58,30 @@
       the drive prints `["Log out"]` and exits 1; after the fix it prints
       `["Feedback","Usage","Log out"]` and exits 0 (including with
       `WA_VERIFY_REFRESH_DELAY_MS=0`), and `drive-feedback.mjs` is ALL PASS.
+- [x] #44 made `launch.sh` write `$RUN/stack.env` with `printf '%q'` and
+      made `drive-feedback.mjs` parse it through bash.
+      `drive-menu-after-login.mjs` still split lines on `=`, so with a
+      checkout path containing a space `REPO` and `STATE_HOME` kept their
+      backslash escapes and the script could not resolve `@playwright/test`
+      or the token file. The PR's docs also ran it as
+      `node $SKILL/scripts/drive-menu-after-login.mjs "$RUN"`, unquoted.
+    - Source: rebase onto f89df69 (#44).
+    - Red command: a run dir whose `stack.env` was written as `launch.sh`
+      writes it, with `REPO` a symlink to this worktree under
+      `<scratch>/has space/` and `STATE_HOME` a dir beside it holding dummy
+      tokens; URLs on port 1.
+      `node .agents/skills/verify-wa/scripts/drive-menu-after-login.mjs <run>`
+      exited 1 with `Error: Cannot find module '@playwright/test'`,
+      require stack `<scratch>/has\ space/wa/frontend/package.json`.
+    - Green: the same command gets past env parsing, `require` and the token
+      read, then exits 1 because no stack is running:
+      `FAIL browser drive - Error: page.goto: net::ERR_UNSAFE_PORT`.
+      `drive-feedback.mjs` on the same run dir reaches its first `fetch`
+      (`bad port`).
+    - Files: `.agents/skills/verify-wa/scripts/stack-env.mjs` (new),
+      `drive-feedback.mjs`, `drive-menu-after-login.mjs`, `launch.sh`
+      (comment), `features/feedback-admin-page.md`,
+      `features/usage-admin-page.md`.
+    - Fix: moved #44's bash-sourcing parser (only `PATH` inherited) into
+      `readStackEnv(run)` in `stack-env.mjs`; both drivers call it.
+      The two doc invocations quote the script path.

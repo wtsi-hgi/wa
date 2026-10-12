@@ -41,7 +41,7 @@ the whole path after submitting a fresh report:
    `acknowledged:true` with `acknowledged_at`, in
    `08-admin-list-after-ack.json`.
 
-`node $SKILL/scripts/drive-menu-after-login.mjs "$RUN"` (exit 0, `PASS`)
+`node "$SKILL/scripts/drive-menu-after-login.mjs" "$RUN"` (exit 0, `PASS`)
 checks that the `Feedback` and `Usage` items are in the menu opened the
 moment login finishes, with the post-login route refresh and
 `/api/auth/refresh` held back. Step 2 above waits for the item, so it cannot
