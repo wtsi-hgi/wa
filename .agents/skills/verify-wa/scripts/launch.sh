@@ -33,15 +33,18 @@ fi
 # builds its own copy and deletes it on shutdown.
 CGO_ENABLED=1 go build -o "$RUN/wa" .
 
+# %q so values with spaces, quotes or `$` (checkout path, the dirty-tree
+# REVISION suffix) survive `. stack.env`; drive-feedback.mjs reads it via bash.
+REVISION="$(git rev-parse HEAD)$(git diff --quiet HEAD -- . ':!.agents' ':!.claude' || printf ' +uncommitted')"
 {
-  printf 'REPO=%s\n' "$REPO"
-  printf 'REVISION=%s%s\n' "$(git rev-parse HEAD)" "$(git diff --quiet HEAD -- . ':!.agents' ':!.claude' || printf ' +uncommitted')"
-  printf 'FRONTEND_URL=https://127.0.0.1:%s\n' "$FRONTEND_PORT"
-  printf 'RESULTS_URL=https://127.0.0.1:%s\n' "$RESULTS_PORT"
-  printf 'MLWH_URL=http://127.0.0.1:%s\n' "$MLWH_PORT"
-  printf 'SPARE_PORT=%s\n' "$SPARE_PORT"
-  printf 'STATE_HOME=%s/.tmp/state-test\n' "$REPO"
-  printf 'CERT=%s/.tmp/wa-dev-cert.pem\n' "$REPO"
+  printf 'REPO=%q\n' "$REPO"
+  printf 'REVISION=%q\n' "$REVISION"
+  printf 'FRONTEND_URL=%q\n' "https://127.0.0.1:$FRONTEND_PORT"
+  printf 'RESULTS_URL=%q\n' "https://127.0.0.1:$RESULTS_PORT"
+  printf 'MLWH_URL=%q\n' "http://127.0.0.1:$MLWH_PORT"
+  printf 'SPARE_PORT=%q\n' "$SPARE_PORT"
+  printf 'STATE_HOME=%q\n' "$REPO/.tmp/state-test"
+  printf 'CERT=%q\n' "$REPO/.tmp/wa-dev-cert.pem"
 } >"$RUN/stack.env"
 
 (
@@ -59,7 +62,7 @@ printf '%s\n' "$PID" >"$RUN/run-dev.pid"
 
 for _ in $(seq 1 600); do
   if grep -q '^Development environment is ready\.' "$RUN/run-dev.out" 2>/dev/null; then
-    printf 'PGID=%s\n' "$(ps -o pgid= -p "$PID" | tr -d ' ')" >>"$RUN/stack.env"
+    printf 'PGID=%q\n' "$(ps -o pgid= -p "$PID" | tr -d ' ')" >>"$RUN/stack.env"
     printf 'RUN=%s\n' "$RUN"
     exit 0
   fi

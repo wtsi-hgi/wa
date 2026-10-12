@@ -24,18 +24,18 @@ feedback route answers `503 {"code":"feedback_disabled"}`.
 ## How To Drive It
 
 1. Feedback on, through the run-dev stack (`--feedback-db` path):
-   `node $SKILL/scripts/drive-feedback.mjs "$RUN"`. Steps 1-2 of its output
+   `node "$SKILL/scripts/drive-feedback.mjs" "$RUN"`. Steps 1-2 of its output
    cover this feature:
     - `POST $MLWH_URL/feedback` with an MCP-shaped body (category,
       description, user_request, tools_tried, version and client fields)
       returns 201 and an integer id. Evidence: `01-post-feedback.json`.
     - Side effect: unauthenticated `GET /feedback` is 401. With
-      `Authorization: Bearer $(cat $STATE_HOME/.wa-mlwh-server.token)` it
+      `Authorization: Bearer $(cat "$STATE_HOME/.wa-mlwh-server.token")` it
       lists the row, every field round-tripped and `acknowledged:false`.
       Evidence: `02-admin-list-after-post.json`. The mlwh log
       (`$RUN/logs/mlwh.log`) shows `mlwh feedback received id=N`.
 2. Feedback off, env-var on, and rejected paths, on a fresh never-synced
-   cache on `SPARE_PORT`: `$SKILL/scripts/drive-feedback-modes.sh "$RUN"`.
+   cache on `SPARE_PORT`: `"$SKILL/scripts/drive-feedback-modes.sh" "$RUN"`.
    Expected `PASS` lines:
     - off: POST and admin GET both 503 `feedback_disabled`; no
       `.wa-mlwh-server.token` created; serve still starts and `/freshness` is 200.

@@ -9,9 +9,9 @@ resolved server-side, then search and fetch them with their file lists.
 
 ## How To Reach It
 
-`$RUN/wa results <cmd> --server $RESULTS_URL --cert $CERT`. Auth uses the
-JWT cached in `$XDG_STATE_HOME/.wa-results.jwt`. In test mode the CLI gets it
-without a prompt when the results owner token
+`"$RUN/wa" results <cmd> --server "$RESULTS_URL" --cert "$CERT"`. Auth uses
+the JWT cached in `$XDG_STATE_HOME/.wa-results.jwt`. In test mode the CLI gets
+it without a prompt when the results owner token
 (`.wa-results-server.token`) is in the same `XDG_STATE_HOME`.
 
 ## How To Drive It
@@ -22,12 +22,12 @@ mkdir -p "$RUN/cli-state" "$RUN/cli-out/sub"
 cp "$STATE_HOME/.wa-results-server.token" "$RUN/cli-state/"
 echo hello >"$RUN/cli-out/sub/a.txt"; echo x >"$RUN/cli-out/b.csv"
 export XDG_STATE_HOME="$RUN/cli-state"
-C="--server $RESULTS_URL --cert $CERT"
-$RUN/wa results register "$RUN/cli-out" $C --user "$(id -un)" --operator "$(id -un)" \
+C=(--server "$RESULTS_URL" --cert "$CERT")
+"$RUN/wa" results register "$RUN/cli-out" "${C[@]}" --user "$(id -un)" --operator "$(id -un)" \
   --command verify-wa --workflow verify/wa-cli --unique cli-probe \
   --study 6568 --sample WTSI_wEMB10524782 </dev/null
-$RUN/wa results search $C --pipeline-name verify/wa-cli --user "$(id -un)" </dev/null
-$RUN/wa results get $C --files <id> </dev/null
+"$RUN/wa" results search "${C[@]}" --pipeline-name verify/wa-cli --user "$(id -un)" </dev/null
+"$RUN/wa" results get "${C[@]}" --files <id> </dev/null
 ```
 
 Expected:

@@ -6,6 +6,7 @@
 //
 // Usage: drive-feedback.mjs <run-dir>   (run-dir is the one launch.sh printed)
 
+import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { readFileSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
@@ -17,13 +18,28 @@ if (!run) {
     process.exit(2);
 }
 
+// stack.env is shell-quoted by launch.sh; let bash parse it rather than
+// reimplementing printf %q unquoting. Only PATH is inherited, so every value
+// comes from stack.env (plus bash's own PWD and SHLVL).
 const env = Object.fromEntries(
-    readFileSync(path.join(run, "stack.env"), "utf8")
-        .split("\n")
-        .filter((line) => line.includes("="))
-        .map((line) => [
-            line.slice(0, line.indexOf("=")),
-            line.slice(line.indexOf("=") + 1),
+    execFileSync(
+        "bash",
+        [
+            "-c",
+            'set -a; . "$1"; exec env -0',
+            "bash",
+            path.join(run, "stack.env"),
+        ],
+        {
+            encoding: "utf8",
+            env: { PATH: process.env.PATH },
+        },
+    )
+        .split("\0")
+        .filter((entry) => entry.includes("="))
+        .map((entry) => [
+            entry.slice(0, entry.indexOf("=")),
+            entry.slice(entry.indexOf("=") + 1),
         ]),
 );
 const require = createRequire(path.join(env.REPO, "frontend", "package.json"));
