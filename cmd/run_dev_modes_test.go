@@ -264,7 +264,7 @@ func runRunDevExpectingFailureForTest(t *testing.T, repoRoot string, args []stri
 
 	command := exec.Command("bash", append([]string{filepath.Join(repoRoot, "run-dev.sh")}, args...)...) //nolint:gosec
 	command.Dir = repoRoot
-	command.Env = applyTestEnvForTest(env, unsetEnv)
+	command.Env = applyTestEnvForTest(t, env, unsetEnv)
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	command.Stdout = stdout
@@ -275,8 +275,10 @@ func runRunDevExpectingFailureForTest(t *testing.T, repoRoot string, args []stri
 	return stdout.String(), stderr.String(), err
 }
 
-func applyTestEnvForTest(overrides map[string]string, unset []string) []string {
-	base := runDevEnvForTest(unset)
+func applyTestEnvForTest(t *testing.T, overrides map[string]string, unset []string) []string {
+	t.Helper()
+
+	base := runDevEnvForTest(t, unset)
 	for key, value := range overrides {
 		base = append(base, key+"="+value)
 	}

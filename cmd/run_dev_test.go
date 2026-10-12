@@ -120,7 +120,7 @@ func TestRunDevAutoManagedMLWHBackendDoesNotSyncBeforeMLWHServe(t *testing.T) {
 		invocationText := strings.Join(invocations, "\n")
 
 		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
-		convey.So(snapshot.MLWHCachePath, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "mlwh-dev.sqlite"))
+		convey.So(snapshot.MLWHCachePath, convey.ShouldEqual, filepath.Join(runDevTmpDirForTest(t), "mlwh-dev.sqlite"))
 		convey.So(invocations[0], convey.ShouldContainSubstring, "results serve")
 		convey.So(invocations[1], convey.ShouldContainSubstring, fmt.Sprintf("mlwh serve --port %d", seqmetaPort))
 		convey.So(invocations[1], convey.ShouldContainSubstring, fmt.Sprintf("--url 127.0.0.1:%d", seqmetaPort))
@@ -232,17 +232,19 @@ exit 2
 	convey.So(os.WriteFile(filepath.Join(binDir, "go"), []byte(fakeGo), 0o755), convey.ShouldBeNil)
 }
 
-func removeRunDevTestServerTokenForTest(t *testing.T, repoRoot string) {
+func removeRunDevTestServerTokenForTest(t *testing.T) {
 	t.Helper()
 
-	tokenPath := runDevTestServerTokenPathForTest(repoRoot)
+	tokenPath := runDevTestServerTokenPathForTest(t)
 	if err := os.Remove(tokenPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("remove stale run-dev server token %s: %v", tokenPath, err)
 	}
 }
 
-func runDevTestServerTokenPathForTest(repoRoot string) string {
-	return filepath.Join(repoRoot, ".tmp", "state-test", ".wa-results-server.token")
+func runDevTestServerTokenPathForTest(t *testing.T) string {
+	t.Helper()
+
+	return filepath.Join(runDevTmpDirForTest(t), "state-test", ".wa-results-server.token")
 }
 
 func runDevUnsetSeqmetaEnvForTest() []string {
@@ -452,7 +454,7 @@ func TestRunDevAutoManagedMLWHBackendCanServeProdConfiguredCacheWithoutDSN(t *te
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
 		seqmetaPort := runDevFreePortForTest(t)
-		resultsPath := filepath.Join(repoRoot, ".tmp", fmt.Sprintf("run-dev-prod-results-%d.sqlite", resultsPort))
+		resultsPath := filepath.Join(runDevTmpDirForTest(t), fmt.Sprintf("run-dev-prod-results-%d.sqlite", resultsPort))
 		// Prod refuses cache paths under /tmp, so a repo-relative path keeps
 		// this operator-style value valid wherever the repo is checked out.
 		cachePath := filepath.Join(".tmp", fmt.Sprintf("run-dev-prod-mlwh-%d.sqlite", seqmetaPort))
@@ -566,7 +568,7 @@ func TestRunDevAutoManagedMLWHBackendCanServeTestModeEphemeralCacheWithoutDSN(t 
 
 		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
 		convey.So(snapshot.MLWHCachePath, convey.ShouldNotBeBlank)
-		convey.So(snapshot.MLWHCachePath, convey.ShouldContainSubstring, filepath.Join(repoRoot, ".tmp")+string(os.PathSeparator))
+		convey.So(snapshot.MLWHCachePath, convey.ShouldStartWith, runDevTmpDirForTest(t)+string(os.PathSeparator))
 		convey.So(invocations, convey.ShouldContainSubstring, "results serve")
 		convey.So(invocations, convey.ShouldContainSubstring, fmt.Sprintf("mlwh serve --port %d", seqmetaPort))
 		convey.So(invocations, convey.ShouldContainSubstring, fmt.Sprintf("--url 127.0.0.1:%d", seqmetaPort))
@@ -709,14 +711,14 @@ func runDevOwnerJWTWithTokenForTest(t *testing.T, resultsPort int, token []byte)
 	return jwt, true
 }
 
-func runDevBuiltBinaryPathForTest(t *testing.T, repoRoot string, process *runDevProcess) string {
+func runDevBuiltBinaryPathForTest(t *testing.T, process *runDevProcess) string {
 	t.Helper()
 
 	prefix := "Building Go binary at "
 	for _, line := range strings.Split(process.stdout.String(), "\n") {
 		if strings.HasPrefix(line, prefix) {
 			path := strings.TrimSpace(strings.TrimPrefix(line, prefix))
-			convey.So(path, convey.ShouldStartWith, filepath.Join(repoRoot, ".tmp")+string(os.PathSeparator)+"wa-run-dev-")
+			convey.So(path, convey.ShouldStartWith, filepath.Join(runDevTmpDirForTest(t), "wa-run-dev-"))
 
 			return path
 		}
@@ -727,8 +729,10 @@ func runDevBuiltBinaryPathForTest(t *testing.T, repoRoot string, process *runDev
 	return ""
 }
 
-func runDevStableBinaryPathForTest(repoRoot string) string {
-	return filepath.Join(repoRoot, ".tmp", "wa")
+func runDevStableBinaryPathForTest(t *testing.T) string {
+	t.Helper()
+
+	return filepath.Join(runDevTmpDirForTest(t), "wa")
 }
 
 func runDevStableBinarySymlinkTargetForTest(t *testing.T, stableBinaryPath string) string {
@@ -823,6 +827,39 @@ func runDevTCPPortClosesWithinForTest(port int, timeout time.Duration) bool {
 	return false
 }
 
+// runRunDevDevModeWithFailingMLWHForTest runs run-dev.sh --mode dev with an
+// MLWH command that exits before becoming ready, after run-dev.sh has started
+// a real wa results serve, and returns its output once it has given up.
+func runRunDevDevModeWithFailingMLWHForTest(t *testing.T) (string, string, error) {
+	t.Helper()
+
+	repoRoot := runDevRepoRootForTest(t)
+	frontendPort := runDevFreePortForTest(t)
+	resultsPort := runDevFreePortForTest(t)
+	seqmetaPort := runDevFreePortForTest(t)
+
+	return runRunDevExpectingFailureForTest(t, repoRoot, []string{
+		"--mode", "dev",
+		"--frontend-port", fmt.Sprintf("%d", frontendPort),
+		"--results-port", fmt.Sprintf("%d", resultsPort),
+		"--seqmeta-port", fmt.Sprintf("%d", seqmetaPort),
+	}, map[string]string{
+		"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results.db"),
+		"WA_MLWH_DSN":                           "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse",
+		"WA_MLWH_CACHE_PATH":                    filepath.Join(t.TempDir(), "mlwh-cache.sqlite"),
+		"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
+		"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
+		"WA_RUN_DEV_LOG_DIR":                    filepath.Join(t.TempDir(), "logs"),
+		"WA_RUN_DEV_SEQMETA_CMD":                `node -e "console.error('mlwh boot failed: source db unavailable'); process.exit(23)"`,
+		"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+		"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+		"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+	}, []string{"WA_ENV"})
+}
+
 // runDevFlagValueForTest returns the value following flag in a recorded
 // invocation, or "" when the flag is absent.
 func runDevFlagValueForTest(invocation string, flag string) string {
@@ -885,7 +922,7 @@ func TestRunDevUsageDB(t *testing.T) {
 		t.Cleanup(func() { removeRunDevSQLiteFilesForTest(usagePath) })
 
 		convey.So(usagePath, convey.ShouldNotBeBlank)
-		convey.So(filepath.Dir(usagePath), convey.ShouldEqual, filepath.Join(repoRoot, ".tmp"))
+		convey.So(filepath.Dir(usagePath), convey.ShouldEqual, runDevTmpDirForTest(t))
 		convey.So(filepath.Base(usagePath), convey.ShouldStartWith, "mlwh-usage-test.")
 		convey.So(filepath.Base(usagePath), convey.ShouldEndWith, ".sqlite")
 
@@ -1198,7 +1235,7 @@ func TestRunDevFeedbackDB(t *testing.T) {
 		t.Cleanup(func() { removeRunDevSQLiteFilesForTest(feedbackPath) })
 
 		convey.So(feedbackPath, convey.ShouldNotBeBlank)
-		convey.So(filepath.Dir(feedbackPath), convey.ShouldEqual, filepath.Join(repoRoot, ".tmp"))
+		convey.So(filepath.Dir(feedbackPath), convey.ShouldEqual, runDevTmpDirForTest(t))
 		convey.So(filepath.Base(feedbackPath), convey.ShouldStartWith, "mlwh-feedback-test.")
 		convey.So(filepath.Base(feedbackPath), convey.ShouldEndWith, ".sqlite")
 
@@ -1459,7 +1496,7 @@ func TestRunDevHelpDocumentsProdRefusedEnvironment(t *testing.T) {
 		repoRoot := runDevRepoRootForTest(t)
 		command := exec.Command("bash", filepath.Join(repoRoot, "run-dev.sh"), "--help") //nolint:gosec
 		command.Dir = repoRoot
-		command.Env = runDevEnvForTest(nil)
+		command.Env = runDevEnvForTest(t, nil)
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
 		command.Stdout = stdout
@@ -1529,10 +1566,10 @@ exec node %q "$WA_TEST_FRONTEND_PORT"
 	})
 }
 
-func runDevEnsureTLSCertificateForTest(t *testing.T, repoRoot string) (string, string) {
+func runDevEnsureTLSCertificateForTest(t *testing.T) (string, string) {
 	t.Helper()
 
-	certPath, keyPath := runDevTLSCertPathsForTest(repoRoot)
+	certPath, keyPath := runDevTLSCertPathsForTest(t)
 	hosts := []string{"localhost", "127.0.0.1", "::1"}
 	hosts = append(hosts, runDevHostnameForTest(t, "-f"), runDevHostnameForTest(t, "-s"))
 	runDevWriteTLSCertificateForHostnamesForTest(t, certPath, keyPath, hosts)
@@ -1540,9 +1577,12 @@ func runDevEnsureTLSCertificateForTest(t *testing.T, repoRoot string) (string, s
 	return certPath, keyPath
 }
 
-func runDevTLSCertPathsForTest(repoRoot string) (string, string) {
-	return filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"),
-		filepath.Join(repoRoot, ".tmp", "wa-dev-key.pem")
+func runDevTLSCertPathsForTest(t *testing.T) (string, string) {
+	t.Helper()
+
+	tmpDir := runDevTmpDirForTest(t)
+
+	return filepath.Join(tmpDir, "wa-dev-cert.pem"), filepath.Join(tmpDir, "wa-dev-key.pem")
 }
 
 func TestRunDevScriptF1DevCertificates(t *testing.T) {
@@ -1579,7 +1619,8 @@ func TestRunDevScriptF1DevCertificates(t *testing.T) {
 		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
 		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", resultsPort))
-		convey.So(snapshot.ResultsCACert, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
+		certPath, _ := runDevTLSCertPathsForTest(t)
+		convey.So(snapshot.ResultsCACert, convey.ShouldEqual, certPath)
 		convey.So(runDevPathExistsForTest(snapshot.ResultsCACert), convey.ShouldBeTrue)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
@@ -1610,8 +1651,9 @@ func TestRunDevScriptF1DevCertificates(t *testing.T) {
 		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 		cmdline := waitForRunDevChildCommandLineForTest(t, process.Command.Process.Pid, " results serve ")
 
-		convey.So(snapshot.ResultsServerCert, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
-		convey.So(snapshot.ResultsServerKey, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-key.pem"))
+		certPath, keyPath := runDevTLSCertPathsForTest(t)
+		convey.So(snapshot.ResultsServerCert, convey.ShouldEqual, certPath)
+		convey.So(snapshot.ResultsServerKey, convey.ShouldEqual, keyPath)
 		convey.So(cmdline, convey.ShouldNotContainSubstring, " --cert ")
 		convey.So(cmdline, convey.ShouldNotContainSubstring, " --key ")
 		convey.So(cmdline, convey.ShouldContainSubstring, " --mlwh-cache ")
@@ -1734,7 +1776,7 @@ func runDevOpenSSLConfigForHostnamesForTest(hosts []string) string {
 func runDevHTTPSClientForTest(t *testing.T) *http.Client {
 	t.Helper()
 
-	certPath, _ := runDevTLSCertPathsForTest(runDevRepoRootForTest(t))
+	certPath, _ := runDevTLSCertPathsForTest(t)
 	caPEM, err := os.ReadFile(certPath)
 	if err != nil {
 		t.Fatalf("read run-dev CA cert %s: %v", certPath, err)
@@ -1758,8 +1800,7 @@ func runDevHTTPSClientForTest(t *testing.T) *http.Client {
 func runDevOwnerJWTForTest(t *testing.T, resultsPort int) string {
 	t.Helper()
 
-	repoRoot := runDevRepoRootForTest(t)
-	tokenPath := runDevTestServerTokenPathForTest(repoRoot)
+	tokenPath := runDevTestServerTokenPathForTest(t)
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		token, err := os.ReadFile(tokenPath)
@@ -2181,7 +2222,7 @@ func runRunDevExpectingFailureWithinForTest(
 	command := exec.Command("bash", append([]string{filepath.Join(repoRoot, "run-dev.sh")}, args...)...) //nolint:gosec
 	command.Dir = repoRoot
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	command.Env = applyTestEnvForTest(env, unsetEnv)
+	command.Env = applyTestEnvForTest(t, env, unsetEnv)
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	command.Stdout = stdout
@@ -2332,7 +2373,7 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 
 		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
 		convey.So(snapshot.MLWHCachePath, convey.ShouldNotBeBlank)
-		convey.So(snapshot.MLWHCachePath, convey.ShouldContainSubstring, filepath.Join(repoRoot, ".tmp")+string(os.PathSeparator))
+		convey.So(snapshot.MLWHCachePath, convey.ShouldStartWith, runDevTmpDirForTest(t)+string(os.PathSeparator))
 
 		// Test mode serves a fresh ephemeral cache (always cold) and forbids
 		// WA_MLWH_DSN, so the backend must reach readiness without ever running
@@ -2585,8 +2626,8 @@ func TestRunDevScript(t *testing.T) {
 		resultsList := waitForSeededResultsForTest(t, resultsPort, expectedFixtureCount)
 		fixtureSummary := summarizeRunDevFixturesForTest(t, repoRoot, resultsPort, resultsList)
 
-		binaryPath := runDevBuiltBinaryPathForTest(t, repoRoot, process)
-		stableBinaryPath := runDevStableBinaryPathForTest(repoRoot)
+		binaryPath := runDevBuiltBinaryPathForTest(t, process)
+		stableBinaryPath := runDevStableBinaryPathForTest(t)
 		convey.So(runDevPathExistsForTest(binaryPath), convey.ShouldBeTrue)
 		convey.So(runDevStableBinarySymlinkTargetForTest(t, stableBinaryPath), convey.ShouldEqual, binaryPath)
 		convey.So(resultsList, convey.ShouldHaveLength, expectedFixtureCount)
@@ -2598,16 +2639,17 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(fixtureSummary.fileKinds, convey.ShouldContain, "pipeline")
 		convey.So(fixtureSummary.maxPreviewableImagesInDirectory, convey.ShouldBeGreaterThan, 100)
 		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", resultsPort))
-		convey.So(snapshot.ResultsCACert, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
+		certPath, _ := runDevTLSCertPathsForTest(t)
+		convey.So(snapshot.ResultsCACert, convey.ShouldEqual, certPath)
 		convey.So(runDevPathExistsForTest(snapshot.ResultsCACert), convey.ShouldBeTrue)
 		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
 		convey.So(snapshot.ResultsDBPath, convey.ShouldNotBeBlank)
 		convey.So(snapshot.MLWHCachePath, convey.ShouldNotBeBlank)
-		convey.So(snapshot.MLWHCachePath, convey.ShouldContainSubstring, filepath.Join(repoRoot, ".tmp")+string(os.PathSeparator))
+		convey.So(snapshot.MLWHCachePath, convey.ShouldStartWith, runDevTmpDirForTest(t)+string(os.PathSeparator))
 		convey.So(runDevPathExistsForTest(snapshot.ResultsDBPath), convey.ShouldBeTrue)
-		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "results.log")), convey.ShouldBeTrue)
-		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "frontend.log")), convey.ShouldBeTrue)
-		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "mlwh.log")), convey.ShouldBeTrue)
+		convey.So(runDevPathExistsForTest(filepath.Join(runDevLogDirForTest(t), "results.log")), convey.ShouldBeTrue)
+		convey.So(runDevPathExistsForTest(filepath.Join(runDevLogDirForTest(t), "frontend.log")), convey.ShouldBeTrue)
+		convey.So(runDevPathExistsForTest(filepath.Join(runDevLogDirForTest(t), "mlwh.log")), convey.ShouldBeTrue)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -2641,9 +2683,9 @@ func TestRunDevScript(t *testing.T) {
 
 		_ = waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
-		binaryPath := runDevBuiltBinaryPathForTest(t, repoRoot, process)
-		stableBinaryPath := runDevStableBinaryPathForTest(repoRoot)
-		repointedBinaryPath := filepath.Join(repoRoot, ".tmp", fmt.Sprintf("wa-run-dev-repointed-%d", frontendPort))
+		binaryPath := runDevBuiltBinaryPathForTest(t, process)
+		stableBinaryPath := runDevStableBinaryPathForTest(t)
+		repointedBinaryPath := filepath.Join(runDevTmpDirForTest(t), fmt.Sprintf("wa-run-dev-repointed-%d", frontendPort))
 		convey.So(os.WriteFile(repointedBinaryPath, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755), convey.ShouldBeNil)
 		defer func() {
 			if target, err := os.Readlink(stableBinaryPath); err == nil && target == repointedBinaryPath {
@@ -2732,31 +2774,7 @@ func TestRunDevScript(t *testing.T) {
 	})
 
 	convey.Convey("run-dev.sh surfaces MLWH log output when MLWH exits before becoming ready", t, func() {
-		repoRoot := runDevRepoRootForTest(t)
-		frontendPort := runDevFreePortForTest(t)
-		resultsPort := runDevFreePortForTest(t)
-		seqmetaPort := runDevFreePortForTest(t)
-
-		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{
-			"--mode", "dev",
-			"--frontend-port", fmt.Sprintf("%d", frontendPort),
-			"--results-port", fmt.Sprintf("%d", resultsPort),
-			"--seqmeta-port", fmt.Sprintf("%d", seqmetaPort),
-		}, map[string]string{
-			"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results.db"),
-			"WA_MLWH_DSN":                           "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse",
-			"WA_MLWH_CACHE_PATH":                    filepath.Join(t.TempDir(), "mlwh-cache.sqlite"),
-			"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
-			"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
-			"WA_RUN_DEV_LOG_DIR":                    filepath.Join(t.TempDir(), "logs"),
-			"WA_RUN_DEV_SEQMETA_CMD":                `node -e "console.error('mlwh boot failed: source db unavailable'); process.exit(23)"`,
-			"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
-			"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
-			"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
-			"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
-			"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
-			"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
-		}, []string{"WA_ENV"})
+		stdout, stderr, err := runRunDevDevModeWithFailingMLWHForTest(t)
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stdout, convey.ShouldContainSubstring, "Starting MLWH server")
@@ -2971,7 +2989,7 @@ exec %q "$@"
 
 		_ = waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
-		convey.So(runDevPathExistsForTest(runDevBuiltBinaryPathForTest(t, repoRoot, process)), convey.ShouldBeTrue)
+		convey.So(runDevPathExistsForTest(runDevBuiltBinaryPathForTest(t, process)), convey.ShouldBeTrue)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -2985,6 +3003,15 @@ exec %q "$@"
 		binDir := t.TempDir()
 		pnpmLogPath := filepath.Join(t.TempDir(), "pnpm-dev-args.txt")
 		pnpmPath := filepath.Join(binDir, "pnpm")
+		// Repo-relative values, as .env.test sets, that resolve into this
+		// test's run-dev temp dir rather than the checkout's .tmp.
+		certPath, keyPath := runDevTLSCertPathsForTest(t)
+		relativeCertPath, err := filepath.Rel(repoRoot, certPath)
+		convey.So(err, convey.ShouldBeNil)
+		relativeKeyPath, err := filepath.Rel(repoRoot, keyPath)
+		convey.So(err, convey.ShouldBeNil)
+		resolvedCertPath := repoRoot + string(os.PathSeparator) + relativeCertPath
+		resolvedKeyPath := repoRoot + string(os.PathSeparator) + relativeKeyPath
 
 		stub := fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
@@ -3004,7 +3031,7 @@ if [[ "$1" == "dev" ]]; then
 fi
 
 exit 0
-`, pnpmLogPath, fmt.Sprintf("%d", frontendPort), filepath.Join(repoRoot, ".tmp", "wa-dev-key.pem"), filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"), filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"))
+`, pnpmLogPath, fmt.Sprintf("%d", frontendPort), resolvedKeyPath, resolvedCertPath, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"))
 
 		convey.So(os.WriteFile(pnpmPath, []byte(stub), 0o755), convey.ShouldBeNil)
 
@@ -3013,8 +3040,8 @@ exit 0
 			resultsPort:  resultsPort,
 			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
 			env: map[string]string{
-				"WA_RESULTS_SERVER_CERT":                ".tmp/wa-dev-cert.pem",
-				"WA_RESULTS_SERVER_KEY":                 ".tmp/wa-dev-key.pem",
+				"WA_RESULTS_SERVER_CERT":                relativeCertPath,
+				"WA_RESULTS_SERVER_KEY":                 relativeKeyPath,
 				"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
@@ -3028,14 +3055,15 @@ exit 0
 		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 		loggedArgs := waitForRunDevStepsForTest(t, pnpmLogPath, 1)
 
-		convey.So(snapshot.ResultsServerCert, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
-		convey.So(snapshot.ResultsServerKey, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-key.pem"))
+		convey.So(snapshot.ResultsServerCert, convey.ShouldEqual, resolvedCertPath)
+		convey.So(snapshot.ResultsServerKey, convey.ShouldEqual, resolvedKeyPath)
+		convey.So(runDevPathExistsForTest(certPath), convey.ShouldBeTrue)
 		convey.So(loggedArgs, convey.ShouldResemble, []string{
 			fmt.Sprintf(
 				"dev --port %d --experimental-https --experimental-https-key %s --experimental-https-cert %s",
 				frontendPort,
-				filepath.Join(repoRoot, ".tmp", "wa-dev-key.pem"),
-				filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"),
+				resolvedKeyPath,
+				resolvedCertPath,
 			),
 		})
 
@@ -3191,8 +3219,24 @@ exec %q "$@"
 
 }
 
-func runDevEnvForTest(unsetKeys []string) []string {
+// runDevEnvForTest returns the inherited environment minus unsetKeys and the
+// keys below, plus WA_RUN_DEV_TMP_DIR, WA_RUN_DEV_LOG_DIR, and XDG_STATE_HOME
+// pointing at t's own run-dev temp, log, and state dirs.
+func runDevEnvForTest(t *testing.T, unsetKeys []string) []string {
+	t.Helper()
+
 	unsetKeys = append(unsetKeys, []string{
+		// make test exports .env.test's repo-relative .tmp dev TLS paths; drop
+		// them so run-dev.sh keeps its cert and key in WA_RUN_DEV_TMP_DIR
+		// rather than rewriting the checkout's. Tests that need them set them.
+		"WA_RESULTS_SERVER_CERT",
+		"WA_RESULTS_SERVER_KEY",
+		"WA_RUN_DEV_TMP_DIR",
+		"WA_RUN_DEV_LOG_DIR",
+		// Outside test mode run-dev.sh keeps the caller's XDG_STATE_HOME (or
+		// HOME), where a real wa results serve writes its server token and
+		// deletes it on shutdown. Tests that need a state dir set their own.
+		"XDG_STATE_HOME",
 		"WA_RUN_DEV_SEQMETA_CMD",
 		"WA_RUN_DEV_SEQMETA_HEALTH_URL",
 		"WA_MLWH_DSN",
@@ -3233,7 +3277,11 @@ func runDevEnvForTest(unsetKeys []string) []string {
 		filtered = append(filtered, entry)
 	}
 
-	return filtered
+	return append(filtered,
+		"WA_RUN_DEV_TMP_DIR="+runDevTmpDirForTest(t),
+		"WA_RUN_DEV_LOG_DIR="+runDevLogDirForTest(t),
+		"XDG_STATE_HOME="+filepath.Join(runDevTmpDirForTest(t), "state"),
+	)
 }
 
 func signalRunDevProcessGroupForTest(command *exec.Cmd, signal syscall.Signal) {
@@ -3678,7 +3726,7 @@ func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOption
 	t.Helper()
 
 	if options.mode == "" || options.mode == "test" {
-		removeRunDevTestServerTokenForTest(t, repoRoot)
+		removeRunDevTestServerTokenForTest(t)
 	}
 
 	args := []string{
@@ -3711,7 +3759,7 @@ func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOption
 		command.Dir = options.startDir
 	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	command.Env = append(runDevEnvForTest(options.unsetEnv), "CI=1")
+	command.Env = append(runDevEnvForTest(t, options.unsetEnv), "CI=1")
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	command.Stdout = stdout
@@ -3827,7 +3875,7 @@ func startStaticEndpointServerForTest(t *testing.T, port int, responses map[stri
 
 func startRunDevResultsStubForTest(t *testing.T, repoRoot string, port int, onSeed func()) {
 	t.Helper()
-	certPath, keyPath := runDevEnsureTLSCertificateForTest(t, repoRoot)
+	certPath, keyPath := runDevEnsureTLSCertificateForTest(t)
 
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -4088,7 +4136,7 @@ func TestRunDevScriptCleansUpHungResultsAfterReadinessTimeout(t *testing.T) {
 		seqmetaPort := runDevFreePortForTest(t)
 		binDir := t.TempDir()
 		fakeResultsPIDPath := filepath.Join(t.TempDir(), "fake-results.pid")
-		fakeWaPath := filepath.Join(repoRoot, ".tmp", "wa")
+		fakeWaPath := runDevStableBinaryPathForTest(t)
 
 		writeRunDevHungResultsToolchainForTest(t, binDir)
 		t.Cleanup(func() {

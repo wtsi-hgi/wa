@@ -3,6 +3,10 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Dev TLS cert/key, test-mode state, built binaries, the stable .tmp/wa link,
+# and ephemeral DBs live here. Tests point it at their own directory so they
+# never disturb a stack running from the same checkout.
+TMP_DIR="${WA_RUN_DEV_TMP_DIR:-$REPO_ROOT/.tmp}"
 frontend_port=""
 results_port=""
 seqmeta_port=""
@@ -135,7 +139,7 @@ KNOWN_DEVELOPMENT_MLWH_PASSWORD='mlwh_humgen_is_secure'
 
 mlwh_cache_path_resolves_under_repo_tmp() {
   local value="${1:-}"
-  [[ "$value" == "$REPO_ROOT/.tmp/"* || "$value" == .tmp/* || "$value" == */.tmp/* ]]
+  [[ "$value" == "$TMP_DIR/"* || "$value" == .tmp/* || "$value" == */.tmp/* ]]
 }
 
 mlwh_cache_path_looks_test() {
@@ -395,7 +399,6 @@ collect_dev_origins() {
 WA_DEV_ALLOWED_ORIGINS="$(collect_dev_origins)"
 export WA_DEV_ALLOWED_ORIGINS
 
-TMP_DIR="$REPO_ROOT/.tmp"
 BIN_PATH="$TMP_DIR/wa-run-dev-$$"
 STABLE_BIN_PATH="$TMP_DIR/wa"
 STABLE_BIN_LOCK="$TMP_DIR/wa.lock"

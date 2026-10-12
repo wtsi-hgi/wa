@@ -31,6 +31,7 @@ SKILL="<checkout>/.agents/skills/verify-wa"
   +3 MLWH, +4 spare for standalone serves. The script refuses to start if any
   is listening; pick another base rather than stopping someone else's server.
   Run one stack per checkout: run-dev test mode shares `.tmp/state-test`.
+  `make test` keeps its stack in `.tmp/e2e/`, so it can run alongside.
   Separate worktrees can run side by side on different bases.
 - It installs `frontend/node_modules` with `pnpm install --frozen-lockfile`
   when missing, builds `$RUN/wa`, and waits for run-dev's

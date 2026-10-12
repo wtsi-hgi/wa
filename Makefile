@@ -60,8 +60,8 @@ help:
 # ---- Test scenario --------------------------------------------------------
 # Hermetic: ephemeral DBs, throwaway ports, never touches dev/prod state.
 # `clean-test-tmp` runs whether the sub-targets pass or fail so .tmp/ never
-# accumulates the built `wa` binary, the playwright port-allocation cache, or
-# stray SQLite DBs from a killed run-dev.sh.
+# accumulates Playwright's run-dev files (built `wa` binary, port-allocation
+# cache, stray SQLite DBs from a killed run-dev.sh).
 test:
 	@rc=0; \
 	$(MAKE) --no-print-directory test-go test-frontend test-e2e || rc=$$?; \
@@ -109,14 +109,12 @@ test-frontend:
 test-e2e:
 	@$(LOAD_TEST_ENV); cd $(FRONTEND_DIR) && pnpm exec playwright test
 
-# Remove only the artefacts `make test` itself produces under .tmp/. Leaves
-# unrelated entries (e.g. agent scratch in .tmp/agent/) untouched.
+# Remove only the artefacts `make test` itself produces under .tmp/. Playwright's
+# run-dev stack keeps all of them in .tmp/e2e/ (see frontend/e2e/run-dir.ts);
+# the Go run-dev tests use per-test temp dirs. A verify-wa or `make dev` stack's
+# files elsewhere in .tmp/, and agent scratch in .tmp/agent/, are left alone.
 clean-test-tmp:
-	@rm -f .tmp/wa .tmp/playwright-ports.json
-	@rm -f .tmp/results-dev.*.sqlite .tmp/results-dev.*.sqlite-wal .tmp/results-dev.*.sqlite-shm
-	@rm -f .tmp/mlwh-feedback-test.*.sqlite .tmp/mlwh-feedback-test.*.sqlite-wal .tmp/mlwh-feedback-test.*.sqlite-shm
-	@rm -f .tmp/mlwh-usage-test.*.sqlite .tmp/mlwh-usage-test.*.sqlite-wal .tmp/mlwh-usage-test.*.sqlite-shm
-	@rm -f .tmp/mlwh-test.*.sqlite .tmp/mlwh-test.*.sqlite-wal .tmp/mlwh-test.*.sqlite-shm
+	@rm -rf .tmp/e2e
 
 # ---- Dev scenario ---------------------------------------------------------
 dev:
