@@ -2635,6 +2635,9 @@ func (c *Client) emitSyncReport(report SyncReport) {
 		return
 	}
 
+	c.syncReportMu.Lock()
+	defer c.syncReportMu.Unlock()
+
 	_, _ = io.WriteString(
 		c.syncReportWriter,
 		fmt.Sprintf(

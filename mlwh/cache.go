@@ -251,6 +251,7 @@ type Client struct {
 	now              func() time.Time
 	syncRunner       func(context.Context, *sql.Tx, []string) error
 	syncReportWriter io.Writer
+	syncReportMu     sync.Mutex
 	syncRetryWriter  io.Writer
 	syncRetrySleep   func(context.Context, time.Duration) error
 	disableSyncLock  bool
@@ -266,6 +267,8 @@ func (c *Client) ReadDB() *sql.DB {
 }
 
 // SetSyncReportWriter configures an optional writer for per-table sync lines.
+// Tables sync in parallel, but writes to the writer are serialised, so it need
+// not be safe for concurrent use.
 func (c *Client) SetSyncReportWriter(writer io.Writer) {
 	if c == nil {
 		return
