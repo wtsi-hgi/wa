@@ -1277,6 +1277,228 @@ func TestOpenCacheSQLitePathWithURISpecialCharacters(t *testing.T) {
 	}
 }
 
+func TestOpenCacheSQLiteFileURI(t *testing.T) {
+	convey.Convey("Given a relative file: URI cache path, when opened and sync-locked, then the named file is used", t, func() {
+		dir := t.TempDir()
+		t.Chdir(dir)
+
+		assertFileURICacheUsesPath(dir, "file:x.db", "x.db")
+	})
+
+	convey.Convey("Given an absolute file: URI cache path, when opened and sync-locked, then the named file is used", t, func() {
+		dir := t.TempDir()
+
+		sqlite := assertFileURICacheUsesPath(dir, "file:"+filepath.Join(dir, "x.db"), "x.db")
+
+		var journalMode string
+		convey.So(sqlite.DB().QueryRow(`PRAGMA journal_mode`).Scan(&journalMode), convey.ShouldBeNil)
+		convey.So(journalMode, convey.ShouldEqual, "wal")
+
+		var timeout int
+		convey.So(sqlite.DB().QueryRow(`PRAGMA busy_timeout`).Scan(&timeout), convey.ShouldBeNil)
+		convey.So(timeout, convey.ShouldEqual, 5000)
+	})
+
+	convey.Convey("Given an existing cache opened by a file: URI with its own query params", t, func() {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "x.db")
+		existing, err := OpenCache(context.Background(), CacheConfig{Path: path})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(existing.Close(), convey.ShouldBeNil)
+
+		uri := "file:" + path + "?mode=rw&_pragma=BUSY_TIMEOUT(3000)"
+
+		sqlite := assertFileURICacheUsesPath(dir, uri, "x.db")
+
+		convey.Convey("then both cache handles keep the user's params alongside the cache's own", func() {
+			var journalMode string
+			convey.So(sqlite.DB().QueryRow(`PRAGMA journal_mode`).Scan(&journalMode), convey.ShouldBeNil)
+			convey.So(journalMode, convey.ShouldEqual, "wal")
+
+			var timeout int
+			convey.So(sqlite.DB().QueryRow(`PRAGMA busy_timeout`).Scan(&timeout), convey.ShouldBeNil)
+			convey.So(timeout, convey.ShouldEqual, 3000)
+			convey.So(sqlite.ReadDB().QueryRow(`PRAGMA busy_timeout`).Scan(&timeout), convey.ShouldBeNil)
+			convey.So(timeout, convey.ShouldEqual, 3000)
+		})
+
+		convey.Convey("then the read handle is still read-only", func() {
+			_, err := sqlite.ReadDB().Exec(`INSERT INTO probe VALUES (2)`)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "readonly")
+		})
+
+		convey.Convey("then a second sync lock fails at once instead of waiting", func() {
+			assertSecondSyncLockFailsAtOnce(sqlite)
+		})
+	})
+
+	convey.Convey("Given a new cache opened by a file: URI setting an unrelated pragma, "+
+		"when opened, then the cache's own pragmas still apply", t, func() {
+		dir := t.TempDir()
+
+		sqlite := assertFileURICacheUsesPath(dir, "file:"+filepath.Join(dir, "n.db")+"?_pragma=foreign_keys(1)", "n.db")
+
+		var journalMode string
+		convey.So(sqlite.DB().QueryRow(`PRAGMA journal_mode`).Scan(&journalMode), convey.ShouldBeNil)
+		convey.So(journalMode, convey.ShouldEqual, "wal")
+
+		var timeout int
+		convey.So(sqlite.DB().QueryRow(`PRAGMA busy_timeout`).Scan(&timeout), convey.ShouldBeNil)
+		convey.So(timeout, convey.ShouldEqual, 5000)
+	})
+
+	for _, query := range []string{"_pragma=busy_timeout%283000%29", "%5Fpragma=busy_timeout(3000)"} {
+		convey.Convey("Given a file: URI cache path with percent-encoded param "+query+
+			", when sync-locked twice, then the second lock fails at once", t, func() {
+			dir := t.TempDir()
+
+			sqlite := assertFileURICacheUsesPath(dir, "file:"+filepath.Join(dir, "x.db")+"?"+query, "x.db")
+
+			assertSecondSyncLockFailsAtOnce(sqlite)
+		})
+	}
+
+	for _, suffix := range []string{"#frag", "?cache=private#frag", "?vfs=unix", "?MODE=memory", "?VFS=memdb"} {
+		convey.Convey("Given a file: URI cache path ending "+suffix+", when opened and sync-locked, "+
+			"then the named file is used and the read handle is read-only", t, func() {
+			dir := t.TempDir()
+
+			sqlite := assertFileURICacheUsesPath(dir, "file:"+filepath.Join(dir, "x.db")+suffix, "x.db")
+
+			_, err := sqlite.ReadDB().Exec(`INSERT INTO probe VALUES (2)`)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "readonly")
+		})
+	}
+}
+
+// assertFileURICacheUsesPath opens a cache at uri, writes, reads and takes the
+// sync lock, then asserts that only name and its siblings exist in dir.
+func assertFileURICacheUsesPath(dir, uri, name string) *sqliteCache {
+	cache, err := OpenCache(context.Background(), CacheConfig{Path: uri})
+	convey.So(err, convey.ShouldBeNil)
+	convey.Reset(func() { _ = cache.Close() })
+
+	_, err = cache.DB().Exec(`CREATE TABLE probe (a INTEGER); INSERT INTO probe VALUES (1)`)
+	convey.So(err, convey.ShouldBeNil)
+
+	var count int
+	convey.So(cacheReadDB(cache).QueryRow(`SELECT COUNT(*) FROM probe`).Scan(&count), convey.ShouldBeNil)
+	convey.So(count, convey.ShouldEqual, 1)
+
+	sqlite, ok := cache.(*sqliteCache)
+	convey.So(ok, convey.ShouldBeTrue)
+
+	release, err := sqlite.acquireSyncLock(context.Background())
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(release, convey.ShouldNotBeNil)
+	convey.So(release(), convey.ShouldBeNil)
+
+	info, err := os.Stat(filepath.Join(dir, name))
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(info.Size(), convey.ShouldBeGreaterThan, 0)
+
+	_, err = os.Stat(filepath.Join(dir, name+".sync-lock"))
+	convey.So(err, convey.ShouldBeNil)
+
+	entries, err := os.ReadDir(dir)
+	convey.So(err, convey.ShouldBeNil)
+
+	for _, entry := range entries {
+		convey.So(entry.Name(), convey.ShouldBeIn, []string{
+			name, name + "-wal", name + "-shm",
+			name + ".sync-lock", name + ".sync-lock-wal", name + ".sync-lock-shm",
+		})
+	}
+
+	return sqlite
+}
+
+func TestOpenCacheSQLiteMemoryURI(t *testing.T) {
+	for _, path := range []string{
+		":memory:",
+		"file::memory:",
+		"file::memory:?cache=shared",
+		"file::memory:#frag",
+		"file:x?mode=memory",
+		"file:x?cache=shared&mode=memory",
+		"file:x?%6Dode=memory",
+		"file:x?mode=%6Demory",
+		"file:%3Amemory%3A",
+		"file:x?mode=rwc&mode=memory",
+		"file:x?vfs=memdb",
+		"file:/x?vfs=memdb",
+	} {
+		convey.Convey("Given the in-memory SQLite cache path "+path+", when opened, written, read and sync-locked, "+
+			"then the read handle sees the write and no file is created", t, func() {
+			dir := t.TempDir()
+			t.Chdir(dir)
+
+			cache, err := OpenCache(context.Background(), CacheConfig{Path: path})
+			convey.So(err, convey.ShouldBeNil)
+			convey.Reset(func() { _ = cache.Close() })
+
+			_, err = cache.DB().Exec(`CREATE TABLE probe (a INTEGER); INSERT INTO probe VALUES (1)`)
+			convey.So(err, convey.ShouldBeNil)
+
+			var count int
+			convey.So(cacheReadDB(cache).QueryRow(`SELECT COUNT(*) FROM probe`).Scan(&count), convey.ShouldBeNil)
+			convey.So(count, convey.ShouldEqual, 1)
+
+			sqlite, ok := cache.(*sqliteCache)
+			convey.So(ok, convey.ShouldBeTrue)
+
+			release, err := sqlite.acquireSyncLock(context.Background())
+			convey.So(err, convey.ShouldBeNil)
+
+			if release != nil {
+				convey.So(release(), convey.ShouldBeNil)
+			}
+
+			entries, err := os.ReadDir(dir)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(entries, convey.ShouldBeEmpty)
+		})
+	}
+}
+
+func TestOpenCacheTrimsPathWhitespace(t *testing.T) {
+	convey.Convey("Given a SQLite cache path padded with whitespace, when opened, "+
+		"then the unpadded file is created", t, func() {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "x.db")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: " \t" + path + "\n "})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		_, err = os.Stat(path)
+		convey.So(err, convey.ShouldBeNil)
+	})
+
+	convey.Convey("Given the in-memory cache path padded with whitespace, when opened and written, "+
+		"then it behaves as :memory: and creates no file", t, func() {
+		dir := t.TempDir()
+		t.Chdir(dir)
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: " :memory: "})
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = cache.Close() })
+
+		_, err = cache.DB().Exec(`CREATE TABLE probe (a INTEGER); INSERT INTO probe VALUES (1)`)
+		convey.So(err, convey.ShouldBeNil)
+
+		var count int
+		convey.So(cacheReadDB(cache).QueryRow(`SELECT COUNT(*) FROM probe`).Scan(&count), convey.ShouldBeNil)
+		convey.So(count, convey.ShouldEqual, 1)
+
+		entries, err := os.ReadDir(dir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(entries, convey.ShouldBeEmpty)
+	})
+}
+
 func cacheReadDB(cache Cache) *sql.DB {
 	reader, ok := cache.(interface{ ReadDB() *sql.DB })
 	if !ok {
@@ -1413,4 +1635,17 @@ func expectNoDroppedMirrorRepairRows(mock sqlmock.Sqlmock, table string) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 		WithArgs(table).
 		WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
+}
+
+// assertSecondSyncLockFailsAtOnce takes the cache's sync lock, then asserts a
+// second attempt returns ErrSyncAlreadyRunning without waiting on the lock.
+func assertSecondSyncLockFailsAtOnce(sqlite *sqliteCache) {
+	release, err := sqlite.acquireSyncLock(context.Background())
+	convey.So(err, convey.ShouldBeNil)
+	convey.Reset(func() { _ = release() })
+
+	start := time.Now()
+	_, err = sqlite.acquireSyncLock(context.Background())
+	convey.So(err, convey.ShouldEqual, ErrSyncAlreadyRunning)
+	convey.So(time.Since(start), convey.ShouldBeLessThan, time.Second)
 }

@@ -124,7 +124,7 @@ func openUsageStore(ctx context.Context, path string, retentionDays, queueSize i
 		return nil, err
 	}
 
-	db, err := sql.Open("sqlite", sqliteWritableDSN(path))
+	db, err := sql.Open("sqlite", sqliteWritablePathDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("mlwh: open usage store: %w", err)
 	}

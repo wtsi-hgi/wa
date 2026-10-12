@@ -305,6 +305,16 @@ func TestFeedbackStoreA2(t *testing.T) {
 		})
 	}
 
+	convey.Convey("Given a new relative path starting file:, when opened and written, then the data lands in that exact file readable only by the owner", t, func() {
+		dir := t.TempDir()
+		t.Chdir(dir)
+
+		store := openTestFeedbackStore(t, "file:f.db")
+		addTestFeedback(ctx, store, FeedbackCategoryOther)
+
+		assertStoreFileUsed(dir, "file:f.db")
+	})
+
 	convey.Convey("Given an existing database at mode 0644, when reopened, then its mode is unchanged", t, func() {
 		path := filepath.Join(t.TempDir(), "feedback.db")
 		store, err := OpenFeedbackStore(ctx, path)
@@ -352,4 +362,20 @@ func reportIDs(reports []FeedbackReport) []int64 {
 	}
 
 	return ids
+}
+
+// assertStoreFileUsed asserts that the store wrote to the owner-only file name
+// in dir and that only name and its WAL siblings exist there.
+func assertStoreFileUsed(dir, name string) {
+	info, err := os.Stat(filepath.Join(dir, name))
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(info.Size(), convey.ShouldBeGreaterThan, 0)
+	convey.So(info.Mode().Perm(), convey.ShouldEqual, os.FileMode(0o600))
+
+	entries, err := os.ReadDir(dir)
+	convey.So(err, convey.ShouldBeNil)
+
+	for _, entry := range entries {
+		convey.So(entry.Name(), convey.ShouldBeIn, []string{name, name + "-wal", name + "-shm"})
+	}
 }

@@ -8,19 +8,19 @@
 
 ## Deliver queue
 
-| Branch                   | Worktree            | PR                                            | Target    | Depends on        | Head      | Status               | Waits on       | Next action                |
-| ------------------------ | ------------------- | --------------------------------------------- | --------- | ----------------- | --------- | -------------------- | -------------- | -------------------------- |
-| `usage`                  | removed after merge | [#39](https://github.com/wtsi-hgi/wa/pull/39) | `develop` | none              | `879dcf8` | merged as `5e851cd`  | none           | done; user tags `v0.11.0`  |
-| `syncrace-bd100063`      | removed after merge | [#47](https://github.com/wtsi-hgi/wa/pull/47) | `develop` | none              | `42619e6` | merged as `1757d9a`  | none           | done                       |
-| `resultswal-867e6b0f`    | removed after merge | [#42](https://github.com/wtsi-hgi/wa/pull/42) | `develop` | #39 (merged)      | `a5f3e9d` | merged as `d35401d`  | none           | done                       |
-| `frontendtsc-69d13e03`   | removed after merge | [#43](https://github.com/wtsi-hgi/wa/pull/43) | `develop` | #39 (merged)      | `47cdfd7` | merged as `407579c`  | none           | done                       |
-| `verifyrev-45b2c5f7`     | removed after merge | [#44](https://github.com/wtsi-hgi/wa/pull/44) | `develop` | #39 (merged)      | `2bb7e0c` | merged as `f89df69`  | none           | done                       |
-| `menurace-39ecd8d1`      | removed after merge | [#45](https://github.com/wtsi-hgi/wa/pull/45) | `develop` | #43, #44 (merged) | `007c0d6` | merged as `e8bbf25`  | none           | done                       |
-| `serveshutdown-cf1cb518` | removed after merge | [#41](https://github.com/wtsi-hgi/wa/pull/41) | `develop` | #39, #40 (merged) | `6a4d1ab` | merged as `fcefbc8`  | none           | done                       |
-| `rundevstate-64ed3f75`   | removed after merge | [#46](https://github.com/wtsi-hgi/wa/pull/46) | `develop` | none              | `5d80ca2` | merged as `a2b63f3`  | none           | done                       |
-| `pnpmfilter-90a8f24a`    | `../wa-pnpmfilter`  | [#48](https://github.com/wtsi-hgi/wa/pull/48) | `develop` | #43 (merged)      | rebased   | rebased on `1757d9a` | CI, Copilot    | ask user to merge #48      |
-| `filecache-00de9195`     | `../wa-filecache`   | [#49](https://github.com/wtsi-hgi/wa/pull/49) | `develop` | #40 (merged)      | `05b8188` | ready on `407579c`   | earlier merges | recheck on current develop |
-| `sqlitedsn-723fb158`     | removed after merge | [#40](https://github.com/wtsi-hgi/wa/pull/40) | `develop` | #39 (merged)      | `8727521` | merged as `a6d0876`  | none           | done                       |
+| Branch                   | Worktree            | PR                                            | Target    | Depends on        | Head      | Status                              | Waits on    | Next action               |
+| ------------------------ | ------------------- | --------------------------------------------- | --------- | ----------------- | --------- | ----------------------------------- | ----------- | ------------------------- |
+| `usage`                  | removed after merge | [#39](https://github.com/wtsi-hgi/wa/pull/39) | `develop` | none              | `879dcf8` | merged as `5e851cd`                 | none        | done; user tags `v0.11.0` |
+| `syncrace-bd100063`      | removed after merge | [#47](https://github.com/wtsi-hgi/wa/pull/47) | `develop` | none              | `42619e6` | merged as `1757d9a`                 | none        | done                      |
+| `resultswal-867e6b0f`    | removed after merge | [#42](https://github.com/wtsi-hgi/wa/pull/42) | `develop` | #39 (merged)      | `a5f3e9d` | merged as `d35401d`                 | none        | done                      |
+| `frontendtsc-69d13e03`   | removed after merge | [#43](https://github.com/wtsi-hgi/wa/pull/43) | `develop` | #39 (merged)      | `47cdfd7` | merged as `407579c`                 | none        | done                      |
+| `verifyrev-45b2c5f7`     | removed after merge | [#44](https://github.com/wtsi-hgi/wa/pull/44) | `develop` | #39 (merged)      | `2bb7e0c` | merged as `f89df69`                 | none        | done                      |
+| `menurace-39ecd8d1`      | removed after merge | [#45](https://github.com/wtsi-hgi/wa/pull/45) | `develop` | #43, #44 (merged) | `007c0d6` | merged as `e8bbf25`                 | none        | done                      |
+| `serveshutdown-cf1cb518` | removed after merge | [#41](https://github.com/wtsi-hgi/wa/pull/41) | `develop` | #39, #40 (merged) | `6a4d1ab` | merged as `fcefbc8`                 | none        | done                      |
+| `rundevstate-64ed3f75`   | removed after merge | [#46](https://github.com/wtsi-hgi/wa/pull/46) | `develop` | none              | `5d80ca2` | merged as `a2b63f3`                 | none        | done                      |
+| `pnpmfilter-90a8f24a`    | removed after merge | [#48](https://github.com/wtsi-hgi/wa/pull/48) | `develop` | #43 (merged)      | `1298557` | merged as `b691615`                 | none        | done                      |
+| `filecache-00de9195`     | `../wa-filecache`   | [#49](https://github.com/wtsi-hgi/wa/pull/49) | `develop` | #40 (merged)      | rebased   | rebased on `b691615`; last in queue | CI, Copilot | ask user to merge #49     |
+| `sqlitedsn-723fb158`     | removed after merge | [#40](https://github.com/wtsi-hgi/wa/pull/40) | `develop` | #39 (merged)      | `8727521` | merged as `a6d0876`                 | none        | done                      |
 
 ## Incidental handoffs
 

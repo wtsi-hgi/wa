@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -70,6 +71,13 @@ var (
 	cacheMigrationStderr io.Writer = os.Stderr
 )
 
+const (
+	sqliteWritableParams = "mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	sqliteLockParams     = "_pragma=journal_mode(WAL)"
+	sqliteLockForced     = "mode=rwc&_pragma=busy_timeout(0)"
+	sqliteReadOnlyParams = "mode=ro"
+)
+
 // Cache exposes the opened cache database handle.
 type Cache interface {
 	DB() *sql.DB
@@ -79,6 +87,8 @@ type Cache interface {
 
 // OpenCache opens the configured cache backend and ensures the embedded schema exists.
 func OpenCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
+	cfg.Path = strings.TrimSpace(cfg.Path)
+
 	if looksLikeMySQLDSN(cfg.Path) {
 		return openMySQLCache(ctx, cfg)
 	}
@@ -115,7 +125,7 @@ func openSQLiteCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 	lockDSN := sqliteLockDSN(cfg.Path)
 
 	roDB := rwDB
-	if cfg.Path != ":memory:" {
+	if !isSQLiteMemoryPath(cfg.Path) {
 		roDB, err = sqlOpenFunc("sqlite", sqliteReadOnlyDSN(cfg.Path))
 		if err != nil {
 			_ = rwDB.Close()
@@ -1619,25 +1629,161 @@ func looksLikeMySQLDSN(path string) bool {
 }
 
 func sqliteWritableDSN(path string) string {
-	if path == ":memory:" {
-		return path
+	if strings.HasPrefix(path, "file:") {
+		return mergeSQLiteURIParams(path, sqliteWritableParams, "")
 	}
 
-	return sqliteuri.File(path, "mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	return sqliteWritablePathDSN(path)
 }
 
 func sqliteLockDSN(path string) string {
-	if path == ":memory:" {
+	if isSQLiteMemoryPath(path) {
 		return ""
 	}
 
-	return sqliteuri.File(path+".sync-lock", "mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(0)")
+	if strings.HasPrefix(path, "file:") {
+		uriPath, query, _ := strings.Cut(withoutURIFragment(path), "?")
+
+		return mergeSQLiteURIParams(uriPath+".sync-lock?"+query, sqliteLockParams, sqliteLockForced)
+	}
+
+	return sqliteuri.File(path+".sync-lock", sqliteLockParams+"&"+sqliteLockForced)
 }
 
 func sqliteReadOnlyDSN(path string) string {
+	if isSQLiteMemoryPath(path) {
+		return path
+	}
+
+	if strings.HasPrefix(path, "file:") {
+		return mergeSQLiteURIParams(path, "", sqliteReadOnlyParams)
+	}
+
+	return sqliteuri.File(path, sqliteReadOnlyParams)
+}
+
+// isSQLiteMemoryPath reports whether SQLite opens path as an in-memory
+// database: ":memory:", a file: URI whose path is ":memory:", or a file: URI
+// whose last mode param is "memory" or whose last vfs param is "memdb". Like
+// SQLite, it percent-decodes the URI path and params and compares values
+// case-sensitively.
+func isSQLiteMemoryPath(path string) bool {
+	if path == ":memory:" {
+		return true
+	}
+
+	uri, ok := strings.CutPrefix(path, "file:")
+	if !ok {
+		return false
+	}
+
+	uriPath, query, _ := strings.Cut(withoutURIFragment(uri), "?")
+	if unescaped, err := url.PathUnescape(uriPath); err == nil && unescaped == ":memory:" {
+		return true
+	}
+
+	last := map[string]string{}
+
+	for param := range strings.SplitSeq(query, "&") {
+		key := sqliteParamKey(param)
+		if key != "mode" && key != "vfs" {
+			continue
+		}
+
+		_, value, _ := strings.Cut(param, "=")
+		if unescaped, err := url.QueryUnescape(value); err == nil {
+			value = unescaped
+		}
+
+		last[key] = value
+	}
+
+	return last["mode"] == "memory" || last["vfs"] == "memdb"
+}
+
+// mergeSQLiteURIParams adds our handle params to a user's SQLite file: URI.
+// A param the user set wins over the same param in defaults, while forced
+// params replace the user's. Params are matched by key, and _pragma params by
+// pragma name, because SQLite rejects a repeated mode that widens access and
+// the driver runs repeated pragmas in an unspecified order.
+func mergeSQLiteURIParams(uri, defaults, forced string) string {
+	base, query, _ := strings.Cut(withoutURIFragment(uri), "?")
+	forcedKeys := sqliteParamKeys(forced)
+	userKeys := map[string]bool{}
+
+	var params []string
+
+	for param := range strings.SplitSeq(query, "&") {
+		if param == "" || forcedKeys[sqliteParamKey(param)] {
+			continue
+		}
+
+		params = append(params, param)
+		userKeys[sqliteParamKey(param)] = true
+	}
+
+	for param := range strings.SplitSeq(defaults, "&") {
+		if param != "" && !userKeys[sqliteParamKey(param)] {
+			params = append(params, param)
+		}
+	}
+
+	if forced != "" {
+		params = append(params, forced)
+	}
+
+	return base + "?" + strings.Join(params, "&")
+}
+
+// withoutURIFragment drops a URI's #fragment, which SQLite ignores, so params
+// we add land in the query rather than after the '#'.
+func withoutURIFragment(uri string) string {
+	uri, _, _ = strings.Cut(uri, "#")
+
+	return uri
+}
+
+func sqliteParamKeys(query string) map[string]bool {
+	keys := map[string]bool{}
+
+	for param := range strings.SplitSeq(query, "&") {
+		if param != "" {
+			keys[sqliteParamKey(param)] = true
+		}
+	}
+
+	return keys
+}
+
+// sqliteParamKey names a URI query param: its key, or for _pragma the pragma
+// name, so "_pragma=busy_timeout(0)" and "_pragma=BUSY_TIMEOUT=5" match.
+func sqliteParamKey(param string) string {
+	key, value, _ := strings.Cut(param, "=")
+	if unescaped, err := url.QueryUnescape(key); err == nil {
+		key = unescaped
+	}
+
+	if key != "_pragma" {
+		return key
+	}
+
+	if unescaped, err := url.QueryUnescape(value); err == nil {
+		value = unescaped
+	}
+
+	if i := strings.IndexAny(value, "(="); i >= 0 {
+		value = value[:i]
+	}
+
+	return "_pragma:" + strings.ToLower(strings.TrimSpace(value))
+}
+
+// sqliteWritablePathDSN opens path as a literal file name, even one starting
+// "file:", for stores that create that exact file at mode 0600 first.
+func sqliteWritablePathDSN(path string) string {
 	if path == ":memory:" {
 		return path
 	}
 
-	return sqliteuri.File(path, "mode=ro")
+	return sqliteuri.File(path, sqliteWritableParams)
 }
