@@ -84,6 +84,7 @@
       and write handles probably open separate in-memory databases and the
       lock opens a disk file named `:memory:.sync-lock`; `mlwh.OpenCache`
       does not trim whitespace from library callers' paths (the CLI does).
+
 - [x] PR #49 makes `file:` URI MLWH cache paths pass through to SQLite
       (`mlwh/cache.go`). But `--mlwh-cache file::memory:` (and any `file:`
       URI with `mode=memory`) is not treated like `:memory:`: the read and
@@ -95,9 +96,10 @@
       owner.
     - Confirmed on `da94daa`. Red command: a script that builds `wa`, serves
       each of `:memory:`, `file::memory:`, `file:x?mode=memory` and
-      `file::memory:?cache=shared` with `timeout 6 wa mlwh serve
-      --mlwh-cache <p>`, and expects `GET /studies` to return the same
-      `cache_never_synced` error as `:memory:`. Exit 1:
+      `file::memory:?cache=shared` with
+      `timeout 6 wa mlwh serve --mlwh-cache <p>`, and expects
+      `GET /studies` to return the same `cache_never_synced` error as
+      `:memory:`. Exit 1:
 
         ```text
         :memory: exit=124 body={"code":"cache_never_synced",...}
@@ -108,8 +110,9 @@
         file::memory:?cache=shared exit=124 body={"code":"cache_never_synced",...}
         ```
 
-      `serve` never takes the sync lock, so the `:memory:.sync-lock` part is
-      covered by a unit test on `sqliteLockDSN` rather than the CLI.
+        `serve` never takes the sync lock, so the `:memory:.sync-lock` part is
+        covered by a unit test on `sqliteLockDSN` rather than the CLI.
+
     - Decision: treat in-memory `file:` URIs exactly as `:memory:` (one
       shared handle, no sync lock) instead of rejecting them. `cache.go`
       accepts `:memory:` as a cache, the `--mlwh-cache` CLI accepts both
