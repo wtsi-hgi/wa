@@ -1279,9 +1279,11 @@ values. New tests follow the existing pattern in
    `WA_MLWH_DSN=mlwh_test@tcp(localhost:3306)/mlwarehouse_test`
    inherited (a development/test-shaped value), when `run-dev.sh` runs,
    then it exits non-zero and stderr contains `WA_MLWH_DSN`.
-6. Given `--mode prod` and `WA_MLWH_PASSWORD` set to the literal value
-   used in `.env.test` / `.env.development`, when `run-dev.sh` runs,
-   then it exits non-zero and stderr names `WA_MLWH_PASSWORD`.
+6. Given `--mode prod`, `WA_ENV=production`,
+   `WA_MLWH_DSN=mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse` and a
+   non-empty `WA_MLWH_PASSWORD`, when `run-dev.sh` runs, then no
+   scenario guard refuses it (the shared read-only upstream source is
+   valid in every environment).
 7. Given `--mode test` with no `WA_MLWH_*` inherited and the test
    `.env.test` values resolved, when `run-dev.sh` boots the test
    stack, then it succeeds and the resolved `WA_MLWH_CACHE_PATH`

@@ -34,11 +34,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const (
-	knownDevelopmentMLWHDSN      = "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse"
-	knownDevelopmentMLWHPassword = "mlwh_humgen_is_secure"
-)
-
 // usageError is a command error caused by how the command was invoked, so the
 // command's usage is printed with it. The rule: a missing, conflicting or
 // mutually required flag or argument is a usageError; a bad flag value (such
@@ -139,14 +134,6 @@ func validateProductionScenarioEnvironment() error {
 		}
 	}
 
-	if mlwhPasswordLooksNonProduction(strings.TrimSpace(firstEnv("WA_MLWH_PASSWORD"))) {
-		return fmt.Errorf("WA_MLWH_PASSWORD matches a development or test literal and is not permitted when WA_ENV=production")
-	}
-
-	if mlwhPasswordLooksNonProduction(strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PASSWORD"))) {
-		return fmt.Errorf("WA_MLWH_CACHE_PASSWORD matches a development or test literal and is not permitted when WA_ENV=production")
-	}
-
 	if mlwhDSNLooksNonProduction(strings.TrimSpace(firstEnv("WA_MLWH_DSN"))) {
 		return fmt.Errorf("WA_MLWH_DSN looks like a development or test value and is not permitted when WA_ENV=production")
 	}
@@ -165,11 +152,7 @@ func mlwhDSNLooksNonProduction(value string) bool {
 
 	lowerValue := strings.ToLower(value)
 
-	return value == knownDevelopmentMLWHDSN || strings.Contains(lowerValue, "localhost") || strings.Contains(lowerValue, "127.0.0.1") || strings.Contains(lowerValue, "_test")
-}
-
-func mlwhPasswordLooksNonProduction(value string) bool {
-	return value == knownDevelopmentMLWHPassword
+	return strings.Contains(lowerValue, "localhost") || strings.Contains(lowerValue, "127.0.0.1") || strings.Contains(lowerValue, "_test")
 }
 
 func mlwhCachePathLooksTest(value string) bool {

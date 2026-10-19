@@ -242,17 +242,20 @@ func TestRunDevModeGuards(t *testing.T) {
 		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_DSN")
 	})
 
-	convey.Convey("run-dev.sh --mode prod rejects inherited WA_MLWH_PASSWORD from development or test env", t, func() {
+	convey.Convey("run-dev.sh --mode prod accepts the shared upstream MLWH source DSN and password", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
-		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "prod", "--frontend-port", "1", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
+		// Port 0 fails validation after every scenario guard has run, so
+		// reaching that error proves the guards accepted the MLWH source.
+		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "prod", "--frontend-port", "0", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
 			"WA_ENV":             "production",
 			"WA_RESULTS_DB_PATH": "/var/lib/wa/results.db",
-			"WA_MLWH_DSN":        "mlwh_prod@tcp(mlwh-db-ro:3435)/mlwarehouse",
-			"WA_MLWH_PASSWORD":   "mlwh_humgen_is_secure",
-		}, []string{"WA_TEST_FRONTEND_PORT", "WA_TEST_RESULTS_PORT", "WA_TEST_SEQMETA_PORT"})
+			"WA_MLWH_DSN":        "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse",
+			"WA_MLWH_PASSWORD":   "example-mlwh-password",
+		}, []string{"WA_TEST_FRONTEND_PORT", "WA_TEST_RESULTS_PORT", "WA_TEST_SEQMETA_PORT", "WA_MLWH_CACHE_PATH", "WA_MLWH_CACHE_PASSWORD"})
 
 		convey.So(err, convey.ShouldNotBeNil)
-		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_PASSWORD")
+		convey.So(stdout+stderr, convey.ShouldNotContainSubstring, "refusing")
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "frontend port must be between 1 and 65535")
 	})
 }
 

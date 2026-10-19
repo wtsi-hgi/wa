@@ -241,14 +241,45 @@ func TestRunLoadsSelectedEnv(t *testing.T) {
 		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_MLWH_DSN")
 	})
 
-	convey.Convey("run rejects development or test-shaped WA_MLWH_PASSWORD in production mode", t, func() {
+	convey.Convey("run accepts the shared upstream MLWH source DSN and password in production mode", t, func() {
 		t.Setenv("WA_ENV", "production")
-		t.Setenv("WA_MLWH_PASSWORD", "mlwh_humgen_is_secure")
+		t.Setenv("WA_MLWH_DSN", "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse")
+		t.Setenv("WA_MLWH_PASSWORD", "example-mlwh-password")
+		t.Setenv("WA_MLWH_CACHE_PASSWORD", "")
+		t.Setenv("WA_MLWH_CACHE_PATH", "")
+		t.Setenv("WA_DEV_RESULTS_HOST", "")
+		t.Setenv("WA_DEV_SEQMETA_HOST", "")
+
+		err := run([]string{"--help"}, io.Discard)
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+
+	convey.Convey("run rejects a localhost WA_MLWH_DSN in production mode", t, func() {
+		t.Setenv("WA_ENV", "production")
+		t.Setenv("WA_MLWH_DSN", "mlwh_test@tcp(localhost:3306)/mlwarehouse_test")
+		t.Setenv("WA_MLWH_PASSWORD", "")
+		t.Setenv("WA_MLWH_CACHE_PASSWORD", "")
 
 		err := run(nil, io.Discard)
 
 		convey.So(err, convey.ShouldNotBeNil)
-		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_MLWH_PASSWORD")
+		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_MLWH_DSN")
+	})
+
+	convey.Convey("run rejects a /tmp WA_MLWH_CACHE_PATH in production mode", t, func() {
+		t.Setenv("WA_ENV", "production")
+		t.Setenv("WA_MLWH_PASSWORD", "")
+		t.Setenv("WA_MLWH_CACHE_PASSWORD", "")
+		t.Setenv("WA_MLWH_DSN", "")
+		t.Setenv("WA_MLWH_CACHE_PATH", "/tmp/x.sqlite")
+		t.Setenv("WA_DEV_RESULTS_HOST", "")
+		t.Setenv("WA_DEV_SEQMETA_HOST", "")
+
+		err := run(nil, io.Discard)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
 	})
 
 	convey.Convey("run rejects inherited development results host in production mode", t, func() {
