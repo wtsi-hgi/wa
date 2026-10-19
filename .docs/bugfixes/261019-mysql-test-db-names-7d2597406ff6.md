@@ -39,12 +39,20 @@
       `ensureAdditiveCurrentCacheIndexes` does). Tests in
       `mlwh/cache_schema_test.go` cover the reopen repair and a missing
       `study_mirror` still triggering a rebuild.
-- [ ] Exposed by the first item:
+- [x] Exposed by the first item:
       `TestClientSyncSparseMySQLProductMirrorsReplaceExistingKeys`
       (`mlwh/sync_test.go:3908`) fails in setup with
       `dropMirrorPrimaryKeyForTest(seq_product_irods_locations_mirror): Error 1091 Can't DROP 'PRIMARY'`;
       the MySQL table has no primary key any more.
     - Red command: the test above with the cache credentials exported.
+    - Test bug, not a product bug: the location mirror has had no primary key
+      since the test was added (1b61666; composite products expand to several
+      rows and the write path deletes then inserts). Fixed in
+      `mlwh/sync_test.go`: the setup no longer drops that key, and the fake
+      source routes the warm iRODS dependency repair queries (4862e7d) to
+      their own empty plan instead of the location and product plans.
+      Assertions unchanged; mutants removing either table's delete step fail
+      the test.
 - [ ] Exposed by the first item:
       `TestClientSyncSampleColdLoadRecreatesIndexesMySQL`
       (`mlwh/sync_test.go:4383`) expects the `sample_mirror_*_idx` indexes after

@@ -177,6 +177,9 @@ var newSyncTestSourceTables = map[string]bool{
 	syncTablePacBioProductMetrics:    true,
 	syncTableEseqProductMetrics:      true,
 	syncTableUseqProductMetrics:      true,
+	// The warm product-metrics iRODS dependency repair queries the source for
+	// candidates; a test that does not plan them sees no candidates.
+	syncTableIseqProductMetricsIRODSRepair: true,
 }
 
 var (
@@ -3904,8 +3907,10 @@ func TestClientSyncSparseMySQLProductMirrorsReplaceExistingKeys(t *testing.T) {
 		base := time.Date(2026, time.May, 12, 16, 0, 0, 0, time.UTC)
 		next := base.Add(time.Minute)
 
+		// seq_product_irods_locations_mirror has no primary key by design (one
+		// source row can expand to several component-sample rows), so it
+		// already accepts the duplicate keys seeded below.
 		dropMirrorPrimaryKeyForTest(t, db, iseqProductMetricsMirrorIndexSet)
-		dropMirrorPrimaryKeyForTest(t, db, seqProductIRODSLocationsMirrorIndexSet)
 		seedSparseIseqProductMetricsMirrorRow(t, db, "product-1", 1001, 1, base)
 		seedSparseIseqProductMetricsMirrorRow(t, db, "product-1", 1002, 2, base)
 		seedSeqProductIRODSLocationsMirrorRow(t, db, "product-loc-1", "/seq/old", "old-1.cram", base, 9001)
@@ -5986,6 +5991,11 @@ func (r *syncTestRows) Next(dest []driver.Value) error {
 
 func syncTableForQuery(query string) string {
 	switch {
+	// These select from the iRODS and product-metrics source tables but return
+	// one candidate-id column, so they must not be served the table plans' rows.
+	case query == iseqProductMetricsIRODSDependencySourceQuery(),
+		query == iseqProductMetricsInitialIRODSDependencySourceQuery():
+		return syncTableIseqProductMetricsIRODSRepair
 	case strings.Contains(query, " FROM sample "):
 		return syncTableSample
 	case strings.Contains(query, " FROM study_users su "):
