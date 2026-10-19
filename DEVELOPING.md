@@ -617,3 +617,58 @@ trusted by the system.
 | `WA_MLWH_BACKEND_URL`          | For frontend / compatibility            | MLWH query API URL for the frontend and lower-precedence `wa mlwh info` default                          |
 | `WA_STUDIES_CACHE_TTL_SECONDS` | No                                      | Study list cache TTL (default: 300)                                                                      |
 | `PORT`                         | No                                      | Frontend listen port (default: 3000)                                                                     |
+
+### Container image
+
+Pushing a `v*` tag publishes the Go binary (no frontend) as
+`ghcr.io/wtsi-hgi/wa:<tag>`, for example `ghcr.io/wtsi-hgi/wa:v0.11.1`.
+Non-prerelease tags also move `ghcr.io/wtsi-hgi/wa:latest`. Pull requests to
+`develop` build and smoke-test the image without pushing it. The image runs
+as UID/GID `10001` with `wa` as its entrypoint.
+
+The working directory is `/app`, which holds the committed `.env.production`,
+so `wa --env production` loads it from there. Mount deployment secrets as the
+single file `/app/.env.production.local`, for example with a secret volume and
+`subPath`. Mounting a secret over the whole of `/app` would hide
+`.env.production`. A typical `.env.production.local`:
+
+```bash
+WA_PROD_SEQMETA_HOST=0.0.0.0
+WA_MLWH_DSN='user@tcp(mlwh-host:3306)/warehouse'
+WA_MLWH_PASSWORD='...'
+WA_MLWH_CACHE_PATH='user@tcp(cache-host:3306)/wa_mlwh_cache'
+WA_MLWH_CACHE_PASSWORD='...'
+WA_MLWH_FEEDBACK_PATH=/data/mlwh-feedback.sqlite
+WA_MLWH_USAGE_PATH=/data/mlwh-usage.sqlite
+```
+
+Run the MLWH API and a periodic sync in one container by overriding the
+command:
+
+```yaml
+command: ["sh", "-c"]
+args:
+    - >-
+        (sleep 60; while :; do wa --env production mlwh sync; sleep 1800; done) &
+        exec wa --env production mlwh serve
+```
+
+The first sync waits 60 seconds so that serve opens and migrates the cache
+before sync touches it. If both open the cache at the same moment, either can
+fail with `SQLITE_BUSY`, and their MySQL schema setup is not serialised. The
+loop then waits 30 minutes after each sync finishes before starting the next.
+
+`wa mlwh serve` listens on port `8091` and answers `GET /health` without
+reading the cache, so use that for probes. A failed sync is logged and retried
+on the next loop, and serve keeps running.
+
+Mount a persistent volume at `/data` for the feedback and usage SQLite files.
+The image sets `XDG_STATE_HOME=/data`, so the admin token for `/feedback` and
+`/usage`, `.wa-mlwh-server.token`, is created there on first start and
+survives restarts. Read it with
+`kubectl exec <pod> -- cat /data/.wa-mlwh-server.token`. A freshly provisioned
+volume is usually owned by root, so it must be writable by UID `10001`: set
+the pod's `securityContext.fsGroup: 10001` or fix ownership another way, such
+as an init container that runs `chown 10001:10001 /data`. Use a `Recreate`
+deployment strategy so that an update never runs an old and a new pod against
+the same `ReadWriteOnce` volume and its SQLite files at once.
