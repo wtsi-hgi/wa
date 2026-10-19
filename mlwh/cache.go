@@ -78,6 +78,16 @@ const (
 	sqliteReadOnlyParams = "mode=ro"
 )
 
+// mySQLStudySearchCollatedColumns are the study_mirror columns, with their
+// declared definitions, that the case-insensitive study search reads but that
+// the schema did not give the text collation until after caches existed. Those
+// caches inherited the database default collation for them, which is binary on
+// a utf8mb4_bin database.
+var mySQLStudySearchCollatedColumns = []struct{ column, definition string }{
+	{column: "study_title", definition: "TEXT NOT NULL"},
+	{column: "programme", definition: "VARCHAR(255) NOT NULL"},
+}
+
 // Cache exposes the opened cache database handle.
 type Cache interface {
 	DB() *sql.DB
@@ -606,6 +616,10 @@ func prepareCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
 			return err
 		}
 
+		if err = ensureMySQLStudySearchColumnCollation(ctx, db, dialect); err != nil {
+			return err
+		}
+
 		if err = validateCurrentCacheSchema(ctx, db, dialect); err != nil {
 			return migrateCacheSchema(ctx, db, dialect, version)
 		}
@@ -627,6 +641,48 @@ func sqliteMirrorIndexesFullyDroppedForRecovery(ctx context.Context, db *sql.DB,
 	}
 
 	return len(indexes) == 0, nil
+}
+
+// ensureMySQLStudySearchColumnCollation gives an existing MySQL cache's
+// study_mirror search columns the declared text collation, altering only a
+// column whose collation differs. study_mirror is small, so the in-place ALTER
+// keeps the mirrored rows and needs no version bump or re-sync.
+func ensureMySQLStudySearchColumnCollation(ctx context.Context, db *sql.DB, dialect string) error {
+	if dialect != "mysql" {
+		return nil
+	}
+
+	collation, err := mySQLSchemaTextCollation(ctx, db)
+	if err != nil {
+		return err
+	}
+
+	for _, spec := range mySQLStudySearchCollatedColumns {
+		var current sql.NullString
+		err = db.QueryRowContext(
+			ctx,
+			`SELECT COLLATION_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'study_mirror' AND COLUMN_NAME = ?`,
+			spec.column,
+		).Scan(&current)
+		if errors.Is(err, sql.ErrNoRows) {
+			// A missing column fails validateCurrentCacheSchema, which rebuilds the cache.
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("mlwh: read mysql study_mirror.%s collation: %w", spec.column, err)
+		}
+
+		if current.String == collation {
+			continue
+		}
+
+		stmt := fmt.Sprintf(`ALTER TABLE study_mirror MODIFY COLUMN %s %s COLLATE %s`, spec.column, spec.definition, collation)
+		if _, err = db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("mlwh: set mysql study_mirror.%s collation: %w", spec.column, err)
+		}
+	}
+
+	return nil
 }
 
 func validateCurrentCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {

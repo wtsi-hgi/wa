@@ -37,7 +37,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"
@@ -1216,6 +1215,47 @@ func TestMySQLSchemaCaseInsensitiveSampleNameEquality(t *testing.T) {
 	})
 }
 
+func TestOpenCacheMySQLMakesExistingStudySearchColumnsCaseInsensitive(t *testing.T) {
+	convey.Convey("Given a seeded MySQL cache whose study_title and programme kept a binary database default", t, func() {
+		cfg, skipReason := loadMySQLCacheConfigForTest(t)
+		if skipReason != "" {
+			t.Skip(skipReason)
+		}
+
+		ctx := context.Background()
+		cache := openMySQLCacheForTest(t, cfg)
+		seedSearchParityFixtures(t, cache)
+
+		declared := readStudySearchColumnDefinitions(t, cache.DB())
+
+		// Caches built from the schema before these columns declared a collation
+		// inherited the database default, utf8mb4_bin on this test database.
+		_, err := cache.DB().ExecContext(ctx, `ALTER TABLE study_mirror
+			MODIFY COLUMN study_title TEXT NOT NULL COLLATE utf8mb4_bin,
+			MODIFY COLUMN programme VARCHAR(255) NOT NULL COLLATE utf8mb4_bin`)
+		convey.So(err, convey.ShouldBeNil)
+
+		before, err := (&Client{cache: cache, cacheReader: cacheReadDB(cache)}).SearchStudies(ctx, "malar", 1000, 0)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(before, convey.ShouldBeEmpty)
+
+		convey.Convey("when the cache is reopened, then study search is case-insensitive without a re-sync", func() {
+			reopened := reopenMySQLCacheForTest(t, cfg, cache)
+			client := &Client{cache: reopened, cacheReader: cacheReadDB(reopened)}
+
+			byTitle, err := client.SearchStudies(ctx, "malar", 1000, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sortedInt64s(studyTmpIDs(byTitle)), convey.ShouldResemble, []int64{1, 2})
+
+			byProgramme, err := client.SearchStudies(ctx, "oncol", 1000, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(studyTmpIDs(byProgramme), convey.ShouldResemble, []int64{3})
+
+			convey.So(readStudySearchColumnDefinitions(t, reopened.DB()), convey.ShouldResemble, declared)
+		})
+	})
+}
+
 func TestSchemaCaseInsensitiveStudyAccessionNumberEquality(t *testing.T) {
 	convey.Convey("Given a populated SQLite study_mirror row", t, func() {
 		db := openSQLiteSchemaTestDB(t)
@@ -1434,6 +1474,27 @@ func insertReadBackStudyUsersMirror(t *testing.T, db *sql.DB) error {
 	return nil
 }
 
+func TestOpenCacheMySQLRebuildsCurrentCacheMissingStudyMirror(t *testing.T) {
+	convey.Convey("Given a current-version MySQL cache whose study_mirror table was dropped", t, func() {
+		cfg, skipReason := loadMySQLCacheConfigForTest(t)
+		if skipReason != "" {
+			t.Skip(skipReason)
+		}
+
+		cache := openMySQLCacheForTest(t, cfg)
+		_, err := cache.DB().Exec(`DROP TABLE study_mirror`)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when the cache is reopened, then the schema is rebuilt with study_mirror", func() {
+			reopened := reopenMySQLCacheForTest(t, cfg, cache)
+
+			var count int
+			convey.So(reopened.DB().QueryRow(`SELECT COUNT(*) FROM study_mirror`).Scan(&count), convey.ShouldBeNil)
+			convey.So(count, convey.ShouldEqual, 0)
+		})
+	})
+}
+
 func loadMySQLCacheConfigForTest(t *testing.T) (CacheConfig, string) {
 	t.Helper()
 
@@ -1498,20 +1559,19 @@ func openMySQLCacheForTest(t *testing.T, cfg CacheConfig) Cache {
 		t.Fatalf("mysql cache integration requires a DSN with a database name")
 	}
 
+	testDBName := throwawayCacheDBName(adminCfg.DBName)
 	adminCfg.DBName = ""
-	adminDB, err := sql.Open("mysql", adminCfg.FormatDSN())
+	adminDSN := adminCfg.FormatDSN()
+	adminDB, err := sql.Open("mysql", adminDSN)
 	if err != nil {
 		t.Fatalf("sql.Open(mysql admin): %v", err)
 	}
 	t.Cleanup(func() { _ = adminDB.Close() })
 
-	testDBName := fmt.Sprintf("wa_mlwh_a3_%d", time.Now().UnixNano())
 	if _, err = adminDB.ExecContext(context.Background(), "CREATE DATABASE `"+testDBName+"` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"); err != nil {
 		t.Skipf("skipping MySQL cache integration: create database failed: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = adminDB.ExecContext(context.Background(), "DROP DATABASE IF EXISTS `"+testDBName+"`")
-	})
+	t.Cleanup(func() { dropThrowawayMySQLCacheDB(t, adminDSN, testDBName) })
 
 	testDSN, err := mysql.ParseDSN(normalizeMySQLDSNInput(cfg.Path))
 	if err != nil {
@@ -1984,4 +2044,57 @@ func explainSQLiteQueryPlanDetails(t *testing.T, db *sql.DB, query string, args 
 	}
 
 	return details
+}
+
+// readStudySearchColumnDefinitions returns the live column type, nullability and
+// collation of the study_mirror search columns whose case-insensitivity depends
+// on their declared collation.
+func readStudySearchColumnDefinitions(t *testing.T, db *sql.DB) map[string]string {
+	t.Helper()
+
+	rows, err := db.Query(`SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLLATION_NAME FROM INFORMATION_SCHEMA.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'study_mirror' AND COLUMN_NAME IN ('study_title', 'programme')`)
+	if err != nil {
+		t.Fatalf("read study_mirror column definitions: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	definitions := map[string]string{}
+	for rows.Next() {
+		var name, columnType, nullable, collation string
+		if err = rows.Scan(&name, &columnType, &nullable, &collation); err != nil {
+			t.Fatalf("scan study_mirror column definition: %v", err)
+		}
+		definitions[name] = columnType + " nullable=" + nullable + " " + collation
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatalf("read study_mirror column definitions: %v", err)
+	}
+
+	return definitions
+}
+
+// reopenMySQLCacheForTest opens a second Cache on the database behind cache, as
+// a later process opening an existing cache would, and closes it on cleanup.
+func reopenMySQLCacheForTest(t *testing.T, cfg CacheConfig, cache Cache) Cache {
+	t.Helper()
+
+	var dbName string
+	if err := cache.DB().QueryRow(`SELECT DATABASE()`).Scan(&dbName); err != nil {
+		t.Fatalf("read cache database name: %v", err)
+	}
+
+	dsn, err := mysql.ParseDSN(normalizeMySQLDSNInput(cfg.Path))
+	if err != nil {
+		t.Fatalf("mysql.ParseDSN(path): %v", err)
+	}
+	dsn.DBName = dbName
+
+	reopened, err := OpenCache(context.Background(), CacheConfig{Path: dsn.FormatDSN(), Password: cfg.Password})
+	if err != nil {
+		t.Fatalf("reopen OpenCache(mysql): %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+
+	return reopened
 }
