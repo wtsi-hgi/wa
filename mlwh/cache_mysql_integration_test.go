@@ -890,13 +890,14 @@ func randomHexToken() string {
 
 // dropThrowawayMySQLCacheDB drops the throwaway database, opening a short-lived
 // server connection of its own so it works both before creation (defensive) and
-// from t.Cleanup after the test (success or failure).
+// from t.Cleanup after the test (success or failure). A failure to drop fails the
+// test, so a leaked throwaway database cannot go unnoticed.
 func dropThrowawayMySQLCacheDB(t *testing.T, serverDSN, throwawayDB string) {
 	t.Helper()
 
 	server, err := sql.Open("mysql", serverDSN)
 	if err != nil {
-		t.Logf("drop throwaway db %q: open server: %v", throwawayDB, err)
+		t.Errorf("drop throwaway db %q: open server: %v", throwawayDB, err)
 
 		return
 	}
@@ -906,7 +907,7 @@ func dropThrowawayMySQLCacheDB(t *testing.T, serverDSN, throwawayDB string) {
 	defer cancel()
 
 	if _, err = server.ExecContext(ctx, "DROP DATABASE IF EXISTS `"+throwawayDB+"`"); err != nil {
-		t.Logf("drop throwaway db %q: %v", throwawayDB, err)
+		t.Errorf("drop throwaway db %q: %v", throwawayDB, err)
 	}
 }
 

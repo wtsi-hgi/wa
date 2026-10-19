@@ -37,7 +37,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"
@@ -1498,20 +1497,19 @@ func openMySQLCacheForTest(t *testing.T, cfg CacheConfig) Cache {
 		t.Fatalf("mysql cache integration requires a DSN with a database name")
 	}
 
+	testDBName := throwawayCacheDBName(adminCfg.DBName)
 	adminCfg.DBName = ""
-	adminDB, err := sql.Open("mysql", adminCfg.FormatDSN())
+	adminDSN := adminCfg.FormatDSN()
+	adminDB, err := sql.Open("mysql", adminDSN)
 	if err != nil {
 		t.Fatalf("sql.Open(mysql admin): %v", err)
 	}
 	t.Cleanup(func() { _ = adminDB.Close() })
 
-	testDBName := fmt.Sprintf("wa_mlwh_a3_%d", time.Now().UnixNano())
 	if _, err = adminDB.ExecContext(context.Background(), "CREATE DATABASE `"+testDBName+"` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"); err != nil {
 		t.Skipf("skipping MySQL cache integration: create database failed: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = adminDB.ExecContext(context.Background(), "DROP DATABASE IF EXISTS `"+testDBName+"`")
-	})
+	t.Cleanup(func() { dropThrowawayMySQLCacheDB(t, adminDSN, testDBName) })
 
 	testDSN, err := mysql.ParseDSN(normalizeMySQLDSNInput(cfg.Path))
 	if err != nil {
