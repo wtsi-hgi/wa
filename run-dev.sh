@@ -134,9 +134,6 @@ case "$scenario" in
     ;;
 esac
 
-KNOWN_DEVELOPMENT_MLWH_DSN='mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse'
-KNOWN_DEVELOPMENT_MLWH_PASSWORD='mlwh_humgen_is_secure'
-
 mlwh_cache_path_resolves_under_repo_tmp() {
   local value="${1:-}"
   [[ "$value" == "$TMP_DIR/"* || "$value" == .tmp/* || "$value" == */.tmp/* ]]
@@ -151,7 +148,7 @@ mlwh_dsn_looks_nonprod() {
   local value="${1:-}"
   local lower_value="${value,,}"
 
-  [[ -n "$value" && ( "$value" == "$KNOWN_DEVELOPMENT_MLWH_DSN" || "$lower_value" == *"localhost"* || "$lower_value" == *"127.0.0.1"* || "$lower_value" == *"_test"* ) ]]
+  [[ -n "$value" && ( "$lower_value" == *"localhost"* || "$lower_value" == *"127.0.0.1"* || "$lower_value" == *"_test"* ) ]]
 }
 
 has_nonblank_value() {
@@ -249,16 +246,6 @@ if [[ "$scenario" == "prod" ]]; then
 
   if mlwh_dsn_looks_nonprod "${WA_MLWH_DSN:-}"; then
     printf 'run-dev.sh: refusing to run --mode prod with development or test-shaped WA_MLWH_DSN.\n' >&2
-    exit 1
-  fi
-
-  if [[ "${WA_MLWH_PASSWORD:-}" == "$KNOWN_DEVELOPMENT_MLWH_PASSWORD" ]]; then
-    printf 'run-dev.sh: refusing to run --mode prod with development or test-shaped WA_MLWH_PASSWORD.\n' >&2
-    exit 1
-  fi
-
-  if [[ "${WA_MLWH_CACHE_PASSWORD:-}" == "$KNOWN_DEVELOPMENT_MLWH_PASSWORD" ]]; then
-    printf 'run-dev.sh: refusing to run --mode prod with development or test-shaped WA_MLWH_CACHE_PASSWORD.\n' >&2
     exit 1
   fi
 
