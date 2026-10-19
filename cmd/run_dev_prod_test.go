@@ -773,6 +773,12 @@ func TestProdCtlStartingStack(t *testing.T) {
 		convey.So(ctl.pid(), convey.ShouldEqual, pid)
 		convey.So(runDevPIDIsAliveForTest(pid), convey.ShouldBeTrue)
 
+		stdout, stderr, code = ctl.run("status")
+		convey.So(code, convey.ShouldEqual, 1)
+		convey.So(stdout, convey.ShouldBeEmpty)
+		convey.So(stderr, convey.ShouldEqual, fmt.Sprintf(
+			"The wa production stack (pid %d) is still starting. See %s.\n", pid, ctl.logPath()))
+
 		const startTimeoutSeconds = 15
 
 		ctl.setEnv("WA_PROD_START_TIMEOUT_SECONDS", strconv.Itoa(startTimeoutSeconds))

@@ -8,7 +8,8 @@
 #            starting. Quiet when there is nothing to do, so cron can run it
 #            every few minutes.
 #   stop     Stop the stack's whole process group.
-#   status   Print the URLs and exit 0 when healthy; exit non-zero otherwise.
+#   status   Print the URLs and exit 0 when healthy; exit 1 otherwise, saying
+#            whether the stack is still starting, unhealthy, or not running.
 #   restart  Stop, then start.
 #
 # Every action refuses when .tmp/prod.pid records a stack on another host.
@@ -380,7 +381,10 @@ case "$action" in
       exit 0
     fi
 
-    if pid="$(stack_pid)"; then
+    # A stack that is still starting is not healthy yet, so it exits 1 too.
+    if stack_is_starting; then
+      printf 'The wa production stack (pid %s) is still starting. See %s.\n' "$(stack_pid)" "$LOG_FILE" >&2
+    elif pid="$(stack_pid)"; then
       printf 'The wa production stack (pid %s) is running but not healthy. See %s.\n' "$pid" "$LOG_FILE" >&2
     elif pgid="$(stack_group)"; then
       printf 'The wa production stack'"'"'s run-dev.sh (pid %s) has exited, but processes in its group are still running. make prod-start or prod-restart replaces them; make prod-stop stops them.\n' "$pgid" >&2

@@ -538,8 +538,9 @@ Browser  →  Next.js (Server Actions)  →  Go REST API  →  SQLite / MySQL ca
 
 The results API and website run on a farm host, such as farm22-wrstat01 as
 user mercury from a checkout at `/nfs/hgi/wa/repo`, because they need `/lustre`,
-`/nfs`, and local NSS lookups. The MLWH API runs elsewhere (Kubernetes), so
-this stack starts no local `wa mlwh serve` or `wa mlwh sync`.
+`/nfs`, and local NSS lookups. The MLWH API runs elsewhere, on Kubernetes
+from the [container image](#container-image), so this stack starts no local
+`wa mlwh serve` or `wa mlwh sync`.
 
 `make prod` runs `run-dev.sh --mode prod` in the foreground. It runs `next
 build`, then serves the build over HTTPS with `frontend/scripts/serve-https.mts`
@@ -626,7 +627,9 @@ ago. That covers a start you interrupted with Ctrl-C, which leaves the stack
 building in the background. When a health check fails, it retries for about
 30 seconds (`WA_PROD_HEALTH_ATTEMPTS` checks, `WA_PROD_HEALTH_RETRY_SECONDS`
 apart) before it restarts the stack, so one slow response does not cost a
-rebuild. `make prod-status` checks once, so it answers at once.
+rebuild. `make prod-status` checks once, so it answers at once. While the
+stack is still starting, `make prod-status` says so and exits 1, as it does
+whenever the stack is not healthy.
 
 The stack runs in its own process group. `.tmp/prod.pid` records the group's
 ID, the host, and a random stack ID that every process in the group inherits
@@ -661,6 +664,10 @@ PATH=/software/hgi/installs/go/bin:/software/hgi/installs/node-v24.11.1/bin:/sof
 
 Cron mails only errors and restarts. Do not also run `make prod` or `make dev`
 on the same ports: `prod-start` would report the ports as in use.
+
+With that cron line in place, the next cron run undoes a `make prod-stop`
+within 5 minutes. To keep the stack stopped, comment out the cron line first,
+and restore it when you want the stack back.
 
 To update:
 
@@ -709,6 +716,9 @@ The `pnpm build` output goes to `frontend/.next/standalone/` — a self-containe
 Node.js server.
 
 ### Run
+
+For a farm host, follow [Production on a farm host](#production-on-a-farm-host)
+instead.
 
 Start the Go backend and Next.js frontend as separate processes. Use a process
 manager (systemd, supervisor, etc.) to keep them running.
