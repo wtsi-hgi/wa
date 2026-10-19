@@ -4364,7 +4364,7 @@ func TestClientSyncSampleColdLoadDropsAllSecondaryIndexesMySQL(t *testing.T) {
 }
 
 func TestClientSyncSampleColdLoadRecreatesIndexesMySQL(t *testing.T) {
-	convey.Convey("B4.7: Given a MySQL cache and a cold sample sync, when sync completes, then exactly eight distinct secondary indexes exist on sample_mirror and indexes_dropped is 0", t, func() {
+	convey.Convey("B4.7: Given a MySQL cache and a cold sample sync, when Client.Sync completes, then exactly nine distinct secondary indexes exist on sample_mirror and indexes_dropped is 0", t, func() {
 		cfg, skip := loadMySQLCacheConfigForTest(t)
 		if skip != "" {
 			t.Skip(skip)
@@ -4372,19 +4372,60 @@ func TestClientSyncSampleColdLoadRecreatesIndexesMySQL(t *testing.T) {
 
 		cache := openMySQLCacheForTest(t, cfg)
 		base := time.Date(2026, time.May, 11, 18, 30, 0, 0, time.UTC)
+		irodsStarted := make(chan struct{})
+		releaseIRODS := make(chan struct{})
+		release := sync.OnceFunc(func() { close(releaseIRODS) })
+		var irodsStartOnce sync.Once
 		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
 			syncTableSample: {
 				columns: sampleSyncSourceColumns,
 				rows:    sampleSyncRowsForRange(1, 2, base, nil),
 			},
+			syncTableStudy:              {columns: studySyncSourceColumns},
+			syncTableIseqFlowcell:       {columns: []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"}},
+			syncTableIseqProductMetrics: {columns: iseqProductMetricsSyncSourceColumns},
+			// The iRODS stage starts only after every other table, sample
+			// included, has finalized, and before Sync's final index repair.
+			syncTableSeqProductIRODSLocations: {
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				startSink: func(syncStartRecord) {
+					irodsStartOnce.Do(func() {
+						close(irodsStarted)
+						<-releaseIRODS
+					})
+				},
+			},
 		})
 		defer func() { _ = source.Close() }()
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		errCh := make(chan error, 1)
+		syncDone := make(chan struct{})
+		go func() {
+			defer close(syncDone)
+			_, err := client.Sync(context.Background())
+			errCh <- err
+		}()
+		defer func() {
+			release()
+			<-syncDone
+		}()
 
-		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+		select {
+		case <-irodsStarted:
+		case err := <-errCh:
+			t.Fatalf("Client.Sync returned before the iRODS stage started: %v", err)
+		case <-time.After(30 * time.Second):
+			t.Fatal("timed out waiting for Client.Sync to reach the iRODS stage")
+		}
 
-		convey.So(err, convey.ShouldBeNil)
+		sampleState := readSyncStateRow(t, cache.DB(), syncTableSample)
+		convey.So(sampleState.HighWater, convey.ShouldNotEqual, formatSyncTime(time.Time{}))
+		convey.So(sampleState.IndexesDropped, convey.ShouldEqual, 1)
+		convey.So(sampleMirrorIndexColumns(t, cache.DB(), cache.Dialect()), convey.ShouldResemble, map[string][]string{})
+
+		release()
+		convey.So(<-errCh, convey.ShouldBeNil)
 		convey.So(sampleMirrorIndexColumns(t, cache.DB(), cache.Dialect()), convey.ShouldResemble, sampleMirrorSecondaryIndexColumns())
 		convey.So(readSyncStateRow(t, cache.DB(), syncTableSample).IndexesDropped, convey.ShouldEqual, 0)
 	})

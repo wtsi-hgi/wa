@@ -53,7 +53,7 @@
       their own empty plan instead of the location and product plans.
       Assertions unchanged; mutants removing either table's delete step fail
       the test.
-- [ ] Exposed by the first item:
+- [x] Exposed by the first item:
       `TestClientSyncSampleColdLoadRecreatesIndexesMySQL`
       (`mlwh/sync_test.go:4383`) expects the `sample_mirror_*_idx` indexes after
       a cold MySQL sample sync and gets none, because `finalizeSampleSyncState`
@@ -61,3 +61,10 @@
       test and the deferral were added together in 1b61666.
     - Red command: the test above with the cache credentials exported ->
       `Expected map[...9 indexes...], Actual map[]`.
+    - Stale test: the MySQL rebuild is deliberately deferred to the end of
+      `Client.Sync` (`repairDroppedMirrorIndexes`) and cache open (spec
+      B4.7, `.docs/bugfixes/260512-1.md`), but the test called an internal
+      single-table sync that never reaches it. Fixed in `mlwh/sync_test.go`:
+      the test runs the real `Client.Sync`, pauses after the sample stage to
+      assert the deferred state (indexes dropped, flag 1), then asserts all
+      nine indexes and flag 0 once Sync completes.
