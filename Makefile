@@ -1,4 +1,4 @@
-.PHONY: help dev dev-fixtures prod lint lint-go lint-frontend lint-prettier-root format format-go format-frontend format-prettier-root test test-go test-frontend test-e2e clean-test-tmp
+.PHONY: help dev dev-fixtures prod prod-start prod-stop prod-status prod-restart lint lint-go lint-frontend lint-prettier-root format format-go format-frontend format-prettier-root test test-go test-frontend test-e2e clean-test-tmp
 
 SHELL := bash
 FRONTEND_DIR := frontend
@@ -51,7 +51,11 @@ help:
 	@printf '  dev               Run the dev stack (no fixtures). Persistent DB from .env.development + .env.development.local.\n'
 	@printf '  dev FIXTURES=1    Same as above but seed demo fixtures.\n'
 	@printf '  dev-fixtures      Alias for `make dev FIXTURES=1`.\n'
-	@printf '  prod              Run the production stack with .env.production + .env.production.local.\n\n'
+	@printf '  prod              Run the production stack with .env.production + .env.production.local.\n'
+	@printf '  prod-start        Start the production stack in the background unless it is healthy or starting (cron-safe).\n'
+	@printf '  prod-stop         Stop the background production stack.\n'
+	@printf '  prod-status       Print the URLs and exit 0 if the background stack is healthy.\n'
+	@printf '  prod-restart      Restart the background production stack, e.g. after git pull.\n\n'
 	@printf 'Quality:\n'
 	@printf '  lint              Run Go and frontend linters.\n'
 	@printf '  format            Apply Go and frontend formatters.\n'
@@ -126,6 +130,12 @@ dev-fixtures:
 # ---- Production scenario --------------------------------------------------
 prod:
 	@$(LOAD_PRODUCTION_ENV); ./run-dev.sh --mode prod
+
+# Background lifecycle around the same `run-dev.sh --mode prod`. The PID, log,
+# and lock live in .tmp/prod.{pid,log,lock}. See DEVELOPING.md "Production on
+# a farm host".
+prod-start prod-stop prod-status prod-restart:
+	@$(LOAD_PRODUCTION_ENV); ./prod-ctl.sh $(@:prod-%=%)
 
 # ---- Lint and format (no scenario binding) -------------------------------
 lint: lint-go lint-frontend lint-prettier-root

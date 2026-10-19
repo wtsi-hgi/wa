@@ -36,6 +36,7 @@ wa/
 ├── mlwhdiff/            # MLWH change detection store and API
 ├── frontend/            # Next.js web UI
 ├── run-dev.sh           # Bring-up script used by `make dev`, `make prod`, and Playwright
+├── prod-ctl.sh          # Background lifecycle for `make prod-start/stop/status/restart`
 ├── .docs/               # Specs and proposal
 │   ├── proposal.md
 │   ├── mlwh-overhaul/spec.md
@@ -91,6 +92,10 @@ database or cache credentials.
 | `make dev FIXTURES=1` | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Same as `make dev`, plus seed demo fixtures into the development DB.                                                                                           |
 | `make dev-fixtures`   | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Alias for `make dev FIXTURES=1`.                                                                                                                               |
 | `make prod`           | `.env`, `.env.production`, `.env.local`, `.env.production.local`   | Bring up the production stack. Refuses inherited test/development ports and still requires `WA_ENV=production` plus a real `WA_RESULTS_DB_PATH` after loading. |
+| `make prod-start`     | `.env`, `.env.production`, `.env.local`, `.env.production.local`   | Start `make prod` in the background unless it is healthy or starting. Quiet when there is nothing to do, so cron can run it. See "Production on a farm host".  |
+| `make prod-stop`      | `.env`, `.env.production`, `.env.local`, `.env.production.local`   | Stop the background production stack.                                                                                                                          |
+| `make prod-status`    | `.env`, `.env.production`, `.env.local`, `.env.production.local`   | Print the URLs and exit 0 when the background stack is healthy; exit non-zero otherwise.                                                                       |
+| `make prod-restart`   | `.env`, `.env.production`, `.env.local`, `.env.production.local`   | Stop, then start, the background production stack.                                                                                                             |
 | `make test`           | `.env`, `.env.test`, `.env.test.local`                             | Run Go + Vitest + Playwright. Always uses ephemeral DBs and refuses an inherited `WA_RESULTS_DB_PATH`.                                                         |
 | `make test-go`        | `.env`, `.env.test`, `.env.test.local`                             | Just the Go suite.                                                                                                                                             |
 | `make test-frontend`  | `.env`, `.env.test`, `.env.test.local`                             | Just Vitest.                                                                                                                                                   |
@@ -528,6 +533,163 @@ Browser  →  Next.js (Server Actions)  →  Go REST API  →  SQLite / MySQL ca
   catching backend regressions at the boundary.
 - **Change detection**: `mlwhdiff` uses per-entity SHA256 watermarks with
   tombstones for removals. First poll returns all data as "added".
+
+## Production on a farm host
+
+The results API and website run on a farm host, such as farm22-wrstat01 as
+user mercury from a checkout at `/nfs/hgi/wa/repo`, because they need `/lustre`,
+`/nfs`, and local NSS lookups. The MLWH API runs elsewhere (Kubernetes), so
+this stack starts no local `wa mlwh serve` or `wa mlwh sync`.
+
+`make prod` runs `run-dev.sh --mode prod` in the foreground. It runs `next
+build`, then serves the build over HTTPS with `frontend/scripts/serve-https.mts`
+(`next start` has no HTTPS option), using the same self-signed certificate
+as `make dev`. The `make prod-*` targets run that same command in the
+background.
+
+### Configure
+
+Put the deployment settings in `.env.production.local` (gitignored):
+
+```bash
+# Ports. These match `make dev`, so existing URLs keep working.
+WA_PROD_FRONTEND_PORT=3671
+WA_PROD_RESULTS_PORT=3672
+WA_PROD_RESULTS_HOST=0.0.0.0
+
+# Results database: a passwordless MySQL DSN plus WA_RESULTS_DB_PASSWORD, or
+# an absolute SQLite path on local disk. Not SQLite on /nfs or /lustre: its WAL
+# mode does not work on network filesystems.
+WA_RESULTS_DB_PATH='wa@tcp(db-host:3306)/wa_results'
+WA_RESULTS_DB_PASSWORD=
+
+# LDAP for web and CLI logins.
+WA_RESULTS_LDAP_SERVER=ldap.example.org
+WA_RESULTS_LDAP_DN='uid=%s,ou=people,dc=example,dc=org'
+
+# Remote MLWH API. A path prefix is fine. Leave WA_MLWH_DSN and
+# WA_MLWH_CACHE_PATH unset: either one makes run-dev.sh start a local MLWH.
+WA_MLWH_SERVER_URL=https://apps.hgi.sanger.ac.uk/mlwh-api
+
+# MLWH admin token for the /feedback and /usage pages (see below).
+WA_MLWH_SERVER_TOKEN=/nfs/hgi/wa/mlwh-admin.token
+
+# Comma-separated LDAP usernames who may see the /feedback and /usage pages.
+# The OS user running the stack (mercury) is always included.
+WA_FEEDBACK_ADMINS=alice,bob
+```
+
+TLS: `run-dev.sh` reuses `.tmp/wa-dev-cert.pem` and `.tmp/wa-dev-key.pem`,
+and regenerates them only when a required hostname is missing. Set
+`WA_RESULTS_SERVER_CERT` and `WA_RESULTS_SERVER_KEY` to use other files.
+
+MLWH TLS: `.env.production` sets `NODE_USE_SYSTEM_CA=1`, so the frontend
+trusts the Genome Research Ltd. CA that signs `apps.hgi.sanger.ac.uk`, as
+the Go code already does.
+
+MLWH admin token: `WA_MLWH_SERVER_TOKEN` is a file path, not the token itself.
+An absolute path is used as is; a bare name is looked up in `$XDG_STATE_HOME`,
+else `$HOME`. The MLWH pod keeps its token at `/data/.wa-mlwh-server.token`.
+Copy it to the farm host and keep it private:
+
+```bash
+(umask 077; kubectl exec <mlwh-pod> -- cat /data/.wa-mlwh-server.token >/nfs/hgi/wa/mlwh-admin.token)
+```
+
+Without a readable token the `/feedback` and `/usage` pages report that they
+are unavailable; the rest of the site works.
+
+Admins: the website shows the `/feedback` and `/usage` pages only to users
+named in `WA_FEEDBACK_ADMINS` and to the OS user running the stack. Admins log
+in to the website with their own LDAP account; the server reads the MLWH token
+itself, so they never handle it.
+
+### Run
+
+```bash
+make prod-start    # start in the background; prints the URLs
+make prod-status   # exit 0 and print the URLs when healthy
+make prod-stop     # stop the whole process group
+make prod-restart  # stop, then start
+```
+
+`make prod-start` reports a start only once `run-dev.sh` prints
+`Development environment is ready.`, which it does after its own services
+pass their health checks. It gives up and stops the stack after
+`WA_PROD_START_TIMEOUT_SECONDS` (default 1800), which covers the frontend
+build.
+
+`make prod-start` does nothing and prints nothing when the stack is already
+healthy, or is still starting: its `run-dev.sh` is running but has not yet
+printed the ready line, and started less than `WA_PROD_START_TIMEOUT_SECONDS`
+ago. That covers a start you interrupted with Ctrl-C, which leaves the stack
+building in the background. When a health check fails, it retries for about
+30 seconds (`WA_PROD_HEALTH_ATTEMPTS` checks, `WA_PROD_HEALTH_RETRY_SECONDS`
+apart) before it restarts the stack, so one slow response does not cost a
+rebuild. `make prod-status` checks once, so it answers at once.
+
+The stack runs in its own process group. `.tmp/prod.pid` records the group's
+ID, the host, and a random stack ID that every process in the group inherits
+as `WA_PROD_STACK_ID`. The `make prod-*` targets signal a group only when its
+processes carry that stack ID, so a stale pid file, for example after a
+reboot, never stops an unrelated process. `.tmp` is on NFS, so the pid file
+is visible from other hosts: there, every `make prod-*` target refuses, names
+the host that runs the stack, and leaves the file alone. If `run-dev.sh`
+itself dies, for example from `kill -9`, its services keep running.
+`prod-status` then reports that, and `prod-start`, `prod-stop`, and
+`prod-restart` stop the leftover group; `prod-start` and `prod-restart` then
+start a new stack.
+
+When `.tmp/prod.pid` records no running stack but a process is listening on
+the frontend or results port, `prod-start` and `prod-restart` refuse and name
+the port, without touching the logs, and `prod-stop` prints that the stack is
+not running, names the port, and exits non-zero. That process may be a stack
+whose pid file was deleted or moved; stop it by hand, or restore the file.
+
+A lock in `.tmp/prod.lock` makes a second `prod-start` exit at once while
+another start, stop, or restart is in progress. It exits silently, or with a
+one-line note when run from a terminal. `prod-stop` and `prod-restart` instead
+wait for the lock, with a one-line note when run from a terminal, so while a
+start is building the frontend, for example one cron began, they wait until it
+finishes. Run `prod-start` from mercury's crontab to bring the stack back after
+a reboot or crash:
+
+```text
+PATH=/software/hgi/installs/go/bin:/software/hgi/installs/node-v24.11.1/bin:/software/hgi/installs/pnpm:/usr/bin:/bin
+*/5 * * * * cd /nfs/hgi/wa/repo && make -s prod-start
+```
+
+Cron mails only errors and restarts. Do not also run `make prod` or `make dev`
+on the same ports: `prod-start` would report the ports as in use.
+
+To update:
+
+```bash
+cd /nfs/hgi/wa/repo && git pull && make prod-restart
+```
+
+`prod-restart` stops the stack before it builds the new frontend, so the site
+is down for the whole build.
+
+Logs: `.tmp/prod.log` has the `run-dev.sh` output, and `logs/results.log`
+and `logs/frontend.log` have the service output. Each start moves the
+previous run's logs to `.1` files, such as `logs/frontend.log.1`, so a crash
+that cron restarted leaves its evidence there. Only that one generation is
+kept: the next start overwrites the `.1` files.
+
+### CLI binary and certificate
+
+Each start builds `wa` and links it from `.tmp/wa`. Users need that binary and
+the certificate that signs the results API:
+
+```bash
+cp -L .tmp/wa .tmp/wa-dev-cert.pem /software/hgi/installs/wa/
+chmod -R o+rX /software/hgi/installs/wa
+```
+
+CLI users then set `WA_RESULTS_SERVER_URL=https://<farm host>:<results port>`,
+`WA_RESULTS_SERVER_CERT=/software/hgi/installs/wa/wa-dev-cert.pem`, and
+`WA_MLWH_SERVER_URL` to the remote MLWH URL.
 
 ## Deploying to Production
 
