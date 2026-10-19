@@ -23,7 +23,7 @@
       drops it with `dropThrowawayMySQLCacheDB`, which now fails the test
       (`t.Errorf`) when a drop fails (`mlwh/cache_mysql_integration_test.go`).
       The red test now passes and no database is left behind.
-- [ ] Exposed by the first item (these tests never ran before):
+- [x] Exposed by the first item (these tests never ran before):
       `TestSearchParityStudyIDSetsAndCountsEqualAcrossDialects`
       (`mlwh/search_parity_test.go:171`) fails on MySQL: `SearchStudies("malar")`
       finds neither "Malaria ..." study. `study_title` and `programme` in
@@ -32,6 +32,13 @@
       the database default collation.
     - Red command: the test above with the cache credentials exported ->
       `Expected []int64{1, 2}, Actual []int64{}`.
+    - Fixed in `mlwh/cache_schema/mysql/study_mirror.sql` (COLLATE on
+      `study_title` and `programme`) and `mlwh/cache.go`
+      (`ensureMySQLStudySearchColumnCollation`, run from `prepareCacheSchema`,
+      repairs existing current-version caches in place without a re-sync, as
+      `ensureAdditiveCurrentCacheIndexes` does). Tests in
+      `mlwh/cache_schema_test.go` cover the reopen repair and a missing
+      `study_mirror` still triggering a rebuild.
 - [ ] Exposed by the first item:
       `TestClientSyncSparseMySQLProductMirrorsReplaceExistingKeys`
       (`mlwh/sync_test.go:3908`) fails in setup with
