@@ -27,13 +27,17 @@ package mlwh
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/smartystreets/goconvey/convey"
@@ -302,6 +306,195 @@ func TestUsageMiddlewareB1(t *testing.T) {
 	})
 }
 
+func TestUsageErrorCapture(t *testing.T) {
+	convey.Convey("a successful request stores no error details and no path", t, func() {
+		router, store, path := newUsageTestRouter(t, &feedbackStudiesQueryerForTest{})
+
+		usageRequestForTest(router, http.MethodGet, "/studies?limit=5", nil)
+
+		rows := flushedUsageRowsForTest(store, path)
+		convey.So(rows, convey.ShouldHaveLength, 1)
+		convey.So(rows[0].Path, convey.ShouldEqual, "")
+		convey.So(rows[0].Query.Valid, convey.ShouldBeFalse)
+		convey.So(rows[0].ErrorCode.Valid, convey.ShouldBeFalse)
+		convey.So(rows[0].ErrorKind.Valid, convey.ShouldBeFalse)
+		convey.So(rows[0].ErrorMessage.Valid, convey.ShouldBeFalse)
+	})
+
+	convey.Convey("a mapped MLWH error stores the envelope code and message, the path, and the query", t, func() {
+		router, store, path := newUsageTestRouter(t, classifyQueryerForUsageTest(
+			fmt.Errorf("classify XYZ: %w", ErrNotFound)))
+
+		response := usageRequestForTest(router, http.MethodGet, "/classify/XYZ?x=1", map[string]string{
+			"User-Agent":     "mlwh-mcp-server/0.5.0",
+			"X-WA-MCP-Tool":  "mlwh_classify_identifier",
+			"X-WA-MCP-Agent": "claude-code/2.1.0",
+		})
+		convey.So(response.Code, convey.ShouldEqual, http.StatusNotFound)
+
+		envelope := decodeErrorEnvelopeForUsageTest(response)
+
+		rows := flushedUsageRowsForTest(store, path)
+		convey.So(rows, convey.ShouldHaveLength, 1)
+		convey.So(rows[0].Route, convey.ShouldEqual, "/classify/:id")
+		convey.So(rows[0].Path, convey.ShouldEqual, "/classify/XYZ")
+		convey.So(rows[0].Query, convey.ShouldResemble, usageNullStringForTest("x=1"))
+		convey.So(rows[0].ErrorCode, convey.ShouldResemble, usageNullStringForTest(httpErrorCodeNotFound))
+		convey.So(rows[0].ErrorMessage, convey.ShouldResemble, usageNullStringForTest(envelope.Message))
+		convey.So(rows[0].ErrorKind.Valid, convey.ShouldBeFalse)
+		convey.So(rows[0].MCPTool, convey.ShouldEqual, "mlwh_classify_identifier")
+	})
+
+	convey.Convey("a bad request stores its message and a query with credential-like values redacted", t, func() {
+		router, store, path := newUsageTestRouter(t, &feedbackStudiesQueryerForTest{})
+
+		response := usageRequestForTest(router, http.MethodGet,
+			"/studies?limit=-1&token=abc&Password=p&api_key=k&offset=2", nil)
+		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
+		convey.So(decodeErrorEnvelopeForUsageTest(response).Code, convey.ShouldEqual, httpErrorCodeBadRequest)
+
+		rows := flushedUsageRowsForTest(store, path)
+		convey.So(rows, convey.ShouldHaveLength, 1)
+		convey.So(rows[0].ErrorCode, convey.ShouldResemble, usageNullStringForTest(httpErrorCodeBadRequest))
+		convey.So(rows[0].ErrorMessage, convey.ShouldResemble, usageNullStringForTest("limit must not be negative"))
+		convey.So(rows[0].Query, convey.ShouldResemble, usageNullStringForTest(
+			"limit=-1&token=[redacted]&Password=[redacted]&api_key=[redacted]&offset=2"))
+	})
+
+	convey.Convey("credential-like names are matched ignoring case, '-' and '_', and ';' also separates parameters", t, func() {
+		router, store, path := newUsageTestRouter(t, &feedbackStudiesQueryerForTest{})
+
+		response := usageRequestForTest(router, http.MethodGet,
+			"/studies?limit=-1&API-KEY=k1&X-API-KEY=k2&a=1;token=abc&Session_Id=s&pwd=p&Bearer=b"+
+				"&jwt=j&x-auth=x&signature=g&private_key=pk&passphrase=pp&id=keep", nil)
+		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
+
+		rows := flushedUsageRowsForTest(store, path)
+		convey.So(rows, convey.ShouldHaveLength, 1)
+		convey.So(rows[0].Query, convey.ShouldResemble, usageNullStringForTest(
+			"limit=-1&API-KEY=[redacted]&X-API-KEY=[redacted]&a=1;token=[redacted]&Session_Id=[redacted]"+
+				"&pwd=[redacted]&Bearer=[redacted]&jwt=[redacted]&x-auth=[redacted]&signature=[redacted]"+
+				"&private_key=[redacted]&passphrase=[redacted]&id=keep"))
+	})
+
+	convey.Convey("a deadline error keeps its public 502 upstream_impaired answer and stores kind timeout", t, func() {
+		cause := fmt.Errorf("query samples: %w", context.DeadlineExceeded)
+		router, store, path := newUsageTestRouter(t, classifyQueryerForUsageTest(cause))
+
+		response := usageRequestForTest(router, http.MethodGet, "/classify/ABC", nil)
+		convey.So(response.Code, convey.ShouldEqual, http.StatusBadGateway)
+		convey.So(decodeErrorEnvelopeForUsageTest(response), convey.ShouldResemble, httpErrorEnvelope{
+			Code: httpErrorCodeUpstreamImpaired, Message: cause.Error(),
+		})
+
+		rows := flushedUsageRowsForTest(store, path)
+		convey.So(rows, convey.ShouldHaveLength, 1)
+		convey.So(rows[0].ErrorCode, convey.ShouldResemble, usageNullStringForTest(httpErrorCodeUpstreamImpaired))
+		convey.So(rows[0].ErrorKind, convey.ShouldResemble, usageNullStringForTest(UsageErrorKindTimeout))
+	})
+
+	convey.Convey("an error after the client went away stores kind canceled", t, func() {
+		for _, cause := range []error{
+			fmt.Errorf("query: %w", context.Canceled),
+			errors.New("driver: bad connection"),
+		} {
+			router, store, path := newUsageTestRouter(t, classifyQueryerForUsageTest(cause))
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			request := httptest.NewRequestWithContext(ctx, http.MethodGet, "/classify/ABC", nil)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			convey.So(response.Code, convey.ShouldEqual, http.StatusBadGateway)
+
+			rows := flushedUsageRowsForTest(store, path)
+			convey.So(rows, convey.ShouldHaveLength, 1)
+			convey.So(rows[0].ErrorKind, convey.ShouldResemble, usageNullStringForTest(UsageErrorKindCanceled))
+		}
+	})
+
+	convey.Convey("a 4xx answer to a client that went away stores no kind", t, func() {
+		router, store, path := newUsageTestRouter(t, classifyQueryerForUsageTest(
+			fmt.Errorf("classify ABC: %w", ErrNotFound)))
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		request := httptest.NewRequestWithContext(ctx, http.MethodGet, "/classify/ABC", nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		convey.So(response.Code, convey.ShouldEqual, http.StatusNotFound)
+
+		rows := flushedUsageRowsForTest(store, path)
+		convey.So(rows, convey.ShouldHaveLength, 1)
+		convey.So(rows[0].ErrorCode, convey.ShouldResemble, usageNullStringForTest(httpErrorCodeNotFound))
+		convey.So(rows[0].ErrorKind.Valid, convey.ShouldBeFalse)
+	})
+
+	convey.Convey("an unmatched path stores code no_route with its path but not its query", t, func() {
+		router, store, path := newUsageTestRouter(t, &serverFakeQueryer{})
+
+		usageRequestForTest(router, http.MethodGet, "/no/such?id=secret", nil)
+
+		rows := flushedUsageRowsForTest(store, path)
+		convey.So(rows, convey.ShouldHaveLength, 1)
+		convey.So(rows[0].Path, convey.ShouldEqual, "/no/such")
+		convey.So(rows[0].ErrorCode, convey.ShouldResemble, usageNullStringForTest(UsageErrorCodeNoRoute))
+		convey.So(rows[0].Query.Valid, convey.ShouldBeFalse)
+		convey.So(rows[0].ErrorMessage.Valid, convey.ShouldBeFalse)
+	})
+
+	convey.Convey("a feedback validation error stores the envelope code and message", t, func() {
+		router, store, path := newUsageTestRouter(t, &serverFakeQueryer{},
+			WithFeedback(newFeedbackServerTestStore(t), []byte(usageTestAdminToken)))
+
+		response := postFeedbackForTest(router, `{"category":"bogus","description":"x"}`, nil)
+		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
+
+		envelope := decodeErrorEnvelopeForUsageTest(response)
+
+		rows := flushedUsageRowsForTest(store, path)
+		convey.So(rows, convey.ShouldHaveLength, 1)
+		convey.So(rows[0].Route, convey.ShouldEqual, "/feedback")
+		convey.So(rows[0].ErrorCode, convey.ShouldResemble, usageNullStringForTest(envelope.Code))
+		convey.So(rows[0].ErrorMessage, convey.ShouldResemble, usageNullStringForTest(envelope.Message))
+	})
+
+	convey.Convey("an error response no error writer produced stores code uncoded", t, func() {
+		store, path := openUsageServerTestStore(t)
+		server := NewServer(&serverFakeQueryer{}, WithUsage(store, []byte(usageTestAdminToken)))
+
+		gin.SetMode(gin.TestMode)
+
+		router := gin.New()
+		router.GET("/teapot", server.countedHandlers("/teapot", func(c *gin.Context) {
+			c.Status(http.StatusTeapot)
+		})...)
+
+		usageRequestForTest(router, http.MethodGet, "/teapot", nil)
+
+		rows := flushedUsageRowsForTest(store, path)
+		convey.So(rows, convey.ShouldHaveLength, 1)
+		convey.So(rows[0].ErrorCode, convey.ShouldResemble, usageNullStringForTest("uncoded"))
+	})
+
+	convey.Convey("long messages and queries are stored cut to 512 bytes on a rune boundary", t, func() {
+		long := strings.Repeat("\u00e9", 400)
+		router, store, path := newUsageTestRouter(t, classifyQueryerForUsageTest(
+			fmt.Errorf("%s: %w", long, ErrNotFound)))
+
+		usageRequestForTest(router, http.MethodGet, "/classify/ABC?q="+strings.Repeat("%C3%A9", 400), nil)
+
+		rows := flushedUsageRowsForTest(store, path)
+		convey.So(rows, convey.ShouldHaveLength, 1)
+		convey.So(rows[0].ErrorMessage.String, convey.ShouldEqual, long[:UsageMaxErrorMessageBytes])
+		convey.So(len(rows[0].Query.String), convey.ShouldBeLessThanOrEqualTo, UsageMaxQueryBytes)
+		convey.So(utf8.ValidString(rows[0].Query.String), convey.ShouldBeTrue)
+		convey.So(strings.HasPrefix(rows[0].Query.String, "q="), convey.ShouldBeTrue)
+	})
+}
+
 func TestUsageAdminRouteB2(t *testing.T) {
 	adminAuth := map[string]string{"Authorization": "Bearer " + usageTestAdminToken}
 
@@ -458,6 +651,10 @@ func classifyQueryerForUsageTest(err error) *serverFakeQueryer {
 			return Match{}, err
 		},
 	}
+}
+
+func usageNullStringForTest(s string) sql.NullString {
+	return sql.NullString{String: s, Valid: true}
 }
 
 // newUsageTestRouter returns a plain-mode router for a server over q with

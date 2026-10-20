@@ -52,6 +52,19 @@ const (
 	UsageMaxMCPToolBytes       = 128
 	UsageMaxPathBytes          = 256
 	UsageMaxClientVersionBytes = 64
+	UsageMaxQueryBytes         = 512
+	UsageMaxErrorMessageBytes  = 512
+)
+
+// UsageErrorCodeNoRoute is the error code stored for unmatched requests,
+// which gin answers with a plain-text 404 and no error envelope.
+const UsageErrorCodeNoRoute = "no_route"
+
+// Usage error kinds record the cause of an error where it differs from the
+// public error code; both map to 502 upstream_impaired for clients.
+const (
+	UsageErrorKindTimeout  = "timeout"  // a context deadline expired
+	UsageErrorKindCanceled = "canceled" // the client went away
 )
 
 // UsageCategory classifies the caller of a counted request.
@@ -161,7 +174,8 @@ type UsageEvent struct {
 	Category      UsageCategory
 	Method        string
 	Route         string // registration template; "" when unmatched
-	Path          string // URL path, only when Route == ""
+	Path          string // URL path, only when Route == "" or Status >= 400
+	Query         string // raw query, redacted, only for matched errors
 	ClientID      string
 	Username      string
 	RemoteAddr    string
@@ -172,6 +186,9 @@ type UsageEvent struct {
 	MCPTool       string
 	Status        int
 	Latency       time.Duration
+	ErrorCode     string // envelope code (or no_route), only for errors
+	ErrorKind     string // UsageErrorKind* cause, when known
+	ErrorMessage  string // envelope message, only for errors
 }
 
 // truncateUTF8 returns s cut to at most maxBytes bytes, backing off to a rune

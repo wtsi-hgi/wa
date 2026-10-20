@@ -26,9 +26,13 @@
 package mlwh
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -40,6 +44,151 @@ const (
 	usageDisabledMessage      = "usage tracking is disabled on this server"
 	usageSummaryFailedMessage = "could not summarise usage"
 )
+
+// usageRedactedQueryNames are substrings of normalised query parameter names
+// (see normaliseUsageQueryName) whose values are never stored. No MLWH
+// endpoint takes credentials in the query, but a misconfigured client could
+// send them.
+var usageRedactedQueryNames = []string{
+	"token", "password", "passwd", "secret", "apikey", "authorization", "credential",
+	"auth", "jwt", "bearer", "session", "pwd", "pass", "key", "signature", "privatekey",
+}
+
+const usageRedactedValue = "[redacted]"
+
+// usageErrorCodeUncoded is stored for an error response no error writer
+// produced, so it reads differently from rows recorded before codes were.
+const usageErrorCodeUncoded = "uncoded"
+
+// usageErrorContextKey is the gin context key of the usageErrorDetail that the
+// error writers note for usageMiddleware.
+type usageErrorContextKey struct{}
+
+// setUsageError notes the error envelope's code and message on c.
+func setUsageError(c *gin.Context, code, message string) {
+	detail := usageErrorFromContext(c)
+	detail.code, detail.message = code, message
+	c.Set(usageErrorContextKey{}, detail)
+}
+
+func usageErrorFromContext(c *gin.Context) usageErrorDetail {
+	value, _ := c.Get(usageErrorContextKey{})
+	detail, _ := value.(usageErrorDetail)
+
+	return detail
+}
+
+// setUsageErrorKind notes on c the cause of err, answered with status, that
+// its public error code hides: a deadline (timeout) or the client going away
+// (canceled).
+func setUsageErrorKind(c *gin.Context, status int, err error) {
+	detail := usageErrorFromContext(c)
+	detail.kind = usageErrorKind(c.Request.Context(), status, err)
+	c.Set(usageErrorContextKey{}, detail)
+}
+
+// usageErrorKind classifies err. For a 5xx status it falls back to the
+// request context's state, because a driver may report a cancelled query
+// without wrapping its cause; a 4xx answer is the request's own fault however
+// the client's context ended.
+func usageErrorKind(ctx context.Context, status int, err error) string {
+	causes := []error{err}
+	if status >= http.StatusInternalServerError {
+		causes = append(causes, ctx.Err())
+	}
+
+	for _, cause := range causes {
+		switch {
+		case errors.Is(cause, context.DeadlineExceeded):
+			return UsageErrorKindTimeout
+		case errors.Is(cause, context.Canceled):
+			return UsageErrorKindCanceled
+		}
+	}
+
+	return ""
+}
+
+type usageErrorDetail struct {
+	code, kind, message string
+}
+
+// addUsageErrorDetails sets ev's error code, kind, message, and query from
+// what the error writers noted on c. Unmatched requests get code no_route
+// and, like their successful counterparts, no query: their parameters are
+// unknown to the server.
+func addUsageErrorDetails(c *gin.Context, route string, ev *UsageEvent) {
+	if route == "" {
+		ev.ErrorCode = UsageErrorCodeNoRoute
+
+		return
+	}
+
+	detail := usageErrorFromContext(c)
+	ev.ErrorCode = detail.code
+	ev.ErrorKind = detail.kind
+	ev.ErrorMessage = truncateUTF8(detail.message, UsageMaxErrorMessageBytes)
+	ev.Query = truncateUTF8(redactUsageQuery(c.Request.URL.RawQuery), UsageMaxQueryBytes)
+
+	if ev.ErrorCode == "" {
+		ev.ErrorCode = usageErrorCodeUncoded
+	}
+}
+
+// redactUsageQuery returns raw with the value of every parameter whose
+// normalised name contains a usageRedactedQueryNames entry replaced. Both '&'
+// and ';' separate parameters, since some clients and servers treat ';' as a
+// separator.
+func redactUsageQuery(raw string) string {
+	if raw == "" {
+		return ""
+	}
+
+	var redacted strings.Builder
+
+	for raw != "" {
+		end := strings.IndexAny(raw, "&;")
+		if end < 0 {
+			end = len(raw)
+		}
+
+		redacted.WriteString(redactUsageQueryParam(raw[:end]))
+
+		if end < len(raw) {
+			redacted.WriteByte(raw[end])
+			end++
+		}
+
+		raw = raw[end:]
+	}
+
+	return redacted.String()
+}
+
+func redactUsageQueryParam(param string) string {
+	name, _, hasValue := strings.Cut(param, "=")
+	if !hasValue {
+		return param
+	}
+
+	normalised := normaliseUsageQueryName(name)
+	if slices.ContainsFunc(usageRedactedQueryNames, func(s string) bool { return strings.Contains(normalised, s) }) {
+		return name + "=" + usageRedactedValue
+	}
+
+	return param
+}
+
+// normaliseUsageQueryName unescapes name, lower-cases it, and strips '-' and
+// '_', so API-KEY, x_api_key and apiKey all read as apikey.
+func normaliseUsageQueryName(name string) string {
+	unescaped, err := url.QueryUnescape(name)
+	if err != nil {
+		unescaped = name
+	}
+
+	return strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(unescaped))
+}
 
 // countedHandlers returns handlers with usageMiddleware(route) prepended when
 // usage is enabled, else handlers unchanged.
@@ -86,8 +235,12 @@ func (s *Server) usageMiddleware(route string) gin.HandlerFunc {
 			Latency:       time.Since(start),
 		}
 
-		if route == "" {
+		if route == "" || event.Status >= http.StatusBadRequest {
 			event.Path = truncateUTF8(c.Request.URL.Path, UsageMaxPathBytes)
+		}
+
+		if event.Status >= http.StatusBadRequest {
+			addUsageErrorDetails(c, route, &event)
 		}
 
 		s.usage.Record(event)

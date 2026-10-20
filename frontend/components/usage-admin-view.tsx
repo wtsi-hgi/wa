@@ -16,6 +16,7 @@ import {
     type UsageSummary,
     type UsageWindow,
 } from "@/lib/contracts";
+import { usageErrorHelp, usageErrorKindHelp } from "@/lib/usage-error-help";
 import { cn } from "@/lib/utils";
 
 export type UsageAdminViewProps = {
@@ -25,6 +26,8 @@ export type UsageAdminViewProps = {
 
 type CountMap = Record<string, number>;
 type UsagePeriod = UsageSummary["series"][number];
+type UsageErrorGroup = NonNullable<UsageSummary["errors"]>[number];
+type UsageErrorExample = UsageErrorGroup["examples"][number];
 
 const categoryLabels: Record<UsageCategory, string> = {
     cli: "CLI",
@@ -348,6 +351,453 @@ function TrendSection({
     );
 }
 
+// errorEndpointLabel names an error group's endpoint as the Endpoints table
+// does, or marks it unmatched.
+function errorEndpointLabel(method: string, route: string): string {
+    return route ? `${method} ${route}` : `${method} (no matching route)`;
+}
+
+// errorEndpointId is the element id of an endpoint's errors. Distinct labels
+// can share an id; a link then reaches the first, which is harmless.
+function errorEndpointId(label: string): string {
+    return `usage-errors-${label.replace(/[^A-Za-z0-9]+/g, "-")}`;
+}
+
+type ErrorEndpoint = {
+    groups: UsageErrorGroup[];
+    label: string;
+    total: number;
+    unmatched: boolean;
+};
+
+// errorEndpoints groups errors by endpoint, keeping the server's order within
+// each, and orders endpoints by error count, matched routes before unmatched
+// requests, then label.
+function errorEndpoints(errors: UsageErrorGroup[]): ErrorEndpoint[] {
+    const byLabel = new Map<string, ErrorEndpoint>();
+
+    for (const group of errors) {
+        const label = errorEndpointLabel(group.method, group.route);
+        const endpoint = byLabel.get(label) ?? {
+            groups: [],
+            label,
+            total: 0,
+            unmatched: group.route === "",
+        };
+
+        endpoint.groups.push(group);
+        endpoint.total += group.count;
+        byLabel.set(label, endpoint);
+    }
+
+    return [...byLabel.values()].sort((a, b) => {
+        if (a.total !== b.total) {
+            return b.total - a.total;
+        }
+
+        if (a.unmatched !== b.unmatched) {
+            return a.unmatched ? 1 : -1;
+        }
+
+        return a.label < b.label ? -1 : a.label > b.label ? 1 : 0;
+    });
+}
+
+// errorHelpId is the element id of a code's entry in the "What to do" guide.
+function errorHelpId(code: string | null): string {
+    return `usage-error-help-${code === null ? "legacy" : code.replace(/[^A-Za-z0-9_]+/g, "-")}`;
+}
+
+// errorKindHelpId is the element id of a known kind's entry in the "What to
+// do" guide.
+function errorKindHelpId(kind: string): string {
+    return `usage-error-kind-help-${kind}`;
+}
+
+type ErrorGuideEntry = { action: string; id: string; label: string };
+
+// errorGuideEntries returns one "What to do" entry per code in endpoints, in
+// the order the codes first appear, then one per known kind (timeout,
+// canceled) any group recorded.
+function errorGuideEntries(endpoints: ErrorEndpoint[]): ErrorGuideEntry[] {
+    const entries = new Map<string, ErrorGuideEntry>();
+    const kinds = new Set<string>();
+
+    for (const group of endpoints.flatMap((endpoint) => endpoint.groups)) {
+        const id = errorHelpId(group.error_code);
+
+        if (!entries.has(id)) {
+            const help = usageErrorHelp(group.error_code);
+            entries.set(id, { action: help.action, id, label: help.label });
+        }
+
+        for (const kind of Object.keys(group.error_kinds)) {
+            kinds.add(kind);
+        }
+    }
+
+    const kindEntries = Object.keys(usageErrorKindHelp)
+        .filter((kind) => kinds.has(kind))
+        .map((kind) => ({
+            action: usageErrorKindHelp[kind],
+            id: errorKindHelpId(kind),
+            label: kind,
+        }));
+
+    return [...entries.values(), ...kindEntries];
+}
+
+function ErrorGuide({ entries }: { entries: ErrorGuideEntry[] }) {
+    return (
+        <div
+            aria-labelledby="usage-error-guide-heading"
+            className="rounded-xl border border-border/70 bg-muted/30 px-4 py-3"
+            role="group"
+        >
+            <h3
+                className="text-sm font-semibold"
+                id="usage-error-guide-heading"
+            >
+                What to do
+            </h3>
+            <dl className="mt-2 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
+                {entries.map((entry) => (
+                    <div
+                        className="scroll-mt-6 sm:col-span-2 sm:grid sm:grid-cols-subgrid"
+                        id={entry.id}
+                        key={entry.id}
+                    >
+                        <dt className="font-mono text-xs leading-5 font-medium wrap-anywhere">
+                            {entry.label}
+                        </dt>
+                        <dd className="max-w-3xl text-muted-foreground">
+                            {entry.action}
+                        </dd>
+                    </div>
+                ))}
+            </dl>
+        </div>
+    );
+}
+
+function pluralise(n: number, noun: string): string {
+    return `${formatCount(n)} ${noun}${n === 1 ? "" : "s"}`;
+}
+
+// exampleRequest is the example's path and query, or a note for rows stored
+// before paths of matched routes were recorded.
+function exampleRequest(example: UsageErrorExample): string {
+    if (!example.path) {
+        return "(not recorded)";
+    }
+
+    return example.query ? `${example.path}?${example.query}` : example.path;
+}
+
+// exampleCaller lists the example's category, MCP tool and agent, and user
+// (or session when no user was declared), skipping empty values.
+function exampleCaller(example: UsageErrorExample): string {
+    return [
+        categoryLabels[example.category],
+        example.mcp_tool,
+        example.mcp_agent,
+        example.username || example.client_id,
+    ]
+        .filter(Boolean)
+        .join(" · ");
+}
+
+function ErrorDetailLine({ label, value }: { label: string; value: string }) {
+    if (!value) {
+        return null;
+    }
+
+    return (
+        <p className="text-sm wrap-anywhere">
+            <span className="text-muted-foreground">{label}:</span> {value}
+        </p>
+    );
+}
+
+const helpLinkClassName =
+    "text-muted-foreground underline decoration-border underline-offset-4 hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
+
+// ErrorCausesLine lists kinds like formatCounts, linking each known kind to
+// its entry in the "What to do" guide.
+function ErrorCausesLine({ kinds }: { kinds: CountMap }) {
+    const entries = Object.entries(kinds).sort(([a], [b]) =>
+        a < b ? -1 : a > b ? 1 : 0,
+    );
+
+    if (entries.length === 0) {
+        return null;
+    }
+
+    return (
+        <p className="text-sm wrap-anywhere">
+            <span className="text-muted-foreground">Causes:</span>{" "}
+            {entries.map(([kind, count], index) => (
+                <span key={kind}>
+                    {index > 0 ? ", " : null}
+                    {Object.hasOwn(usageErrorKindHelp, kind) ? (
+                        <a
+                            aria-label={`What to do about ${kind} (${count})`}
+                            className={helpLinkClassName}
+                            href={`#${errorKindHelpId(kind)}`}
+                        >
+                            {`${kind} ${count}`}
+                        </a>
+                    ) : (
+                        `${kind} ${count}`
+                    )}
+                </span>
+            ))}
+        </p>
+    );
+}
+
+function ErrorGroupEntry({
+    group,
+    id,
+}: {
+    group: UsageErrorGroup;
+    id: string;
+}) {
+    const help = usageErrorHelp(group.error_code);
+    const serverError = group.status >= 500;
+    const headingId = `${id}-heading`;
+
+    return (
+        <article
+            aria-labelledby={headingId}
+            className={cn(
+                "relative flex flex-col gap-2 py-4 pr-4 pl-6 before:absolute before:inset-y-4 before:left-0 before:w-1 before:rounded-r-full",
+                serverError ? "before:bg-destructive" : "before:bg-accent",
+            )}
+        >
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <h4
+                    className="flex min-w-0 items-baseline gap-2 font-medium"
+                    id={headingId}
+                >
+                    <span
+                        className={cn(
+                            "rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums ring-1",
+                            serverError
+                                ? "bg-destructive/10 ring-destructive/40"
+                                : "bg-accent/30 ring-accent",
+                        )}
+                    >
+                        {group.status}
+                    </span>{" "}
+                    <span
+                        className={cn(
+                            "wrap-anywhere",
+                            group.error_code !== null && "font-mono text-sm",
+                        )}
+                    >
+                        {help.label}
+                    </span>
+                </h4>
+                <span className="text-sm font-semibold tabular-nums">
+                    {pluralise(group.count, "error")}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                    first{" "}
+                    <LocalTimestamp
+                        format="dateTime"
+                        value={group.first_seen}
+                    />
+                    , latest{" "}
+                    <LocalTimestamp format="dateTime" value={group.last_seen} />
+                </span>
+            </div>
+            <p className="max-w-3xl text-sm">
+                {help.meaning}{" "}
+                <a
+                    aria-label={`What to do about ${help.label}`}
+                    className={helpLinkClassName}
+                    href={`#${errorHelpId(group.error_code)}`}
+                >
+                    What to do
+                </a>
+            </p>
+            <ErrorCausesLine kinds={group.error_kinds} />
+            <details className="mt-1 rounded-lg border border-border/70 bg-muted/30 open:bg-transparent">
+                <summary className="cursor-pointer rounded-lg px-3 py-2 text-sm font-medium hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+                    Messages and examples (
+                    {pluralise(group.examples.length, "example")})
+                </summary>
+                <div className="flex flex-col gap-3 px-3 pt-1 pb-3">
+                    <div className="flex flex-col gap-1">
+                        <ErrorDetailLine
+                            label="Callers"
+                            value={formatCategories(group.by_category)}
+                        />
+                        <ErrorDetailLine
+                            label="MCP tools"
+                            value={formatCounts(group.by_tool)}
+                        />
+                        <ErrorDetailLine
+                            label="MCP agents"
+                            value={formatCounts(group.by_agent)}
+                        />
+                    </div>
+                    {group.messages.length > 0 ? (
+                        <div className="flex flex-col gap-1">
+                            <h5
+                                className="text-sm font-medium"
+                                id={`${id}-messages`}
+                            >
+                                Top messages
+                            </h5>
+                            <ol
+                                aria-labelledby={`${id}-messages`}
+                                className="flex flex-col divide-y divide-border/60 rounded-lg border border-border/70 bg-card"
+                            >
+                                {group.messages.map((message, index) => (
+                                    <li
+                                        className="flex items-baseline justify-between gap-4 px-3 py-1.5 text-sm"
+                                        key={`${index} ${message.message}`}
+                                    >
+                                        <span className="font-mono text-xs wrap-anywhere">
+                                            {message.message}
+                                        </span>
+                                        <span className="tabular-nums">
+                                            {formatCount(message.count)}
+                                        </span>
+                                    </li>
+                                ))}
+                            </ol>
+                        </div>
+                    ) : null}
+                    <div className="flex flex-col gap-1">
+                        <h5 className="text-sm font-medium">Latest examples</h5>
+                        <UsageTable<UsageErrorExample>
+                            columns={[
+                                {
+                                    header: "Time",
+                                    render: (row) => (
+                                        <LocalTimestamp
+                                            className="whitespace-nowrap tabular-nums"
+                                            format="dateTime"
+                                            value={row.ts}
+                                        />
+                                    ),
+                                },
+                                {
+                                    header: "Request",
+                                    render: (row) => (
+                                        <span className="font-mono text-xs">
+                                            {exampleRequest(row)}
+                                        </span>
+                                    ),
+                                    wrapAnywhere: true,
+                                },
+                                {
+                                    header: "Caller",
+                                    render: exampleCaller,
+                                    wrapAnywhere: true,
+                                },
+                                {
+                                    header: "Message",
+                                    render: (row) => row.message,
+                                    wrapAnywhere: true,
+                                },
+                            ]}
+                            rowKey={(row, index) => `${index} ${row.ts}`}
+                            rows={group.examples}
+                        />
+                    </div>
+                </div>
+            </details>
+        </article>
+    );
+}
+
+function ErrorsSection({
+    errors,
+    totalErrors,
+}: {
+    errors: UsageErrorGroup[] | undefined;
+    totalErrors: number;
+}) {
+    if (errors === undefined) {
+        return (
+            <UsageSection id="errors" title="Errors">
+                <EmptyNote>
+                    This MLWH server does not report error details. Upgrade wa
+                    mlwh serve to see them.
+                </EmptyNote>
+            </UsageSection>
+        );
+    }
+
+    if (errors.length === 0) {
+        return (
+            <UsageSection id="errors" title="Errors">
+                <EmptyNote>No errors in this window.</EmptyNote>
+            </UsageSection>
+        );
+    }
+
+    const endpoints = errorEndpoints(errors);
+    const shownErrors = errors.reduce((sum, group) => sum + group.count, 0);
+
+    return (
+        <UsageSection id="errors" title="Errors">
+            <p className="max-w-3xl text-sm text-muted-foreground">
+                Grouped by endpoint, then by status and error code. Expand an
+                entry for its most common messages and latest examples.
+            </p>
+            {shownErrors < totalErrors ? (
+                <p className="max-w-3xl text-sm text-muted-foreground">
+                    Showing the {formatCount(errors.length)} largest groups (
+                    {formatCount(shownErrors)} of {formatCount(totalErrors)}{" "}
+                    errors).
+                </p>
+            ) : null}
+            <ErrorGuide entries={errorGuideEntries(endpoints)} />
+            <div className="flex flex-col gap-4">
+                {endpoints.map((endpoint) => {
+                    const id = errorEndpointId(endpoint.label);
+
+                    return (
+                        <div
+                            aria-labelledby={`${id}-heading`}
+                            className="scroll-mt-6 overflow-hidden rounded-xl border border-border/70 bg-card text-card-foreground shadow-sm"
+                            id={id}
+                            key={endpoint.label}
+                            role="group"
+                        >
+                            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border/70 bg-muted/40 px-4 py-3">
+                                <h3
+                                    className="font-mono text-sm font-semibold wrap-anywhere"
+                                    id={`${id}-heading`}
+                                >
+                                    {endpoint.label}
+                                </h3>
+                                <p className="text-sm text-muted-foreground tabular-nums">
+                                    {pluralise(endpoint.total, "error")}
+                                </p>
+                            </div>
+                            <div className="divide-y divide-border/70">
+                                {endpoint.groups.map((group, index) => (
+                                    <ErrorGroupEntry
+                                        group={group}
+                                        id={`${id}-${index}`}
+                                        key={`${group.status} ${group.error_code}`}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </UsageSection>
+    );
+}
+
 function StatTile({ label, children }: { children: ReactNode; label: string }) {
     return (
         <div className="flex flex-col gap-1 rounded-xl border border-border/70 bg-card p-4 text-card-foreground shadow-sm">
@@ -376,6 +826,15 @@ function valueCountSection(id: string, title: string, rows: ValueCount[]) {
                         numeric: true,
                         render: (row) => formatCount(row.requests),
                     },
+                    {
+                        header: "Errors",
+                        numeric: true,
+                        // Servers that predate error details send none.
+                        render: (row) =>
+                            row.errors === undefined
+                                ? "-"
+                                : formatCount(row.errors),
+                    },
                 ]}
                 rowKey={(row, index) => `${index} ${row.value}`}
                 rows={rows}
@@ -386,6 +845,11 @@ function valueCountSection(id: string, title: string, rows: ValueCount[]) {
 
 export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
     const { totals } = summary;
+    const endpointsWithErrors = new Set(
+        (summary.errors ?? []).map((group) =>
+            errorEndpointLabel(group.method, group.route),
+        ),
+    );
 
     return (
         <main className="mx-auto flex min-h-screen w-full max-w-[84rem] flex-col gap-6 px-4 py-6 sm:px-8 lg:py-8">
@@ -532,7 +996,24 @@ export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
                         {
                             header: "Errors",
                             numeric: true,
-                            render: (row) => formatCount(row.errors),
+                            render: (row) => {
+                                const label = errorEndpointLabel(
+                                    row.method,
+                                    row.route,
+                                );
+
+                                return endpointsWithErrors.has(label) ? (
+                                    <a
+                                        aria-label={`${pluralise(row.errors, "error")} on ${label}, see details`}
+                                        className="underline decoration-border underline-offset-4 hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                                        href={`#${errorEndpointId(label)}`}
+                                    >
+                                        {formatCount(row.errors)}
+                                    </a>
+                                ) : (
+                                    formatCount(row.errors)
+                                );
+                            },
                         },
                         {
                             header: "Error rate",
@@ -558,6 +1039,11 @@ export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
                     rows={summary.endpoints}
                 />
             </UsageSection>
+
+            <ErrorsSection
+                errors={summary.errors}
+                totalErrors={totals.errors}
+            />
 
             {valueCountSection("mcp-tools", "MCP tools", summary.mcp_tools)}
             {valueCountSection("mcp-agents", "MCP agents", summary.mcp_agents)}

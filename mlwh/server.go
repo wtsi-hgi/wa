@@ -1594,10 +1594,7 @@ func mlwhPathParam(c *gin.Context, name string) (string, bool) {
 }
 
 func writeMLWHBadRequest(c *gin.Context, message string) {
-	c.JSON(http.StatusBadRequest, httpErrorEnvelope{
-		Code:    httpErrorCodeBadRequest,
-		Message: message,
-	})
+	writeErrorEnvelope(c, http.StatusBadRequest, httpErrorCodeBadRequest, message)
 }
 
 func writeMLWHResult(c *gin.Context, result any, err error) {
@@ -1612,10 +1609,8 @@ func writeMLWHResult(c *gin.Context, result any, err error) {
 
 func writeMLWHError(c *gin.Context, err error) {
 	status, code := httpStatusAndErrorCode(err)
-	c.JSON(status, httpErrorEnvelope{
-		Code:    code,
-		Message: err.Error(),
-	})
+	setUsageErrorKind(c, status, err)
+	writeErrorEnvelope(c, status, code, err.Error())
 }
 
 // writeMLWHPaginatedResult writes a paginated list response: on error it writes

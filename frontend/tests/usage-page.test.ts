@@ -314,6 +314,13 @@ describe("E4 usage admin view", () => {
             "40.0",
             "CLI 2, MCP 1, Other API 1",
         ]);
+        const studiesErrors = within(endpoints).getByRole("link", {
+            name: "1 error on GET /studies, see details",
+        });
+        expect(studiesErrors.getAttribute("href")).toBe(
+            "#usage-errors-GET-studies",
+        );
+        expect(studiesErrors.textContent).toBe("1");
         expect(rowCells(endpoints, "GET /classify/:id")).toEqual([
             "GET /classify/:id",
             "1",
@@ -524,14 +531,16 @@ describe("E4 usage admin view", () => {
         expect(rowCells(section("MCP tools"), "mlwh_list_studies")).toEqual([
             "mlwh_list_studies",
             "1",
+            "0",
         ]);
         expect(rowCells(section("MCP agents"), "claude-code/2.1.0")).toEqual([
             "claude-code/2.1.0",
             "1",
+            "0",
         ]);
         expect(
             rowCells(section("Other API user agents"), "curl/8.5.0"),
-        ).toEqual(["curl/8.5.0", "2"]);
+        ).toEqual(["curl/8.5.0", "2", "2"]);
 
         const days = section("Requests per day (UTC)");
         expect(rowCells(days, "2026-10-09")).toEqual(["2026-10-09", "0", ""]);
@@ -658,6 +667,7 @@ describe("E4 usage admin view", () => {
         expect(rowCells(section("Other API user agents"), "(none)")).toEqual([
             "(none)",
             "4",
+            "-",
         ]);
     });
 
@@ -879,5 +889,386 @@ describe("E4 usage admin view", () => {
             expect(screen.getByText(noteText), window).toBeTruthy();
             cleanup();
         }
+    });
+});
+
+type UsageErrorGroup = NonNullable<UsageSummary["errors"]>[number];
+
+function errorGroup(overrides: Partial<UsageErrorGroup>): UsageErrorGroup {
+    return {
+        method: "GET",
+        route: "/classify/:id",
+        status: 404,
+        error_code: "not_found",
+        count: 1,
+        first_seen: "2026-10-10T09:00:00Z",
+        last_seen: "2026-10-10T09:00:00Z",
+        error_kinds: {},
+        messages: [],
+        examples: [],
+        by_category: { cli: 1 },
+        by_tool: {},
+        by_agent: {},
+        ...overrides,
+    };
+}
+
+// errorGuide returns the Errors section's per-code "What to do" block.
+function errorGuide(): HTMLElement {
+    return within(section("Errors")).getByRole("group", { name: "What to do" });
+}
+
+// guideAction returns the guide's action text for the code label.
+function guideAction(label: string): string {
+    const term = within(errorGuide())
+        .getAllByRole("term")
+        .find((candidate) => candidate.textContent === label);
+    const definition = term?.nextElementSibling;
+
+    if (!definition) {
+        throw new Error(`no action for ${label}`);
+    }
+
+    return definition.textContent ?? "";
+}
+
+// errorEntry returns the Errors section's entry for the endpoint label and
+// the status-and-code label.
+function errorEntry(endpoint: string, code: string): HTMLElement {
+    const group = within(section("Errors")).getByRole("group", {
+        name: endpoint,
+    });
+
+    return within(group).getByRole("article", { name: code });
+}
+
+describe("usage errors section", () => {
+    it("groups the A3 fixture's errors by endpoint, then status and code", async () => {
+        await renderView(a3Summary(), "24h");
+
+        const errors = section("Errors");
+        expect(
+            within(errors)
+                .getAllByRole("heading", { level: 3 })
+                .map((heading) => heading.textContent),
+        ).toEqual([
+            "What to do",
+            "GET /classify/:id",
+            "GET /studies",
+            "GET (no matching route)",
+        ]);
+
+        expect(
+            within(errorGuide())
+                .getAllByRole("term")
+                .map((term) => term.textContent),
+        ).toEqual([
+            "not_found",
+            "unknown (recorded before error details were captured)",
+            "no_route",
+        ]);
+        expect(guideAction("not_found")).toContain("guessing");
+        expect(within(errors).getAllByText(/guessing/)).toHaveLength(1);
+
+        const notFound = errorEntry("GET /classify/:id", "404 not_found");
+        expect(notFound.textContent).toContain(
+            "The identifier is not known to the MLWH.",
+        );
+        expect(notFound.textContent).not.toContain("guessing");
+        expect(
+            within(notFound)
+                .getByRole("link", { name: "What to do about not_found" })
+                .getAttribute("href"),
+        ).toBe("#usage-error-help-not_found");
+        expect(
+            within(
+                within(notFound).getByRole("list", { name: "Top messages" }),
+            ).getByText("mlwh: not found: XYZ"),
+        ).toBeTruthy();
+        expect(within(notFound).getByText("/classify/XYZ")).toBeTruthy();
+        expect(notFound.textContent).toContain("bob");
+
+        const noRoute = errorEntry("GET (no matching route)", "404 no_route");
+        expect(noRoute.textContent).toContain("No endpoint matches");
+        expect(within(noRoute).getByText("/bogus")).toBeTruthy();
+    });
+
+    it("labels rows recorded before error details as unknown", async () => {
+        await renderView(a3Summary(), "24h");
+
+        const legacy = errorEntry(
+            "GET /studies",
+            "500 unknown (recorded before error details were captured)",
+        );
+        expect(legacy.textContent).toContain(
+            "recorded before the server stored error codes and messages",
+        );
+    });
+
+    it("explains every known code once, with its meaning in each entry and its action in the guide", async () => {
+        const codes = [
+            "not_found",
+            "ambiguous",
+            "unsupported_identifier",
+            "bad_request",
+            "cache_never_synced",
+            "upstream_impaired",
+            "no_route",
+            "payload_too_large",
+            "internal_error",
+            "uncoded",
+        ];
+
+        await renderView(
+            a3Summary({
+                errors: codes.map((code, index) =>
+                    errorGroup({ status: 400 + index, error_code: code }),
+                ),
+            }),
+            "24h",
+        );
+
+        for (const [index, code] of codes.entries()) {
+            const entry = errorEntry(
+                "GET /classify/:id",
+                `${400 + index} ${code}`,
+            );
+
+            expect(entry.textContent, code).not.toContain(
+                "No explanation for this code",
+            );
+            expect(guideAction(code), code).not.toBe("");
+            expect(guideAction(code), code).not.toContain(
+                "See that entry's messages and examples",
+            );
+        }
+    });
+
+    it("points an unknown code's guide entry back at its messages and examples", async () => {
+        await renderView(
+            a3Summary({
+                errors: [errorGroup({ status: 418, error_code: "teapot" })],
+            }),
+            "24h",
+        );
+
+        expect(
+            errorEntry("GET /classify/:id", "418 teapot").textContent,
+        ).toContain("No explanation for this code.");
+        expect(guideAction("teapot")).toBe(
+            "See that entry's messages and examples.",
+        );
+    });
+
+    it("shows timeout and canceled kinds with their specific advice", async () => {
+        await renderView(
+            a3Summary({
+                errors: [
+                    errorGroup({
+                        status: 502,
+                        error_code: "upstream_impaired",
+                        count: 3,
+                        error_kinds: { timeout: 2, canceled: 1 },
+                    }),
+                ],
+            }),
+            "24h",
+        );
+
+        const entry = errorEntry("GET /classify/:id", "502 upstream_impaired");
+        expect(entry.textContent).toContain("timeout 2");
+        expect(entry.textContent).toContain("canceled 1");
+        expect(guideAction("timeout")).toContain("slow query");
+        expect(guideAction("canceled")).toContain("client went away");
+
+        for (const [kind, count] of [
+            ["canceled", 1],
+            ["timeout", 2],
+        ] as const) {
+            const link = within(entry).getByRole("link", {
+                name: `What to do about ${kind} (${count})`,
+            });
+            const target = document.getElementById(
+                link.getAttribute("href")?.slice(1) ?? "",
+            );
+
+            expect(link.textContent).toBe(`${kind} ${count}`);
+            expect(target?.querySelector("dt")?.textContent).toBe(kind);
+            expect(errorGuide().contains(target)).toBe(true);
+        }
+    });
+
+    it("leaves causes without guide entries unlinked", async () => {
+        await renderView(
+            a3Summary({
+                errors: [
+                    errorGroup({
+                        status: 502,
+                        error_code: "upstream_impaired",
+                        error_kinds: { constructor: 1 },
+                    }),
+                ],
+            }),
+            "24h",
+        );
+
+        const entry = errorEntry("GET /classify/:id", "502 upstream_impaired");
+        expect(entry.textContent).toContain("Causes: constructor 1");
+        expect(
+            within(entry).queryByRole("link", { name: /constructor/ }),
+        ).toBeNull();
+    });
+
+    it("says how many errors the shown groups cover when the server capped them", async () => {
+        const errors = [
+            errorGroup({ count: 50 }),
+            errorGroup({ status: 400, error_code: "bad_request", count: 3 }),
+        ];
+
+        await renderView(
+            a3Summary({
+                totals: { ...a3Summary().totals, errors: 56 },
+                errors,
+            }),
+            "24h",
+        );
+        expect(
+            within(section("Errors")).getByText(
+                "Showing the 2 largest groups (53 of 56 errors).",
+            ),
+        ).toBeTruthy();
+
+        cleanup();
+        await renderView(
+            a3Summary({
+                totals: { ...a3Summary().totals, errors: 53 },
+                errors,
+            }),
+            "24h",
+        );
+        expect(
+            within(section("Errors")).queryByText(/largest groups/),
+        ).toBeNull();
+    });
+
+    it("states shared advice once when several entries share a code or cause", async () => {
+        await renderView(
+            a3Summary({
+                errors: [
+                    errorGroup({
+                        status: 502,
+                        error_code: "upstream_impaired",
+                        error_kinds: { timeout: 1 },
+                    }),
+                    errorGroup({
+                        route: "/studies",
+                        status: 502,
+                        error_code: "upstream_impaired",
+                        error_kinds: { timeout: 1 },
+                    }),
+                ],
+            }),
+            "24h",
+        );
+
+        const errors = section("Errors");
+        expect(
+            within(errors).getAllByText(/cache database's health/),
+        ).toHaveLength(1);
+        expect(within(errors).getAllByText(/slow query/)).toHaveLength(1);
+        expect(
+            within(errors).getAllByText(
+                "The server could not read the MLWH cache database or another upstream service.",
+            ),
+        ).toHaveLength(2);
+        expect(
+            within(errorGuide())
+                .getAllByRole("term")
+                .map((term) => term.textContent),
+        ).toEqual(["upstream_impaired", "timeout"]);
+    });
+
+    it("lists top messages, MCP callers, and examples with their query", async () => {
+        await renderView(
+            a3Summary({
+                errors: [
+                    errorGroup({
+                        count: 3,
+                        messages: [
+                            { message: "no A", count: 2 },
+                            { message: "no B", count: 1 },
+                        ],
+                        by_tool: { mlwh_classify_identifier: 2 },
+                        by_agent: { "claude-code/2.1.0": 2 },
+                        examples: [
+                            {
+                                ts: "2026-10-10T11:00:00Z",
+                                path: "/classify/A",
+                                query: "x=1",
+                                category: "mcp",
+                                mcp_tool: "mlwh_classify_identifier",
+                                mcp_agent: "claude-code/2.1.0",
+                                client_id: "sess-1",
+                                username: "",
+                                message: "no A",
+                                error_kind: "",
+                            },
+                        ],
+                    }),
+                ],
+            }),
+            "24h",
+        );
+
+        const entry = errorEntry("GET /classify/:id", "404 not_found");
+        const messages = within(entry).getByRole("list", {
+            name: "Top messages",
+        });
+        expect(
+            within(messages)
+                .getAllByRole("listitem")
+                .map((item) => item.textContent),
+        ).toEqual(["no A2", "no B1"]);
+        expect(entry.textContent).toContain("mlwh_classify_identifier 2");
+        expect(entry.textContent).toContain("claude-code/2.1.0 2");
+        expect(within(entry).getByText("/classify/A?x=1")).toBeTruthy();
+        expect(
+            within(entry).getByText("Messages and examples (1 example)"),
+        ).toBeTruthy();
+    });
+
+    it("shows an empty state and a note for servers without error details", async () => {
+        await renderView(a3Summary({ errors: [] }), "24h");
+        expect(
+            within(section("Errors")).getByText("No errors in this window."),
+        ).toBeTruthy();
+
+        cleanup();
+        const { errors: _errors, ...withoutErrors } = a3Summary();
+        await renderView(withoutErrors, "24h");
+        expect(
+            within(section("Errors")).getByText(
+                /does not report error details/,
+            ),
+        ).toBeTruthy();
+    });
+
+    it("adds error counts to the MCP tool and agent tables", async () => {
+        await renderView(
+            a3Summary({
+                mcp_tools: [
+                    {
+                        value: "mlwh_classify_identifier",
+                        requests: 5,
+                        errors: 2,
+                    },
+                ],
+            }),
+            "24h",
+        );
+
+        expect(
+            rowCells(section("MCP tools"), "mlwh_classify_identifier"),
+        ).toEqual(["mlwh_classify_identifier", "5", "2"]);
     });
 });
