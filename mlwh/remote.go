@@ -41,9 +41,37 @@ import (
 	"time"
 )
 
-const remoteClientDefaultTimeout = 30 * time.Second
+const (
+	remoteClientDefaultTimeout = 30 * time.Second
+
+	// MultiSampleExportAPIVersion is the first MLWH API version whose Export
+	// endpoint honours multi_sample.
+	MultiSampleExportAPIVersion = "1.11.0"
+)
 
 var _ Queryer = (*RemoteClient)(nil)
+
+// MultiSampleUnsupportedError reports that a remote server too old for the
+// Export multi_sample option answered a multi-sample request with its
+// ambiguity error. It matches both ErrMultiSampleUnsupported and the wrapped
+// server error (ErrAmbiguous).
+type MultiSampleUnsupportedError struct {
+	ServerURL        string
+	ServerAPIVersion string
+	Err              error
+}
+
+// Error describes the server, its API version and the version that adds
+// multi-sample export, followed by the server's own error.
+func (e *MultiSampleUnsupportedError) Error() string {
+	return fmt.Sprintf("%s: the MLWH server at %s runs API %s; multi-sample export needs API %s: %v",
+		ErrMultiSampleUnsupported, e.ServerURL, e.ServerAPIVersion, MultiSampleExportAPIVersion, e.Err)
+}
+
+// Unwrap exposes ErrMultiSampleUnsupported and the server's error.
+func (e *MultiSampleUnsupportedError) Unwrap() []error {
+	return []error{ErrMultiSampleUnsupported, e.Err}
+}
 
 // RemoteClient queries an mlwh REST server. It satisfies Queryer with the
 // body-only methods and also exposes header-aware helpers for callers that need
@@ -661,13 +689,31 @@ func (rc *RemoteClient) Export(ctx context.Context, rel ExportRelationship, pare
 		return rc.exportAllByRemotePages(ctx, rel, parentID, opts)
 	}
 
-	return remoteCall[ExportResult](rc, ctx, "Export", []string{rel.Children, rel.ParentKind, parentID}, remoteExportQuery(opts))
+	return rc.exportRemoteCall(ctx, rel, parentID, opts)
 }
 
 func remoteExportCanPageAll(rel ExportRelationship) bool {
 	_, _, err := normaliseExportRelationship(rel)
 
 	return err == nil
+}
+
+// exportRemoteCall issues one Export request. A server older than API 1.11.0
+// ignores multi_sample and reports a shared supplier name as ambiguous, so on
+// that error the server's advertised Export parameters decide whether to add
+// ErrMultiSampleUnsupported.
+func (rc *RemoteClient) exportRemoteCall(ctx context.Context, rel ExportRelationship, parentID string, opts ExportOptions) (ExportResult, error) {
+	result, err := remoteCall[ExportResult](rc, ctx, "Export", []string{rel.Children, rel.ParentKind, parentID}, remoteExportQuery(opts))
+	if err == nil || !opts.MultiSample || !errors.Is(err, ErrAmbiguous) {
+		return result, err
+	}
+
+	version, supported, probeErr := rc.exportSupportsMultiSample(ctx)
+	if probeErr != nil || supported {
+		return result, err
+	}
+
+	return result, &MultiSampleUnsupportedError{ServerURL: rc.baseURL, ServerAPIVersion: version, Err: err}
 }
 
 func remoteExportQuery(opts ExportOptions) url.Values {
@@ -683,6 +729,9 @@ func remoteExportQuery(opts ExportOptions) url.Values {
 	remoteSetNonEmptyQuery(query, "until", opts.Until)
 	remoteSetNonEmptyQuery(query, "cursor", opts.Cursor)
 	remoteSetNonEmptyQuery(query, "format", opts.Format)
+	if opts.MultiSample {
+		query.Set("multi_sample", "true")
+	}
 	if opts.DeliverablesOnly != nil {
 		query.Set("deliverables_only", strconv.FormatBool(*opts.DeliverablesOnly))
 	}
@@ -786,7 +835,53 @@ func remoteExportNoProgressError() error {
 func (rc *RemoteClient) exportRemotePage(ctx context.Context, rel ExportRelationship, parentID string, opts ExportOptions) (ExportResult, error) {
 	opts.All = false
 
-	return remoteCall[ExportResult](rc, ctx, "Export", []string{rel.Children, rel.ParentKind, parentID}, remoteExportQuery(opts))
+	return rc.exportRemoteCall(ctx, rel, parentID, opts)
+}
+
+// exportSupportsMultiSample reads the server's OpenAPI document and reports its
+// API version and whether its Export operation advertises multi_sample.
+func (rc *RemoteClient) exportSupportsMultiSample(ctx context.Context) (string, bool, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, rc.baseURL+mlwhOpenAPIPath, nil)
+	if err != nil {
+		return "", false, err
+	}
+	if rc.token != "" {
+		request.Header.Set("Authorization", "Bearer "+rc.token)
+	}
+	rc.setIdentityHeaders(request)
+
+	response, err := rc.httpClient.Do(request)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	if response.StatusCode != http.StatusOK {
+		return "", false, fmt.Errorf("mlwh: GET %s returned %s", mlwhOpenAPIPath, response.Status)
+	}
+
+	var document struct {
+		Info struct {
+			Version string `json:"version"`
+		} `json:"info"`
+		Paths map[string]map[string]struct {
+			Parameters []struct {
+				Name string `json:"name"`
+			} `json:"parameters"`
+		} `json:"paths"`
+	}
+	if err = json.NewDecoder(response.Body).Decode(&document); err != nil {
+		return "", false, err
+	}
+
+	exportPath := openAPIPathTemplate(rc.endpoints["Export"].Path)
+	for _, parameter := range document.Paths[exportPath]["get"].Parameters {
+		if parameter.Name == "multi_sample" {
+			return document.Info.Version, true, nil
+		}
+	}
+
+	return document.Info.Version, false, nil
 }
 
 // StudiesForFacultySponsor lists the studies of a named PI/sponsor through the

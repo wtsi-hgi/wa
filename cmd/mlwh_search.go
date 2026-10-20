@@ -150,6 +150,8 @@ func newMLWHSearchCommand() *cobra.Command {
 			"--limit/--offset to page results and --json for a single JSON object",
 			"suitable for piping into jq. Each section reports a total match count;",
 			"a very common sample term reports its count as a floor (e.g. 10000+).",
+			"The JSON object also carries cache_synced_at, the oldest sync time",
+			"across the cache's tables.",
 			"",
 			mlwhQueryCommandConfigurationHelp,
 			"",
@@ -242,6 +244,8 @@ func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, 
 	}
 
 	if jsonOut {
+		report.CacheSyncedAt = mlwhCacheSyncedAt(ctx, client)
+
 		return writeSearchReportJSON(out, report)
 	}
 
@@ -483,9 +487,11 @@ type sampleSearchSection struct {
 // cache was observed, so the text renderer can show a neutral note without any
 // sync hint.
 type searchReport struct {
-	Term             string               `json:"term"`
-	Studies          *studySearchSection  `json:"studies,omitempty"`
-	Samples          *sampleSearchSection `json:"samples,omitempty"`
-	TimedOut         bool                 `json:"timed_out,omitempty"`
+	Term     string               `json:"term"`
+	Studies  *studySearchSection  `json:"studies,omitempty"`
+	Samples  *sampleSearchSection `json:"samples,omitempty"`
+	TimedOut bool                 `json:"timed_out,omitempty"`
+	// CacheSyncedAt is the oldest last_run across the cache's synced tables.
+	CacheSyncedAt    string `json:"cache_synced_at,omitempty"`
 	cacheUnavailable bool
 }

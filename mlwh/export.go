@@ -186,11 +186,15 @@ var (
 	}
 	laneExportVocabulary = exportVocabulary{
 		Columns: []exportColumn{
+			{Name: "supplier_name", Aliases: []string{"supplier_sample_name"}, Supported: true},
+			{Name: "sanger_sample_id", Supported: true},
+			{Name: "name", Supported: true},
+			{Name: "accession_number", Supported: true},
 			{Name: "id_run", Supported: true},
-			{Name: "lane", Supported: true},
+			{Name: "lane", Aliases: []string{"position"}, Supported: true},
 			{Name: "tag_index", Supported: true},
 		},
-		Default: []string{"id_run", "lane", "tag_index"},
+		Default: []string{"supplier_name", "sanger_sample_id", "id_run", "lane", "tag_index"},
 	}
 	studyExportVocabulary = exportVocabulary{
 		Columns: []exportColumn{
@@ -515,20 +519,6 @@ func projectLibraries(libraries []Library, columns []exportColumn) [][]string {
 	return rows
 }
 
-func projectLanes(lanes []Lane, columns []exportColumn) [][]string {
-	rows := make([][]string, len(lanes))
-	for rowIndex, lane := range lanes {
-		values := map[string]string{
-			"id_run":    strconv.Itoa(lane.IDRun),
-			"lane":      strconv.Itoa(lane.Position),
-			"tag_index": strconv.Itoa(lane.TagIndex),
-		}
-		rows[rowIndex] = projectMap(values, columns)
-	}
-
-	return rows
-}
-
 func exportColumnsNeedSample(columns []exportColumn) bool {
 	for _, column := range columns {
 		if column.NeedsSample {
@@ -767,6 +757,9 @@ func newExportPlan(rel ExportRelationship, parentID string, opts ExportOptions) 
 	if strings.TrimSpace(parentID) == "" {
 		return exportPlan{}, fmt.Errorf("%w: export parent id is required", ErrUnsupportedIdentifier)
 	}
+	if opts.MultiSample && normalisedRel.ParentKind != "sample" {
+		return exportPlan{}, fmt.Errorf("%w: multi-sample export is supported only for sample parents", ErrUnsupportedIdentifier)
+	}
 	if kind != exportRelationshipIRODS && (opts.Sort != "" || opts.Since != "" || opts.Until != "") {
 		return exportPlan{}, fmt.Errorf("%w: created-date export sorting/windows are supported only for iRODS exports", ErrUnsupportedIdentifier)
 	}
@@ -834,6 +827,7 @@ func newExportPlan(rel ExportRelationship, parentID string, opts ExportOptions) 
 		cursor:            cursor,
 		sortCreatedDesc:   sortCreatedDesc,
 		createdWindowArgs: createdWindowArgs,
+		multiSample:       opts.MultiSample,
 	}, nil
 }
 
@@ -968,6 +962,7 @@ type ExportOptions struct {
 	All              bool
 	Cursor           string
 	Format           string
+	MultiSample      bool
 }
 
 // ExportResult is the string-rendered projection returned by Export. Rows are in
@@ -1212,6 +1207,7 @@ func (c *Client) exportIRODS(ctx context.Context, plan exportPlan, parent export
 	input := exportIRODSQueryInput{
 		parentKind:          plan.rel.ParentKind,
 		parentValue:         parent.Value,
+		sampleScope:         parent.SampleScope,
 		columns:             plan.columns,
 		normalisedFile:      plan.normalisedFile,
 		deliverablesOnly:    plan.deliverablesOnly,
@@ -1401,16 +1397,6 @@ func (c *Client) exportLibraries(ctx context.Context, plan exportPlan, parent ex
 
 func exportCountValue(count Count) int {
 	return count.Count
-}
-
-func (c *Client) exportLanes(ctx context.Context, plan exportPlan, parent exportParent) (ExportResult, error) {
-	lanes, err := c.LanesForSample(ctx, parent.Canonical, plan.limit, plan.offset)
-	total, countErr := c.CountLanesForSample(ctx, parent.Canonical)
-	if err = errors.Join(err, countErr); err != nil {
-		return ExportResult{}, err
-	}
-
-	return buildExportResult(plan, projectLanes(lanes, plan.columns), exportCountValue(total)), nil
 }
 
 func (c *Client) exportStudies(ctx context.Context, plan exportPlan, parent exportParent) (ExportResult, error) {
@@ -1615,12 +1601,13 @@ func (row exportIRODSRow) IRODSPath() string {
 type exportSampleCRAMRow = exportIRODSRow
 
 type exportParent struct {
-	Value     any
-	Canonical string
-	Study     *Study
-	Sample    *Sample
-	Run       *Run
-	Library   *Library
+	Value       any
+	Canonical   string
+	Study       *Study
+	Sample      *Sample
+	SampleScope exportSampleScope
+	Run         *Run
+	Library     *Library
 }
 
 func (c *Client) resolveExportParent(ctx context.Context, plan exportPlan, parentID string) (exportParent, error) {
@@ -1633,12 +1620,7 @@ func (c *Client) resolveExportParent(ctx context.Context, plan exportPlan, paren
 
 		return exportParent{Value: match.Study.IDStudyLims, Canonical: match.Study.IDStudyLims, Study: match.Study}, nil
 	case "sample":
-		match, err := c.ResolveSample(ctx, parentID)
-		if err != nil {
-			return exportParent{}, err
-		}
-
-		return exportParent{Value: match.Sample.IDSampleTmp, Canonical: match.Sample.Name, Sample: match.Sample}, nil
+		return c.resolveExportSampleParent(ctx, parentID, plan.multiSample)
 	case "run":
 		match, err := c.ResolveRun(ctx, parentID)
 		if err != nil {
@@ -2180,7 +2162,7 @@ func exportRunUnionQuery(plan exportPlan, parent exportParent, dialect string) (
 }
 
 func exportRunArmQuery(spec runAggregationPlatformSpec, plan exportPlan, parent exportParent, dialect string) (string, []any, error) {
-	where, value, err := exportRunParentScope(plan, parent)
+	where, args, err := exportRunParentScope(plan, parent)
 	if err != nil {
 		return "", nil, err
 	}
@@ -2188,7 +2170,6 @@ func exportRunArmQuery(spec runAggregationPlatformSpec, plan exportPlan, parent 
 	numericID := func(expr string) string {
 		return runListingIntegerTextExpr(dialect, expr)
 	}
-	args := []any{value}
 
 	switch spec.platform {
 	case platformIllumina:
@@ -2247,12 +2228,16 @@ func exportRunArmQuery(spec runAggregationPlatformSpec, plan exportPlan, parent 
 	}
 }
 
-func exportRunParentScope(plan exportPlan, parent exportParent) (string, any, error) {
+// exportRunParentScope returns an unqualified predicate that each run arm
+// prefixes with its table alias, plus its arguments.
+func exportRunParentScope(plan exportPlan, parent exportParent) (string, []any, error) {
 	switch plan.rel.ParentKind {
 	case "study":
-		return "id_study_lims = ?", parent.Canonical, nil
+		return "id_study_lims = ?", []any{parent.Canonical}, nil
 	case "sample":
-		return "id_sample_tmp = ?", parent.Value, nil
+		predicate, args := parent.SampleScope.predicate("id_sample_tmp")
+
+		return predicate, args, nil
 	default:
 		return "", nil, ErrUnsupportedIdentifier
 	}
@@ -2353,6 +2338,7 @@ type exportPlan struct {
 	cursor            exportCursor
 	sortCreatedDesc   bool
 	createdWindowArgs []any
+	multiSample       bool
 }
 
 func (c *Client) streamExportIRODSRows(ctx context.Context, db *sql.DB, plan exportPlan, input exportIRODSQueryInput, emit func([]string) error) (int, error) {
@@ -2399,7 +2385,7 @@ type exportStudyRows struct {
 func (c *Client) studiesForExport(ctx context.Context, plan exportPlan, parent exportParent) (exportStudyRows, error) {
 	switch plan.rel.ParentKind {
 	case "sample":
-		studies, total, err := c.sampleStudiesForExport(ctx, parent.Canonical, plan.limit, plan.offset)
+		studies, total, err := c.sampleStudiesForExport(ctx, parent, plan.limit, plan.offset)
 		if err != nil {
 			return exportStudyRows{}, err
 		}
@@ -2475,6 +2461,7 @@ func (c *Client) queryExportRunRows(ctx context.Context, db *sql.DB, query strin
 type exportIRODSQueryInput struct {
 	parentKind          string
 	parentValue         any
+	sampleScope         exportSampleScope
 	columns             []exportColumn
 	normalisedFile      string
 	deliverablesOnly    bool
@@ -2660,7 +2647,7 @@ func exportNeedsSample(input exportIRODSQueryInput) bool {
 }
 
 func exportIRODSWhere(input exportIRODSQueryInput, count bool) (string, []any, error) {
-	query, args, err := exportIRODSParentWhere(input.parentKind, input.parentValue)
+	query, args, err := exportIRODSParentWhere(input)
 	if err != nil {
 		return "", nil, err
 	}
@@ -2697,16 +2684,18 @@ func exportIRODSWhere(input exportIRODSQueryInput, count bool) (string, []any, e
 	return query, args, nil
 }
 
-func exportIRODSParentWhere(parentKind string, parentValue any) (string, []any, error) {
-	switch parentKind {
+func exportIRODSParentWhere(input exportIRODSQueryInput) (string, []any, error) {
+	switch input.parentKind {
 	case "study":
-		return ` WHERE spi.id_study_lims = ?`, []any{parentValue}, nil
+		return ` WHERE spi.id_study_lims = ?`, []any{input.parentValue}, nil
 	case "sample":
-		return ` WHERE spi.id_sample_tmp = ?`, []any{parentValue}, nil
+		predicate, args := input.sampleScope.predicate("spi.id_sample_tmp")
+
+		return ` WHERE ` + predicate, args, nil
 	case "run":
-		return ` WHERE ` + irodsRunScopePredicate, []any{parentValue}, nil
+		return ` WHERE ` + irodsRunScopePredicate, []any{input.parentValue}, nil
 	default:
-		return "", nil, fmt.Errorf("%w: unsupported iRODS export parent %q", ErrUnsupportedIdentifier, parentKind)
+		return "", nil, fmt.Errorf("%w: unsupported iRODS export parent %q", ErrUnsupportedIdentifier, input.parentKind)
 	}
 }
 
@@ -2868,7 +2857,12 @@ func (row exportProductRow) cursor() exportCursor {
 	}
 }
 
-func (c *Client) sampleStudiesForExport(ctx context.Context, sangerName string, limit, offset int) ([]Study, int, error) {
+func (c *Client) sampleStudiesForExport(ctx context.Context, parent exportParent, limit, offset int) ([]Study, int, error) {
+	if parent.SampleScope.multiple() {
+		return c.multiSampleStudiesForExport(ctx, parent.SampleScope, limit, offset)
+	}
+
+	sangerName := parent.Canonical
 	db := c.readCacheDB()
 	if db == nil {
 		return nil, 0, fmt.Errorf("mlwh: cache reader not configured")

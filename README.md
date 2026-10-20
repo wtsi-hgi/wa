@@ -207,6 +207,40 @@ replaced by the generic export surface. Use `wa mlwh export sample-crams ...`
 for sample-grained CRAM exports: each row is one selected, merged-aware CRAM for
 a sample.
 
+A supplier name or donor id often names several Sanger samples, for example a
+top-up or a sample that was registered again and never sequenced. Sample
+exports cover all of them:
+
+```bash
+wa mlwh export irods sample PD42478a
+wa mlwh export lanes sample PD42478a
+```
+
+Each row names its sample (`supplier_name` and `sanger_sample_id` are in the
+default `irods` and `lanes` columns). A sample with no matching rows adds none,
+so samples that were never sequenced drop out. `runs` and `studies` exports
+list each run or study once across the samples. Identifiers that must be unique
+(Sanger sample name or id, UUID, LIMS id, accession) still fail as ambiguous if
+they ever match several samples. This needs a server at MLWH API 1.11.0 or
+later; an older server makes the export fail with a message saying so.
+
+MLWH API 1.11.0 changed the default `lanes` export columns for every caller,
+including single-sample exports, from `id_run,lane,tag_index` to
+`supplier_name,sanger_sample_id,id_run,lane,tag_index`. Scripts that parse the
+old three-column output should ask for it explicitly:
+
+```bash
+wa mlwh export lanes sample <sample> --columns id_run,lane,tag_index
+```
+
+`wa mlwh info` on such an identifier lists the matching samples, their studies
+and whether each has deliverable data, then suggests the export and
+`wa mlwh search --type sample <id> --deliverables-only` commands. It exits
+non-zero because the identifier did not resolve to one record; `--json` prints
+the list as `candidates`. The `--json` output of `wa mlwh info` and
+`wa mlwh search` carries `cache_synced_at`, the cache sync time the human
+`info` output shows. Export output stays data only.
+
 #### Agent feedback
 
 LLM agents using the MLWH MCP server can report problems with a user request to

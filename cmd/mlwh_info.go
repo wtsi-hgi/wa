@@ -1046,6 +1046,26 @@ func writeLibraryPanel(out io.Writer, report infoReport, style infoStyle) {
 	}
 }
 
+// infoReportCacheSyncedAt picks the same cache-synced timestamp the human panel
+// shows, falling back to the oldest sync across the cache when the panel's
+// aggregate did not report one.
+func infoReportCacheSyncedAt(ctx context.Context, client mlwhInfoClient, report infoReport) string {
+	var synced string
+	switch {
+	case report.Sample != nil:
+		synced = sampleCacheSyncedAt(report)
+	case report.Study != nil:
+		synced = studyCacheSyncedAt(report)
+	case report.Run != nil:
+		synced = runCacheSyncedAt(report)
+	}
+	if strings.TrimSpace(synced) != "" {
+		return synced
+	}
+
+	return mlwhCacheSyncedAt(ctx, client)
+}
+
 type mlwhInfoSampleNameResolver interface {
 	ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error)
 }
@@ -1072,10 +1092,19 @@ func runMLWHInfo(ctx context.Context, client mlwhInfoClient, out io.Writer, iden
 			return nil
 		}
 
+		if errors.Is(err, mlwh.ErrAmbiguous) {
+			if report, ok := buildInfoCandidatesReport(ctx, client, identifier); ok {
+				report.CacheSyncedAt = mlwhCacheSyncedAt(ctx, client)
+
+				return writeInfoCandidates(out, report, jsonOut)
+			}
+		}
+
 		return infoQueryError(identifier, err, canSync)
 	}
 
 	report := buildInfoReport(ctx, client, identifier, since, match)
+	report.CacheSyncedAt = infoReportCacheSyncedAt(ctx, client, report)
 
 	if jsonOut {
 		return writeInfoReportJSON(out, report)
@@ -1537,6 +1566,16 @@ type infoReport struct {
 	RunStatus               *mlwh.RunStatusTimeline   `json:"run_status,omitempty"`
 	RunIRODSPaths           []mlwh.IRODSPath          `json:"run_irods_paths,omitempty"`
 
+	Candidates   []infoSampleCandidate `json:"candidates,omitempty"`
+	NextCommands []string              `json:"next_commands,omitempty"`
+
+	// multiSampleExport records that a multi-sample export accepts Identifier,
+	// so NextCommands lead with one export covering every candidate.
+	multiSampleExport bool
+
+	// CacheSyncedAt is the as-of time the human panel shows as "Cache synced".
+	CacheSyncedAt string `json:"cache_synced_at,omitempty"`
+
 	Warnings []string `json:"warnings,omitempty"`
 
 	productsTotal int
@@ -1587,6 +1626,20 @@ func newMLWHInfoCommand() *cobra.Command {
 			"now-7d, matching the overview's added_last_7_days. A sample report",
 			"adds its progress timeline and a run report adds the run overview",
 			"and within-sequencing status.",
+			"",
+			"An identifier that names several samples does not resolve to one",
+			"record. The command then lists the matching samples (name,",
+			"sanger_sample_id, studies and whether each has deliverable data),",
+			"suggests next commands and exits non-zero; --json prints the list as",
+			"candidates and the commands as next_commands. When the identifier is",
+			"a supplier name or donor id the samples share, and no sample holds it",
+			"as its name, Sanger sample id, LIMS id or accession, one",
+			"'wa mlwh export irods sample <id>' covers every sample; otherwise",
+			"the suggestion is one 'wa mlwh export irods sample <name>' per",
+			"sample, by Sanger sample name. Both forms end with",
+			"'wa mlwh search --type sample <id> --deliverables-only'. --json",
+			"output carries cache_synced_at, the cache sync time the text output",
+			"shows.",
 			"",
 			mlwhInfoCommandConfigurationHelp,
 			"",

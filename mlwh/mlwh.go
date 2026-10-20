@@ -33,6 +33,11 @@ var (
 	ErrSyncAlreadyRunning    = errors.New("mlwh sync: another sync is already running against this cache")
 	ErrAmbiguous             = errors.New("mlwh: identifier matches multiple records")
 	ErrUnsupportedIdentifier = errors.New("mlwh: identifier form not supported")
+
+	// ErrMultiSampleUnsupported reports that a remote server predates the
+	// multi_sample export option, so it rejected an identifier shared by several
+	// samples as ambiguous. It always accompanies ErrAmbiguous.
+	ErrMultiSampleUnsupported = errors.New("mlwh: server does not support multi-sample export")
 )
 
 // IdentifierKind classifies the canonical identifier returned by a resolver.

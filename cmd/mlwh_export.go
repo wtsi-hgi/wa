@@ -56,7 +56,12 @@ redirect to a file.`
 
 const mlwhExportParentIDHelp = `Parent kinds and parent-id values:
   study: a study LIMS id, study UUID, accession number or study name
-  sample: a sample UUID, LIMS id, Sanger sample name/id, supplier name, accession or donor id
+  sample: a sample UUID, LIMS id, Sanger sample name/id, supplier name, accession or donor id;
+    a supplier name or donor id shared by several samples exports the rows of
+    every matching sample (samples with no matching rows add none), so lanes
+    and irods rows carry sample columns to tell them apart; a value that is
+    also some sample's name, Sanger sample id, LIMS id or accession is still
+    reported as ambiguous
   run: an Illumina NPG id_run
   library: a pipeline_id_lims, library_id, id_library_lims or library type
   faculty-sponsor: a case-insensitive faculty_sponsor substring
@@ -107,6 +112,7 @@ const mlwhExportExamplesHelp = `Examples:
   wa --env development mlwh export irods study 5901 --file-type cram
   wa mlwh export products study 7568 --file-type cram --columns name,supplier_name,accession_number,sanger_sample_id,id_run,lane,tag_index,manual_qc,irods_path,irods_unmatched,reason
   wa mlwh export runs sample DN1234 --columns id_run,platform,run_date
+  wa mlwh export lanes sample PD42478a
   wa mlwh export irods study 5901 --sort created-desc --since 2026-07-01T00:00:00Z
   wa mlwh export irods study 5901 --server http://host:8091 --json`
 
@@ -300,6 +306,11 @@ func runMLWHExport(
 			return handleErr
 		}
 
+		var unsupported *mlwh.MultiSampleUnsupportedError
+		if errors.As(err, &unsupported) {
+			return mlwhExportMultiSampleUnsupportedError(rel, parentID, unsupported)
+		}
+
 		return fmt.Errorf("export %s of %s %q: %w", rel.Children, rel.ParentKind, parentID, err)
 	}
 
@@ -320,6 +331,18 @@ func runMLWHExport(
 	}
 
 	return nil
+}
+
+// mlwhExportMultiSampleUnsupportedError explains that the server is too old to
+// export several samples at once, that a newer one could only when the
+// identifier is a shared supplier name or donor id, and how to export the
+// samples one by one instead.
+func mlwhExportMultiSampleUnsupportedError(rel mlwh.ExportRelationship, parentID string, err *mlwh.MultiSampleUnsupportedError) error {
+	return fmt.Errorf(
+		"export %s of %s %q: %q names several samples on the MLWH server at %s, which runs API %s, too old to export several samples at once; "+
+			"if it is a supplier name or donor id the samples share, a server with API %s or later can export them together; "+
+			"otherwise, or with this server, export each sample by its Sanger sample name, listing them with:\n  wa mlwh search --type sample %s",
+		rel.Children, rel.ParentKind, parentID, parentID, err.ServerURL, err.ServerAPIVersion, mlwh.MultiSampleExportAPIVersion, shellQuote(parentID))
 }
 
 func handleMLWHExportCleanError(
@@ -454,6 +477,7 @@ func (f mlwhExportFlags) options(rel mlwh.ExportRelationship, cmd *cobra.Command
 		Since:            f.since,
 		Until:            f.until,
 		Format:           format,
+		MultiSample:      rel.ParentKind == "sample",
 	}
 	if f.limit > 0 {
 		opts.Limit = f.limit
