@@ -104,7 +104,9 @@ Scenario behaviour:
         deleted). Refuses to start if WA_ENV=production. Pass --fixtures to
         also seed demo data.
   prod  Persistent DB at WA_RESULTS_DB_PATH. Requires WA_ENV=production.
-        Refuses --fixtures. Refuses these inherited environment variables:
+        Runs `next build`, then serves the build over HTTPS (dev and test
+        run `next dev`). Refuses --fixtures.
+        Refuses these inherited environment variables:
 EOF
       print_prod_refused_env_help
       cat <<'EOF'
@@ -778,10 +780,21 @@ export WA_RESULTS_BACKEND_CA_CERT="$DEV_TLS_CERT"
 export WA_RESULTS_SERVER_CERT="$DEV_TLS_CERT"
 export WA_RESULTS_SERVER_KEY="$DEV_TLS_KEY"
 
+# Prod serves a `next build` through scripts/serve-https.mts, because `next
+# start` has no HTTPS option; dev and test keep `next dev`. An operator-supplied
+# WA_RUN_DEV_FRONTEND_DEV_CMD owns any build it needs.
+FRONTEND_BUILD_CMD=""
 if [[ -n "${WA_RUN_DEV_FRONTEND_DEV_CMD:-}" ]]; then
-  FRONTEND_DEV_CMD="$WA_RUN_DEV_FRONTEND_DEV_CMD"
+  FRONTEND_CMD="$WA_RUN_DEV_FRONTEND_DEV_CMD"
+elif [[ "$scenario" == "prod" ]]; then
+  FRONTEND_BUILD_CMD="pnpm build"
+  printf -v FRONTEND_CMD 'pnpm start:https --port %q --key %q --cert %q' "$frontend_port" "$DEV_TLS_KEY" "$DEV_TLS_CERT"
 else
-  FRONTEND_DEV_CMD="pnpm dev --port $frontend_port --experimental-https --experimental-https-key $DEV_TLS_KEY --experimental-https-cert $DEV_TLS_CERT"
+  FRONTEND_CMD="pnpm dev --port $frontend_port --experimental-https --experimental-https-key $DEV_TLS_KEY --experimental-https-cert $DEV_TLS_CERT"
+fi
+FRONTEND_KIND="dev"
+if [[ "$scenario" == "prod" ]]; then
+  FRONTEND_KIND="production"
 fi
 
 if [[ "$scenario" == "test" ]]; then
@@ -790,6 +803,7 @@ if [[ "$scenario" == "test" ]]; then
 fi
 
 PIDS=()
+FRONTEND_BUILD_PID=""
 DB_PATH=""
 DB_EPHEMERAL=0
 MLWH_CACHE_PATH=""
@@ -914,8 +928,10 @@ cleanup() {
   CLEANED_UP=1
   trap - EXIT INT TERM
 
-  for pid in "${PIDS[@]:-}"; do
-    terminate_child_process "$pid"
+  for pid in "${PIDS[@]:-}" "$FRONTEND_BUILD_PID"; do
+    if [[ -n "$pid" ]]; then
+      terminate_child_process "$pid"
+    fi
   done
 
   if (( DB_EPHEMERAL )) && [[ -n "$DB_PATH" ]]; then
@@ -1648,6 +1664,16 @@ RESULTS_STARTED=0
 SEQMETA_STARTED=0
 FRONTEND_STARTED=0
 
+# prod-ctl.sh restarts a crashed prod stack, often from cron, so keep the
+# previous run's service logs as <log>.1 rather than truncating them.
+if [[ "$scenario" == "prod" ]]; then
+  for log_path in "$RESULTS_LOG" "$SEQMETA_LOG" "$FRONTEND_LOG"; do
+    if [[ -s "$log_path" ]]; then
+      mv -f "$log_path" "$log_path.1"
+    fi
+  done
+fi
+
 : >"$RESULTS_LOG"
 : >"$FRONTEND_LOG"
 
@@ -1748,7 +1774,7 @@ else
 	printf 'MLWH server skipped because no explicit command, MLWH DSN, or MLWH cache path is set\n' >"$SEQMETA_LOG"
 fi
 
-printf '\n[dev]\n' >>"$FRONTEND_LOG"
+printf '\n[%s]\n' "$FRONTEND_KIND" >>"$FRONTEND_LOG"
 if [[ -n "$MLWH_CACHE_PATH" ]]; then
   export WA_MLWH_CACHE_PATH="$MLWH_CACHE_PATH"
 fi
@@ -1756,9 +1782,25 @@ if [[ "$scenario" == "dev" ]] && http_is_healthy "$FRONTEND_HEALTH_URL" "strict"
   printf 'Reusing existing frontend dev server on https://127.0.0.1:%s\n' "$frontend_port"
   printf 'Reusing existing frontend dev server on https://127.0.0.1:%s\n' "$frontend_port" >>"$FRONTEND_LOG"
 else
-  printf 'Starting frontend dev server on https://127.0.0.1:%s\n' "$frontend_port"
-  WA_RUN_DEV_FRONTEND_DEV_CMD="$FRONTEND_DEV_CMD" \
-    bash -lc 'cd "$1" && eval "exec $WA_RUN_DEV_FRONTEND_DEV_CMD"' -- "$FRONTEND_DIR" \
+  if [[ -n "$FRONTEND_BUILD_CMD" ]]; then
+    printf 'Building the production frontend (%s); see %s\n' "$FRONTEND_BUILD_CMD" "$FRONTEND_LOG"
+    # Run in the background and wait, so a TERM during a long build runs the
+    # cleanup trap at once rather than after the build finishes.
+    WA_RUN_DEV_FRONTEND_BUILD_CMD="$FRONTEND_BUILD_CMD" \
+      bash -lc 'cd "$1" && eval "exec $WA_RUN_DEV_FRONTEND_BUILD_CMD"' -- "$FRONTEND_DIR" \
+      >>"$FRONTEND_LOG" 2>&1 &
+    FRONTEND_BUILD_PID="$!"
+    if ! wait "$FRONTEND_BUILD_PID"; then
+      printf 'run-dev.sh: the frontend production build failed.\n' >&2
+      print_service_log_tail "$FRONTEND_LOG"
+      exit 1
+    fi
+    FRONTEND_BUILD_PID=""
+  fi
+
+  printf 'Starting frontend %s server on https://127.0.0.1:%s\n' "$FRONTEND_KIND" "$frontend_port"
+  WA_RUN_DEV_FRONTEND_CMD="$FRONTEND_CMD" \
+    bash -lc 'cd "$1" && eval "exec $WA_RUN_DEV_FRONTEND_CMD"' -- "$FRONTEND_DIR" \
     >>"$FRONTEND_LOG" 2>&1 &
   PIDS+=("$!")
   FRONTEND_PID="$!"

@@ -391,6 +391,24 @@ func TestRemoteClientSamplesForStudyRoundTrips(t *testing.T) {
 	})
 }
 
+func TestRemoteClientKeepsBaseURLPathPrefix(t *testing.T) {
+	convey.Convey("Given a RemoteClient whose base URL has a path prefix, as behind an ingress", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONServerForTest(requestURIs, []Sample{{IDSampleTmp: 1, Name: "Alpha"}})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL+"/mlwh-api/", "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when SamplesForStudy runs, then the request path keeps the prefix", func() {
+			_, err := client.SamplesForStudy(context.Background(), "6568", 100, 0)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/mlwh-api/study/6568/samples?limit=100&offset=0")
+		})
+	})
+}
+
 func TestRemoteClientMapsNotFoundEnvelope(t *testing.T) {
 	convey.Convey("Given a server returning a not_found envelope", t, func() {
 		server := newRemoteClientErrorServerForTest(http.StatusNotFound, "not_found")

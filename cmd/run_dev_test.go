@@ -197,6 +197,7 @@ printf '%%s\n' "$*" >> "$invocations_path"
 case "${1:-} ${2:-}" in
 	"results serve")
 		port="$(port_arg "$@")"
+		printf '%%s\n' "${WA_MLWH_SERVER_URL:-}" >"$invocations_path.results-mlwh-server-url"
 		if [[ "${WA_ENV:-}" == "test" ]]; then
 			exec node -e 'const fs = require("node:fs"); const https = require("node:https"); const path = require("node:path"); const port = Number(process.argv[1]); if (process.env.XDG_STATE_HOME) { fs.mkdirSync(process.env.XDG_STATE_HOME, {recursive: true}); fs.writeFileSync(path.join(process.env.XDG_STATE_HOME, ".wa-results-server.token"), "stub-token\n", {mode: 0o600}); } const options = { key: fs.readFileSync(process.env.WA_RESULTS_SERVER_KEY), cert: fs.readFileSync(process.env.WA_RESULTS_SERVER_CERT) }; const server = https.createServer(options, (request, response) => { if (request.method === "GET" && request.url === "/rest/v1/results/stats") { response.writeHead(200, {"content-type":"application/json"}); response.end("{}"); return; } if (request.method === "POST" && request.url === "/rest/v1/jwt") { response.writeHead(200, {"content-type":"application/json"}); response.end(JSON.stringify("stub-jwt")); return; } if (request.method === "POST" && request.url === "/rest/v1/auth/results") { response.writeHead(201, {"content-type":"application/json"}); response.end("{\"id\":\"seeded\"}"); return; } response.writeHead(404); response.end(); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(port, "127.0.0.1");' "$port"
 		fi
