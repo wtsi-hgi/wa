@@ -556,6 +556,42 @@ export const usageCategorySchema = z.enum([
 export type UsageCategory = z.infer<typeof usageCategorySchema>;
 const countMap = z.record(z.string(), z.number().int().nonnegative());
 const count = z.number().int().nonnegative();
+// errors is absent from servers that predate error details.
+const usageValueCountSchema = z.object({
+    value: z.string(),
+    requests: count,
+    errors: count.optional(),
+});
+// One group of GET /usage errors (mlwh/usage_summary.go UsageErrorGroup).
+// error_code is null for rows recorded before error details were stored.
+const usageErrorGroupSchema = z.object({
+    method: z.string(),
+    route: z.string(),
+    status: z.number().int(),
+    error_code: z.string().nullable(),
+    count,
+    first_seen: z.string(),
+    last_seen: z.string(),
+    error_kinds: countMap,
+    messages: z.array(z.object({ message: z.string(), count })),
+    examples: z.array(
+        z.object({
+            ts: z.string(),
+            path: z.string(),
+            query: z.string(),
+            category: usageCategorySchema,
+            mcp_tool: z.string(),
+            mcp_agent: z.string(),
+            client_id: z.string(),
+            username: z.string(),
+            message: z.string(),
+            error_kind: z.string(),
+        }),
+    ),
+    by_category: countMap,
+    by_tool: countMap,
+    by_agent: countMap,
+});
 export const usageSummarySchema = z.object({
     window: usageWindowSchema,
     generated_at: z.string(),
@@ -596,11 +632,9 @@ export const usageSummarySchema = z.object({
             by_category: countMap,
         }),
     ),
-    mcp_tools: z.array(z.object({ value: z.string(), requests: count })),
-    mcp_agents: z.array(z.object({ value: z.string(), requests: count })),
-    other_user_agents: z.array(
-        z.object({ value: z.string(), requests: count }),
-    ),
+    mcp_tools: z.array(usageValueCountSchema),
+    mcp_agents: z.array(usageValueCountSchema),
+    other_user_agents: z.array(usageValueCountSchema),
     unmatched: z.array(
         z.object({
             method: z.string(),
@@ -643,5 +677,7 @@ export const usageSummarySchema = z.object({
             by_endpoint: countMap,
         }),
     ),
+    // Absent from servers that predate error details.
+    errors: z.array(usageErrorGroupSchema).optional(),
 });
 export type UsageSummary = z.infer<typeof usageSummarySchema>;

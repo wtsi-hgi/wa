@@ -102,7 +102,9 @@ func TestUsageSummaryA3(t *testing.T) {
 		convey.Convey("then MCP tools, agents, and other User-Agents are counted", func() {
 			convey.So(summary.MCPTools, convey.ShouldResemble, []UsageCount{{Value: "mlwh_list_studies", Requests: 1}})
 			convey.So(summary.MCPAgents, convey.ShouldResemble, []UsageCount{{Value: usageSummaryTestAgent, Requests: 1}})
-			convey.So(summary.OtherUserAgents, convey.ShouldResemble, []UsageCount{{Value: "curl/8.5.0", Requests: 2}})
+			convey.So(summary.OtherUserAgents, convey.ShouldResemble, []UsageCount{
+				{Value: "curl/8.5.0", Requests: 2, Errors: 2},
+			})
 		})
 
 		convey.Convey("then unmatched paths are listed", func() {
@@ -458,7 +460,7 @@ func TestUsageSummaryA3(t *testing.T) {
 
 		lists := []string{
 			"categories", "endpoints", "mcp_tools", "mcp_agents", "other_user_agents",
-			"unmatched", "users", "clients", "days", "series",
+			"unmatched", "users", "clients", "days", "series", "errors",
 		}
 		convey.So(countNonArraysForTest(doc, lists), convey.ShouldEqual, 0)
 		convey.So(countNonObjectByMapsForTest(doc, lists), convey.ShouldEqual, 0)
@@ -478,7 +480,7 @@ func TestUsageSummaryA3(t *testing.T) {
 		convey.So(json.Unmarshal(data, &doc), convey.ShouldBeNil)
 		convey.So(countNonArraysForTest(doc, []string{
 			"categories", "endpoints", "mcp_tools", "mcp_agents", "other_user_agents",
-			"unmatched", "users", "clients", "days", "series",
+			"unmatched", "users", "clients", "days", "series", "errors",
 		}), convey.ShouldEqual, 0)
 		convey.So(countNonObjectByMapsForTest(doc, []string{"days"}), convey.ShouldEqual, 0)
 	})
@@ -634,6 +636,143 @@ func TestUsageSummarySemantics(t *testing.T) {
 	})
 }
 
+func TestUsageSummaryErrors(t *testing.T) {
+	convey.Convey("Given error rows of several endpoints, codes, and kinds", t, func() {
+		summary := summariseEventsForTest(t, usageErrorFixtureForTest(), UsageWindow24h)
+
+		convey.Convey("then errors are grouped by method, route, status, and code, largest first", func() {
+			keys := make([]string, 0, len(summary.Errors))
+			for _, group := range summary.Errors {
+				code := "<nil>"
+				if group.ErrorCode != nil {
+					code = *group.ErrorCode
+				}
+
+				keys = append(keys, fmt.Sprintf("%s %s %d %s %d", group.Method, group.Route, group.Status, code,
+					group.Count))
+			}
+
+			convey.So(keys, convey.ShouldResemble, []string{
+				"GET /classify/:id 404 not_found 3",
+				"GET  404 no_route 1",
+				"GET /classify/:id 404 <nil> 1",
+				"GET /classify/:id 502 upstream_impaired 1",
+			})
+		})
+
+		convey.Convey("then a group holds its time span, messages, examples, and breakdowns", func() {
+			group := summary.Errors[0]
+			convey.So(group.FirstSeen, convey.ShouldEqual, "2026-10-10T09:00:00Z")
+			convey.So(group.LastSeen, convey.ShouldEqual, "2026-10-10T11:00:00Z")
+			convey.So(group.ErrorKinds, convey.ShouldResemble, map[string]int64{})
+			convey.So(group.Messages, convey.ShouldResemble, []UsageErrorMessage{
+				{Message: "no A", Count: 2}, {Message: "no B", Count: 1},
+			})
+			convey.So(group.ByCategory, convey.ShouldResemble, map[string]int64{"cli": 2, "mcp": 1})
+			convey.So(group.ByTool, convey.ShouldResemble, map[string]int64{"mlwh_classify_identifier": 1})
+			convey.So(group.ByAgent, convey.ShouldResemble, map[string]int64{usageSummaryTestAgent: 1})
+			convey.So(group.Examples, convey.ShouldResemble, []UsageErrorExample{
+				{
+					Time: "2026-10-10T11:00:00Z", Path: "/classify/A", Query: "x=1", Category: UsageCategoryMCP,
+					MCPTool: "mlwh_classify_identifier", MCPAgent: usageSummaryTestAgent, ClientID: "sess-1",
+					Message: "no A",
+				},
+				{
+					Time: "2026-10-10T10:00:00Z", Path: "/classify/A", Category: UsageCategoryCLI,
+					ClientID: "run-a", Username: "alice", Message: "no A",
+				},
+				{
+					Time: "2026-10-10T09:00:00Z", Path: "/classify/B", Category: UsageCategoryCLI,
+					ClientID: "run-a", Username: "alice", Message: "no B",
+				},
+			})
+		})
+
+		convey.Convey("then legacy rows have a null code and examples without details", func() {
+			group := summary.Errors[2]
+			convey.So(group.ErrorCode, convey.ShouldBeNil)
+			convey.So(group.Messages, convey.ShouldResemble, []UsageErrorMessage{})
+			convey.So(group.Examples, convey.ShouldResemble, []UsageErrorExample{
+				{Time: "2026-10-10T08:00:00Z", Category: UsageCategoryCLI},
+			})
+		})
+
+		convey.Convey("then error kinds are counted and unmatched rows keep their path", func() {
+			convey.So(summary.Errors[3].ErrorKinds, convey.ShouldResemble, map[string]int64{UsageErrorKindTimeout: 1})
+			convey.So(summary.Errors[1].Examples[0].Path, convey.ShouldEqual, "/bogus")
+		})
+
+		convey.Convey("then MCP tools and agents carry their error counts", func() {
+			convey.So(summary.MCPTools, convey.ShouldResemble, []UsageCount{
+				{Value: "mlwh_classify_identifier", Requests: 2, Errors: 1},
+			})
+			convey.So(summary.MCPAgents, convey.ShouldResemble, []UsageCount{
+				{Value: usageSummaryTestAgent, Requests: 2, Errors: 1},
+			})
+		})
+
+		convey.Convey("then rows outside the window are not counted", func() {
+			var total int64
+			for _, group := range summary.Errors {
+				total += group.Count
+			}
+
+			convey.So(total, convey.ShouldEqual, summary.Totals.Errors)
+		})
+	})
+
+	convey.Convey("Given 12 errors with 7 messages, then 5 messages and the 10 latest examples are kept", t, func() {
+		events := make([]UsageEvent, 0, 12)
+
+		for i := range 12 {
+			events = append(events, UsageEvent{
+				Time: usageSummaryTestNow.Add(-time.Duration(i+1) * time.Minute), Category: UsageCategoryCLI,
+				Method: "GET", Route: "/classify/:id", Path: fmt.Sprintf("/classify/%d", i), Status: 404,
+				ErrorCode: httpErrorCodeNotFound, ErrorMessage: fmt.Sprintf("m%d", min(i, 6)),
+			})
+		}
+
+		group := summariseEventsForTest(t, events, UsageWindow24h).Errors[0]
+		convey.So(group.Count, convey.ShouldEqual, 12)
+		convey.So(group.Messages, convey.ShouldResemble, []UsageErrorMessage{
+			{Message: "m6", Count: 6}, {Message: "m0", Count: 1}, {Message: "m1", Count: 1},
+			{Message: "m2", Count: 1}, {Message: "m3", Count: 1},
+		})
+		convey.So(group.Examples, convey.ShouldHaveLength, 10)
+		convey.So(group.Examples[0].Path, convey.ShouldEqual, "/classify/0")
+		convey.So(group.Examples[9].Path, convey.ShouldEqual, "/classify/9")
+	})
+
+	convey.Convey("Given 60 distinct error groups, then the 50 largest are listed", t, func() {
+		events := make([]UsageEvent, 0, 61)
+
+		for i := range 60 {
+			events = append(events, UsageEvent{
+				Time: usageSummaryTestNow.Add(-time.Minute), Category: UsageCategoryCLI, Method: "GET",
+				Route: "/studies", Status: 400 + i, ErrorCode: httpErrorCodeBadRequest,
+			})
+		}
+
+		events = append(events, events[59])
+
+		errorGroups := summariseEventsForTest(t, events, UsageWindow24h).Errors
+		convey.So(errorGroups, convey.ShouldHaveLength, 50)
+		convey.So(errorGroups[0].Status, convey.ShouldEqual, 459)
+		convey.So(errorGroups[1].Status, convey.ShouldEqual, 400)
+	})
+
+	convey.Convey("Given no errors, then errors is an empty JSON array", t, func() {
+		data, err := json.Marshal(summariseEventsForTest(t, []UsageEvent{latencyUsageEventForTest(1)},
+			UsageWindow24h))
+		convey.So(err, convey.ShouldBeNil)
+
+		var doc map[string]any
+
+		convey.So(json.Unmarshal(data, &doc), convey.ShouldBeNil)
+		convey.So(countNonArraysForTest(doc, []string{"errors"}), convey.ShouldEqual, 0)
+	})
+}
+
 // usageFixtureFForTest returns the nine rows of spec fixture F.
 func usageFixtureFForTest() []UsageEvent {
 	type row struct {
@@ -689,6 +828,12 @@ func usageFixtureFForTest() []UsageEvent {
 		})
 	}
 
+	// The classify 404 and the unmatched 404 carry error details; the
+	// /studies 500 has none, as rows recorded before details were captured.
+	events[2].Path, events[2].ErrorCode = "/classify/XYZ", httpErrorCodeNotFound
+	events[2].ErrorMessage = "mlwh: not found: XYZ"
+	events[5].ErrorCode = UsageErrorCodeNoRoute
+
 	return events
 }
 
@@ -722,6 +867,47 @@ func recordUsageEventsForTest(store *UsageStore, events []UsageEvent) {
 	}
 
 	convey.So(store.Flush(context.Background()), convey.ShouldBeNil)
+}
+
+// usageErrorFixtureForTest returns error rows for the 24h window: three
+// not_found (one MCP), one unmatched, one legacy row with no details, one
+// timeout, plus a successful MCP row and a not_found row outside the window.
+func usageErrorFixtureForTest() []UsageEvent {
+	at := func(hoursAgo int) time.Time { return usageSummaryTestNow.Add(-time.Duration(hoursAgo) * time.Hour) }
+	classify := "/classify/:id"
+	tool := "mlwh_classify_identifier"
+	cli := func(hoursAgo int, path, message string) UsageEvent {
+		return UsageEvent{
+			Time: at(hoursAgo), Category: UsageCategoryCLI, Method: "GET", Route: classify, Path: path,
+			ClientID: "run-a", Username: "alice", Status: 404, ErrorCode: httpErrorCodeNotFound,
+			ErrorMessage: message,
+		}
+	}
+
+	return []UsageEvent{
+		{
+			Time: at(1), Category: UsageCategoryMCP, Method: "GET", Route: classify, Path: "/classify/A",
+			Query: "x=1", ClientID: "sess-1", MCPTool: tool, MCPAgent: usageSummaryTestAgent, Status: 404,
+			ErrorCode: httpErrorCodeNotFound, ErrorMessage: "no A",
+		},
+		cli(2, "/classify/A", "no A"),
+		cli(3, "/classify/B", "no B"),
+		{Time: at(4), Category: UsageCategoryCLI, Method: "GET", Route: classify, Status: 404},
+		{
+			Time: at(5), Category: UsageCategoryOther, Method: "GET", Path: "/bogus", Status: 404,
+			ErrorCode: UsageErrorCodeNoRoute,
+		},
+		{
+			Time: at(6), Category: UsageCategoryCLI, Method: "GET", Route: classify, Path: "/classify/C",
+			Status: 502, ErrorCode: httpErrorCodeUpstreamImpaired, ErrorKind: UsageErrorKindTimeout,
+			ErrorMessage: "deadline",
+		},
+		{
+			Time: at(7), Category: UsageCategoryMCP, Method: "GET", Route: classify, MCPTool: tool,
+			MCPAgent: usageSummaryTestAgent, Status: 200,
+		},
+		cli(30, "/classify/Z", "no Z"),
+	}
 }
 
 func latencyUsageEventForTest(ms int) UsageEvent {

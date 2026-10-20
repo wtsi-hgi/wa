@@ -69,7 +69,11 @@ CREATE TABLE IF NOT EXISTS usage_requests (
     mcp_agent      TEXT NOT NULL DEFAULT '',
     mcp_tool       TEXT NOT NULL DEFAULT '',
     status         INTEGER NOT NULL,
-    latency_us     INTEGER NOT NULL
+    latency_us     INTEGER NOT NULL,
+    query          TEXT,
+    error_code     TEXT,
+    error_kind     TEXT,
+    error_message  TEXT
 );
 CREATE INDEX IF NOT EXISTS usage_requests_ts ON usage_requests (ts_ms);
 CREATE INDEX IF NOT EXISTS usage_requests_route_ts
@@ -78,9 +82,20 @@ CREATE INDEX IF NOT EXISTS usage_requests_route_latency
     ON usage_requests (method, route, latency_us, ts_ms);
 `
 
+// usageErrorColumns are the nullable columns added after the first release,
+// in schema order. migrateUsageErrorColumns adds any an existing DB lacks; rows
+// written before then keep NULL in them.
+var usageErrorColumns = []string{"query", "error_code", "error_kind", "error_message"}
+
+// usageErrorIndexSQL creates the partial index the error summary reads. It
+// runs after migrateUsageErrorColumns, since an old table lacks error_code.
+const usageErrorIndexSQL = `CREATE INDEX IF NOT EXISTS usage_requests_errors
+    ON usage_requests (ts_ms, method, route, status, error_code) WHERE status >= 400`
+
 const usageInsertSQL = `INSERT INTO usage_requests (ts_ms, category, method, route, path,
     client_id, username, remote_addr, client_version, user_agent, mcp_transport, mcp_agent,
-    mcp_tool, status, latency_us) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    mcp_tool, status, latency_us, query, error_code, error_kind, error_message)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 var errUsageRetention = errors.New("mlwh: usage retention must be at least 1 day")
 
@@ -138,10 +153,10 @@ func openUsageStore(ctx context.Context, path string, retentionDays, queueSize i
 		done:          make(chan struct{}),
 	}
 
-	if _, err = db.ExecContext(ctx, usageSchema); err != nil {
+	if err = createUsageSchema(ctx, db); err != nil {
 		_ = db.Close()
 
-		return nil, fmt.Errorf("mlwh: create usage schema: %w", err)
+		return nil, err
 	}
 
 	if _, err = s.Prune(ctx); err != nil {
@@ -399,5 +414,84 @@ func usageInsertArgs(ev UsageEvent) []any {
 		truncateUTF8(ev.MCPTool, UsageMaxMCPToolBytes),
 		ev.Status,
 		ev.Latency.Microseconds(),
+		usageNullString(truncateUTF8(ev.Query, UsageMaxQueryBytes)),
+		usageNullString(ev.ErrorCode),
+		usageNullString(ev.ErrorKind),
+		usageNullString(truncateUTF8(ev.ErrorMessage, UsageMaxErrorMessageBytes)),
 	}
+}
+
+// migrateUsageErrorColumns adds any usageErrorColumns the table lacks. Two
+// processes opening one old DB would otherwise both see a column missing and
+// both ALTER, so the check and the ALTERs share one BEGIN IMMEDIATE
+// transaction on a single connection: a later opener waits on busy_timeout,
+// then finds the columns present.
+func migrateUsageErrorColumns(ctx context.Context, db *sql.DB) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("mlwh: usage migration connection: %w", err)
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("mlwh: begin usage migration: %w", err)
+	}
+
+	if err = addMissingUsageErrorColumns(ctx, conn); err != nil {
+		_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+
+		return err
+	}
+
+	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
+		_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+
+		return fmt.Errorf("mlwh: commit usage migration: %w", err)
+	}
+
+	return nil
+}
+
+func addMissingUsageErrorColumns(ctx context.Context, conn *sql.Conn) error {
+	columns, err := readSQLiteTableColumns(ctx, conn, "usage_requests")
+	if err != nil {
+		return err
+	}
+
+	for _, column := range usageErrorColumns {
+		if _, ok := columns[column]; ok {
+			continue
+		}
+
+		if _, err = conn.ExecContext(ctx, "ALTER TABLE usage_requests ADD COLUMN "+column+" TEXT"); err != nil {
+			return fmt.Errorf("mlwh: add usage column %s: %w", column, err)
+		}
+	}
+
+	return nil
+}
+
+// createUsageSchema creates the table and indexes, adding the error columns
+// to a table created before they existed.
+func createUsageSchema(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, usageSchema); err != nil {
+		return fmt.Errorf("mlwh: create usage schema: %w", err)
+	}
+
+	if err := migrateUsageErrorColumns(ctx, db); err != nil {
+		return err
+	}
+
+	if _, err := db.ExecContext(ctx, usageErrorIndexSQL); err != nil {
+		return fmt.Errorf("mlwh: create usage error index: %w", err)
+	}
+
+	return nil
+}
+
+// usageNullString returns NULL for "", so rows without error details read
+// the same as rows written before those columns existed.
+func usageNullString(s string) sql.NullString {
+	return sql.NullString{String: s, Valid: s != ""}
 }

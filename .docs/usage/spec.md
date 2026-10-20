@@ -30,6 +30,7 @@ never fails or noticeably slows the request being counted. Release: wa
 mlwh/usage.go                  categories, windows, caps, User-Agent parsing
 mlwh/usage_store.go            SQLite store, async writer, retention
 mlwh/usage_summary.go          UsageSummary types and Summary queries
+mlwh/usage_error_summary.go    UsageSummary errors groups
 mlwh/usage_server.go           counting middleware, GET /usage
 mlwh/client_identity.go        identity headers, ClientIdentity, context
 mlwh/remote.go                 RemoteConfig fields; headers in do()
@@ -52,6 +53,7 @@ frontend/app/(results)/usage/actions.ts     Server Action
 frontend/app/(results)/usage/page.tsx       admin page
 frontend/components/usage-admin-view.tsx    view
 frontend/lib/usage-messages.ts              reason messages
+frontend/lib/usage-error-help.ts            error code explanations
 frontend/components/auth-menu.tsx           Usage link
 frontend/app/(results)/layout.tsx           link visibility
 ```
@@ -100,6 +102,7 @@ carry the originating end user.
 | `GET /openapi.json`                                             | yes     | `/openapi.json`                       | `""`               |
 | `POST /feedback`                                                | yes     | `/feedback`                           | `""`               |
 | no matching route (gin NoRoute, 404, includes wrong method)     | yes     | `""`                                  | URL path, no query |
+| matched route answering status >= 400                           | yes     | Registry `Path`                       | URL path           |
 | `GET /health`; admin `GET/PATCH/DELETE /feedback`; `GET /usage` | no      | -                                     | -                  |
 | rejected by gas JWT middleware (401, secured mode)              | no      | -                                     | -                  |
 | User-Agent product `wa-run-dev`                                 | no      | -                                     | -                  |
@@ -107,7 +110,7 @@ carry the originating end user.
 - `route` is the template passed at registration, never the actual path, so
   secured-mode rows carry `/classify/:id`, not `/rest/v1/auth/classify/:id`.
 - `path` is `c.Request.URL.Path` truncated to 256 bytes, stored only when
-  `route` is `""`.
+  `route` is `""` or the status is >= 400.
 - A matched route's 404 (e.g. unknown sample) is counted under its template.
 - Error means status >= 400.
 
@@ -160,14 +163,28 @@ CREATE TABLE IF NOT EXISTS usage_requests (
     mcp_agent      TEXT NOT NULL DEFAULT '',
     mcp_tool       TEXT NOT NULL DEFAULT '',
     status         INTEGER NOT NULL,
-    latency_us     INTEGER NOT NULL
+    latency_us     INTEGER NOT NULL,
+    query          TEXT,
+    error_code     TEXT,
+    error_kind     TEXT,
+    error_message  TEXT
 );
 CREATE INDEX IF NOT EXISTS usage_requests_ts ON usage_requests (ts_ms);
 CREATE INDEX IF NOT EXISTS usage_requests_route_ts
     ON usage_requests (method, route, ts_ms);
 CREATE INDEX IF NOT EXISTS usage_requests_route_latency
     ON usage_requests (method, route, latency_us, ts_ms);
+CREATE INDEX IF NOT EXISTS usage_requests_errors
+    ON usage_requests (ts_ms, method, route, status, error_code)
+    WHERE status >= 400;
 ```
+
+The last four columns were added after the first release. On open, the
+store adds any that an existing table lacks (`ALTER TABLE ... ADD COLUMN`),
+then creates `usage_requests_errors`. The column check and the `ALTER`s run
+in one `BEGIN IMMEDIATE` transaction on one connection, so stores opening
+the same old DB at once all succeed and each column is added once. Rows
+written before then keep NULL in them. Empty values are stored as NULL.
 
 `ts_ms` is Unix milliseconds UTC. `remote_addr` uses `feedbackRemoteHost`
 (socket host, never `X-Forwarded-For`).
@@ -214,6 +231,63 @@ a row's period index is `k = floor((now_ms - ts_ms) / W_ms)`, with rows where
   ranks); `Summary` never loads every row into Go memory.
 - `Summary` first flushes queued events, so counts include every request
   recorded before the call.
+
+### Error details
+
+Every error writer goes through `writeErrorEnvelope`, which notes the
+envelope's `code` and `message` on the gin context. `writeMLWHError` also
+notes an internal `error_kind` where the cause differs from the public code:
+`timeout` when the error is `context.DeadlineExceeded`, `canceled` when it is
+`context.Canceled` (the client went away). For a 5xx answer the request
+context's state counts too, since a driver may not wrap the cause; a 4xx
+answer, such as a genuine 404, gets no kind from the context. The HTTP status
+and code sent to clients do not change, so both still answer 502
+`upstream_impaired`. `timeout` is rare: the server sets no request deadline,
+and driver read timeouts are not context deadlines, so it appears only when
+an error wraps `context.DeadlineExceeded`.
+
+For a counted request with status >= 400, `usageMiddleware` stores:
+
+| Column          | Matched route                                   | Unmatched (`route` `""`) |
+| --------------- | ----------------------------------------------- | ------------------------ |
+| `error_code`    | envelope code, or `uncoded` if none was written | `no_route`               |
+| `error_kind`    | `timeout`, `canceled`, or NULL                  | NULL                     |
+| `error_message` | envelope message, cut to 512 bytes              | NULL                     |
+| `path`          | URL path, cut to 256 bytes                      | URL path                 |
+| `query`         | raw query, cut to 512 bytes, redacted           | NULL                     |
+
+Redaction splits the query on `&` and `;`, normalises each parameter name
+by unescaping it, lower-casing it, and removing `-` and `_`, and replaces with
+`[redacted]` the value of every parameter whose normalised name contains
+`token`, `password`, `passwd`, `secret`, `apikey`, `authorization`,
+`credential`, `auth`, `jwt`, `bearer`, `session`, `pwd`, `pass`, `key`,
+`signature`, or `privatekey`. So `API-KEY`, `X-API-KEY`, and the `token` in
+`a=1;token=abc` are all redacted. Cuts back off to a UTF-8 rune boundary.
+Request bodies and headers are never stored. Stored error paths are decoded
+and can include people's names, for example `/studies/user/:person` or
+`/resolve-person/:term`; retention limits how long they are kept.
+
+`UsageSummary.errors` lists the window's error rows grouped by `method`,
+`route`, `status`, and `error_code`, ranked by count descending, then by
+those keys ascending (NULL codes first), capped at 50 groups. Each
+`UsageErrorGroup` has:
+
+- `error_code`: the code, or `null` for rows recorded before error details
+  were stored.
+- `count`, `first_seen`, `last_seen` (RFC3339 UTC).
+- `error_kinds`, `by_category`, `by_tool`, `by_agent`: non-nil count maps of
+  non-empty values.
+- `messages`: up to 5 `{message, count}` of non-empty messages, by count
+  descending, then message.
+- `examples`: the latest 10 rows (`ts`, `path`, `query`, `category`,
+  `mcp_tool`, `mcp_agent`, `client_id`, `username`, `message`,
+  `error_kind`), newest first, with `""` for values not recorded.
+
+`mcp_tools`, `mcp_agents`, and `other_user_agents` entries also carry
+`errors`. All of this is additive: `/usage` is outside OpenAPI, so
+`APIVersion` is unchanged, and the frontend contract makes `errors` and
+the per-value `errors` optional so a newer frontend still reads an older
+server.
 
 ### Known limits (documented, not fixed)
 
@@ -314,7 +388,8 @@ type UsageEvent struct {
     Category      UsageCategory
     Method        string
     Route         string // registration template; "" when unmatched
-    Path          string // URL path, only when Route == ""
+    Path          string // URL path, only when Route == "" or Status >= 400
+    Query         string // raw query, redacted, only for matched errors
     ClientID      string
     Username      string
     RemoteAddr    string
@@ -325,6 +400,9 @@ type UsageEvent struct {
     MCPTool       string
     Status        int
     Latency       time.Duration
+    ErrorCode     string // envelope code (or no_route), only for errors
+    ErrorKind     string // timeout or canceled, when known
+    ErrorMessage  string // envelope message, only for errors
 }
 
 // truncateUTF8 returns s cut to at most max bytes, backing off to a rune
@@ -1413,8 +1491,31 @@ I can see at a glance whether and how the server is used.
           An empty `series` shows "No usage recorded yet."
         - "Endpoints": Endpoint (`<METHOD> <route>`), Requests, Errors,
           Error rate, Median latency (ms), p95 latency (ms), Categories.
+          An Errors cell links to that endpoint's group in "Errors" when it
+          has one; the link is named "<n> errors on <endpoint>, see
+          details".
+        - "Errors": first a "What to do" `role="group"` (`h3`) listing,
+          once per code present in the order codes first appear, the code
+          (`dt`) and its action (`dd`) from `lib/usage-error-help.ts`, then
+          the advice for each of `timeout` and `canceled` any entry
+          recorded. Then one `role="group"` per endpoint, headed (`h3`)
+          `<METHOD> <route>`, or `<METHOD> (no matching route)` for
+          unmatched requests, ordered by error count, matched before
+          unmatched, then label. Each holds one `article` per status and
+          code, headed (`h4`) `<status> <code>`, with the count, first and
+          latest times, the code's one-line meaning with a "What to do"
+          link (named "What to do about <code>") to its guide entry, and
+          the kind counts as "Causes". A `null` code reads "unknown
+          (recorded before error details were captured)". A `details`
+          element, "Messages and examples (<n> examples)", holds caller,
+          tool, and agent counts, a "Top messages" list, and a "Latest
+          examples" table: Time, Request (`<path>?<query>`), Caller, and
+          Message. Empty: "No errors in this window." Absent (older
+          server): "This MLWH server does not report error details.
+          Upgrade wa mlwh serve to see them."
         - "MCP tools", "MCP agents", "Other API user agents": Value,
-          Requests (`""` renders as "(none)").
+          Requests, Errors (`""` renders as "(none)"; Errors `-` when the
+          server sends none).
         - "Unmatched paths": Method, Path, Requests, Categories, MCP tools,
           MCP agents (maps rendered as `"<key> <n>"` joined by ", ").
         - "Top users (self-declared)": User, Requests, Categories.

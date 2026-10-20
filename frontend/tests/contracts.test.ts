@@ -1077,6 +1077,43 @@ describe("E2 usage contracts", () => {
         }
     });
 
+    it("accepts a usage summary from a server without error details", () => {
+        const {
+            errors: _errors,
+            mcp_tools: _tools,
+            ...older
+        } = usageSummaryA3Fixture;
+        const parsed = contracts.usageSummarySchema.parse({
+            ...older,
+            mcp_tools: [{ value: "mlwh_list_studies", requests: 1 }],
+        });
+
+        expect(parsed.errors).toBeUndefined();
+        expect(parsed.mcp_tools[0].errors).toBeUndefined();
+    });
+
+    it("rejects a usage error group with a bad code, category, or example", () => {
+        const [group] = usageSummaryA3Fixture.errors as Record<
+            string,
+            unknown
+        >[];
+
+        for (const bad of [
+            { ...group, error_code: 404 },
+            { ...group, count: -1 },
+            { ...group, examples: [{ ts: "x" }] },
+            { ...group, error_kinds: { timeout: "2" } },
+        ]) {
+            expect(
+                contracts.usageSummarySchema.safeParse({
+                    ...usageSummaryA3,
+                    errors: [bad],
+                }).success,
+                JSON.stringify(bad).slice(0, 80),
+            ).toBe(false);
+        }
+    });
+
     it("accepts only the four usage windows", () => {
         for (const window of ["24h", "7d", "30d", "all"]) {
             expect(contracts.usageWindowSchema.parse(window)).toBe(window);

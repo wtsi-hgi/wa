@@ -5,8 +5,8 @@
 The server admin reads MLWH API usage at frontend `/usage` ("MLWH usage").
 It shows totals (Requests, Errors, Sessions, Clients by IP, Users
 (self-declared)), then sections `By category`, `Trend (24-hour periods)`
-(or `7-day`, `30-day`; hidden for All time), `Endpoints`, `MCP tools`,
-`MCP agents`, `Other API user agents`, `Unmatched paths`,
+(or `7-day`, `30-day`; hidden for All time), `Endpoints`, `Errors`,
+`MCP tools`, `MCP agents`, `Other API user agents`, `Unmatched paths`,
 `Top users (self-declared)`, `Top clients`, and `Requests per day (UTC)`.
 Next.js reads the MLWH admin token from disk on the server side and calls
 `${WA_MLWH_BACKEND_URL}/usage?window=<w>`. The browser never sees the token.
@@ -54,9 +54,37 @@ the moment login finishes; see
    the URL `window` to change, the clicked link to take `aria-current`, and
    the Trend section to disappear for All time. Evidence: one screenshot
    per window.
-6. Side effect: `GET /usage?window=24h` with the token shows the same
-   totals as the page, in `usage-02-after.json`. To read raw rows, find the
-   `--usage-db` path in the `mlwh serve` arguments
+6. Errors: with `MLWH_URL` from `stack.env`, make one error of each kind
+   with `curl -s -w ' %{http_code}\n'`: `"$MLWH_URL/classify/nonsense-xyz"`
+   (404 `not_found`), `"$MLWH_URL/studies?limit=-1&token=abc"` (400
+   `bad_request`), `"$MLWH_URL/no/such/route"` (gin's plain 404), and
+   `"$MLWH_URL/classify/GUESSED-ID-42"` with headers
+   `User-Agent: mlwh-mcp-server/1.3.1`,
+   `X-WA-MCP-Tool: mlwh_classify_identifier`, and
+   `X-WA-MCP-Agent: claude-code/2.1.0`. Open `/usage?window=24h`. Expect
+   region `Errors` to start with a `What to do` group listing each code
+   present once (`dt` code, `dd` action), then one `group` per endpoint
+   (`h3` `GET /classify/:id`, `GET /studies`, `GET (no matching route)`,
+   plus `GET /resolve/...` groups if step 2 used an unknown identifier),
+   each holding `article`s named `<status> <code>` (`404 not_found`,
+   `400 bad_request`, `404 no_route`) with a one-line meaning and a
+   `What to do about <code>` link to the guide entry, but no action text of
+   their own. Click `Messages and examples (...)` in `404 not_found`:
+   expect `Top messages` `mlwh: identifier not found` and an example row
+   `/classify/GUESSED-ID-42` whose Caller is
+   `MCP · mlwh_classify_identifier · claude-code/2.1.0`. The
+   `400 bad_request` example's Request is
+   `/studies?limit=-1&token=[redacted]`. The Endpoints row `GET /studies`
+   has its Errors cell link, named `1 error on GET /studies, see details`,
+   pointing to `#usage-errors-GET-studies`, and `MCP tools` has an Errors
+   column. Evidence: `usage-03-errors.png` (the region) and one expanded
+   entry. Timeouts (`Causes: timeout`) cannot be produced on the hermetic
+   stack; the Go tests cover them.
+7. Side effect: `GET /usage?window=24h` with the token shows the same
+   totals as the page, in `usage-02-after.json`, and its `errors[]` groups
+   match the Errors section, with `error_code` `null` only for rows
+   recorded by a server older than the error details. To read raw rows,
+   find the `--usage-db` path in the `mlwh serve` arguments
    (`.tmp/mlwh-usage-test.*.sqlite`) and open it read-only
    (`file:<path>?mode=ro` with SQLite URI mode). Do it before Cleanup,
    which deletes the file.

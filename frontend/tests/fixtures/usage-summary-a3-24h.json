@@ -112,19 +112,22 @@
     "mcp_tools": [
         {
             "value": "mlwh_list_studies",
-            "requests": 1
+            "requests": 1,
+            "errors": 0
         }
     ],
     "mcp_agents": [
         {
             "value": "claude-code/2.1.0",
-            "requests": 1
+            "requests": 1,
+            "errors": 0
         }
     ],
     "other_user_agents": [
         {
             "value": "curl/8.5.0",
-            "requests": 2
+            "requests": 2,
+            "errors": 2
         }
     ],
     "unmatched": [
@@ -296,6 +299,103 @@
                 "GET /classify/:id": 1,
                 "GET /studies": 4
             }
+        }
+    ],
+    "errors": [
+        {
+            "method": "GET",
+            "route": "",
+            "status": 404,
+            "error_code": "no_route",
+            "count": 1,
+            "first_seen": "2026-10-10T06:00:00Z",
+            "last_seen": "2026-10-10T06:00:00Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-10T06:00:00Z",
+                    "path": "/bogus",
+                    "query": "",
+                    "category": "other",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "",
+                    "username": "",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "other": 1
+            },
+            "by_tool": {},
+            "by_agent": {}
+        },
+        {
+            "method": "GET",
+            "route": "/classify/:id",
+            "status": 404,
+            "error_code": "not_found",
+            "count": 1,
+            "first_seen": "2026-10-10T09:00:00Z",
+            "last_seen": "2026-10-10T09:00:00Z",
+            "error_kinds": {},
+            "messages": [
+                {
+                    "message": "mlwh: not found: XYZ",
+                    "count": 1
+                }
+            ],
+            "examples": [
+                {
+                    "ts": "2026-10-10T09:00:00Z",
+                    "path": "/classify/XYZ",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "run-b",
+                    "username": "bob",
+                    "message": "mlwh: not found: XYZ",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 1
+            },
+            "by_tool": {},
+            "by_agent": {}
+        },
+        {
+            "method": "GET",
+            "route": "/studies",
+            "status": 500,
+            "error_code": null,
+            "count": 1,
+            "first_seen": "2026-10-10T07:00:00Z",
+            "last_seen": "2026-10-10T07:00:00Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-10T07:00:00Z",
+                    "path": "",
+                    "query": "",
+                    "category": "other",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "",
+                    "username": "",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "other": 1
+            },
+            "by_tool": {},
+            "by_agent": {}
         }
     ]
 }

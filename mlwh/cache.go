@@ -1083,7 +1083,7 @@ func readSQLiteCacheSchemaShape(ctx context.Context, db *sql.DB) (schemaShape, e
 	return shape, nil
 }
 
-func readSQLiteTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]string, error) {
+func readSQLiteTableColumns(ctx context.Context, db Querier, table string) (map[string]string, error) {
 	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info('%s')", table))
 	if err != nil {
 		return nil, fmt.Errorf("mlwh: read sqlite table info for %s: %w", table, err)

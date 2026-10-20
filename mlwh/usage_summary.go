@@ -105,10 +105,52 @@ type UsageEndpointStats struct {
 	ByCategory map[string]int64 `json:"by_category"`
 }
 
-// UsageCount is a request count for one value, such as an MCP tool.
+// UsageCount is a request and error count for one value, such as an MCP
+// tool.
 type UsageCount struct {
 	Value    string `json:"value"`
 	Requests int64  `json:"requests"`
+	Errors   int64  `json:"errors"`
+}
+
+// UsageErrorMessage is how often one error message was returned.
+type UsageErrorMessage struct {
+	Message string `json:"message"`
+	Count   int64  `json:"count"`
+}
+
+// UsageErrorExample is one error request. Path, Query, Message, and
+// ErrorKind are "" when not recorded.
+type UsageErrorExample struct {
+	Time      string        `json:"ts"` // RFC3339 UTC
+	Path      string        `json:"path"`
+	Query     string        `json:"query"`
+	Category  UsageCategory `json:"category"`
+	MCPTool   string        `json:"mcp_tool"`
+	MCPAgent  string        `json:"mcp_agent"`
+	ClientID  string        `json:"client_id"`
+	Username  string        `json:"username"`
+	Message   string        `json:"message"`
+	ErrorKind string        `json:"error_kind"`
+}
+
+// UsageErrorGroup is the window's errors for one method, route, status, and
+// error code. Route is "" for unmatched requests (code no_route). ErrorCode
+// is nil for rows recorded before error details were stored.
+type UsageErrorGroup struct {
+	Method     string              `json:"method"`
+	Route      string              `json:"route"`
+	Status     int                 `json:"status"`
+	ErrorCode  *string             `json:"error_code"`
+	Count      int64               `json:"count"`
+	FirstSeen  string              `json:"first_seen"` // RFC3339 UTC
+	LastSeen   string              `json:"last_seen"`  // RFC3339 UTC
+	ErrorKinds map[string]int64    `json:"error_kinds"`
+	Messages   []UsageErrorMessage `json:"messages"` // top usageErrorMessageLimit
+	Examples   []UsageErrorExample `json:"examples"` // latest usageErrorExampleLimit
+	ByCategory map[string]int64    `json:"by_category"`
+	ByTool     map[string]int64    `json:"by_tool"`
+	ByAgent    map[string]int64    `json:"by_agent"`
 }
 
 // UsageUnmatched is the request count for one unmatched method and path.
@@ -165,6 +207,7 @@ type UsageSummary struct {
 	Clients         []UsageActor         `json:"clients"`
 	Days            []UsageDay           `json:"days"`
 	Series          []UsagePeriod        `json:"series"`
+	Errors          []UsageErrorGroup    `json:"errors"`
 }
 
 // Summary flushes queued events, then aggregates window w at s.now().
@@ -302,7 +345,11 @@ func (q usageSummaryQuery) fill(ctx context.Context, summary *UsageSummary) erro
 		return err
 	}
 
-	summary.Series, err = q.series(ctx, earliest, hasRows)
+	if summary.Series, err = q.series(ctx, earliest, hasRows); err != nil {
+		return err
+	}
+
+	summary.Errors, err = q.errorGroups(ctx)
 
 	return err
 }
@@ -505,7 +552,7 @@ func (q usageSummaryQuery) counts(ctx context.Context, column, filter string) ([
 	counts := make([]UsageCount, 0, len(groups))
 
 	for _, group := range groups {
-		counts = append(counts, UsageCount{Value: group.keys[0], Requests: group.requests})
+		counts = append(counts, UsageCount{Value: group.keys[0], Requests: group.requests, Errors: group.errors})
 	}
 
 	return counts, nil

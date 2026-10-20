@@ -133,8 +133,10 @@ func writeFeedbackValidationError(c *gin.Context, err error) {
 	writeErrorEnvelope(c, http.StatusBadRequest, httpErrorCodeBadRequest, err.Error())
 }
 
-// writeErrorEnvelope writes status with the shared {code, message} error body.
+// writeErrorEnvelope writes status with the shared {code, message} error body,
+// and notes code and message for usageMiddleware.
 func writeErrorEnvelope(c *gin.Context, status int, code, message string) {
+	setUsageError(c, code, message)
 	c.JSON(status, httpErrorEnvelope{Code: code, Message: message})
 }
 

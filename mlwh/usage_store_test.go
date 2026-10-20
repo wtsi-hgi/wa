@@ -39,6 +39,32 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
+// usageSchemaV1ForTest is the usage_requests schema before error details
+// were stored, as existing production DBs hold it.
+const usageSchemaV1ForTest = `
+CREATE TABLE usage_requests (
+    id             INTEGER PRIMARY KEY,
+    ts_ms          INTEGER NOT NULL,
+    category       TEXT NOT NULL,
+    method         TEXT NOT NULL,
+    route          TEXT NOT NULL DEFAULT '',
+    path           TEXT NOT NULL DEFAULT '',
+    client_id      TEXT NOT NULL DEFAULT '',
+    username       TEXT NOT NULL DEFAULT '',
+    remote_addr    TEXT NOT NULL DEFAULT '',
+    client_version TEXT NOT NULL DEFAULT '',
+    user_agent     TEXT NOT NULL DEFAULT '',
+    mcp_transport  TEXT NOT NULL DEFAULT '',
+    mcp_agent      TEXT NOT NULL DEFAULT '',
+    mcp_tool       TEXT NOT NULL DEFAULT '',
+    status         INTEGER NOT NULL,
+    latency_us     INTEGER NOT NULL
+);
+CREATE INDEX usage_requests_ts ON usage_requests (ts_ms);
+INSERT INTO usage_requests (ts_ms, category, method, route, status, latency_us)
+VALUES (1791633600000, 'cli', 'GET', '/classify/:id', 404, 5000);
+`
+
 // usageRowForTest is one usage_requests row as stored.
 type usageRowForTest struct {
 	TSMS          int64
@@ -56,6 +82,10 @@ type usageRowForTest struct {
 	MCPTool       string
 	Status        int
 	LatencyUS     int64
+	Query         sql.NullString
+	ErrorCode     sql.NullString
+	ErrorKind     sql.NullString
+	ErrorMessage  sql.NullString
 }
 
 func TestUsageStoreA2(t *testing.T) {
@@ -113,6 +143,8 @@ func TestUsageStoreA2(t *testing.T) {
 		ev.MCPAgent = strings.Repeat("a", 300)
 		ev.MCPTool = strings.Repeat("o", 200)
 		ev.Method = strings.Repeat("M", 1<<20)
+		ev.Query = strings.Repeat("q", 600)
+		ev.ErrorMessage = strings.Repeat("m", 600)
 
 		store.Record(ev)
 		convey.So(store.Flush(ctx), convey.ShouldBeNil)
@@ -128,6 +160,8 @@ func TestUsageStoreA2(t *testing.T) {
 		convey.So(rows[0].MCPAgent, convey.ShouldEqual, ev.MCPAgent[:UsageMaxMCPAgentBytes])
 		convey.So(rows[0].MCPTool, convey.ShouldEqual, ev.MCPTool[:UsageMaxMCPToolBytes])
 		convey.So(rows[0].Method, convey.ShouldEqual, ev.Method[:32])
+		convey.So(rows[0].Query.String, convey.ShouldEqual, ev.Query[:UsageMaxQueryBytes])
+		convey.So(rows[0].ErrorMessage.String, convey.ShouldEqual, ev.ErrorMessage[:UsageMaxErrorMessageBytes])
 	})
 
 	convey.Convey("A2.4: Given 3 events recorded and the store closed without Flush, when reopened, then 3 rows exist", t, func() {
@@ -410,7 +444,8 @@ func usageRowsForTest(path string) []usageRowForTest {
 
 	rows, err := db.QueryContext(context.Background(), `SELECT ts_ms, category, method, route, path,
     client_id, username, remote_addr, client_version, user_agent, mcp_transport, mcp_agent,
-    mcp_tool, status, latency_us FROM usage_requests ORDER BY id`)
+    mcp_tool, status, latency_us, query, error_code, error_kind, error_message
+    FROM usage_requests ORDER BY id`)
 	convey.So(err, convey.ShouldBeNil)
 
 	defer func() { _ = rows.Close() }()
@@ -422,7 +457,8 @@ func usageRowsForTest(path string) []usageRowForTest {
 
 		convey.So(rows.Scan(&r.TSMS, &r.Category, &r.Method, &r.Route, &r.Path, &r.ClientID,
 			&r.Username, &r.RemoteAddr, &r.ClientVersion, &r.UserAgent, &r.MCPTransport,
-			&r.MCPAgent, &r.MCPTool, &r.Status, &r.LatencyUS), convey.ShouldBeNil)
+			&r.MCPAgent, &r.MCPTool, &r.Status, &r.LatencyUS, &r.Query, &r.ErrorCode, &r.ErrorKind,
+			&r.ErrorMessage), convey.ShouldBeNil)
 
 		got = append(got, r)
 	}
@@ -441,6 +477,112 @@ func (c *usageLockConnForTest) Close() error {
 	_ = c.Conn.Close()
 
 	return c.db.Close()
+}
+
+func TestUsageStoreErrorColumnsMigration(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+
+	convey.Convey("Given a DB written before error details existed", t, func() {
+		path := filepath.Join(t.TempDir(), "u.sqlite")
+
+		db, err := sql.Open("sqlite", sqliteWritableDSN(path))
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.ExecContext(ctx, usageSchemaV1ForTest)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(db.Close(), convey.ShouldBeNil)
+
+		convey.Convey("when opened twice and an error event is recorded, then the old row keeps NULL details "+
+			"and the new row holds them", func() {
+			first, err := openUsageStore(ctx, path, 30, usageQueueSize, func() time.Time { return clock })
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(first.Close(), convey.ShouldBeNil)
+
+			store := openTestUsageStore(t, path, 30, usageQueueSize, clock)
+
+			ev := fullUsageEventForTest(clock)
+			ev.Status, ev.Path, ev.Query = 404, "/classify/X", "a=1"
+			ev.ErrorCode, ev.ErrorKind, ev.ErrorMessage = "not_found", "timeout", "no X"
+			store.Record(ev)
+			convey.So(store.Flush(ctx), convey.ShouldBeNil)
+
+			rows := usageRowsForTest(path)
+			convey.So(rows, convey.ShouldHaveLength, 2)
+			convey.So(rows[0].Status, convey.ShouldEqual, 404)
+			convey.So(rows[0].ErrorCode.Valid, convey.ShouldBeFalse)
+			convey.So(rows[0].ErrorMessage.Valid, convey.ShouldBeFalse)
+			convey.So(rows[0].Query.Valid, convey.ShouldBeFalse)
+			convey.So(rows[1].Query.String, convey.ShouldEqual, "a=1")
+			convey.So(rows[1].ErrorCode.String, convey.ShouldEqual, "not_found")
+			convey.So(rows[1].ErrorKind.String, convey.ShouldEqual, "timeout")
+			convey.So(rows[1].ErrorMessage.String, convey.ShouldEqual, "no X")
+
+			summary, err := store.Summary(ctx, UsageWindowAll)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(summary.Errors, convey.ShouldHaveLength, 2)
+		})
+	})
+
+	convey.Convey("Given old DBs opened by 4 stores at once, then every open succeeds "+
+		"and each DB gains the error columns", t, func() {
+		const (
+			trials  = 10
+			openers = 4
+		)
+
+		failures := 0
+
+		for range trials {
+			path := filepath.Join(t.TempDir(), "u.sqlite")
+
+			db, err := sql.Open("sqlite", sqliteWritableDSN(path))
+			convey.So(err, convey.ShouldBeNil)
+			_, err = db.ExecContext(ctx, usageSchemaV1ForTest)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(db.Close(), convey.ShouldBeNil)
+
+			errs := make(chan error, openers)
+			start := make(chan struct{})
+
+			for range openers {
+				go func() {
+					<-start
+
+					store, openErr := openUsageStore(ctx, path, 30, usageQueueSize,
+						func() time.Time { return clock })
+					if openErr == nil {
+						openErr = store.Close()
+					}
+
+					errs <- openErr
+				}()
+			}
+
+			close(start)
+
+			for range openers {
+				if openErr := <-errs; openErr != nil {
+					t.Logf("concurrent open: %v", openErr)
+
+					failures++
+				}
+			}
+
+			db, err = sql.Open("sqlite", sqliteWritableDSN(path))
+			convey.So(err, convey.ShouldBeNil)
+			columns, err := readSQLiteTableColumns(ctx, db, "usage_requests")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(db.Close(), convey.ShouldBeNil)
+
+			for _, column := range usageErrorColumns {
+				if _, ok := columns[column]; !ok {
+					failures++
+				}
+			}
+		}
+
+		convey.So(failures, convey.ShouldEqual, 0)
+	})
 }
 
 func TestUsageStoreSQLitePathWithURISpecialCharacters(t *testing.T) {
