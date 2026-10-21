@@ -413,15 +413,15 @@ MLWH API 1.10.0 ignore them.
 The User-Agent product, the text before the first `/` or space, decides the
 category:
 
-| Product              | Category          | Sender                                                                                 |
-| -------------------- | ----------------- | -------------------------------------------------------------------------------------- |
-| `wa-cli`             | `cli`             | `wa mlwh info/latest/search/runs/export/studies/programmes/people`, `wa mlwhdiff diff` |
-| `mlwh-mcp-server`    | `mcp`             | the MLWH MCP server                                                                    |
-| `wa-web`             | `web`             | the Next.js server                                                                     |
-| `wa-results-server`  | `results_server`  | `wa results serve`, which also carries `wa results register` traffic                   |
-| `wa-mlwhdiff-server` | `mlwhdiff_server` | `wa mlwhdiff serve`                                                                    |
-| `wa-run-dev`         | not counted       | `run-dev.sh` readiness checks                                                          |
-| anything else, none  | `other`           | unidentified callers, such as `curl`                                                   |
+| Product              | Category          | Sender                                                                                           |
+| -------------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
+| `wa-cli`             | `cli`             | `wa mlwh info/latest/search/runs/export/studies/programmes/people/freshness`, `wa mlwhdiff diff` |
+| `mlwh-mcp-server`    | `mcp`             | the MLWH MCP server                                                                              |
+| `wa-web`             | `web`             | the Next.js server                                                                               |
+| `wa-results-server`  | `results_server`  | `wa results serve`, which also carries `wa results register` traffic                             |
+| `wa-mlwhdiff-server` | `mlwhdiff_server` | `wa mlwhdiff serve`                                                                              |
+| `wa-run-dev`         | not counted       | `run-dev.sh` readiness checks                                                                    |
+| anything else, none  | `other`           | unidentified callers, such as `curl`                                                             |
 
 The CLI sends the local OS username, the web sends the logged-in username,
 and the MCP stdio server sends its user's name. These usernames are
@@ -468,6 +468,24 @@ Known limits:
   window grows most: a year of rows gives about 366 bars per row, several
   megabytes of HTML that load slowly. Lower `--usage-retention-days` to bound
   it.
+
+### Check MLWH sync health
+
+`GET /freshness` reports, per mirrored table, when its sync last succeeded,
+the error from its latest failed sync, and a status: `ok`, `stale`,
+`failing`, or `never_synced`, plus the worst of those overall. A table is
+stale when its last successful sync is older than `WA_MLWH_STALE_AFTER` on
+the server (default `2h`).
+
+```bash
+wa mlwh freshness           # table of every mirrored table
+wa mlwh freshness --check   # silent and exit 0 when ok, else problems on stderr and exit 1
+```
+
+Admins see the same report on the website's MLWH sync page, linked from the
+account menu next to Usage. See
+[Monitoring MLWH sync](DEVELOPING.md#monitoring-mlwh-sync) for the status
+rules and a cron line that mails problems.
 
 ### Poll for metadata changes
 

@@ -51,7 +51,7 @@ import (
 const mlwhServeDefaultServerTokenBasename = ".wa-mlwh-server.token"
 
 var openMLWHSyncClient = func(ctx context.Context, cfg mlwh.Config) (mlwhSyncClient, error) {
-	return mlwh.Open(ctx, cfg)
+	return mlwh.OpenForSync(ctx, cfg)
 }
 
 var mlwhServeNewAuthServer = func(logWriter io.Writer) mlwhServeAuthServer {
@@ -283,6 +283,10 @@ func newMLWHServeCommand() *cobra.Command {
 			"default 365) sets how many days of rows are kept. GET /usage requires",
 			"the same admin Bearer token as the feedback admin routes.",
 			"",
+			"GET /freshness reports each table's sync status. A table whose last",
+			"successful sync is older than WA_MLWH_STALE_AFTER (a Go duration,",
+			"default 2h) is reported stale.",
+			"",
 			"Example:",
 			"  WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite wa --env production mlwh serve",
 		}, "\n"),
@@ -304,6 +308,11 @@ func newMLWHServeCommand() *cobra.Command {
 				return err
 			}
 
+			staleAfter, err := resolveMLWHStaleAfter()
+			if err != nil {
+				return err
+			}
+
 			retentionDays, err := resolveMLWHServeUsageRetentionDays(
 				usageRetentionDays,
 				cmd.Flags().Changed("usage-retention-days"),
@@ -317,6 +326,8 @@ func newMLWHServeCommand() *cobra.Command {
 				return fmt.Errorf("open mlwh cache: %w", err)
 			}
 			defer func() { _ = client.Close() }()
+
+			client.SetStaleAfter(staleAfter)
 
 			authServer := mlwhServeNewAuthServer(cmd.ErrOrStderr())
 			if serveConfig.secured {
@@ -620,6 +631,7 @@ func newMLWHCommand() *cobra.Command {
 	command.AddCommand(newMLWHProgrammesCommand())
 	command.AddCommand(newMLWHPeopleCommand())
 	command.AddCommand(newMLWHServeCommand())
+	command.AddCommand(newMLWHFreshnessCommand())
 
 	return command
 }

@@ -30,6 +30,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // utcRFC3339Layout formats a UTC time as RFC3339 ending in a literal Z (the Z is a
@@ -65,75 +66,164 @@ var freshnessSyncTables = []string{
 	syncTableUseqProductMetrics,
 }
 
+// Freshness statuses, per table and overall.
+const (
+	// FreshnessStatusOK means the table's last sync succeeded within the stale
+	// threshold and it has no newer failure.
+	FreshnessStatusOK = "ok"
+	// FreshnessStatusStale means the table's last successful sync is older than
+	// the stale threshold, or it has synced but never been seen to succeed.
+	FreshnessStatusStale = "stale"
+	// FreshnessStatusFailing means the table's most recent sync attempt failed
+	// or was skipped because a dependency failed.
+	FreshnessStatusFailing = "failing"
+	// FreshnessStatusNeverSynced means the table has no synced data.
+	FreshnessStatusNeverSynced = "never_synced"
+)
+
+// DefaultStaleAfter is how long after its last successful sync a table is
+// reported stale, unless SetStaleAfter configures otherwise. It allows several
+// missed runs of the 30-minute production sync loop.
+const DefaultStaleAfter = 2 * time.Hour
+
+// freshnessStatusSeverity orders statuses for the overall status, which is the
+// most severe table status. A never-synced table has no data at all, so it
+// outranks a stale one.
+var freshnessStatusSeverity = map[string]int{
+	FreshnessStatusOK:          0,
+	FreshnessStatusStale:       1,
+	FreshnessStatusNeverSynced: 2,
+	FreshnessStatusFailing:     3,
+}
+
 // TableFreshness is the per-table sync metadata reported by Freshness (and
 // served by GET /freshness). HighWater is a sync-mode-specific source-progress
 // watermark, while LastRun is the cache-refresh timestamp used to judge
 // currency. Present timestamps are UTC RFC3339 strings; EverSynced is false and
 // both timestamps are empty when no sync_state row exists.
 type TableFreshness struct {
-	Table      string `json:"table" doc:"mirrored MLWH table name"`
-	HighWater  string `json:"high_water" doc:"sync-mode-specific source-progress watermark (UTC RFC3339): latest source-row change for incremental tables, refresh/snapshot time for full-refresh tables, or empty for unsynced tables and sync modes without a meaningful watermark; may remain old when source data is unchanged; do not use as cache refresh currency"`
-	LastRun    string `json:"last_run" doc:"last cache sync/refresh time for this table (UTC RFC3339), empty if never synced; use for per-table cache currency and as-of caveats"`
-	EverSynced bool   `json:"ever_synced" doc:"false when no sync_state row exists for the table"`
+	Table         string   `json:"table" doc:"mirrored MLWH table name"`
+	HighWater     string   `json:"high_water" doc:"sync-mode-specific source-progress watermark (UTC RFC3339): latest source-row change for incremental tables, refresh/snapshot time for full-refresh tables, or empty for unsynced tables and sync modes without a meaningful watermark; may remain old when source data is unchanged; do not use as cache refresh currency"`
+	LastRun       string   `json:"last_run" doc:"last cache sync/refresh time for this table (UTC RFC3339), empty if never synced; use for per-table cache currency and as-of caveats; advances with every committed batch, so a sync that later failed also moves it"`
+	EverSynced    bool     `json:"ever_synced" doc:"false when no sync_state row exists for the table"`
+	LastSuccessAt string   `json:"last_success_at" doc:"when this table's sync last completed without error (UTC RFC3339), empty if never seen to complete; staleness is judged from it"`
+	LastError     string   `json:"last_error" doc:"error from this table's most recent failed or skipped sync, credentials redacted and capped at 1000 bytes; empty when its latest sync succeeded"`
+	LastErrorAt   string   `json:"last_error_at" doc:"when last_error was recorded (UTC RFC3339); empty when last_error is empty"`
+	BlockedBy     []string `json:"blocked_by" doc:"failed dependency tables that made the most recent sync skip this table; empty otherwise"`
+	Status        string   `json:"status" doc:"ok, stale (last success older than stale_after_seconds, or none seen although data was synced), failing (most recent sync failed or was skipped), or never_synced (no success and no synced data)"`
 }
 
-// readTableFreshness reads the sync_state high_water and last_run for one table,
-// returning ever_synced=false with empty timestamps when the row is absent. This is
-// the sync_state read that also selects last_run, which readSyncStateFromDB omits.
-func readTableFreshness(ctx context.Context, db *sql.DB, table string) (TableFreshness, error) {
+// readTableFreshness reads one table's sync_state high_water and last_run and
+// its sync_outcome, returning ever_synced=false with empty timestamps when the
+// sync_state row is absent. This is the sync_state read that also selects
+// last_run, which readSyncStateFromDB omits.
+func readTableFreshness(ctx context.Context, db *sql.DB, table string) (TableFreshness, syncOutcome, error) {
+	outcome, err := readSyncOutcome(ctx, db, table)
+	if err != nil {
+		return TableFreshness{}, syncOutcome{}, err
+	}
+
+	freshness := TableFreshness{
+		Table:         table,
+		LastSuccessAt: formatOptionalFreshnessTime(outcome.LastSuccessAt),
+		LastError:     outcome.LastError,
+		LastErrorAt:   formatOptionalFreshnessTime(outcome.LastErrorAt),
+		BlockedBy:     append([]string{}, outcome.BlockedBy...),
+	}
+
 	var highWaterRaw, lastRunRaw any
-	err := db.QueryRowContext(ctx, `SELECT high_water, last_run FROM sync_state WHERE table_name = ?`, table).
+	err = db.QueryRowContext(ctx, `SELECT high_water, last_run FROM sync_state WHERE table_name = ?`, table).
 		Scan(&highWaterRaw, &lastRunRaw)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return TableFreshness{Table: table}, nil
+			return freshness, outcome, nil
 		}
 
-		return TableFreshness{}, fmt.Errorf("%w: query sync state for %s: %w", ErrUpstreamImpaired, table, err)
+		return TableFreshness{}, syncOutcome{}, fmt.Errorf("%w: query sync state for %s: %w", ErrUpstreamImpaired, table, err)
 	}
 
-	highWater, err := formatFreshnessTime(highWaterRaw)
-	if err != nil {
-		return TableFreshness{}, fmt.Errorf("mlwh: parse sync state high_water for %s: %w", table, err)
+	if freshness.HighWater, err = formatFreshnessTime(highWaterRaw); err != nil {
+		return TableFreshness{}, syncOutcome{}, fmt.Errorf("mlwh: parse sync state high_water for %s: %w", table, err)
 	}
 
-	lastRun, err := formatFreshnessTime(lastRunRaw)
-	if err != nil {
-		return TableFreshness{}, fmt.Errorf("mlwh: parse sync state last_run for %s: %w", table, err)
+	if freshness.LastRun, err = formatFreshnessTime(lastRunRaw); err != nil {
+		return TableFreshness{}, syncOutcome{}, fmt.Errorf("mlwh: parse sync state last_run for %s: %w", table, err)
 	}
 
-	return TableFreshness{Table: table, HighWater: highWater, LastRun: lastRun, EverSynced: true}, nil
+	freshness.EverSynced = true
+
+	return freshness, outcome, nil
 }
 
 // Freshness reports the freshness of every mirrored sync table, returned by
 // GET /freshness.
 type Freshness struct {
-	Tables []TableFreshness `json:"tables" doc:"sync metadata per mirrored table; use last_run, not high_water, for cache currency"`
+	Status            string           `json:"status" doc:"the most severe table status: failing, then never_synced, then stale, then ok"`
+	StaleAfterSeconds int64            `json:"stale_after_seconds" doc:"how long after its last successful sync a table is reported stale, set on the server by WA_MLWH_STALE_AFTER (default 2h)"`
+	Tables            []TableFreshness `json:"tables" doc:"sync metadata per mirrored table; use last_run, not high_water, for cache currency, and status for sync health"`
 }
 
 // Freshness reports, for each mirrored sync table in freshnessSyncTables, its
-// sync-mode-specific source-progress high_water and cache-refresh last_run (UTC
-// RFC3339) and whether it has ever synced. It reads sync_state directly and must
-// succeed even on a never-synced cache (every table then reports
-// ever_synced=false with empty timestamps), so the MCP layer can degrade
-// gracefully rather than seeing ErrCacheNeverSynced.
+// sync-mode-specific source-progress high_water, cache-refresh last_run, last
+// sync outcome and status, plus the overall status. It reads sync_state and
+// sync_outcome directly and must succeed even on a never-synced cache (every
+// table then reports ever_synced=false and never_synced), so the MCP layer can
+// degrade gracefully rather than seeing ErrCacheNeverSynced.
 func (c *Client) Freshness(ctx context.Context) (Freshness, error) {
 	db := c.readCacheDB()
 	if db == nil {
 		return Freshness{}, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	tables := make([]TableFreshness, 0, len(freshnessSyncTables))
+	now := c.outcomeNow()
+	staleAfter := c.freshnessStaleAfter()
+	result := Freshness{
+		Status:            FreshnessStatusOK,
+		StaleAfterSeconds: int64(staleAfter / time.Second),
+		Tables:            make([]TableFreshness, 0, len(freshnessSyncTables)),
+	}
+
 	for _, table := range freshnessSyncTables {
-		freshness, err := readTableFreshness(ctx, db, table)
+		freshness, outcome, err := readTableFreshness(ctx, db, table)
 		if err != nil {
 			return Freshness{}, err
 		}
 
-		tables = append(tables, freshness)
+		freshness.Status = freshnessTableStatus(freshness.EverSynced, outcome, now, staleAfter)
+		if freshnessStatusSeverity[freshness.Status] > freshnessStatusSeverity[result.Status] {
+			result.Status = freshness.Status
+		}
+
+		result.Tables = append(result.Tables, freshness)
 	}
 
-	return Freshness{Tables: tables}, nil
+	return result, nil
+}
+
+// freshnessTableStatus applies the status rules in order: a recorded error is
+// failing; no success and no synced data is never_synced; synced data with no
+// recorded success, or a success older than staleAfter, is stale; otherwise
+// ok. A table whose source is empty succeeds without writing sync_state, so a
+// recorded success counts even when ever_synced is false.
+func freshnessTableStatus(everSynced bool, outcome syncOutcome, now time.Time, staleAfter time.Duration) string {
+	switch {
+	case outcome.LastError != "":
+		return FreshnessStatusFailing
+	case outcome.LastSuccessAt.IsZero() && !everSynced:
+		return FreshnessStatusNeverSynced
+	case outcome.LastSuccessAt.IsZero() || now.Sub(outcome.LastSuccessAt) > staleAfter:
+		return FreshnessStatusStale
+	default:
+		return FreshnessStatusOK
+	}
+}
+
+func formatOptionalFreshnessTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+
+	return value.UTC().Format(utcRFC3339Layout)
 }
 
 // formatFreshnessTime parses a stored timestamp and re-renders it as UTC RFC3339
@@ -159,4 +249,22 @@ func formatFreshnessTime(raw any) (string, error) {
 	}
 
 	return parsed.UTC().Format(utcRFC3339Layout), nil
+}
+
+// SetStaleAfter sets how long after its last successful sync Freshness reports
+// a table stale. A non-positive value restores DefaultStaleAfter.
+func (c *Client) SetStaleAfter(staleAfter time.Duration) {
+	if c == nil {
+		return
+	}
+
+	c.staleAfter = staleAfter
+}
+
+func (c *Client) freshnessStaleAfter() time.Duration {
+	if c.staleAfter > 0 {
+		return c.staleAfter
+	}
+
+	return DefaultStaleAfter
 }

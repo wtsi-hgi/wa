@@ -15,7 +15,8 @@ Next.js reads the MLWH admin token from disk on the server side and calls
 
 - Account menu: log in (see the skill's Login), open the `<user> account`
   button, then the `Usage` menu item. Admins see menu items `Feedback`,
-  `Usage`, `Log out`; the admin rule is the same as `/feedback`.
+  `Usage`, `MLWH sync`, `Log out`; the admin rule is the same as
+  `/feedback`.
 - Direct URL: `$FRONTEND_URL/usage`, with query `window=24h|7d|30d|all`.
   No or unknown `window` shows 7d.
 - API, with `STATE_HOME` and `MLWH_URL` from `stack.env`:

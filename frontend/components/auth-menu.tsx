@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
     ChartColumn,
+    DatabaseZap,
     LogIn,
     LogOut,
     LockKeyhole,
@@ -255,6 +256,18 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
                                     className="h-4 w-4"
                                 />
                                 <span>Usage</span>
+                            </DropdownMenuLinkItem>
+                        ) : null}
+                        {session.isAdmin ? (
+                            <DropdownMenuLinkItem
+                                href="/mlwh-sync"
+                                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                            >
+                                <DatabaseZap
+                                    aria-hidden="true"
+                                    className="h-4 w-4"
+                                />
+                                <span>MLWH sync</span>
                             </DropdownMenuLinkItem>
                         ) : null}
                         <button

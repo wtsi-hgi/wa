@@ -1617,6 +1617,9 @@ func expectMySQLSchemaMigration(mock sqlmock.Sqlmock, fromVersion, toVersion int
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM sync_state WHERE table_name IN (` + syncStatePlaceholders + `)`)).
 		WithArgs(syncStateArgs...).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM sync_outcome WHERE table_name IN (` + syncStatePlaceholders + `)`)).
+		WithArgs(syncStateArgs...).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM schema_version`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)`)).WithArgs(toVersion).WillReturnResult(sqlmock.NewResult(1, 1))

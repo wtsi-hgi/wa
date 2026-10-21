@@ -118,10 +118,12 @@ git pull && make prod-restart
 ```
 
 After the upstream release, check the production source from inside the pod,
-then watch `/freshness` until every table has synced since the release:
+then watch `/freshness` until every table is `ok` and has synced since the
+release ([Monitoring MLWH sync](#monitoring-mlwh-sync)):
 
 ```bash
 kubectl -n apps exec deploy/mlwh-api -- wa --env production mlwh check-source
+WA_MLWH_SERVER_URL=https://apps.hgi.sanger.ac.uk/mlwh-api wa mlwh freshness
 ```
 
 ## Repository Layout
@@ -882,6 +884,7 @@ trusted by the system.
 | `WA_MLWH_PASSWORD`             | Optional                                | MLWH password paired with a passwordless DSN                                                             |
 | `WA_MLWH_CACHE_PATH`           | For `wa mlwh serve` and local operators | SQLite path or passwordless MySQL cache DSN used by server-side MLWH lookups                             |
 | `WA_MLWH_CACHE_PASSWORD`       | Optional                                | MLWH cache MySQL password                                                                                |
+| `WA_MLWH_STALE_AFTER`          | Optional                                | Go duration after a table's last successful sync before `/freshness` reports it stale (default: `2h`)    |
 | `WA_MLWH_SERVER_URL`           | For results/mlwhdiff/mlwh info clients  | Remote `wa mlwh serve` URL, equivalent to `--mlwh-server-url` / `wa mlwh info --server`; not a bind host |
 | `WA_RESULTS_SERVER_CERT`       | For results                             | TLS certificate path and CLI trust root; `run-dev.sh` resolves relative paths from the repo root         |
 | `WA_RESULTS_SERVER_KEY`        | For results                             | TLS private key path for `wa results serve`; `run-dev.sh` resolves relative paths from the repo root     |
@@ -927,7 +930,10 @@ command:
 command: ["sh", "-c"]
 args:
     - >-
-        (sleep 60; while :; do wa --env production mlwh sync; sleep 1800; done) &
+        (sleep 60; while :; do
+        wa --env production mlwh sync ||
+        { rc=$?; echo "$(date -Is) wa mlwh sync failed (exit $rc)" >&2; };
+        sleep 1800; done) &
         exec wa --env production mlwh serve
 ```
 
@@ -935,10 +941,71 @@ The first sync waits 60 seconds so that serve opens and migrates the cache
 before sync touches it. If both open the cache at the same moment, either can
 fail with `SQLITE_BUSY`, and their MySQL schema setup is not serialised. The
 loop then waits 30 minutes after each sync finishes before starting the next.
+A failed sync adds one timestamped line with its exit code to the pod log,
+such as `2026-10-21T10:50:00+00:00 wa mlwh sync failed (exit 1)`, after the
+sync's own error. The line saves `$?` before running `date`, because bash
+resets `$?` after a command substitution.
 
 `wa mlwh serve` listens on port `8091` and answers `GET /health` without
 reading the cache, so use that for probes. A failed sync is logged and retried
-on the next loop, and serve keeps running.
+on the next loop, and serve keeps running. `GET /health` stays ok while syncs
+fail; watch sync health as described in
+[Monitoring MLWH sync](#monitoring-mlwh-sync).
+
+### Monitoring MLWH sync
+
+Each sync records, per table, when the table last synced without error, and
+the error from its most recent failed attempt. `GET /freshness`, `wa mlwh
+freshness`, and the website's admin MLWH sync page report them with a status
+per table:
+
+- `failing`: the most recent sync of the table failed, or was skipped because
+  a table it depends on failed. `blocked_by` names those tables.
+- `never_synced`: the table has neither synced data nor a successful sync.
+- `stale`: its last successful sync is older than `WA_MLWH_STALE_AFTER`, or
+  it has synced data but no recorded success yet.
+- `ok`: otherwise.
+
+The overall status is the worst table status, in that order. A table's error
+is cleared by its next successful sync, and a failure keeps the time of the
+last success. When the MLWH source is unreachable, every table records that
+error. Staleness uses the last successful sync, not `high_water`, so tables
+whose source data rarely changes stay `ok`.
+
+A single failed sync makes its tables `failing` until their next successful
+run, even when nothing is wrong with MLWH. That includes a sync that was
+interrupted, for example by a pod rollout or a restart of `wa mlwh serve`: the
+interrupted tables report `failing` with a `context canceled` error until the
+next sync succeeds.
+
+`WA_MLWH_STALE_AFTER` is a Go duration read by `wa mlwh serve`, default `2h`,
+which allows for several missed runs of the 30-minute sync loop. Set it in
+`.env.production.local` to change it.
+
+To be mailed when sync needs attention, add this line to mercury's crontab:
+
+```text
+*/30 * * * * WA_MLWH_SERVER_URL=https://apps.hgi.sanger.ac.uk/mlwh-api /software/hgi/installs/wa/wa mlwh freshness --check
+```
+
+`wa mlwh freshness --check` prints nothing and exits 0 when the overall status
+is `ok`. Otherwise it prints one line per table needing attention, then an
+`Error:` summary line, all to stderr, and exits 1, so cron mails the lines.
+Tables with the same status and error share one line, such as
+`17 tables failing (sample, study, ...): connect to MLWH source: ...` when the
+source is unreachable. It also exits 1 with one line when the server cannot be
+reached or is older than MLWH API 1.12.0. Without `--check`, `wa mlwh
+freshness` prints a table of every table's status, and `--json` prints the
+`/freshness` document.
+
+Caches created before these records existed gain them on the first open by
+this version, with no re-sync. Each table whose `sync_state` row has no resume
+cursor, so it is not part-way through a cold load, starts with its last
+successful sync set to its `last_run`. A table part-way through a cold load
+starts with none and reports `stale` until that load completes. Opening a
+cache that already has these records writes nothing, so `wa mlwh serve` and
+`wa mlwh freshness` start without waiting for a running sync. Older wa
+releases ignore the new `sync_outcome` table, so rolling back is safe.
 
 Mount a persistent volume at `/data` for the feedback and usage SQLite files.
 The image sets `XDG_STATE_HOME=/data`, so the admin token for `/feedback` and

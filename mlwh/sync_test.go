@@ -1109,6 +1109,11 @@ func TestClientSyncRepairsSparseProductReadIndexesBeforeIRODSEnrichment(t *testi
 			WithArgs(syncTableIseqProductMetricsIRODSRepair, formatSyncTime(time.Time{}), sqlmock.AnyArg(), nil, 0).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectCommit()
+		mock.ExpectBegin()
+		mock.ExpectExec(regexp.QuoteMeta(buildUpsertStatement("mysql", syncOutcomeTable, syncOutcomeSuccessColumns, []string{"table_name"}))).
+			WithArgs(syncTableIseqProductMetrics, sqlmock.AnyArg(), nil, nil, nil).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
 
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 			WithArgs(syncTableIseqProductMetrics).
@@ -1139,6 +1144,11 @@ func TestClientSyncRepairsSparseProductReadIndexesBeforeIRODSEnrichment(t *testi
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT ipm.id_iseq_product, ipm.id_run, ipm.position, ipm.tag_index, ipm.qc, CASE WHEN ifc.entity_type IN ('library', 'library_indexed') THEN 1 ELSE 0 END, CASE WHEN ipm.position = 0 AND ipm.tag_index = 0 THEN 1 ELSE 0 END FROM iseq_product_metrics_mirror ipm LEFT JOIN iseq_flowcell_mirror ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp WHERE ipm.id_iseq_product IN (?)`)).
 			WithArgs(productRow.IDIseqProduct).
 			WillReturnError(forcedEnrichmentErr)
+		mock.ExpectBegin()
+		mock.ExpectExec(regexp.QuoteMeta(buildUpsertStatement("mysql", syncOutcomeTable, syncOutcomeFailureColumns, []string{"table_name"}))).
+			WithArgs(syncTableSeqProductIRODSLocations, sqlmock.AnyArg(), sqlmock.AnyArg(), nil).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
 
 		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
 			syncTableIseqProductMetrics: {

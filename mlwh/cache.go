@@ -275,6 +275,10 @@ type Client struct {
 	syncRetryWriter  io.Writer
 	syncRetrySleep   func(context.Context, time.Duration) error
 	disableSyncLock  bool
+	staleAfter       time.Duration
+	// syncSecrets are the source and cache passwords, redacted from sync
+	// errors before they are stored.
+	syncSecrets []string
 }
 
 // ReadDB exposes the client's read-only cache handle.
@@ -616,6 +620,10 @@ func prepareCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
 			return err
 		}
 
+		if err = ensureSyncOutcomeSchema(ctx, db, dialect); err != nil {
+			return err
+		}
+
 		if err = ensureMySQLStudySearchColumnCollation(ctx, db, dialect); err != nil {
 			return err
 		}
@@ -628,6 +636,24 @@ func prepareCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
 	default:
 		return migrateCacheSchema(ctx, db, dialect, version)
 	}
+}
+
+func deleteSyncTableRows(ctx context.Context, db *sql.DB, stateTable string, tables []string) error {
+	if len(tables) == 0 {
+		return nil
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(tables)), ", ")
+	args := make([]any, len(tables))
+	for index, table := range tables {
+		args[index] = table
+	}
+
+	if _, err := db.ExecContext(ctx, `DELETE FROM `+stateTable+` WHERE table_name IN (`+placeholders+`)`, args...); err != nil {
+		return fmt.Errorf("mlwh: clear %s rows for recreated tables: %w", stateTable, err)
+	}
+
+	return nil
 }
 
 func sqliteMirrorIndexesFullyDroppedForRecovery(ctx context.Context, db *sql.DB, indexSet syncMirrorIndexSet) (bool, error) {
@@ -916,6 +942,12 @@ func allowLargeSQLiteColdLoadIndexShape(ctx context.Context, db *sql.DB, expecte
 
 		actual.Index[indexSet.Table] = append([]string(nil), expected.Index[indexSet.Table]...)
 	}
+}
+
+// deleteSyncOutcomeRows clears the outcomes of recreated tables, whose old
+// successes no longer describe the now-empty mirrors.
+func deleteSyncOutcomeRows(ctx context.Context, db *sql.DB, tables []string) error {
+	return deleteSyncTableRows(ctx, db, syncOutcomeTable, tables)
 }
 
 func analyzeMirrorTable(ctx context.Context, db *sql.DB, table string) error {
@@ -1352,6 +1384,10 @@ func migrateCacheSchema(ctx context.Context, db *sql.DB, dialect string, fromVer
 		return err
 	}
 
+	if err := deleteSyncOutcomeRows(ctx, db, cacheMigrationSyncStateTables); err != nil {
+		return err
+	}
+
 	if err := writeSchemaVersion(ctx, db); err != nil {
 		return err
 	}
@@ -1424,21 +1460,7 @@ func syncStateIndexesDroppedStatement(dialect string) string {
 }
 
 func deleteSyncStateRows(ctx context.Context, db *sql.DB, tables []string) error {
-	if len(tables) == 0 {
-		return nil
-	}
-
-	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(tables)), ", ")
-	args := make([]any, len(tables))
-	for index, table := range tables {
-		args[index] = table
-	}
-
-	if _, err := db.ExecContext(ctx, `DELETE FROM sync_state WHERE table_name IN (`+placeholders+`)`, args...); err != nil {
-		return fmt.Errorf("mlwh: clear sync_state rows for recreated tables: %w", err)
-	}
-
-	return nil
+	return deleteSyncTableRows(ctx, db, "sync_state", tables)
 }
 
 func logCacheMigration(fromVersion, toVersion int) error {
