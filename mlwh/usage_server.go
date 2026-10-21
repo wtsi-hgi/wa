@@ -233,6 +233,7 @@ func (s *Server) usageMiddleware(route string) gin.HandlerFunc {
 			MCPTool:       truncateUTF8(c.GetHeader(HeaderMCPTool), UsageMaxMCPToolBytes),
 			Status:        c.Writer.Status(),
 			Latency:       time.Since(start),
+			Probe:         c.GetHeader(HeaderLookup) == LookupProbe,
 		}
 
 		if route == "" || event.Status >= http.StatusBadRequest {

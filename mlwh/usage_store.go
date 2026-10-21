@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS usage_requests (
     query          TEXT,
     error_code     TEXT,
     error_kind     TEXT,
-    error_message  TEXT
+    error_message  TEXT,
+    lookup         TEXT
 );
 CREATE INDEX IF NOT EXISTS usage_requests_ts ON usage_requests (ts_ms);
 CREATE INDEX IF NOT EXISTS usage_requests_route_ts
@@ -84,8 +85,8 @@ CREATE INDEX IF NOT EXISTS usage_requests_route_latency
 
 // usageErrorColumns are the nullable columns added after the first release,
 // in schema order. migrateUsageErrorColumns adds any an existing DB lacks; rows
-// written before then keep NULL in them.
-var usageErrorColumns = []string{"query", "error_code", "error_kind", "error_message"}
+// written before then keep NULL in them. lookup is LookupProbe for a probe.
+var usageErrorColumns = []string{"query", "error_code", "error_kind", "error_message", "lookup"}
 
 // usageErrorIndexSQL creates the partial index the error summary reads. It
 // runs after migrateUsageErrorColumns, since an old table lacks error_code.
@@ -94,8 +95,8 @@ const usageErrorIndexSQL = `CREATE INDEX IF NOT EXISTS usage_requests_errors
 
 const usageInsertSQL = `INSERT INTO usage_requests (ts_ms, category, method, route, path,
     client_id, username, remote_addr, client_version, user_agent, mcp_transport, mcp_agent,
-    mcp_tool, status, latency_us, query, error_code, error_kind, error_message)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    mcp_tool, status, latency_us, query, error_code, error_kind, error_message, lookup)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 var errUsageRetention = errors.New("mlwh: usage retention must be at least 1 day")
 
@@ -418,7 +419,17 @@ func usageInsertArgs(ev UsageEvent) []any {
 		usageNullString(ev.ErrorCode),
 		usageNullString(ev.ErrorKind),
 		usageNullString(truncateUTF8(ev.ErrorMessage, UsageMaxErrorMessageBytes)),
+		usageNullString(usageLookup(ev.Probe)),
 	}
+}
+
+// usageLookup returns the lookup column value for a probe, else "".
+func usageLookup(probe bool) string {
+	if probe {
+		return LookupProbe
+	}
+
+	return ""
 }
 
 // migrateUsageErrorColumns adds any usageErrorColumns the table lacks. Two

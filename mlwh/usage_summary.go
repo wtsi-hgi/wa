@@ -71,12 +71,33 @@ WHERE method = ? AND route = ? AND ts_ms > ? ORDER BY latency_us LIMIT 1 OFFSET 
 
 // UsageTotals are the window's request, error, and distinct-caller counts.
 type UsageTotals struct {
-	Requests  int64   `json:"requests"`
-	Errors    int64   `json:"errors"`
-	ErrorRate float64 `json:"error_rate"`
-	Sessions  int64   `json:"sessions"`
-	IPClients int64   `json:"ip_clients"`
-	Users     int64   `json:"users"`
+	Requests      int64               `json:"requests"`
+	Errors        int64               `json:"errors"`
+	ErrorRate     float64             `json:"error_rate"`
+	ErrorSeverity UsageErrorBreakdown `json:"error_severity"`
+	Sessions      int64               `json:"sessions"`
+	IPClients     int64               `json:"ip_clients"`
+	Users         int64               `json:"users"`
+}
+
+// UsageErrorBreakdown splits errors by UsageErrorSeverity into parts that sum
+// to their count, except that expected answers to probe requests count as
+// Probe rather than Expected. Rows recorded before error details are judged
+// by status (see usageErrorSeveritySQL) and also counted in Legacy.
+type UsageErrorBreakdown struct {
+	Fault    int64             `json:"fault"`
+	Caller   int64             `json:"caller"`
+	Expected int64             `json:"expected"`
+	Probe    int64             `json:"probe"`
+	Legacy   UsageLegacyErrors `json:"legacy"`
+}
+
+// UsageLegacyErrors counts, by severity, the errors of a UsageErrorBreakdown
+// recorded before error details were stored. Such rows are never probes.
+type UsageLegacyErrors struct {
+	Fault    int64 `json:"fault"`
+	Caller   int64 `json:"caller"`
+	Expected int64 `json:"expected"`
 }
 
 // UsageCategoryStats are the window's counts for one caller category.
@@ -134,14 +155,17 @@ type UsageErrorExample struct {
 	ErrorKind string        `json:"error_kind"`
 }
 
-// UsageErrorGroup is the window's errors for one method, route, status, and
-// error code. Route is "" for unmatched requests (code no_route). ErrorCode
-// is nil for rows recorded before error details were stored.
+// UsageErrorGroup is the window's errors for one method, route, status,
+// error code, severity, and probe flag. Route is "" for unmatched requests (code
+// no_route). ErrorCode is nil for rows recorded before error details were
+// stored, whose Severity is judged from their status.
 type UsageErrorGroup struct {
 	Method     string              `json:"method"`
 	Route      string              `json:"route"`
 	Status     int                 `json:"status"`
 	ErrorCode  *string             `json:"error_code"`
+	Severity   UsageErrorSeverity  `json:"severity"`
+	Probe      bool                `json:"probe"` // rows sent as probes (HeaderLookup)
 	Count      int64               `json:"count"`
 	FirstSeen  string              `json:"first_seen"` // RFC3339 UTC
 	LastSeen   string              `json:"last_seen"`  // RFC3339 UTC
@@ -172,11 +196,13 @@ type UsageActor struct {
 	ByCategory map[string]int64 `json:"by_category"`
 }
 
-// UsageDay is the window's request count on one UTC date.
+// UsageDay is the window's request count, and its errors' breakdown, on one
+// UTC date.
 type UsageDay struct {
-	Date       string           `json:"date"` // YYYY-MM-DD, UTC
-	Requests   int64            `json:"requests"`
-	ByCategory map[string]int64 `json:"by_category"`
+	Date          string              `json:"date"` // YYYY-MM-DD, UTC
+	Requests      int64               `json:"requests"`
+	ByCategory    map[string]int64    `json:"by_category"`
+	ErrorSeverity UsageErrorBreakdown `json:"error_severity"`
 }
 
 // UsagePeriod is the request count of one window-length period.
@@ -316,6 +342,13 @@ func (q usageSummaryQuery) fill(ctx context.Context, summary *UsageSummary) erro
 	if summary.Totals, summary.Categories, err = q.categories(ctx); err != nil {
 		return err
 	}
+
+	breakdowns, err := q.errorBreakdowns(ctx, "0")
+	if err != nil {
+		return err
+	}
+
+	summary.Totals.ErrorSeverity = breakdowns[0]
 
 	if summary.Endpoints, err = q.endpoints(ctx); err != nil {
 		return err
@@ -727,6 +760,11 @@ FROM usage_requests WHERE ts_ms > ? GROUP BY 1, 2`, usageMSPerDay, q.fromMS)
 		return nil, err
 	}
 
+	breakdowns, err := q.errorBreakdowns(ctx, "ts_ms / ?", usageMSPerDay)
+	if err != nil {
+		return nil, err
+	}
+
 	days := []UsageDay{}
 
 	for day := firstMS / usageMSPerDay; day <= q.nowMS/usageMSPerDay; day++ {
@@ -736,9 +774,10 @@ FROM usage_requests WHERE ts_ms > ? GROUP BY 1, 2`, usageMSPerDay, q.fromMS)
 		}
 
 		days = append(days, UsageDay{
-			Date:       time.UnixMilli(day * usageMSPerDay).UTC().Format(usageDayLayout),
-			Requests:   usageSumCounts(byCategory),
-			ByCategory: byCategory,
+			Date:          time.UnixMilli(day * usageMSPerDay).UTC().Format(usageDayLayout),
+			Requests:      usageSumCounts(byCategory),
+			ByCategory:    byCategory,
+			ErrorSeverity: breakdowns[day],
 		})
 	}
 

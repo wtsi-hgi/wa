@@ -29,7 +29,52 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
+
+// UsageErrorSeverity says whether an error needs attention.
+type UsageErrorSeverity string
+
+// The usage error severities, most urgent first.
+const (
+	// UsageErrorSeverityFault is a server failure (5xx), or a request wa's own
+	// CLI, web frontend, or internal servers got wrong: wa needs fixing.
+	UsageErrorSeverityFault UsageErrorSeverity = "fault"
+	// UsageErrorSeverityCaller is a request an MCP agent or third-party
+	// client got wrong.
+	UsageErrorSeverityCaller UsageErrorSeverity = "caller"
+	// UsageErrorSeverityExpected is a lookup's answer: the identifier is not
+	// known (not_found) or names several records (ambiguous).
+	UsageErrorSeverityExpected UsageErrorSeverity = "expected"
+)
+
+// usageOwnClientCategories are the categories of wa's own clients, whose
+// malformed requests are wa bugs. MCP is not one: its tools pass agents'
+// arguments through, so its rejected requests are usually the agent's.
+var usageOwnClientCategories = []UsageCategory{
+	UsageCategoryCLI, UsageCategoryWeb, UsageCategoryResultsServer, UsageCategoryMLWHDiffServer,
+}
+
+// usageErrorSeveritySQL is the UsageErrorSeverity of an error row. Rows
+// recorded before error details (NULL code) are judged by status alone: on a
+// matched route only not_found answers 404 and only ambiguous answers 409.
+var usageErrorSeveritySQL = fmt.Sprintf(`CASE
+    WHEN status >= 500 THEN '%s'
+    WHEN error_code IN ('%s', '%s') OR (error_code IS NULL AND route <> '' AND status IN (404, 409)) THEN '%s'
+    WHEN category IN ('%s') THEN '%s'
+    ELSE '%s' END`,
+	UsageErrorSeverityFault, httpErrorCodeNotFound, httpErrorCodeAmbiguous, UsageErrorSeverityExpected,
+	strings.Join(usageCategoryStrings(usageOwnClientCategories), "', '"), UsageErrorSeverityFault,
+	UsageErrorSeverityCaller)
+
+func usageCategoryStrings(categories []UsageCategory) []string {
+	values := make([]string, len(categories))
+	for i, category := range categories {
+		values[i] = string(category)
+	}
+
+	return values
+}
 
 const (
 	// usageErrorGroupLimit caps UsageSummary.Errors.
@@ -39,12 +84,29 @@ const (
 	// usageErrorExampleLimit caps each group's Examples.
 	usageErrorExampleLimit = 10
 
-	// usageErrorRows selects the window's error rows; its parameter is the
-	// window start. The status term matches usage_requests_errors.
-	usageErrorRows = "FROM usage_requests WHERE ts_ms > ? AND status >= 400"
-	// usageErrorGroupColumns are the columns an error group is keyed by.
-	usageErrorGroupColumns = "method, route, status, error_code"
+	// usageErrorGroupColumns are the columns of e an error group is keyed by.
+	usageErrorGroupColumns = "method, route, status, error_code, severity, probe"
+	// usageErrorGroupRank orders error groups so the group cap drops expected
+	// and legacy groups before faults: detailed before legacy, then by
+	// severity, then by count.
+	usageErrorGroupRank = "error_code IS NULL, CASE severity WHEN '" + string(UsageErrorSeverityFault) +
+		"' THEN 0 WHEN '" + string(UsageErrorSeverityCaller) + "' THEN 1 ELSE 2 END, COUNT(*) DESC"
 )
+
+// usageErrorRowsCTE defines e, the window's error rows with their severity
+// and whether they were probes; its parameter is the window start. The status
+// term matches usage_requests_errors.
+var usageErrorRowsCTE = "e AS (SELECT *, " + usageErrorSeveritySQL + " AS severity, lookup IS NOT NULL AS probe " +
+	"FROM usage_requests WHERE ts_ms > ? AND status >= 400)"
+
+// usageErrorBreakdownSQL is the UsageErrorBreakdown field of a row of e,
+// probe or its severity, suffixed with usageLegacySuffix for a row recorded
+// before error details.
+const usageErrorBreakdownSQL = "CASE WHEN probe AND severity = '" + string(UsageErrorSeverityExpected) +
+	"' THEN 'probe' ELSE severity END || CASE WHEN error_code IS NULL THEN '" + usageLegacySuffix +
+	"' ELSE '' END"
+
+const usageLegacySuffix = ":legacy"
 
 // usageErrorGroupKey identifies a UsageErrorGroup; code is NULL for rows
 // recorded before error details were stored.
@@ -52,14 +114,21 @@ type usageErrorGroupKey struct {
 	method, route string
 	status        int
 	code          sql.NullString
+	severity      UsageErrorSeverity
+	probe         bool
+}
+
+// scanDest returns the Scan destinations of the usageErrorGroupColumns.
+func (k *usageErrorGroupKey) scanDest() []any {
+	return []any{&k.method, &k.route, &k.status, &k.code, &k.severity, &k.probe}
 }
 
 func (q usageSummaryQuery) listErrorGroups(ctx context.Context) (usageErrorGroups, error) {
 	groups := usageErrorGroups{list: []UsageErrorGroup{}, index: map[usageErrorGroupKey]int{}}
 
-	rows, err := q.tx.QueryContext(ctx, "SELECT "+usageErrorGroupColumns+", COUNT(*), MIN(ts_ms), MAX(ts_ms) "+
-		usageErrorRows+" GROUP BY "+usageErrorGroupColumns+" ORDER BY 5 DESC, "+usageErrorGroupColumns+
-		" LIMIT ?", q.fromMS, usageErrorGroupLimit)
+	rows, err := q.tx.QueryContext(ctx, "WITH "+usageErrorRowsCTE+" SELECT "+usageErrorGroupColumns+
+		", COUNT(*), MIN(ts_ms), MAX(ts_ms) FROM e GROUP BY "+usageErrorGroupColumns+" ORDER BY "+
+		usageErrorGroupRank+", "+usageErrorGroupColumns+" LIMIT ?", q.fromMS, usageErrorGroupLimit)
 	if err != nil {
 		return groups, err
 	}
@@ -73,7 +142,7 @@ func (q usageSummaryQuery) listErrorGroups(ctx context.Context) (usageErrorGroup
 			first, latest int64
 		)
 
-		if err = rows.Scan(&key.method, &key.route, &key.status, &key.code, &count, &first, &latest); err != nil {
+		if err = rows.Scan(append(key.scanDest(), &count, &first, &latest)...); err != nil {
 			return groups, err
 		}
 
@@ -86,8 +155,8 @@ func (q usageSummaryQuery) listErrorGroups(ctx context.Context) (usageErrorGroup
 
 func newUsageErrorGroup(key usageErrorGroupKey, count, first, latest int64) UsageErrorGroup {
 	group := UsageErrorGroup{
-		Method: key.method, Route: key.route, Status: key.status, Count: count,
-		FirstSeen: usageFormatMS(first), LastSeen: usageFormatMS(latest),
+		Method: key.method, Route: key.route, Status: key.status, Severity: key.severity, Probe: key.probe,
+		Count: count, FirstSeen: usageFormatMS(first), LastSeen: usageFormatMS(latest),
 		ErrorKinds: map[string]int64{}, Messages: []UsageErrorMessage{}, Examples: []UsageErrorExample{},
 		ByCategory: map[string]int64{}, ByTool: map[string]int64{}, ByAgent: map[string]int64{},
 	}
@@ -99,14 +168,45 @@ func newUsageErrorGroup(key usageErrorGroupKey, count, first, latest int64) Usag
 	return group
 }
 
-// errorBreakdown counts each listed group's rows per non-empty value of
+// errorBreakdowns returns the UsageErrorBreakdown of the window's error rows
+// per value of the bucket expression, whose parameters follow the window
+// start in args.
+func (q usageSummaryQuery) errorBreakdowns(ctx context.Context, bucket string,
+	args ...any,
+) (map[int64]UsageErrorBreakdown, error) {
+	counts, err := q.groupCounts(ctx, "WITH "+usageErrorRowsCTE+" SELECT "+bucket+", "+usageErrorBreakdownSQL+
+		", COUNT(*) FROM e GROUP BY 1, 2", append([]any{q.fromMS}, args...)...)
+	if err != nil {
+		return nil, err
+	}
+
+	breakdowns := make(map[int64]UsageErrorBreakdown, len(counts))
+
+	for key, byField := range counts {
+		legacy := func(severity UsageErrorSeverity) int64 { return byField[string(severity)+usageLegacySuffix] }
+		detailed := func(severity UsageErrorSeverity) int64 { return byField[string(severity)] + legacy(severity) }
+
+		breakdowns[key] = UsageErrorBreakdown{
+			Fault: detailed(UsageErrorSeverityFault), Caller: detailed(UsageErrorSeverityCaller),
+			Expected: detailed(UsageErrorSeverityExpected), Probe: byField["probe"],
+			Legacy: UsageLegacyErrors{
+				Fault: legacy(UsageErrorSeverityFault), Caller: legacy(UsageErrorSeverityCaller),
+				Expected: legacy(UsageErrorSeverityExpected),
+			},
+		}
+	}
+
+	return breakdowns, nil
+}
+
+// groupBreakdown counts each listed group's rows per non-empty value of
 // column into the map field returns.
-func (q usageSummaryQuery) errorBreakdown(ctx context.Context, groups usageErrorGroups, column string,
+func (q usageSummaryQuery) groupBreakdown(ctx context.Context, groups usageErrorGroups, column string,
 	field func(*UsageErrorGroup) map[string]int64,
 ) error {
-	rows, err := q.tx.QueryContext(ctx, fmt.Sprintf("SELECT %s, %s, COUNT(*) %s AND COALESCE(%s, '') <> '' "+
-		"GROUP BY %s, %s", usageErrorGroupColumns, column, usageErrorRows, column, usageErrorGroupColumns, column),
-		q.fromMS)
+	rows, err := q.tx.QueryContext(ctx, fmt.Sprintf("WITH %s SELECT %s, %s, COUNT(*) FROM e "+
+		"WHERE COALESCE(%s, '') <> '' GROUP BY %s, %s", usageErrorRowsCTE, usageErrorGroupColumns, column, column,
+		usageErrorGroupColumns, column), q.fromMS)
 	if err != nil {
 		return err
 	}
@@ -120,7 +220,7 @@ func (q usageSummaryQuery) errorBreakdown(ctx context.Context, groups usageError
 			count int64
 		)
 
-		if err = rows.Scan(&key.method, &key.route, &key.status, &key.code, &value, &count); err != nil {
+		if err = rows.Scan(append(key.scanDest(), &value, &count)...); err != nil {
 			return err
 		}
 
@@ -136,9 +236,9 @@ func (q usageSummaryQuery) errorBreakdown(ctx context.Context, groups usageError
 // non-empty messages, by count descending then message.
 func (q usageSummaryQuery) errorMessages(ctx context.Context, groups usageErrorGroups) error {
 	rows, err := q.tx.QueryContext(ctx, `
-WITH m AS (
-    SELECT `+usageErrorGroupColumns+`, error_message AS v, COUNT(*) AS c `+usageErrorRows+`
-    AND error_message <> '' GROUP BY `+usageErrorGroupColumns+`, error_message
+WITH `+usageErrorRowsCTE+`, m AS (
+    SELECT `+usageErrorGroupColumns+`, error_message AS v, COUNT(*) AS c FROM e
+    WHERE error_message <> '' GROUP BY `+usageErrorGroupColumns+`, error_message
 ), r AS (
     SELECT *, ROW_NUMBER() OVER (PARTITION BY `+usageErrorGroupColumns+` ORDER BY c DESC, v) AS rn FROM m
 )
@@ -156,8 +256,7 @@ SELECT `+usageErrorGroupColumns+`, v, c FROM r WHERE rn <= ? ORDER BY `+usageErr
 			message UsageErrorMessage
 		)
 
-		if err = rows.Scan(&key.method, &key.route, &key.status, &key.code, &message.Message,
-			&message.Count); err != nil {
+		if err = rows.Scan(append(key.scanDest(), &message.Message, &message.Count)...); err != nil {
 			return err
 		}
 
@@ -173,12 +272,12 @@ SELECT `+usageErrorGroupColumns+`, v, c FROM r WHERE rn <= ? ORDER BY `+usageErr
 // newest first.
 func (q usageSummaryQuery) errorExamples(ctx context.Context, groups usageErrorGroups) error {
 	rows, err := q.tx.QueryContext(ctx, `
-WITH r AS (
+WITH `+usageErrorRowsCTE+`, r AS (
     SELECT `+usageErrorGroupColumns+`, ts_ms, path, COALESCE(query, '') AS query, category, mcp_tool,
         mcp_agent, client_id, username, COALESCE(error_message, '') AS message,
         COALESCE(error_kind, '') AS kind,
         ROW_NUMBER() OVER (PARTITION BY `+usageErrorGroupColumns+` ORDER BY ts_ms DESC, id DESC) AS rn
-    `+usageErrorRows+`
+    FROM e
 )
 SELECT `+usageErrorGroupColumns+`, ts_ms, path, query, category, mcp_tool, mcp_agent, client_id, username,
     message, kind
@@ -196,9 +295,9 @@ FROM r WHERE rn <= ? ORDER BY `+usageErrorGroupColumns+`, rn`, q.fromMS, usageEr
 			example UsageErrorExample
 		)
 
-		if err = rows.Scan(&key.method, &key.route, &key.status, &key.code, &tsMS, &example.Path,
-			&example.Query, &example.Category, &example.MCPTool, &example.MCPAgent, &example.ClientID,
-			&example.Username, &example.Message, &example.ErrorKind); err != nil {
+		if err = rows.Scan(append(key.scanDest(), &tsMS, &example.Path, &example.Query, &example.Category,
+			&example.MCPTool, &example.MCPAgent, &example.ClientID, &example.Username, &example.Message,
+			&example.ErrorKind)...); err != nil {
 			return err
 		}
 
@@ -246,7 +345,7 @@ func (q usageSummaryQuery) errorGroups(ctx context.Context) ([]UsageErrorGroup, 
 	}
 
 	for _, breakdown := range breakdowns {
-		if err = q.errorBreakdown(ctx, groups, breakdown.column, breakdown.field); err != nil {
+		if err = q.groupBreakdown(ctx, groups, breakdown.column, breakdown.field); err != nil {
 			return nil, err
 		}
 	}

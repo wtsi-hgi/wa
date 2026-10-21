@@ -1273,16 +1273,22 @@ func writeWarningsSection(out io.Writer, warnings []string, style infoStyle) {
 	}
 }
 
+// classifyForInfo resolves identifier as typeFlag names, or by trying study,
+// then sample name, then classify. Requests whose not-found answer only moves
+// on to the next try are marked as probes, so the server's usage summary
+// counts their misses apart.
 func classifyForInfo(ctx context.Context, client mlwhInfoClient, identifier, typeFlag string) (mlwh.Match, error) {
+	probeCtx := mlwh.WithLookupProbe(ctx)
+
 	switch strings.ToLower(strings.TrimSpace(typeFlag)) {
 	case "":
-		if match, err := client.ResolveStudy(ctx, identifier); err == nil {
+		if match, err := client.ResolveStudy(probeCtx, identifier); err == nil {
 			return match, nil
 		} else if !errors.Is(err, mlwh.ErrNotFound) {
 			return mlwh.Match{}, err
 		}
 
-		if match, err := resolveSampleNameForInfo(ctx, client, identifier); err == nil {
+		if match, err := resolveSampleNameForInfo(probeCtx, client, identifier); err == nil {
 			return match, nil
 		} else if !errors.Is(err, mlwh.ErrNotFound) {
 			return mlwh.Match{}, err
@@ -1290,7 +1296,7 @@ func classifyForInfo(ctx context.Context, client mlwhInfoClient, identifier, typ
 
 		return client.ClassifyIdentifier(ctx, identifier)
 	case "sample":
-		if match, err := resolveSampleNameForInfo(ctx, client, identifier); err == nil {
+		if match, err := resolveSampleNameForInfo(probeCtx, client, identifier); err == nil {
 			return match, nil
 		} else if !errors.Is(err, mlwh.ErrNotFound) {
 			return mlwh.Match{}, err
@@ -1361,6 +1367,9 @@ func populateSampleInfo(ctx context.Context, client mlwhInfoClient, report *info
 	}
 }
 
+// refreshSampleFanOut fills sample's studies and libraries from the first of
+// its Sanger id, LIMS id, and accession lookups that finds it. Each lookup is
+// a probe: a miss moves on to the next.
 func refreshSampleFanOut(ctx context.Context, client mlwhInfoClient, sample *mlwh.Sample) error {
 	if sample == nil {
 		return nil
@@ -1368,6 +1377,8 @@ func refreshSampleFanOut(ctx context.Context, client mlwhInfoClient, sample *mlw
 	if len(sample.Libraries) > 0 && len(sample.Studies) > 0 {
 		return nil
 	}
+
+	ctx = mlwh.WithLookupProbe(ctx)
 
 	lookups := []func(context.Context) ([]mlwh.Sample, error){}
 	if strings.TrimSpace(sample.SangerSampleID) != "" {
