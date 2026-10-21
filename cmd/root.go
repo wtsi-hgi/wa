@@ -83,6 +83,7 @@ func NewRootCommand() *cobra.Command {
 	command.AddCommand(newMLWHDiffCommand())
 	command.AddCommand(newResultsCommand())
 	command.AddCommand(newMLWHCommand())
+	command.AddCommand(newVersionCommand())
 
 	showUsageOnlyForUsageErrors(command)
 

@@ -14,9 +14,15 @@ RUN go mod download
 
 COPY . .
 
+# VERSION is what `wa version` prints; .git is not in the build context, so
+# pass it with `--build-arg VERSION=$(git describe --tags --always --long --dirty)`.
+# The image workflow passes the tag. When unset, `wa version` prints "devel".
+ARG VERSION=
+
 # cgo matches the Makefile and run-dev.sh builds: the results service needs
 # cgo os/user group lookups for LDAP auth.
-RUN CGO_ENABLED=1 go build -trimpath -o /out/wa .
+RUN CGO_ENABLED=1 go build -trimpath \
+    -ldflags "-X github.com/wtsi-hgi/wa/cmd.Version=${VERSION}" -o /out/wa .
 
 FROM debian:trixie-slim
 

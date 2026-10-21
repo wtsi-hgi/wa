@@ -187,6 +187,8 @@ database or cache credentials.
 
 | Target                | Env files loaded                                                   | Purpose                                                                                                                                                        |
 | --------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `make build`          | _(none)_                                                           | Build `./wa` with `git describe --tags --always --long --dirty` stamped as the version `wa version` prints.                                                    |
+| `make install`        | _(none)_                                                           | Install `wa` into `$GOBIN` (or `$GOPATH/bin`) with the same version stamp.                                                                                     |
 | `make dev`            | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Bring up the development stack with a persistent DB and no fixtures.                                                                                           |
 | `make dev FIXTURES=1` | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Same as `make dev`, plus seed demo fixtures into the development DB.                                                                                           |
 | `make dev-fixtures`   | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Alias for `make dev FIXTURES=1`.                                                                                                                               |
@@ -419,8 +421,8 @@ Run long-lived `serve` commands in separate terminals or under a process
 manager.
 
 ```bash
-# Build
-go build -o wa .
+# Build (stamps the git describe version that `wa version` prints)
+make build
 
 # Security defaults for manual `results serve` examples below. `--cert`,
 # `--key`, `--ldap_server`, and `--ldap_dn` default from these env vars.
@@ -802,8 +804,8 @@ CLI users then set `WA_RESULTS_SERVER_URL=https://<farm host>:<results port>`,
 ### Build
 
 ```bash
-# Go binary
-go build -o wa .
+# Go binary (stamps the git describe version that `wa version` prints)
+make build
 
 # Frontend (standalone Node.js app)
 cd frontend
@@ -896,6 +898,11 @@ Pushing a `v*` tag publishes the Go binary (no frontend) as
 Non-prerelease tags also move `ghcr.io/wtsi-hgi/wa:latest`. Pull requests to
 `develop` build and smoke-test the image without pushing it. The image runs
 as UID/GID `10001` with `wa` as its entrypoint.
+
+`.git` is not in the build context, so the version `wa version` prints comes
+from the `VERSION` build argument: the workflow passes the tag, such as
+`v1.0.0`. A local build without it prints `devel`; to stamp it, run
+`docker build --build-arg VERSION="$(git describe --tags --always --long --dirty)" .`.
 
 The working directory is `/app`, which holds the committed `.env.production`,
 so `wa --env production` loads it from there. Mount deployment secrets as the

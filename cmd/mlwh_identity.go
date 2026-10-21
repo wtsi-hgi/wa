@@ -30,16 +30,12 @@ import (
 	"encoding/hex"
 	"os"
 	"os/user"
-	"runtime/debug"
 	"sync"
 
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-const (
-	waDevelBuildVersion = "devel"
-	mlwhCLIRunIDBytes   = 16
-)
+const mlwhCLIRunIDBytes = 16
 
 // mlwhCLIRunID is this process's CLI run ID: 16 random bytes as lowercase
 // hex, made on first use.
@@ -72,17 +68,6 @@ func mlwhServerRemoteConfig(baseURL, product string) mlwh.RemoteConfig {
 		BaseURL:   baseURL,
 		UserAgent: product + "/" + waBuildVersion(),
 	}
-}
-
-// waBuildVersion returns debug.ReadBuildInfo().Main.Version, or "devel"
-// when build info is missing, empty, or "(devel)".
-func waBuildVersion() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
-		return waDevelBuildVersion
-	}
-
-	return info.Main.Version
 }
 
 // mlwhCLIUsername returns os/user.Current().Username, else $USER, else "".

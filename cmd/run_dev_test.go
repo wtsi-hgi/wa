@@ -730,6 +730,31 @@ func runDevBuiltBinaryPathForTest(t *testing.T, process *runDevProcess) string {
 	return ""
 }
 
+// runDevBinaryVersionForTest returns what `wa version` prints for binaryPath.
+func runDevBinaryVersionForTest(t *testing.T, binaryPath string) string {
+	t.Helper()
+
+	output, err := exec.Command(binaryPath, "version").Output()
+	if err != nil {
+		t.Fatalf("%s version: %v", binaryPath, err)
+	}
+
+	return strings.TrimSpace(string(output))
+}
+
+// runDevGitDescribeForTest returns the git describe version run-dev.sh stamps
+// into the wa it builds from repoRoot.
+func runDevGitDescribeForTest(t *testing.T, repoRoot string) string {
+	t.Helper()
+
+	output, err := exec.Command("git", "-C", repoRoot, "describe", "--tags", "--always", "--long", "--dirty").Output()
+	if err != nil {
+		t.Fatalf("git describe in %s: %v", repoRoot, err)
+	}
+
+	return strings.TrimSpace(string(output))
+}
+
 func runDevStableBinaryPathForTest(t *testing.T) string {
 	t.Helper()
 
@@ -2631,6 +2656,7 @@ func TestRunDevScript(t *testing.T) {
 		stableBinaryPath := runDevStableBinaryPathForTest(t)
 		convey.So(runDevPathExistsForTest(binaryPath), convey.ShouldBeTrue)
 		convey.So(runDevStableBinarySymlinkTargetForTest(t, stableBinaryPath), convey.ShouldEqual, binaryPath)
+		convey.So(runDevBinaryVersionForTest(t, binaryPath), convey.ShouldEqual, runDevGitDescribeForTest(t, repoRoot))
 		convey.So(resultsList, convey.ShouldHaveLength, expectedFixtureCount)
 		convey.So(fixtureSummary.nestedDirectoryCount, convey.ShouldBeGreaterThanOrEqualTo, 3)
 		convey.So(fixtureSummary.hasSiblingDirectories, convey.ShouldBeTrue)

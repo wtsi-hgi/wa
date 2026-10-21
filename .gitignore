@@ -8,6 +8,9 @@
 *.so
 *.dylib
 
+# wa binary built by `make build` or `go build -o wa .`
+/wa
+
 # Test binary, built with `go test -c`
 *.test
 
