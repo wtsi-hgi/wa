@@ -28,7 +28,7 @@ Download from the GitHub releases page and place `wa` on your `PATH`.
 go install github.com/wtsi-hgi/wa@latest
 ```
 
-Requires **Go 1.25+**.
+Requires **Go 1.27+**.
 
 ## Usage
 
