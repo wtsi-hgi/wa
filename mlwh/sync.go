@@ -4985,8 +4985,18 @@ func (c *Client) requireResolverSyncState(ctx context.Context, table string) err
 	return c.requireAnySyncState(ctx, table)
 }
 
+// neverSyncedReadError is the error read entry points return on a never-synced
+// cache. It satisfies both ErrCacheNeverSynced and ErrNotFound (the
+// empty-cache contract), but its message is ErrCacheNeverSynced's alone, so
+// the 503 cache_never_synced envelope does not read as a not-found.
+type neverSyncedReadError struct{}
+
+func (neverSyncedReadError) Error() string { return ErrCacheNeverSynced.Error() }
+
+func (neverSyncedReadError) Unwrap() []error { return []error{ErrCacheNeverSynced, ErrNotFound} }
+
 func neverSyncedReadErr() error {
-	return fmt.Errorf("%w: %w", ErrNotFound, ErrCacheNeverSynced)
+	return neverSyncedReadError{}
 }
 
 func (c *Client) requireAnySyncState(ctx context.Context, tables ...string) error {

@@ -2406,7 +2406,7 @@ func runResultsRegisterAndCaptureRegistrationForTest(t *testing.T, extraArgs ...
 func TestResultsRegisterInvalidSampleWithSparseMLWHCache(t *testing.T) {
 	installPassthroughResultsAuthClientForTest(t)
 
-	convey.Convey("Given an invalid fixture-like --sample and a legacy sparse MLWH sample cache, register returns a fast not-found error", t, func() {
+	convey.Convey("Given an invalid fixture-like --sample and a legacy sparse MLWH sample cache, register returns a fast never-synced error", t, func() {
 		cachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
 		cache, err := mlwh.OpenCache(context.Background(), mlwh.CacheConfig{Path: cachePath})
 		convey.So(err, convey.ShouldBeNil)
@@ -2482,7 +2482,10 @@ func TestResultsRegisterInvalidSampleWithSparseMLWHCache(t *testing.T) {
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stderr.String(), convey.ShouldContainSubstring, `--sample "gallery-beta"`)
-		convey.So(stderr.String(), convey.ShouldContainSubstring, "not found")
+		// Opening the legacy cache recreates its tables and clears sync_state,
+		// so the lookup reports a never-synced cache, not a missing sample.
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "never been synced")
+		convey.So(stderr.String(), convey.ShouldNotContainSubstring, "not found")
 		convey.So(elapsed, convey.ShouldBeLessThan, time.Second)
 		convey.So(requestCount, convey.ShouldEqual, 1)
 	})
