@@ -115,8 +115,11 @@ func newMLWHFreshnessCommand() *cobra.Command {
 			"",
 			"With --check, print nothing and exit 0 when the overall status is ok;",
 			"otherwise print one line per table needing attention to stderr and",
-			"exit 1. It also exits 1 when the server cannot be reached or is too",
-			"old to report sync status. Run it from cron to mail on problems.",
+			"exit 1, with tables sharing a status and error on one line. It also",
+			"exits 1 when the server cannot be reached or is too old to report",
+			"sync status. Run it from cron to mail on problems. A failed or",
+			"interrupted sync reports its tables failing until their next",
+			"successful sync.",
 			"",
 			"With no MLWH server configured, wa reads the local cache at",
 			"WA_MLWH_CACHE_PATH.",
@@ -164,9 +167,10 @@ func writeMLWHFreshnessJSON(stdout io.Writer, freshness mlwh.Freshness) error {
 	return encoder.Encode(freshness)
 }
 
-// checkMLWHFreshness writes one line per table that is not ok to stderr and
-// returns an error summarising them, or returns nil, writing nothing, when the
-// overall status is ok.
+// checkMLWHFreshness writes the tables that are not ok to stderr and returns
+// an error summarising them, or returns nil, writing nothing, when the overall
+// status is ok. Tables sharing a status, blockers and error, such as every
+// table after an unreachable source, share one line to keep cron mail short.
 func checkMLWHFreshness(stderr io.Writer, freshness mlwh.Freshness) error {
 	if freshness.Status == "" {
 		return errMLWHFreshnessStatusUnsupported
@@ -176,28 +180,77 @@ func checkMLWHFreshness(stderr io.Writer, freshness mlwh.Freshness) error {
 		return nil
 	}
 
+	groups := groupMLWHFreshnessProblems(freshness.Tables)
+
 	problems := 0
-	for _, table := range freshness.Tables {
-		if table.Status == mlwh.FreshnessStatusOK {
-			continue
-		}
+	for _, group := range groups {
+		problems += len(group)
 
-		problems++
-
-		_, _ = fmt.Fprintln(stderr, mlwhFreshnessProblemLine(table))
+		_, _ = fmt.Fprintln(stderr, mlwhFreshnessProblemLine(group))
 	}
 
 	return fmt.Errorf("mlwh sync status %s: %d of %d tables need attention",
 		freshness.Status, problems, len(freshness.Tables))
 }
 
-func mlwhFreshnessProblemLine(table mlwh.TableFreshness) string {
-	lastSuccess := table.LastSuccessAt
-	if lastSuccess == "" {
-		lastSuccess = "never"
+// groupMLWHFreshnessProblems returns the tables that are not ok, grouped by
+// status, blockers and error in order of each group's first table. Tables
+// without an error each form their own group, since their last success times
+// tell them apart.
+func groupMLWHFreshnessProblems(tables []mlwh.TableFreshness) [][]mlwh.TableFreshness {
+	var groups [][]mlwh.TableFreshness
+
+	index := map[string]int{}
+
+	for _, table := range tables {
+		if table.Status == mlwh.FreshnessStatusOK {
+			continue
+		}
+
+		if table.LastError == "" {
+			groups = append(groups, []mlwh.TableFreshness{table})
+
+			continue
+		}
+
+		key := strings.Join([]string{table.Status, strings.Join(table.BlockedBy, ","),
+			firstLineCapped(table.LastError, freshnessCheckErrorMaxRunes)}, "\x00")
+
+		if at, ok := index[key]; ok {
+			groups[at] = append(groups[at], table)
+
+			continue
+		}
+
+		index[key] = len(groups)
+		groups = append(groups, []mlwh.TableFreshness{table})
 	}
 
-	line := fmt.Sprintf("%s: %s, last success %s", table.Table, table.Status, lastSuccess)
+	return groups
+}
+
+// mlwhFreshnessProblemLine describes one group of problem tables: a single
+// table with its last success, or several by name with their shared error.
+func mlwhFreshnessProblemLine(group []mlwh.TableFreshness) string {
+	table := group[0]
+
+	var line string
+	if len(group) == 1 {
+		lastSuccess := table.LastSuccessAt
+		if lastSuccess == "" {
+			lastSuccess = "never"
+		}
+
+		line = fmt.Sprintf("%s: %s, last success %s", table.Table, table.Status, lastSuccess)
+	} else {
+		names := make([]string, len(group))
+		for i, member := range group {
+			names[i] = member.Table
+		}
+
+		line = fmt.Sprintf("%d tables %s (%s)", len(group), table.Status, strings.Join(names, ", "))
+	}
+
 	if len(table.BlockedBy) > 0 {
 		line += ", blocked by " + strings.Join(table.BlockedBy, ", ")
 	}

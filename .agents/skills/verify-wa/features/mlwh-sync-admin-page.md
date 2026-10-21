@@ -39,20 +39,27 @@ env -u WA_ENV WA_MLWH_DSN='verify@tcp(127.0.0.1:1)/mlwarehouse?timeout=3s' \
    the five fixture tables keep their May `last_success_at`. Nothing
    contains `dummy-secret`.
 2. `"$RUN/wa" mlwh freshness --check` with `WA_MLWH_SERVER_URL=$MLWH_URL`
-   exits 1, prints nothing on stdout, and prints one
-   `<table>: failing, last success <time|never>: <error>` line per table
-   plus `Error: mlwh sync status failing: 17 of 17 tables need attention`
-   on stderr.
+   exits 1, prints nothing on stdout, and prints on stderr one
+   `17 tables failing (<tables>): connect to MLWH source: ...` line, since
+   every table shares the error, plus
+   `Error: mlwh sync status failing: 17 of 17 tables need attention`.
+   Tables with their own error get one
+   `<table>: failing, last success <time|never>: <error>` line each.
 3. `node "$SKILL/scripts/drive-mlwh-sync.mjs" "$RUN"` (exit 0, `PASS`)
    opens the page from the menu and saves `mlwh-sync-01-page.png`,
    `mlwh-sync-02-study-error.png` (expanded) and `mlwh-sync-03-dark.png`.
+   At 390px wide it checks that rows stack with no horizontal overflow and
+   that the column and row headers keep their roles, printing a `narrow:`
+   line, and saves `mlwh-sync-04-narrow.png` and
+   `mlwh-sync-05-narrow-study.png`.
 
 ## Gotchas
 
 - Non-OK states render one `role="status"` panel: "Log in to view MLWH sync
   status.", "You do not have access to MLWH sync status.", "Status
-  unavailable: server too old." (a server older than MLWH API 1.12.0), or
-  "The MLWH server could not be reached."
+  unavailable: server too old." (a server older than MLWH API 1.12.0), "The
+  MLWH server sent a sync status this page could not read." (a response that
+  fails schema validation), or "The MLWH server could not be reached."
 - This app's global `* { border-color }` rule is unlayered, so it beats
   Tailwind border-colour utilities; the page tints with `ring-*` instead.
   Check colours in screenshots, not class names.

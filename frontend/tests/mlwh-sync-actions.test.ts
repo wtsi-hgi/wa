@@ -161,4 +161,58 @@ describe("getMLWHSyncStatusAction: fetching /freshness", () => {
             status: "unavailable",
         });
     });
+
+    it("reports invalid_response when a status-reporting server omits a table's outcome fields", async () => {
+        signedInAs("alice");
+        vi.mocked(fetch).mockResolvedValue(
+            Response.json(
+                {
+                    ...currentFreshness,
+                    tables: [{ ...oldServerFreshness.tables[0], status: "ok" }],
+                },
+                { status: 200 },
+            ),
+        );
+
+        await expect(getSyncStatus()).resolves.toEqual({
+            status: "invalid_response",
+        });
+    });
+
+    it("reports invalid_response when a table field has the wrong type", async () => {
+        signedInAs("alice");
+        vi.mocked(fetch).mockResolvedValue(
+            Response.json(
+                {
+                    ...currentFreshness,
+                    tables: [{ ...currentFreshness.tables[0], last_error: 7 }],
+                },
+                { status: 200 },
+            ),
+        );
+
+        await expect(getSyncStatus()).resolves.toEqual({
+            status: "invalid_response",
+        });
+    });
+
+    it("reports invalid_response when /freshness is not a freshness document", async () => {
+        signedInAs("alice");
+        vi.mocked(fetch).mockResolvedValue(
+            Response.json({ tables: "none" }, { status: 200 }),
+        );
+
+        await expect(getSyncStatus()).resolves.toEqual({
+            status: "invalid_response",
+        });
+    });
+
+    it("reports unavailable when the server cannot be reached", async () => {
+        signedInAs("alice");
+        vi.mocked(fetch).mockRejectedValue(new TypeError("fetch failed"));
+
+        await expect(getSyncStatus()).resolves.toEqual({
+            status: "unavailable",
+        });
+    });
 });

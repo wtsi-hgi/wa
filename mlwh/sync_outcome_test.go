@@ -58,11 +58,78 @@ func TestSyncErrorTextIsRedactedAndCapped(t *testing.T) {
 			convey.So(text, convey.ShouldContainSubstring, "Access denied for user 'bob'@'host'")
 		})
 
+		convey.Convey("then a DSN password containing @ is redacted whole", func() {
+			text := client.syncErrorText(errors.New("dial bob:p@ss@word@tcp(db:3306)/mlwh failed"))
+
+			convey.So(text, convey.ShouldEqual, "dial bob:[redacted]@tcp(db:3306)/mlwh failed")
+		})
+
+		convey.Convey("then quoted password parameters are redacted whole", func() {
+			text := client.syncErrorText(errors.New(`bad config password="a b c" and token='x y' end`))
+
+			convey.So(text, convey.ShouldEqual, `bad config password=[redacted] and token=[redacted] end`)
+		})
+
+		convey.Convey("then JSON secret fields are redacted", func() {
+			text := client.syncErrorText(errors.New(`decode {"user":"bob","password":"p\"w d","Token": "tk1"} failed`))
+
+			convey.So(text, convey.ShouldEqual, `decode {"user":"bob","password":"[redacted]","Token": "[redacted]"} failed`)
+		})
+
+		convey.Convey("then a very short known secret does not mangle the text", func() {
+			short := &Client{syncSecrets: []string{"a", "err"}}
+			text := short.syncErrorText(errors.New("a read error occurred"))
+
+			convey.So(text, convey.ShouldEqual, "a read error occurred")
+		})
+
 		convey.Convey("then a long error is capped", func() {
 			text := client.syncErrorText(errors.New(strings.Repeat("é", 5000)))
 
 			convey.So(len(text), convey.ShouldBeLessThanOrEqualTo, syncErrorMaxBytes)
 			convey.So(strings.HasSuffix(text, syncErrorTruncatedSuffix), convey.ShouldBeTrue)
+		})
+	})
+}
+
+// TestRealMySQLOpenCacheDoesNotWaitForAnInProgressSync is the MySQL twin of
+// TestOpenCacheDoesNotWaitForAnInProgressSync: a sync holding row locks on
+// sync_state and sync_outcome must not block another process's open.
+func TestRealMySQLOpenCacheDoesNotWaitForAnInProgressSync(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+	lastRun := time.Date(2026, time.October, 4, 9, 0, 0, 0, time.UTC)
+
+	convey.Convey("Given a synced MySQL cache whose sync holds row locks", t, func() {
+		cfg := CacheConfig{Path: createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password), Password: password}
+
+		cache, err := OpenCache(context.Background(), cfg)
+		convey.So(err, convey.ShouldBeNil)
+		seedSyncStateRun(t, cache.DB(), syncTableStudy, lastRun, lastRun)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		cache, err = OpenCache(context.Background(), cfg)
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = cache.Close() }()
+
+		tx, err := cache.DB().BeginTx(context.Background(), nil)
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = tx.Rollback() }()
+
+		for _, stmt := range []string{
+			`UPDATE sync_state SET last_run = last_run WHERE table_name = ?`,
+			`UPDATE sync_outcome SET last_success_at = last_success_at WHERE table_name = ?`,
+		} {
+			_, err = tx.ExecContext(context.Background(), stmt, syncTableStudy)
+			convey.So(err, convey.ShouldBeNil)
+		}
+
+		convey.Convey("then another process opens it without waiting for the locks", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			client, openErr := OpenCacheOnly(ctx, cfg)
+			convey.So(openErr, convey.ShouldBeNil)
+			defer func() { _ = client.Close() }()
 		})
 	})
 }
@@ -282,6 +349,156 @@ func TestSyncRecordsDependencySkip(t *testing.T) {
 			convey.So(irods.LastError, convey.ShouldContainSubstring, syncTableIseqProductMetrics)
 			convey.So(irods.LastErrorAt, convey.ShouldEqual, "2026-10-03T10:00:00Z")
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestOpenCacheDoesNotWaitForAnInProgressSync(t *testing.T) {
+	lastRun := time.Date(2026, time.October, 4, 9, 0, 0, 0, time.UTC)
+
+	convey.Convey("Given a synced SQLite cache whose sync holds a write transaction", t, func() {
+		path := filepath.Join(t.TempDir(), "busy.sqlite")
+		cfg := CacheConfig{Path: path}
+
+		cache, err := OpenCache(context.Background(), cfg)
+		convey.So(err, convey.ShouldBeNil)
+		seedSyncStateRun(t, cache.DB(), syncTableStudy, lastRun, lastRun)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		// A second open backfills the study outcome, as a real deployment's
+		// first open after upgrading would.
+		cache, err = OpenCache(context.Background(), cfg)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		writer, err := sql.Open("sqlite", sqliteWritableDSN(path))
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = writer.Close() }()
+
+		conn, err := writer.Conn(context.Background())
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = conn.Close() }()
+
+		_, err = conn.ExecContext(context.Background(), `BEGIN IMMEDIATE`)
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _, _ = conn.ExecContext(context.Background(), `ROLLBACK`) }()
+
+		_, err = conn.ExecContext(context.Background(), `UPDATE sync_state SET last_run = last_run`)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("then a reader such as serve or freshness opens it without waiting for the lock", func() {
+			started := time.Now()
+			client, openErr := OpenCacheOnly(context.Background(), cfg)
+			elapsed := time.Since(started)
+
+			convey.So(openErr, convey.ShouldBeNil)
+			defer func() { _ = client.Close() }()
+
+			convey.So(elapsed, convey.ShouldBeLessThan, 2*time.Second)
+
+			client.now = func() time.Time { return lastRun.Add(time.Minute) }
+			convey.So(syncOutcomeFreshness(t, client)[syncTableStudy].LastSuccessAt, convey.ShouldEqual, "2026-10-04T09:00:00Z")
+		})
+	})
+}
+
+func TestSyncRecordsCancelledSyncFailure(t *testing.T) {
+	convey.Convey("Given a study sync whose context is cancelled mid-table, as a pod rollout would", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.October, 5, 9, 0, 0, 0, time.UTC)
+		clock := &fixedClock{now: base.Add(time.Hour)}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableStudy: {
+				columns: studySyncSourceColumns,
+				rows: [][]driver.Value{
+					studyRowValues(10, "SQSCP", "5001", "study-uuid-1", "study-a", "acc-study-a", base),
+					studyRowValues(11, "SQSCP", "5002", "study-uuid-2", "study-b", "acc-study-b", base),
+				},
+				afterFirstRow: cancel,
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := newSyncOutcomeTestClient(cache, source, clock)
+
+		_, err := syncSelectedTablesWithOutcomeForTest(ctx, client, syncTableStudy)
+		convey.So(err, convey.ShouldNotBeNil)
+
+		convey.Convey("then the cancelled table still records its failure", func() {
+			study := syncOutcomeFreshness(t, client)[syncTableStudy]
+			convey.So(study.Status, convey.ShouldEqual, FreshnessStatusFailing)
+			convey.So(study.LastError, convey.ShouldContainSubstring, "context canceled")
+			convey.So(study.LastErrorAt, convey.ShouldEqual, "2026-10-05T10:00:00Z")
+		})
+	})
+}
+
+func TestSyncRecordsDroppedIndexRepairFailure(t *testing.T) {
+	convey.Convey("Given a sample mirror whose dropped indexes cannot be rebuilt after a sync", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedUnrepairableDroppedIndexes(t, cache.DB(), syncTableSample)
+
+		clock := &fixedClock{now: time.Date(2026, time.October, 5, 10, 0, 0, 0, time.UTC)}
+		client := newSyncOutcomeTestClient(cache, nil, clock)
+
+		errs := client.repairDroppedMirrorIndexesAfterSync(context.Background())
+		convey.So(errs, convey.ShouldNotBeEmpty)
+
+		convey.Convey("then the sample table's stored outcome records the rebuild error", func() {
+			sample, readErr := readSyncOutcome(context.Background(), cache.DB(), syncTableSample)
+			convey.So(readErr, convey.ShouldBeNil)
+			convey.So(sample.LastError, convey.ShouldContainSubstring, "rebuild dropped indexes")
+			convey.So(sample.LastErrorAt, convey.ShouldEqual, clock.Now())
+		})
+	})
+}
+
+// seedUnrepairableDroppedIndexes leaves table's sync_state saying a cold load
+// dropped its indexes and finished, with a high_water that cannot be parsed,
+// so rebuilding its indexes fails.
+func seedUnrepairableDroppedIndexes(t *testing.T, db *sql.DB, table string) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, 'not-a-time', ?, NULL, 1)`,
+		table, formatSyncTime(time.Date(2026, time.October, 5, 9, 0, 0, 0, time.UTC)),
+	); err != nil {
+		t.Fatalf("seed unrepairable sync_state for %s: %v", table, err)
+	}
+}
+
+// TestRealMySQLSyncRecordsDependencyIndexRepairSkip covers the MySQL-only skip
+// of the iRODS table when its product dependency's indexes cannot be rebuilt.
+func TestRealMySQLSyncRecordsDependencyIndexRepairSkip(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	convey.Convey("Given a MySQL cache whose product metrics indexes cannot be rebuilt", t, func() {
+		cache, err := OpenCache(context.Background(),
+			CacheConfig{Path: createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password), Password: password})
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = cache.Close() }()
+
+		seedUnrepairableDroppedIndexes(t, cache.DB(), syncTableIseqProductMetrics)
+
+		clock := &fixedClock{now: time.Date(2026, time.October, 5, 10, 0, 0, 0, time.UTC)}
+		client := newSyncOutcomeTestClient(cache, nil, clock)
+
+		_, errs := client.syncSeqProductIRODSLocationsStage(context.Background(), nil)
+		convey.So(errs, convey.ShouldNotBeEmpty)
+
+		convey.Convey("then the iRODS table's stored outcome records it as skipped for the repair error", func() {
+			irods, readErr := readSyncOutcome(context.Background(), cache.DB(), syncTableSeqProductIRODSLocations)
+			convey.So(readErr, convey.ShouldBeNil)
+			convey.So(irods.LastError, convey.ShouldContainSubstring, "skipped: repair dependency indexes")
+			convey.So(irods.LastErrorAt, convey.ShouldEqual, clock.Now())
 		})
 	})
 }

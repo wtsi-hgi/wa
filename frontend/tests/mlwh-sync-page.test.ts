@@ -105,6 +105,37 @@ describe("MLWHSyncAdminView", () => {
         expect(alert.textContent).toContain("stale after 2 hours");
     });
 
+    it("keeps table semantics, with each cell named by its column header only", async () => {
+        await renderView(
+            syncStatus("failing", [
+                table("sample", "ok"),
+                table("study", "failing", {
+                    last_error: "connect to MLWH source: refused",
+                    last_error_at: "2026-10-21T09:31:00Z",
+                }),
+            ]),
+        );
+
+        expect(screen.getByRole("table")).toBeTruthy();
+        expect(
+            screen
+                .getAllByRole("columnheader")
+                .map((header) => header.textContent),
+        ).toEqual(["Table", "Status", "Last success", "Last error"]);
+
+        const cells = within(rowFor("study")).getAllByRole("cell");
+
+        expect(cells).toHaveLength(3);
+        // The stacked layout's visible field labels are hidden from the
+        // accessibility tree, so the header is not announced twice.
+        expect(
+            within(cells[1]).queryByText("Last success", {
+                ignore: "[aria-hidden=true]",
+            }),
+        ).toBeNull();
+        expect(within(cells[1]).getByText("Last success")).toBeTruthy();
+    });
+
     it("lists each table's status, last success and an expandable last error", async () => {
         await renderView(
             syncStatus("failing", [
@@ -191,6 +222,10 @@ describe("MLWH sync admin page", () => {
     it.each([
         ["unsupported", "Status unavailable: server too old"],
         ["unavailable", "The MLWH server could not be reached."],
+        [
+            "invalid_response",
+            "The MLWH server sent a sync status this page could not read.",
+        ],
         ["unauthenticated", "Log in to view MLWH sync status."],
         ["forbidden", "You do not have access to MLWH sync status."],
     ])("explains the %s state", async (status, message) => {

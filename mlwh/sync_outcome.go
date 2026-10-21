@@ -62,6 +62,11 @@ const (
 	syncOutcomeWriteTimeout = 30 * time.Second
 
 	syncErrorRedacted = "[redacted]"
+
+	// syncSecretMinRedactLength is the shortest known secret replaced where it
+	// appears verbatim; a shorter one would mangle ordinary words, while the
+	// patterns still redact it in DSNs and parameters.
+	syncSecretMinRedactLength = 4
 )
 
 var (
@@ -69,18 +74,30 @@ var (
 	syncOutcomeFailureColumns = []string{"table_name", "last_error", "last_error_at", "blocked_by"}
 
 	// syncErrorUserinfoPattern matches the password in user:password@ as it
-	// appears in MySQL DSNs and URLs.
-	syncErrorUserinfoPattern = regexp.MustCompile(`([^\s:/@'"()]+):[^\s@/'"]+@`)
+	// appears in MySQL DSNs and URLs. The password runs to the last @ before
+	// the next space, slash or quote, so a password containing @ is redacted
+	// whole.
+	syncErrorUserinfoPattern = regexp.MustCompile(`([^\s:/@'"()]+):[^\s/'"]+@`)
 
-	// syncErrorSecretParamPattern matches secret-looking key=value parameters.
-	syncErrorSecretParamPattern = regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|token)=[^\s&;,]+`)
+	// syncErrorSecretParamPattern matches secret-looking key=value parameters,
+	// with the value bare or quoted.
+	syncErrorSecretParamPattern = regexp.MustCompile(
+		`(?i)\b(password|passwd|pwd|secret|token)=(?:"[^"]*"|'[^']*'|[^\s&;,]+)`)
+
+	// syncErrorSecretJSONPattern matches secret-looking JSON string fields.
+	syncErrorSecretJSONPattern = regexp.MustCompile(
+		`(?i)("(?:password|passwd|pwd|secret|token)"\s*:\s*)"(?:[^"\\]|\\.)*"`)
 )
 
 // ensureSyncOutcomeSchema creates sync_outcome on a cache that predates it,
 // then backfills last_success_at from last_run for tables whose sync_state has
-// no resume cursor (their last sync ran to the end). Both statements are
-// idempotent and safe when several processes open the cache at once: CREATE
-// TABLE IF NOT EXISTS is atomic, and the backfill ignores rows that exist.
+// no resume cursor (their last sync ran to the end) and no sync_outcome row.
+// The backfill runs only when a read-only check finds such tables, so opening
+// a cache that already has its rows never waits for a sync's write
+// transaction (CREATE TABLE IF NOT EXISTS on an existing table does not wait
+// either). Both writes are idempotent and safe when several processes open
+// the cache at once: CREATE TABLE IF NOT EXISTS is atomic, and the backfill
+// ignores rows that exist.
 func ensureSyncOutcomeSchema(ctx context.Context, db *sql.DB, dialect string) error {
 	body, err := cacheSchemaFS.ReadFile(fmt.Sprintf("cache_schema/%s/%s.sql", dialect, syncOutcomeTable))
 	if err != nil {
@@ -89,6 +106,16 @@ func ensureSyncOutcomeSchema(ctx context.Context, db *sql.DB, dialect string) er
 
 	if _, err = db.ExecContext(ctx, string(body)); err != nil {
 		return fmt.Errorf("mlwh: create %s: %w", syncOutcomeTable, err)
+	}
+
+	var missing int
+	if err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_state s WHERE s.resume_cursor IS NULL
+		AND NOT EXISTS (SELECT 1 FROM sync_outcome o WHERE o.table_name = s.table_name)`).Scan(&missing); err != nil {
+		return fmt.Errorf("mlwh: check %s backfill: %w", syncOutcomeTable, err)
+	}
+
+	if missing == 0 {
+		return nil
 	}
 
 	insert := "INSERT OR IGNORE"
@@ -239,13 +266,14 @@ func (c *Client) syncErrorText(err error) string {
 	text := err.Error()
 
 	for _, secret := range c.syncSecrets {
-		if secret != "" {
+		if len(secret) >= syncSecretMinRedactLength {
 			text = strings.ReplaceAll(text, secret, syncErrorRedacted)
 		}
 	}
 
 	text = syncErrorUserinfoPattern.ReplaceAllString(text, "$1:"+syncErrorRedacted+"@")
 	text = syncErrorSecretParamPattern.ReplaceAllString(text, "$1="+syncErrorRedacted)
+	text = syncErrorSecretJSONPattern.ReplaceAllString(text, `$1"`+syncErrorRedacted+`"`)
 
 	if len(text) <= syncErrorMaxBytes {
 		return text

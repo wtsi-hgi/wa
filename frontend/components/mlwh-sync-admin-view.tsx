@@ -174,6 +174,19 @@ function StatusBadge({ status }: { status: string }) {
     );
 }
 
+// MobileLabel names a cell's column when rows stack below sm. Screen readers
+// already announce the column header, so it is hidden from them.
+function MobileLabel({ children }: { children: string }) {
+    return (
+        <span
+            aria-hidden="true"
+            className="mb-0.5 block text-xs font-medium tracking-wide text-muted-foreground uppercase sm:hidden"
+        >
+            {children}
+        </span>
+    );
+}
+
 function firstLine(text: string): string {
     return text.split("\n", 1)[0];
 }
@@ -192,7 +205,7 @@ function LastError({ table }: { table: SyncTable }) {
                 >
                     ▸
                 </span>
-                <span className="min-w-0 truncate">
+                <span className="min-w-0 break-words sm:truncate">
                     {firstLine(table.last_error)}
                 </span>
             </summary>
@@ -232,29 +245,53 @@ export function MLWHSyncAdminView({ freshness }: MLWHSyncAdminViewProps) {
 
             <OverallBanner freshness={freshness} />
 
-            <div className="overflow-x-auto rounded-xl border border-border/70 bg-card">
-                <Table>
-                    <TableHeader>
-                        <TableRow>
-                            <TableHead scope="col">Table</TableHead>
-                            <TableHead scope="col">Status</TableHead>
-                            <TableHead scope="col">Last success</TableHead>
-                            <TableHead scope="col">Last error</TableHead>
+            <div className="rounded-xl border border-border/70 bg-card">
+                {/* Below sm each row stacks into a card with visible field
+                    labels, so nothing scrolls sideways at phone width. The
+                    explicit roles keep table semantics, which some browsers
+                    drop from table elements no longer displayed as tables. */}
+                <Table className="max-sm:block" role="table">
+                    <TableHeader className="max-sm:sr-only" role="rowgroup">
+                        <TableRow role="row">
+                            <TableHead role="columnheader" scope="col">
+                                Table
+                            </TableHead>
+                            <TableHead role="columnheader" scope="col">
+                                Status
+                            </TableHead>
+                            <TableHead role="columnheader" scope="col">
+                                Last success
+                            </TableHead>
+                            <TableHead role="columnheader" scope="col">
+                                Last error
+                            </TableHead>
                         </TableRow>
                     </TableHeader>
-                    <TableBody>
+                    <TableBody className="max-sm:block" role="rowgroup">
                         {tables.map((table) => (
-                            <TableRow key={table.table}>
+                            <TableRow
+                                className="max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:items-center max-sm:gap-x-3 max-sm:gap-y-2 max-sm:px-4 max-sm:py-3"
+                                key={table.table}
+                                role="row"
+                            >
                                 <th
-                                    className="px-4 py-3 text-left align-top font-mono text-xs font-medium whitespace-nowrap text-foreground"
+                                    className="px-4 py-3 text-left align-top font-mono text-xs font-medium whitespace-nowrap text-foreground max-sm:truncate max-sm:p-0"
+                                    role="rowheader"
                                     scope="row"
                                 >
                                     {table.table}
                                 </th>
-                                <TableCell className="align-top">
+                                <TableCell
+                                    className="align-top max-sm:p-0"
+                                    role="cell"
+                                >
                                     <StatusBadge status={table.status} />
                                 </TableCell>
-                                <TableCell className="align-top text-sm whitespace-nowrap">
+                                <TableCell
+                                    className="align-top text-sm whitespace-nowrap max-sm:col-span-2 max-sm:p-0"
+                                    role="cell"
+                                >
+                                    <MobileLabel>Last success</MobileLabel>
                                     {table.last_success_at === "" ? (
                                         <span className="text-muted-foreground">
                                             Never
@@ -266,7 +303,11 @@ export function MLWHSyncAdminView({ freshness }: MLWHSyncAdminViewProps) {
                                         />
                                     )}
                                 </TableCell>
-                                <TableCell className="align-top text-sm whitespace-normal">
+                                <TableCell
+                                    className="align-top text-sm whitespace-normal max-sm:col-span-2 max-sm:p-0"
+                                    role="cell"
+                                >
+                                    <MobileLabel>Last error</MobileLabel>
                                     {table.blocked_by.length > 0 ? (
                                         <p className="mb-1 text-xs font-medium text-destructive">
                                             Blocked by{" "}

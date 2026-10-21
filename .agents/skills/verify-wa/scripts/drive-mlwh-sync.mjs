@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 // Drive the MLWH sync admin page: log in as the server owner (always an MLWH
 // admin), open "MLWH sync" from the account menu, expand the study table's
-// last error, and save light and dark screenshots to <run-dir>/evidence.
-// Prints the menu items, banner text and row count, then PASS or FAIL.
+// last error, and save light and dark screenshots to <run-dir>/evidence. Then
+// at a 390px phone width, check that no row needs horizontal scrolling and
+// that the table keeps its header and row header roles.
+// Prints the menu items, banner text, row count and narrow-width geometry,
+// then PASS or FAIL.
 //
 // Usage: drive-mlwh-sync.mjs <run-dir>   (run-dir from launch.sh)
 
@@ -91,7 +94,48 @@ try {
         path: path.join(evidence, "mlwh-sync-03-dark.png"),
         fullPage: true,
     });
-    ok = rows > 0 && expanded;
+
+    await page.evaluate(() =>
+        document.documentElement.classList.remove("dark"),
+    );
+    await page.setViewportSize({ width: 390, height: 844 });
+    const narrow = await page.evaluate(() => {
+        const width = window.innerWidth;
+        const table = document.querySelector("table");
+        const wrapper = table?.parentElement;
+        const cells = [...document.querySelectorAll("tbody td")];
+
+        return {
+            width,
+            pageOverflow: document.documentElement.scrollWidth - width,
+            tableOverflow: wrapper
+                ? wrapper.scrollWidth - wrapper.clientWidth
+                : -1,
+            cellsPastEdge: cells.filter(
+                (cell) => cell.getBoundingClientRect().right > width + 0.5,
+            ).length,
+        };
+    });
+    const narrowHeaders = await page.getByRole("columnheader").allInnerTexts();
+    const narrowRowHeaders = await page.getByRole("rowheader").count();
+    console.log(
+        `narrow: ${JSON.stringify(narrow)} columnheaders=${narrowHeaders.length} rowheaders=${narrowRowHeaders}`,
+    );
+    await page.screenshot({
+        path: path.join(evidence, "mlwh-sync-04-narrow.png"),
+        fullPage: true,
+    });
+    await study.screenshot({
+        path: path.join(evidence, "mlwh-sync-05-narrow-study.png"),
+    });
+    const narrowOK =
+        narrow.pageOverflow <= 0 &&
+        narrow.tableOverflow === 0 &&
+        narrow.cellsPastEdge === 0 &&
+        narrowHeaders.length === 4 &&
+        narrowRowHeaders === rows;
+
+    ok = rows > 0 && expanded && narrowOK;
 } catch (error) {
     await page
         .screenshot({

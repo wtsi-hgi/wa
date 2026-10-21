@@ -14,6 +14,10 @@ const statusMessages: Record<
         title: "Status unavailable: server too old.",
         detail: "wa mlwh serve reports sync status from MLWH API 1.12.0.",
     },
+    invalid_response: {
+        title: "The MLWH server sent a sync status this page could not read.",
+        detail: "The server and website may be different wa versions; run wa mlwh freshness on the server to see the status.",
+    },
     unavailable: { title: "The MLWH server could not be reached." },
 };
 

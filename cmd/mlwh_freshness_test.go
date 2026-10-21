@@ -184,6 +184,34 @@ func TestMLWHFreshnessCheckRemoteServer(t *testing.T) {
 			"seq_product_irods_locations: failing, last success never, blocked by iseq_product_metrics: skipped: dependency sync failed: iseq_product_metrics")
 	})
 
+	convey.Convey("Given a remote server where several tables share one connect error", t, func() {
+		setFreshnessTestEnv(t, "")
+
+		connectErr := "connect to MLWH source: mlwh: ping source db: dial tcp 127.0.0.1:1: connect: connection refused"
+		t.Setenv("WA_MLWH_SERVER_URL", freshnessTestServer(t,
+			`{"status":"failing","stale_after_seconds":7200,"tables":[`+
+				`{"table":"sample","status":"failing","last_success_at":"2026-10-21T10:00:00Z","last_error":"`+connectErr+`","blocked_by":[]},`+
+				`{"table":"study","status":"failing","last_success_at":"2026-10-21T10:00:00Z","last_error":"`+connectErr+`","blocked_by":[]},`+
+				`{"table":"iseq_flowcell","status":"ok","last_success_at":"2026-10-21T10:00:00Z","blocked_by":[]},`+
+				`{"table":"iseq_run_status","status":"failing","last_success_at":"","last_error":"`+connectErr+`","blocked_by":[]},`+
+				`{"table":"useq_run_metrics","status":"failing","last_success_at":"2026-10-21T09:00:00Z","last_error":"other failure","blocked_by":[]}]}`))
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "freshness", "--check"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(ExitCode(err), convey.ShouldEqual, ExitCodeError)
+
+		convey.Convey("then they share one line, and a table with its own error keeps its line", func() {
+			lines := nonEmptyLines(output)
+			convey.So(lines, convey.ShouldHaveLength, 3)
+			convey.So(lines[0], convey.ShouldEqual,
+				"3 tables failing (sample, study, iseq_run_status): "+connectErr)
+			convey.So(lines[1], convey.ShouldEqual,
+				"useq_run_metrics: failing, last success 2026-10-21T09:00:00Z: other failure")
+			convey.So(lines[2], convey.ShouldContainSubstring, "4 of 5 tables need attention")
+		})
+	})
+
 	convey.Convey("Given a remote server too old to report sync status", t, func() {
 		setFreshnessTestEnv(t, "")
 		t.Setenv("WA_MLWH_SERVER_URL", freshnessTestServer(t,

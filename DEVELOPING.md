@@ -118,10 +118,12 @@ git pull && make prod-restart
 ```
 
 After the upstream release, check the production source from inside the pod,
-then watch `/freshness` until every table has synced since the release:
+then watch `/freshness` until every table is `ok` and has synced since the
+release ([Monitoring MLWH sync](#monitoring-mlwh-sync)):
 
 ```bash
 kubectl -n apps exec deploy/mlwh-api -- wa --env production mlwh check-source
+WA_MLWH_SERVER_URL=https://apps.hgi.sanger.ac.uk/mlwh-api wa mlwh freshness
 ```
 
 ## Repository Layout
@@ -970,6 +972,12 @@ last success. When the MLWH source is unreachable, every table records that
 error. Staleness uses the last successful sync, not `high_water`, so tables
 whose source data rarely changes stay `ok`.
 
+A single failed sync makes its tables `failing` until their next successful
+run, even when nothing is wrong with MLWH. That includes a sync that was
+interrupted, for example by a pod rollout or a restart of `wa mlwh serve`: the
+interrupted tables report `failing` with a `context canceled` error until the
+next sync succeeds.
+
 `WA_MLWH_STALE_AFTER` is a Go duration read by `wa mlwh serve`, default `2h`,
 which allows for several missed runs of the 30-minute sync loop. Set it in
 `.env.production.local` to change it.
@@ -982,15 +990,22 @@ To be mailed when sync needs attention, add this line to mercury's crontab:
 
 `wa mlwh freshness --check` prints nothing and exits 0 when the overall status
 is `ok`. Otherwise it prints one line per table needing attention, then an
-`Error:` summary line, all to stderr, and exits 1, so cron mails the lines. It
-also exits 1 with one line when the server cannot be reached or is older than
-MLWH API 1.12.0. Without `--check`, `wa mlwh freshness` prints a table of every
-table's status, and `--json` prints the `/freshness` document.
+`Error:` summary line, all to stderr, and exits 1, so cron mails the lines.
+Tables with the same status and error share one line, such as
+`17 tables failing (sample, study, ...): connect to MLWH source: ...` when the
+source is unreachable. It also exits 1 with one line when the server cannot be
+reached or is older than MLWH API 1.12.0. Without `--check`, `wa mlwh
+freshness` prints a table of every table's status, and `--json` prints the
+`/freshness` document.
 
 Caches created before these records existed gain them on the first open by
-this version, with no re-sync. Tables whose last sync ran to completion start
-with their last successful sync set to `last_run`. Older wa releases ignore
-the new `sync_outcome` table, so rolling back is safe.
+this version, with no re-sync. Each table whose `sync_state` row has no resume
+cursor, so it is not part-way through a cold load, starts with its last
+successful sync set to its `last_run`. A table part-way through a cold load
+starts with none and reports `stale` until that load completes. Opening a
+cache that already has these records writes nothing, so `wa mlwh serve` and
+`wa mlwh freshness` start without waiting for a running sync. Older wa
+releases ignore the new `sync_outcome` table, so rolling back is safe.
 
 Mount a persistent volume at `/data` for the feedback and usage SQLite files.
 The image sets `XDG_STATE_HOME=/data`, so the admin token for `/feedback` and
