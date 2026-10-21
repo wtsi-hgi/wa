@@ -413,6 +413,7 @@ if has_nonblank_value "${WA_MLWH_SERVER_URL:-}" && (( ! LOCAL_MLWH_SERVER_CONFIG
   REMOTE_MLWH_SERVER_CONFIGURED=1
 fi
 FRONTEND_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS:-120}"
+RESULTS_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_RESULTS_HEALTH_MAX_ATTEMPTS:-120}"
 SEQMETA_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS:-1200}"
 
 RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-https://127.0.0.1:$results_port/rest/v1/results/stats}"
@@ -635,6 +636,16 @@ fi
 
 if (( FRONTEND_HEALTH_MAX_ATTEMPTS < 1 )); then
   printf 'frontend health max attempts must be at least 1\n' >&2
+  exit 1
+fi
+
+if [[ ! "$RESULTS_HEALTH_MAX_ATTEMPTS" =~ ^[0-9]+$ ]]; then
+  printf 'results health max attempts must be an integer\n' >&2
+  exit 1
+fi
+
+if (( RESULTS_HEALTH_MAX_ATTEMPTS < 1 )); then
+  printf 'results health max attempts must be at least 1\n' >&2
   exit 1
 fi
 
@@ -1706,7 +1717,7 @@ else
   PIDS+=("$!")
   RESULTS_STARTED=1
 
-  wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict" 120 "$!" "$RESULTS_LOG" "$WA_RESULTS_BACKEND_CA_CERT"
+  wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict" "$RESULTS_HEALTH_MAX_ATTEMPTS" "$!" "$RESULTS_LOG" "$WA_RESULTS_BACKEND_CA_CERT"
 fi
 
 seed_fixtures=0

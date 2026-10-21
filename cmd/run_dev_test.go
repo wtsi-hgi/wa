@@ -4184,9 +4184,13 @@ func TestRunDevScriptCleansUpHungResultsAfterReadinessTimeout(t *testing.T) {
 			"WA_RESULTS_LDAP_DN":             "uid=%s,ou=people,dc=example,dc=org",
 			"WA_RUN_DEV_FRONTEND_DEV_CMD":    `node -e "process.exit(1)"`,
 			"WA_RUN_DEV_FRONTEND_HEALTH_URL": fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			// Each readiness poll forks curl and ps; the default 120 polls
+			// alone can exceed the limit below on a loaded host.
+			"WA_RUN_DEV_RESULTS_HEALTH_MAX_ATTEMPTS": "3",
 		}, []string{"WA_ENV"}, 5*time.Second)
 
 		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldNotContainSubstring, "did not exit within")
 		convey.So(stdout, convey.ShouldContainSubstring, "Starting results server")
 		convey.So(stderr, convey.ShouldContainSubstring, "Timed out waiting for results server")
 		convey.So(stderr, convey.ShouldContainSubstring, "did not exit after SIGTERM; sending SIGKILL")
@@ -4215,8 +4219,8 @@ if [[ "${1:-}" == "build" && "${2:-}" == "-o" && -n "${3:-}" ]]; then
 set -euo pipefail
 
 if [[ "${1:-}" == "results" && "${2:-}" == "serve" ]]; then
-	printf '%s\n' "$$" > "${WA_FAKE_RESULTS_PID_PATH:?}"
 	trap "" TERM
+	printf '%s\n' "$$" > "${WA_FAKE_RESULTS_PID_PATH:?}"
 	exec /bin/sleep 60
 fi
 
@@ -4231,7 +4235,35 @@ printf 'unexpected fake go args: %s\n' "$*" >&2
 exit 2
 `
 	convey.So(os.WriteFile(filepath.Join(binDir, "go"), []byte(fakeGo), 0o755), convey.ShouldBeNil)
-	convey.So(os.WriteFile(filepath.Join(binDir, "curl"), []byte("#!/usr/bin/env bash\nset -euo pipefail\nexit 22\n"), 0o755), convey.ShouldBeNil)
+	// The fake server writes its pid only after ignoring SIGTERM. The first
+	// results probe is run-dev.sh's "already running?" check, made before the
+	// server starts; later probes fail only once the pid exists, so the
+	// readiness timeout, and the cleanup SIGTERM after it, cannot come before
+	// the server ignores SIGTERM.
+	fakeCurl := `#!/usr/bin/env bash
+set -euo pipefail
+
+pid_path="${WA_FAKE_RESULTS_PID_PATH:?}"
+if [[ "${*: -1}" != */rest/v1/results/stats ]]; then
+	exit 22
+fi
+
+if [[ ! -e "$pid_path.probed" ]]; then
+	: > "$pid_path.probed"
+	exit 22
+fi
+
+for _ in $(seq 1 100); do
+	if [[ -s "$pid_path" ]]; then
+		exit 22
+	fi
+	/bin/sleep 0.05
+done
+
+printf 'fake results server never wrote its pid\n' >&2
+exit 22
+`
+	convey.So(os.WriteFile(filepath.Join(binDir, "curl"), []byte(fakeCurl), 0o755), convey.ShouldBeNil)
 	convey.So(os.WriteFile(filepath.Join(binDir, "sleep"), []byte("#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"), 0o755), convey.ShouldBeNil)
 }
 
