@@ -930,17 +930,19 @@ command:
 command: ["sh", "-c"]
 args:
     - >-
-        (sleep 60; while :; do
+        (while :; do
         wa --env production mlwh sync ||
         { rc=$?; echo "$(date -Is) wa mlwh sync failed (exit $rc)" >&2; };
         sleep 1800; done) &
         exec wa --env production mlwh serve
 ```
 
-The first sync waits 60 seconds so that serve opens and migrates the cache
-before sync touches it. If both open the cache at the same moment, either can
-fail with `SQLITE_BUSY`, and their MySQL schema setup is not serialised. The
-loop then waits 30 minutes after each sync finishes before starting the next.
+The first sync starts alongside serve. Opening the cache is safe from both at
+once: creating or migrating the schema takes a cross-process lock (a MySQL
+named lock, or a SQLite write transaction), so whichever opens second waits
+and then finds the schema current, and opening a cache that is already current
+takes no lock. The loop waits 30 minutes after each sync finishes before
+starting the next.
 A failed sync adds one timestamped line with its exit code to the pod log,
 such as `2026-10-21T10:50:00+00:00 wa mlwh sync failed (exit 1)`, after the
 sync's own error. The line saves `$?` before running `date`, because bash
