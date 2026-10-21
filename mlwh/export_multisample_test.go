@@ -179,7 +179,7 @@ func newAmbiguousExportServerForTest(openAPI http.HandlerFunc) *httptest.Server 
 }
 
 func TestExportSampleParentMultiSampleSupplierName(t *testing.T) {
-	convey.Convey("Given a supplier name shared by four samples of which only some have data", t, func() {
+	convey.Convey("Given a supplier name shared by five samples of which only some have data", t, func() {
 		client, cleanup := newExportTestClient(t)
 		defer cleanup()
 		seedMultiSampleSupplierScenario(t, client.cache.DB())
@@ -295,7 +295,7 @@ func TestRealMySQLExportSampleParentMultiSample(t *testing.T) {
 	client := openThrowawayMySQLExportClientForTest(t)
 	seedMultiSampleSupplierScenario(t, client.cache.DB())
 
-	convey.Convey("Given a supplier name shared by four samples in a throwaway MySQL cache", t, func() {
+	convey.Convey("Given a supplier name shared by five samples in a throwaway MySQL cache", t, func() {
 		assertMultiSampleSupplierNameExports(client)
 		assertSampleLanesDefaultColumnsIdentifySample(client)
 
@@ -409,7 +409,7 @@ func assertMultiSampleSharedLaneExports(client *Client) {
 	}
 }
 
-// seedMultiSampleSupplierScenario models a supplier name shared by four Sanger
+// seedMultiSampleSupplierScenario models a supplier name shared by five Sanger
 // samples where only some were sequenced: 101 and 103 are registered only, 102
 // has one Illumina product with a CRAM, 104 is a four-lane top-up with CRAMs and
 // a second study, and 105 has a product but no iRODS data yet. Sample 200 has
