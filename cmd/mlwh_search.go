@@ -27,7 +27,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -151,8 +150,20 @@ func newMLWHSearchCommand() *cobra.Command {
 			"--limit/--offset to page results and --json for a single JSON object",
 			"suitable for piping into jq. Each section reports a total match count;",
 			"a very common sample term reports its count as a floor (e.g. 10000+).",
-			"The JSON object also carries cache_synced_at, the oldest sync time",
-			"across the cache's tables.",
+			"",
+			"The --json object has two parts:",
+			`  {"query": {"term", "type", "words", "organism", "library_type", "qc",`,
+			`             "deliverables_only", "with_data", "limit", "offset",`,
+			`             "cache_synced_at", "wa_version"},`,
+			`   "results": {"studies": {"count", "results": [...]},`,
+			`               "samples": {"count", "results": [...]}},`,
+			`   "timed_out": true}`,
+			"query echoes the term and the options that shaped the results (type",
+			"is study, sample or both; organism, library_type and qc appear only",
+			"when given), cache_synced_at (the oldest sync time across the cache's",
+			"tables) and wa_version (this client's version). results has a section",
+			"per requested type. timed_out appears only when the search ran out of",
+			"time, so results are incomplete.",
 			"",
 			"Add --with-data to list each returned sample's sequencing data under",
 			"it: one row per product that has an iRODS object (the sample's",
@@ -278,9 +289,14 @@ func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, 
 	}
 
 	if jsonOut {
-		report.CacheSyncedAt = mlwhCacheSyncedAt(ctx, client)
+		query := newSearchQuery(term, typeFlag, sampleOpts, page)
+		query.CacheSyncedAt = mlwhCacheSyncedAt(ctx, client)
 
-		return writeSearchReportJSON(out, report)
+		return writeMLWHJSONDocument(out, "search report", mlwhJSONDocument[searchQuery, searchReport]{
+			Query:    query,
+			Results:  report,
+			TimedOut: report.TimedOut,
+		})
 	}
 
 	writeSearchReportText(out, report)
@@ -423,17 +439,6 @@ func buildSampleSearchSection(ctx context.Context, client mlwhSearchClient, term
 	return &sampleSearchSection{Count: count.Count, Results: results}, emptyCache, nil
 }
 
-func writeSearchReportJSON(out io.Writer, report searchReport) error {
-	encoder := json.NewEncoder(out)
-	encoder.SetIndent("", "  ")
-
-	if err := encoder.Encode(report); err != nil {
-		return fmt.Errorf("encode search report: %w", err)
-	}
-
-	return nil
-}
-
 func writeSearchReportText(out io.Writer, report searchReport) {
 	_, _ = fmt.Fprintf(out, "Term: %s\n", report.Term)
 
@@ -525,23 +530,63 @@ type sampleSearchSection struct {
 	Results []searchSample `json:"results"`
 }
 
-// searchReport is the JSON-friendly shape of `wa mlwh search` results. A section
-// is nil (and omitted) when --type does not request it. TimedOut is set (and
-// serialised as "timed_out": true) when a section search hit the deadline; the
-// affected section stays nil while any already-collected section is preserved, so
-// both --json and text renderings stay valid and keep partial results.
+// searchQuery is the --json "query" object of `wa mlwh search`: the term, the
+// effective options that shaped the results, the cache sync time and the wa
+// client version. Type is "study", "sample" or "both"; the string filters are
+// omitted when not given.
+type searchQuery struct {
+	Term             string `json:"term"`
+	Type             string `json:"type"`
+	Words            bool   `json:"words"`
+	Organism         string `json:"organism,omitempty"`
+	LibraryType      string `json:"library_type,omitempty"`
+	QC               string `json:"qc,omitempty"`
+	DeliverablesOnly bool   `json:"deliverables_only"`
+	WithData         bool   `json:"with_data"`
+	Limit            int    `json:"limit"`
+	Offset           int    `json:"offset"`
+	// CacheSyncedAt is the oldest last_run across the cache's synced tables.
+	CacheSyncedAt string `json:"cache_synced_at,omitempty"`
+	WAVersion     string `json:"wa_version"`
+}
+
+func newSearchQuery(term, typeFlag string, opts mlwh.SampleSearchOptions, page searchPage) searchQuery {
+	searchType := strings.ToLower(strings.TrimSpace(typeFlag))
+	if searchType == "" {
+		searchType = "both"
+	}
+
+	return searchQuery{
+		Term:             term,
+		Type:             searchType,
+		Words:            opts.Words,
+		Organism:         strings.TrimSpace(opts.Organism),
+		LibraryType:      strings.TrimSpace(opts.LibraryType),
+		QC:               strings.TrimSpace(opts.QC),
+		DeliverablesOnly: opts.DeliverablesOnly,
+		WithData:         page.withData,
+		Limit:            page.limit,
+		Offset:           page.offset,
+		WAVersion:        waBuildVersion(),
+	}
+}
+
+// searchReport holds `wa mlwh search` results; as JSON it is the "results"
+// object of the --json document. A section is nil (and omitted) when --type
+// does not request it. TimedOut is set (and serialised beside "results" as
+// "timed_out": true) when a section search hit the deadline; the affected
+// section stays nil while any already-collected section is preserved, so both
+// --json and text renderings stay valid and keep partial results.
 // cacheUnavailable is set (text-only, never serialised) when a never-synced/empty
 // cache was observed, so the text renderer can show a neutral note without any
 // sync hint.
 // dataTimedOut (text-only) records that the timeout cut off --with-data's
 // per-sample exports rather than a section search.
 type searchReport struct {
-	Term     string               `json:"term"`
-	Studies  *studySearchSection  `json:"studies,omitempty"`
-	Samples  *sampleSearchSection `json:"samples,omitempty"`
-	TimedOut bool                 `json:"timed_out,omitempty"`
-	// CacheSyncedAt is the oldest last_run across the cache's synced tables.
-	CacheSyncedAt    string `json:"cache_synced_at,omitempty"`
+	Term             string               `json:"-"`
+	Studies          *studySearchSection  `json:"studies,omitempty"`
+	Samples          *sampleSearchSection `json:"samples,omitempty"`
+	TimedOut         bool                 `json:"-"`
 	cacheUnavailable bool
 	dataTimedOut     bool
 }

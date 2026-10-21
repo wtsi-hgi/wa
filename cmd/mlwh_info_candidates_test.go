@@ -43,10 +43,21 @@ import (
 const infoChoicePromptForTest = "Choose a sample [1-4] (Enter to cancel): "
 
 type infoCandidatesJSONForTest struct {
-	Kind          string `json:"kind"`
+	Query    infoQueryJSONForTest             `json:"query"`
+	Results  infoCandidatesResultsJSONForTest `json:"results"`
+	Warnings []string                         `json:"warnings"`
+}
+
+type infoQueryJSONForTest struct {
 	Identifier    string `json:"identifier"`
+	Type          string `json:"type"`
 	CacheSyncedAt string `json:"cache_synced_at"`
-	Candidates    []struct {
+	WAVersion     string `json:"wa_version"`
+}
+
+type infoCandidatesResultsJSONForTest struct {
+	Kind       string `json:"kind"`
+	Candidates []struct {
 		Identifier      string `json:"identifier"`
 		Name            string `json:"name"`
 		SangerSampleID  string `json:"sanger_sample_id"`
@@ -152,7 +163,7 @@ func TestMLWHInfoInteractiveSampleChoice(t *testing.T) {
 			convey.So(ExitCode(err), convey.ShouldEqual, ExitCodeAmbiguous)
 			var report infoCandidatesJSONForTest
 			convey.So(json.Unmarshal([]byte(stdout), &report), convey.ShouldBeNil)
-			convey.So(report.Candidates, convey.ShouldHaveLength, 4)
+			convey.So(report.Results.Candidates, convey.ShouldHaveLength, 4)
 		})
 
 		convey.Convey("when the identifier names one sample, then it prints that sample without prompting", func() {
@@ -247,13 +258,24 @@ func TestMLWHInfoNonInteractiveSampleList(t *testing.T) {
 
 			var report infoCandidatesJSONForTest
 			convey.So(json.Unmarshal([]byte(stdout), &report), convey.ShouldBeNil)
-			convey.So(report.Kind, convey.ShouldEqual, "ambiguous_sample")
-			convey.So(report.Identifier, convey.ShouldEqual, multiSampleSupplierForTest)
-			convey.So(report.CacheSyncedAt, convey.ShouldEqual, multiSampleSyncedAtForTest)
-			convey.So(report.Candidates, convey.ShouldHaveLength, 4)
+			convey.So(report.Results.Kind, convey.ShouldEqual, "ambiguous_sample")
+			convey.So(report.Query, convey.ShouldResemble, infoQueryJSONForTest{
+				Identifier:    multiSampleSupplierForTest,
+				Type:          "auto",
+				CacheSyncedAt: multiSampleSyncedAtForTest,
+				WAVersion:     waBuildVersion(),
+			})
+			convey.So(raw, convey.ShouldHaveLength, 2)
+			convey.So(raw, convey.ShouldContainKey, "query")
+			var results map[string]json.RawMessage
+			convey.So(json.Unmarshal(raw["results"], &results), convey.ShouldBeNil)
+			convey.So(results, convey.ShouldHaveLength, 2)
+			convey.So(results, convey.ShouldContainKey, "kind")
+			convey.So(results, convey.ShouldContainKey, "candidates")
+			convey.So(report.Results.Candidates, convey.ShouldHaveLength, 4)
 
 			var identifiers, withData []string
-			for _, candidate := range report.Candidates {
+			for _, candidate := range report.Results.Candidates {
 				identifiers = append(identifiers, candidate.Identifier)
 				if candidate.HasData {
 					withData = append(withData, candidate.Name)
@@ -261,9 +283,9 @@ func TestMLWHInfoNonInteractiveSampleList(t *testing.T) {
 			}
 			convey.So(identifiers, convey.ShouldResemble, []string{"5534STDY0000101", "5534STDY0000102", "5534STDY0000103", "5534STDY0000104"})
 			convey.So(withData, convey.ShouldResemble, []string{"5534STDY0000102", "5534STDY0000104"})
-			convey.So(report.Candidates[3].SupplierName, convey.ShouldEqual, multiSampleSupplierForTest)
-			convey.So(report.Candidates[3].AccessionNumber, convey.ShouldEqual, "EGAN0000104")
-			convey.So(report.Candidates[3].Studies, convey.ShouldHaveLength, 2)
+			convey.So(report.Results.Candidates[3].SupplierName, convey.ShouldEqual, multiSampleSupplierForTest)
+			convey.So(report.Results.Candidates[3].AccessionNumber, convey.ShouldEqual, "EGAN0000104")
+			convey.So(report.Results.Candidates[3].Studies, convey.ShouldHaveLength, 2)
 		})
 
 		convey.Convey("when the candidates' Sanger names are themselves ambiguous, then each candidate's identifier is another key that info resolves to that sample alone", func() {
@@ -272,9 +294,9 @@ func TestMLWHInfoNonInteractiveSampleList(t *testing.T) {
 			convey.So(ExitCode(err), convey.ShouldEqual, ExitCodeAmbiguous)
 			var report infoCandidatesJSONForTest
 			convey.So(json.Unmarshal([]byte(stdout), &report), convey.ShouldBeNil)
-			convey.So(report.Candidates, convey.ShouldHaveLength, 2)
+			convey.So(report.Results.Candidates, convey.ShouldHaveLength, 2)
 
-			for _, candidate := range report.Candidates {
+			for _, candidate := range report.Results.Candidates {
 				convey.So(candidate.Name, convey.ShouldEqual, infoDuplicatedNameForTest)
 				convey.So(candidate.Identifier, convey.ShouldEqual, candidate.SangerSampleID)
 
@@ -282,8 +304,8 @@ func TestMLWHInfoNonInteractiveSampleList(t *testing.T) {
 				convey.So(resolveErr, convey.ShouldBeNil)
 				var sample infoSampleJSONForTest
 				convey.So(json.Unmarshal([]byte(resolved), &sample), convey.ShouldBeNil)
-				convey.So(sample.Kind, convey.ShouldEqual, "sanger_sample_id")
-				convey.So(sample.Sample.SangerSampleID, convey.ShouldEqual, candidate.SangerSampleID)
+				convey.So(sample.Results.Kind, convey.ShouldEqual, "sanger_sample_id")
+				convey.So(sample.Results.Sample.SangerSampleID, convey.ShouldEqual, candidate.SangerSampleID)
 			}
 
 			text, _, err := executeInfoCommandForTest(t, []string{"mlwh", "info", infoDuplicatedNameSupplierForTest, "--server", serverURL}, strings.NewReader(""), false)
@@ -299,7 +321,7 @@ func TestMLWHInfoNonInteractiveSampleList(t *testing.T) {
 			var report infoCandidatesJSONForTest
 			convey.So(json.Unmarshal([]byte(stdout), &report), convey.ShouldBeNil)
 			identifiers := map[string]string{}
-			for _, candidate := range report.Candidates {
+			for _, candidate := range report.Results.Candidates {
 				identifiers[candidate.Name] = candidate.Identifier
 			}
 			convey.So(identifiers, convey.ShouldResemble, map[string]string{"7000": "5534STDY0000701", "5534STDY0000702": "5534STDY0000702"})
@@ -312,7 +334,7 @@ func TestMLWHInfoNonInteractiveSampleList(t *testing.T) {
 			var report infoCandidatesJSONForTest
 			convey.So(json.Unmarshal([]byte(stdout), &report), convey.ShouldBeNil)
 			names := []string{}
-			for _, candidate := range report.Candidates {
+			for _, candidate := range report.Results.Candidates {
 				names = append(names, candidate.Identifier)
 			}
 			convey.So(names, convey.ShouldResemble, []string{"5534STDY0000300", "5534STDY0000301", "5534STDY0000302"})
@@ -324,8 +346,8 @@ func TestMLWHInfoNonInteractiveSampleList(t *testing.T) {
 			convey.So(err, convey.ShouldBeNil)
 			var sample infoSampleJSONForTest
 			convey.So(json.Unmarshal([]byte(stdout), &sample), convey.ShouldBeNil)
-			convey.So(sample.Kind, convey.ShouldEqual, "sanger_sample_name")
-			convey.So(sample.Sample.Name, convey.ShouldEqual, "5534STDY0000102")
+			convey.So(sample.Results.Kind, convey.ShouldEqual, "sanger_sample_name")
+			convey.So(sample.Results.Sample.Name, convey.ShouldEqual, "5534STDY0000102")
 		})
 
 		convey.Convey("when the identifier matches nothing, then it fails with the general error exit code", func() {
@@ -367,14 +389,10 @@ func TestMLWHInfoCandidateLookupTimeout(t *testing.T) {
 			}
 
 			convey.So(ExitCode(runErr), convey.ShouldEqual, ExitCodeAmbiguous)
-			var report struct {
-				infoCandidatesJSONForTest
-
-				Warnings []string `json:"warnings"`
-			}
+			var report infoCandidatesJSONForTest
 			convey.So(json.Unmarshal(out.Bytes(), &report), convey.ShouldBeNil)
-			convey.So(report.Candidates, convey.ShouldHaveLength, 2)
-			convey.So(report.Candidates[0].Identifier, convey.ShouldBeEmpty)
+			convey.So(report.Results.Candidates, convey.ShouldHaveLength, 2)
+			convey.So(report.Results.Candidates[0].Identifier, convey.ShouldBeEmpty)
 			convey.So(report.Warnings, convey.ShouldResemble, []string{infoCandidatesTimedOutWarning})
 		})
 	})
@@ -396,11 +414,13 @@ func (s *blockingStdinForTest) Read([]byte) (int, error) {
 }
 
 type infoSampleJSONForTest struct {
-	Kind   string `json:"kind"`
-	Sample struct {
-		Name           string `json:"name"`
-		SangerSampleID string `json:"sanger_sample_id"`
-	} `json:"sample"`
+	Results struct {
+		Kind   string `json:"kind"`
+		Sample struct {
+			Name           string `json:"name"`
+			SangerSampleID string `json:"sanger_sample_id"`
+		} `json:"sample"`
+	} `json:"results"`
 }
 
 // slowSangerIDLookupClientForTest is a remote client whose Sanger sample id

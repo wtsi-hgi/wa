@@ -163,14 +163,15 @@ func infoCandidateName(candidate infoSampleCandidate) string {
 	return fmt.Sprintf("%s (not unique; use %s)", candidate.Name, candidate.Identifier)
 }
 
-// infoCandidatesReport is the --json shape of `wa mlwh info` when identifier
-// names several samples.
+// infoCandidatesReport lists the samples identifier names; as JSON it is the
+// "results" object of `wa mlwh info --json`, while Identifier and
+// CacheSyncedAt go in "query" and Warnings beside it.
 type infoCandidatesReport struct {
 	Kind          string                `json:"kind"`
-	Identifier    string                `json:"identifier"`
+	Identifier    string                `json:"-"`
 	Candidates    []infoSampleCandidate `json:"candidates"`
-	CacheSyncedAt string                `json:"cache_synced_at,omitempty"`
-	Warnings      []string              `json:"warnings,omitempty"`
+	CacheSyncedAt string                `json:"-"`
+	Warnings      []string              `json:"-"`
 }
 
 // buildInfoCandidatesReport lists the samples whose identifiers equal
@@ -217,8 +218,13 @@ func buildInfoCandidatesReport(ctx context.Context, client mlwhInfoClient, ident
 
 // writeInfoCandidatesJSON prints the candidates report and returns the error
 // that exits with ExitCodeAmbiguous.
-func writeInfoCandidatesJSON(out io.Writer, report infoCandidatesReport) error {
-	if err := writeInfoReportJSON(out, report); err != nil {
+func writeInfoCandidatesJSON(out io.Writer, report infoCandidatesReport, typeFlag string) error {
+	err := writeMLWHJSONDocument(out, "info report", mlwhJSONDocument[infoQuery, infoCandidatesReport]{
+		Query:    newInfoQuery(report.Identifier, typeFlag, report.CacheSyncedAt),
+		Results:  report,
+		Warnings: report.Warnings,
+	})
+	if err != nil {
 		return err
 	}
 
