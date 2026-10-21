@@ -3,7 +3,13 @@ import {
     type UsageSummaryState,
 } from "@/app/(results)/usage/actions";
 import { UsageAdminView } from "@/components/usage-admin-view";
-import { usageWindowSchema, type UsageWindow } from "@/lib/contracts";
+import {
+    usageFilterInputSchema,
+    usageWindowSchema,
+    type UsageFilter,
+    type UsageWindow,
+} from "@/lib/contracts";
+import { filterKeys } from "@/lib/usage-derive";
 import { usageReasonMessages } from "@/lib/usage-messages";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -26,6 +32,26 @@ function parseWindow(searchParams: SearchParams): UsageWindow {
     return parsed.success ? parsed.data : "7d";
 }
 
+// parseFilter reads the filter query params, ignoring repeated or empty
+// ones. A filter the schema rejects (an unknown category, an over-long value,
+// or method without route) is dropped whole, so a bad link shows unfiltered
+// usage, as a bad window shows 7d.
+function parseFilter(searchParams: SearchParams): UsageFilter {
+    const raw: Record<string, string> = {};
+
+    for (const key of filterKeys) {
+        const value = searchParams[key];
+
+        if (typeof value === "string" && value !== "") {
+            raw[key] = value;
+        }
+    }
+
+    const parsed = usageFilterInputSchema.safeParse(raw);
+
+    return parsed.success ? parsed.data : {};
+}
+
 export const dynamic = "force-dynamic";
 
 export default async function UsageAdminPage({
@@ -33,11 +59,19 @@ export default async function UsageAdminPage({
 }: {
     searchParams?: Promise<SearchParams>;
 }) {
-    const window = parseWindow((await searchParams) ?? {});
-    const state = await getUsageSummaryAction(window);
+    const params = (await searchParams) ?? {};
+    const window = parseWindow(params);
+    const filter = parseFilter(params);
+    const state = await getUsageSummaryAction(window, filter);
 
     if (state.status === "ok") {
-        return <UsageAdminView summary={state.summary} window={window} />;
+        return (
+            <UsageAdminView
+                filter={filter}
+                summary={state.summary}
+                window={window}
+            />
+        );
     }
 
     return (

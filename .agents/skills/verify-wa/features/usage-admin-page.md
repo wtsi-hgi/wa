@@ -2,15 +2,20 @@
 
 ## What It Is
 
-The server admin reads MLWH API usage at frontend `/usage` ("MLWH usage").
-It shows totals (Requests, Faults, Sessions, Clients by IP, Users
-(self-declared); a server without error severities shows Errors instead of
-Faults) and a line splitting the errors by severity, then sections `By category`, `Trend (24-hour periods)`
-(or `7-day`, `30-day`; hidden for All time), `Endpoints`, `Errors`,
-`MCP tools`, `MCP agents`, `Other API user agents`, `Unmatched paths`,
-`Top users (self-declared)`, `Top clients`, and `Requests per day (UTC)`.
+The server admin reads MLWH API usage at frontend `/usage` ("MLWH usage"), a
+dashboard: a filter bar, a KPI strip (`Requests`, `People`, `Sessions`,
+`MCP requests`, `Faults`; `Errors` instead of `Faults` from a server
+without severities), `Needs attention` (fault, then caller, rows merged
+across routes by status and code, each a closed `details` with id
+`err-<severity>-<status>-<code>`), `Activity` (an SVG chart stacked by
+category with legend buttons and a "View as table" disclosure), `What
+changed`, ranked bars for `People`, `Via what`, `Endpoints`, and `MCP
+tools`, then closed panels `Expected outcomes`, `Older errors without
+details` (only when there are some), and `Sessions and clients`.
 Next.js reads the MLWH admin token from disk on the server side and calls
-`${WA_MLWH_BACKEND_URL}/usage?window=<w>`. The browser never sees the token.
+`${WA_MLWH_BACKEND_URL}/usage?window=<w>` plus any filter parameters
+(`category`, `user`, `tool`, `agent`, `method`+`route`). The browser never
+sees the token. The spec is `.docs/usage/spec.md` A4 (API) and E4 (page).
 
 ## How To Reach It
 
@@ -18,8 +23,10 @@ Next.js reads the MLWH admin token from disk on the server side and calls
   button, then the `Usage` menu item. Admins see menu items `Feedback`,
   `Usage`, `MLWH sync`, `Log out`; the admin rule is the same as
   `/feedback`.
-- Direct URL: `$FRONTEND_URL/usage`, with query `window=24h|7d|30d|all`.
-  No or unknown `window` shows 7d.
+- Direct URL: `$FRONTEND_URL/usage`, with query `window=24h|7d|30d|all`
+  (no or unknown `window` shows 7d) and filters such as
+  `category=mcp`, `user=<name>`, `agent=claude-code`, or
+  `method=GET&route=%2Fstudies`. An invalid filter is dropped whole.
 - API, with `STATE_HOME` and `MLWH_URL` from `stack.env`:
 
     ```bash
@@ -29,11 +36,23 @@ Next.js reads the MLWH admin token from disk on the server side and calls
 
 ## How To Drive It
 
-No helper script for the page itself. Use Playwright as described in the
-skill. `node "$SKILL/scripts/drive-menu-after-login.mjs" "$RUN"` (exit 0,
-`PASS`) checks that the `Feedback` and `Usage` items are in the menu opened
-the moment login finishes; see
-[Feedback admin page](feedback-admin-page.md).
+`node "$SKILL/scripts/drive-usage.mjs" "$RUN"` drives the page after the
+traffic below: login through the account menu, `Last 24 hours`, KPIs,
+Needs attention order, the CLI legend toggle and expected markers, no
+sideways scroll at 1280 and 390 px, the `claude-code` agent filter (fewer
+requests, a chip, the window link keeps it, the chip's remove link clears
+it), a `#err-caller-400-bad_request-GET-studies` deep link opening its
+`details`, screenshots in light and dark (`usagedash-<scheme>-page.png`,
+`-attention.png`, `-activity.png`, `-expanded.png`,
+`usagedash-light-filtered.png`), and axe on `main` with every disclosure
+closed and then open. axe is the repo's transitive `axe-core` (from
+`eslint-config-next`), injected from
+`frontend/node_modules/.pnpm/axe-core@<version>/`; update the path in the
+script if the lockfile moves it. It writes `usagedash-drive.json` and
+exits 1 when a check fails or axe finds a serious or critical violation.
+`node "$SKILL/scripts/drive-menu-after-login.mjs" "$RUN"` (exit 0, `PASS`)
+checks that the `Feedback` and `Usage` items are in the menu opened the
+moment login finishes; see [Feedback admin page](feedback-admin-page.md).
 
 1. Record a baseline: `GET /usage?window=24h` with the token, saved as
    `$RUN/evidence/usage-00-baseline.json`. Test mode turns usage on with a
@@ -41,70 +60,57 @@ the moment login finishes; see
    as `other`.
 2. Make CLI traffic:
    `"$RUN/wa" mlwh info 6568 --type study --server "$MLWH_URL"` sends 9
-   requests with one `X-WA-Client-ID` and your username. `wa mlwh studies`
-   needs `--programme`, `--user`, or `--faculty-sponsor`.
-3. Make web traffic: log in, then open the `nf-core/rnaseq` result detail
-   (see [Results web UI](results-web.md)). It calls `/enrich/6568` (200)
-   and `/enrich/study-alpha` (404). The dashboard makes no MLWH calls, and
-   anonymous visitors make none with this fixture.
-4. Open the account menu and wait for menuitem `Usage`, then click it.
-   Expect heading `MLWH usage`, a `Generated` timestamp, and the `Window`
-   nav with `Last 7 days` marked `aria-current="page"`. Expect
-   `By category` rows for `CLI`, `Web`, and `Other API` matching steps 1-3.
-   Evidence: `usage-01-page.png` (full page).
-5. Click each of `Last 24 hours`, `Last 30 days`, and `All time`. Expect
-   the URL `window` to change, the clicked link to take `aria-current`, and
-   the Trend section to disappear for All time. Evidence: one screenshot
-   per window.
-6. Errors: with `MLWH_URL` from `stack.env`, make errors of each severity.
-   Expected outcomes and probes:
+   requests with one `X-WA-Client-ID` and your username. For more people,
+   send:
+
+    ```bash
+    curl -A wa-cli/v1.0.0 -H "X-WA-Client-User: carol" \
+      -H "X-WA-Client-ID: run-carol" "$MLWH_URL/studies?limit=3"
+    ```
+
+3. Make errors of each severity. Expected outcomes and probes:
    `"$RUN/wa" mlwh info NOPE-XYZ --server "$MLWH_URL"` (exit 1, "no match")
-   sends `/resolve/study/NOPE-XYZ` and
-   `/resolve/sample-name/NOPE-XYZ` as probes (`X-WA-Lookup: probe`), then
-   the final `/classify/NOPE-XYZ`; `wa mlwh info ERS10524782` (the fixture
-   sample's accession) adds two probe misses and succeeds. Then, with
+   sends `/resolve/study/NOPE-XYZ` and `/resolve/sample-name/NOPE-XYZ` as
+   probes (`X-WA-Lookup: probe`), then the final `/classify/NOPE-XYZ`;
+   `wa mlwh info ERS10524782` adds two probe misses and succeeds. Then, with
    `curl -s -w ' %{http_code}\n'`: `"$MLWH_URL/classify/nonsense-xyz"`
    (404 `not_found`, expected), `"$MLWH_URL/studies?limit=-1&token=abc"`
    (400 `bad_request` from `other`, a caller error), the same URL with
-   `-A wa-cli/v1.0.0` (a fault: wa's own CLI sent a bad request),
-   `"$MLWH_URL/no/such/route"` (gin's plain 404, caller), and
-   `"$MLWH_URL/classify/GUESSED-ID-42"` with headers
-   `User-Agent: mlwh-mcp-server/1.3.1`,
-   `X-WA-MCP-Tool: mlwh_classify_identifier`, and
-   `X-WA-MCP-Agent: claude-code/2.1.0` (expected). The hermetic fixture has
-   one sample, so no identifier is ambiguous, and its cache is synced, so
-   `cache_never_synced` and 5xx faults cannot be produced live; the Go
-   tests cover them. Open `/usage?window=24h`. Expect stat `Faults`
-   `1 (<rate>)`, the line "Of <n> errors: 1 fault, <c> caller errors, <e>
-   expected outcomes, <p> lookup probe misses.", and region `Errors`
-   holding a `What to do` group with only the fault and caller codes
-   (`bad_request`, `no_route`), then regions `Faults (1)`,
-   `Caller errors (<c>)`, and `Expected outcomes (<e+p>)`. The first two
-   are open; the third is a closed `details`. Inside each, one `group` per
-   endpoint (`h4`) holds `article`s named `<status> <code>`; fault and
-   caller entries have a `What to do about <code>` link, expected ones
-   none, and the `/resolve/...` entries say `from lookup probes`. Click
-   `Messages and examples (...)` in the expected `GET /classify/:id`
-   `404 not_found`: expect `Top messages` `mlwh: identifier not found` and
-   an example row `/classify/GUESSED-ID-42` whose Caller is
-   `MCP · mlwh_classify_identifier · claude-code/2.1.0`. The caller
-   `400 bad_request` example's Request is
-   `/studies?limit=-1&token=[redacted]`. The Endpoints row `GET /studies`
-   links its Errors cell to its first listing,
-   `#usage-errors-faults-GET-studies`, and `MCP tools` has an Errors
-   column. Evidence: `usage-03-errors.png` (the region, collapsed and
-   expanded). Rows recorded before error details only exist in a DB
-   written by a server older than v1.0.0; the Go and Vitest tests cover
-   their "Recorded before error details" lists.
-7. Side effect: `GET /usage?window=24h` with the token shows the same
-   totals as the page, in `usage-02-after.json`, and its `errors[]` groups
-   match the Errors section, with `error_code` `null` only for rows
-   recorded by a server older than the error details. Check
-   `totals.error_severity` (`fault`, `caller`, `expected`, and `probe` sum
-   to `totals.errors`), each group's `severity` and `probe`, and
-   `days[].error_severity`. In the raw rows, the CLI's probes have
-   `lookup` `probe` and every other row NULL. To read raw rows,
-   find the `--usage-db` path in the `mlwh serve` arguments
+   `-A wa-cli/v1.0.0` (a fault: wa's own CLI sent a bad request), and
+   `"$MLWH_URL/no/such/route"` and `"$MLWH_URL/version"` (gin's plain 404,
+   caller). The hermetic fixture's cache is synced, so 5xx faults cannot be
+   produced live; the Go and Vitest tests cover them.
+4. Make MCP traffic: for each tool `mlwh_classify_identifier`,
+   `mlwh_list_studies`, and `mlwh_export` and each agent
+   `claude-code/2.1.0`, `claude-code/2.1.5`, and `codex/0.9`, curl
+   `"$MLWH_URL/classify/GUESSED-ID-42"` (expected) and
+   `"$MLWH_URL/studies?limit=5"` with `User-Agent: mlwh-mcp-server/1.3.1`,
+   `X-WA-MCP-Tool`, `X-WA-MCP-Agent`, and
+   `X-WA-Client-ID: mcp-sess-<agent>`. Add one
+   `"$MLWH_URL/studies?limit=-3"` from `codex/0.9` (an MCP caller error).
+   The `verify-mlwh-mcp` skill in the llm-knowledge-base repo drives a real
+   MCP server instead.
+5. Check filters over the API (`usage-03-filters.txt`): with the token,
+   `GET /usage?window=24h&category=mcp`, `&agent=claude-code` (both
+   claude-code versions), `&agent=claude-code%2F2.1.0` (one),
+   `&method=GET&route=%2Fstudies`, and `&user=%27%20OR%20%271%27%3D%271`
+   (0 requests, 200) each echo `filter` and narrow `totals.requests`;
+   `&category=bogus` and `&method=GET` answer 400
+   `invalid usage filter: ...`.
+6. Run `drive-usage.mjs`. Expect every check `ok: true` and every `axe`
+   list empty or moderate only. Look at the screenshots: faults and caller
+   rows with their action line, the chart with fault and caller markers,
+   and the ranked bars with severity badges, in both themes.
+7. Side effect: `GET /usage?window=24h` with the token, saved as
+   `usage-02-after.json`, shows the same totals as the KPIs, a `filter` of
+   `{}`, `bucket_unit` `hour` with 25 `buckets`, `previous_totals`, and
+   `error_severity` on totals, days, buckets, categories, endpoints, MCP
+   tools, and agents, where `fault`, `caller`, `expected`, and `probe` sum
+   to the errors. Its `errors[]` groups match Needs attention and Expected
+   outcomes, with `error_code` `null` only for rows recorded by a server
+   older than the error details. In the raw rows, the CLI's probes have
+   `lookup` `probe` and every other row NULL. To read raw rows, find the
+   `--usage-db` path in the `mlwh serve` arguments
    (`.tmp/mlwh-usage-test.*.sqlite`) and open it read-only
    (`file:<path>?mode=ro` with SQLite URI mode). Do it before Cleanup,
    which deletes the file.
@@ -114,6 +120,8 @@ API checks, each with `curl -s -w '%{http_code}'`:
 - No token or a wrong token: 401
   `{"code":"unauthorized","message":"admin token required"}`.
 - Token and `window=1h`: 400 `invalid window "1h"`.
+- Token and `category=bogus`: 400
+  `invalid usage filter: unknown category "bogus"`.
 - Server without `--usage-db`: 503 `usage_disabled`, with or without a
   token.
 
@@ -145,9 +153,10 @@ API checks, each with `curl -s -w '%{http_code}'`:
     run-dev passes no `--usage-db` to that command, so `/usage` shows "Usage
     is unavailable." and the doctor's usage check fails by design.
 
-- A fresh stack has one Trend period, so multi-bar strips and the Previous
-  column cannot be shown live. The frontend unit tests cover them.
-- At narrow widths (390px) the full page is about 4000px tall. Take region
-  screenshots per section.
+- A fresh stack has one series period and records starting inside every
+  window, so `What changed` says "Not enough history yet", KPI changes say
+  "no earlier records", and the chart is clipped to the hours with records.
+  The frontend unit tests cover multi-period changes and deltas.
+- Hour labels on the chart are UTC; timestamps elsewhere are local.
 - `next dev` compiles each route on first hit. The first `/usage` load can
   take several seconds.

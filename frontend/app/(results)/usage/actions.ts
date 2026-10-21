@@ -4,8 +4,10 @@ import { z } from "zod";
 
 import { BackendRequestError, mlwhJson } from "@/lib/backend-client";
 import {
+    usageFilterInputSchema,
     usageSummarySchema,
     usageWindowSchema,
+    type UsageFilter,
     type UsageSummary,
     type UsageWindow,
 } from "@/lib/contracts";
@@ -51,11 +53,17 @@ function usageErrorReason(error: unknown): UsageUnavailableReason {
     return "backend_error";
 }
 
+const usageSummaryInputSchema = z.object({
+    window: usageWindowSchema,
+    filter: usageFilterInputSchema,
+});
+
 export async function getUsageSummaryAction(
     window: UsageWindow,
+    filter: UsageFilter = {},
 ): Promise<UsageSummaryState> {
     const gate = await authorizeMLWHAdmin(() =>
-        usageWindowSchema.safeParse(window),
+        usageSummaryInputSchema.safeParse({ window, filter }),
     );
 
     if (!("token" in gate)) {
@@ -63,7 +71,14 @@ export async function getUsageSummaryAction(
     }
 
     try {
-        const query = new URLSearchParams({ window: gate.args });
+        const query = new URLSearchParams({ window: gate.args.window });
+
+        for (const [key, value] of Object.entries(gate.args.filter)) {
+            if (value) {
+                query.set(key, value);
+            }
+        }
+
         const summary = await mlwhJson(
             `/usage?${query.toString()}`,
             usageSummarySchema,

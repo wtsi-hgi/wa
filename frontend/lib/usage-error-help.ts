@@ -44,7 +44,7 @@ const codeHelp: Record<string, Omit<UsageErrorHelp, "label">> = {
     },
     no_route: {
         meaning: "No endpoint matches the request's method and path.",
-        action: "A client bug, or an old client calling an endpoint that no longer exists. The Unmatched paths section lists every path.",
+        action: "A client bug, or an old client calling an endpoint that no longer exists. Open this entry for the paths that were asked for.",
     },
     payload_too_large: {
         meaning: "The request body was over the size limit.",
@@ -93,5 +93,51 @@ export function usageErrorHelp(code: string | null): UsageErrorHelp {
         label: code,
         meaning: "No explanation for this code.",
         action: "See that entry's messages and examples.",
+    };
+}
+
+// legacyStatusCodes are the codes wa answers each status with, for rows
+// recorded before error codes were stored (mlwh/errors_http.go).
+const legacyStatusCodes: Record<number, string> = {
+    400: "bad_request",
+    401: "unauthorized",
+    409: "ambiguous",
+    413: "payload_too_large",
+    422: "unsupported_identifier",
+    500: "internal_error",
+    502: "upstream_impaired",
+    503: "cache_never_synced",
+};
+
+// impliedErrorCode is the code wa sends with status on route ("" when
+// unmatched), or null when the status does not imply one.
+export function impliedErrorCode(status: number, route: string): string | null {
+    if (status === 404) {
+        return route ? "not_found" : "no_route";
+    }
+
+    return legacyStatusCodes[status] ?? null;
+}
+
+// usageGroupHelp is usageErrorHelp for a group's code, except that a group
+// recorded before error codes gets the help of the code its status implies,
+// labelled as inferred.
+export function usageGroupHelp(
+    code: string | null,
+    status: number,
+    route: string,
+): UsageErrorHelp {
+    const implied = code === null ? impliedErrorCode(status, route) : null;
+
+    if (implied === null) {
+        return usageErrorHelp(code);
+    }
+
+    const help = usageErrorHelp(implied);
+
+    return {
+        label: `${implied} (inferred, recorded before error details)`,
+        meaning: `${help.meaning} These errors were recorded before error codes were stored, so the code is inferred from the status.`,
+        action: help.action,
     };
 }

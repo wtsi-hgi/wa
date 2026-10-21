@@ -93,11 +93,13 @@ const (
 		"' THEN 0 WHEN '" + string(UsageErrorSeverityCaller) + "' THEN 1 ELSE 2 END, COUNT(*) DESC"
 )
 
-// usageErrorRowsCTE defines e, the window's error rows with their severity
-// and whether they were probes; its parameter is the window start. The status
-// term matches usage_requests_errors.
-var usageErrorRowsCTE = "e AS (SELECT *, " + usageErrorSeveritySQL + " AS severity, lookup IS NOT NULL AS probe " +
-	"FROM usage_requests WHERE ts_ms > ? AND status >= 400)"
+// errorRowsCTE defines e, the window's error rows that match the filter,
+// with their severity and whether they were probes; its parameters are
+// q.whereArgs. The status term matches usage_requests_errors.
+func (q usageSummaryQuery) errorRowsCTE() string {
+	return "e AS (SELECT *, " + usageErrorSeveritySQL + " AS severity, lookup IS NOT NULL AS probe " +
+		"FROM usage_requests WHERE " + q.where + " AND status >= 400)"
+}
 
 // usageErrorBreakdownSQL is the UsageErrorBreakdown field of a row of e,
 // probe or its severity, suffixed with usageLegacySuffix for a row recorded
@@ -126,9 +128,9 @@ func (k *usageErrorGroupKey) scanDest() []any {
 func (q usageSummaryQuery) listErrorGroups(ctx context.Context) (usageErrorGroups, error) {
 	groups := usageErrorGroups{list: []UsageErrorGroup{}, index: map[usageErrorGroupKey]int{}}
 
-	rows, err := q.tx.QueryContext(ctx, "WITH "+usageErrorRowsCTE+" SELECT "+usageErrorGroupColumns+
+	rows, err := q.tx.QueryContext(ctx, "WITH "+q.errorRowsCTE()+" SELECT "+usageErrorGroupColumns+
 		", COUNT(*), MIN(ts_ms), MAX(ts_ms) FROM e GROUP BY "+usageErrorGroupColumns+" ORDER BY "+
-		usageErrorGroupRank+", "+usageErrorGroupColumns+" LIMIT ?", q.fromMS, usageErrorGroupLimit)
+		usageErrorGroupRank+", "+usageErrorGroupColumns+" LIMIT ?", q.args(usageErrorGroupLimit)...)
 	if err != nil {
 		return groups, err
 	}
@@ -168,19 +170,19 @@ func newUsageErrorGroup(key usageErrorGroupKey, count, first, latest int64) Usag
 	return group
 }
 
-// errorBreakdowns returns the UsageErrorBreakdown of the window's error rows
-// per value of the bucket expression, whose parameters follow the window
-// start in args.
-func (q usageSummaryQuery) errorBreakdowns(ctx context.Context, bucket string,
-	args ...any,
-) (map[int64]UsageErrorBreakdown, error) {
-	counts, err := q.groupCounts(ctx, "WITH "+usageErrorRowsCTE+" SELECT "+bucket+", "+usageErrorBreakdownSQL+
-		", COUNT(*) FROM e GROUP BY 1, 2", append([]any{q.fromMS}, args...)...)
+// usageErrorBreakdowns returns the UsageErrorBreakdown of q's error rows
+// matching filter per value of the key expression, whose parameters are
+// keyArgs. filter takes no parameters.
+func usageErrorBreakdowns[K comparable](ctx context.Context, q usageSummaryQuery, key, filter string,
+	keyArgs ...any,
+) (map[K]UsageErrorBreakdown, error) {
+	counts, err := usageGroupCounts[K](ctx, q.tx, "WITH "+q.errorRowsCTE()+" SELECT "+key+", "+
+		usageErrorBreakdownSQL+", COUNT(*) FROM e WHERE "+filter+" GROUP BY 1, 2", q.args(keyArgs...)...)
 	if err != nil {
 		return nil, err
 	}
 
-	breakdowns := make(map[int64]UsageErrorBreakdown, len(counts))
+	breakdowns := make(map[K]UsageErrorBreakdown, len(counts))
 
 	for key, byField := range counts {
 		legacy := func(severity UsageErrorSeverity) int64 { return byField[string(severity)+usageLegacySuffix] }
@@ -205,8 +207,8 @@ func (q usageSummaryQuery) groupBreakdown(ctx context.Context, groups usageError
 	field func(*UsageErrorGroup) map[string]int64,
 ) error {
 	rows, err := q.tx.QueryContext(ctx, fmt.Sprintf("WITH %s SELECT %s, %s, COUNT(*) FROM e "+
-		"WHERE COALESCE(%s, '') <> '' GROUP BY %s, %s", usageErrorRowsCTE, usageErrorGroupColumns, column, column,
-		usageErrorGroupColumns, column), q.fromMS)
+		"WHERE COALESCE(%s, '') <> '' GROUP BY %s, %s", q.errorRowsCTE(), usageErrorGroupColumns, column, column,
+		usageErrorGroupColumns, column), q.args()...)
 	if err != nil {
 		return err
 	}
@@ -236,14 +238,14 @@ func (q usageSummaryQuery) groupBreakdown(ctx context.Context, groups usageError
 // non-empty messages, by count descending then message.
 func (q usageSummaryQuery) errorMessages(ctx context.Context, groups usageErrorGroups) error {
 	rows, err := q.tx.QueryContext(ctx, `
-WITH `+usageErrorRowsCTE+`, m AS (
+WITH `+q.errorRowsCTE()+`, m AS (
     SELECT `+usageErrorGroupColumns+`, error_message AS v, COUNT(*) AS c FROM e
     WHERE error_message <> '' GROUP BY `+usageErrorGroupColumns+`, error_message
 ), r AS (
     SELECT *, ROW_NUMBER() OVER (PARTITION BY `+usageErrorGroupColumns+` ORDER BY c DESC, v) AS rn FROM m
 )
 SELECT `+usageErrorGroupColumns+`, v, c FROM r WHERE rn <= ? ORDER BY `+usageErrorGroupColumns+`, rn`,
-		q.fromMS, usageErrorMessageLimit)
+		q.args(usageErrorMessageLimit)...)
 	if err != nil {
 		return err
 	}
@@ -272,7 +274,7 @@ SELECT `+usageErrorGroupColumns+`, v, c FROM r WHERE rn <= ? ORDER BY `+usageErr
 // newest first.
 func (q usageSummaryQuery) errorExamples(ctx context.Context, groups usageErrorGroups) error {
 	rows, err := q.tx.QueryContext(ctx, `
-WITH `+usageErrorRowsCTE+`, r AS (
+WITH `+q.errorRowsCTE()+`, r AS (
     SELECT `+usageErrorGroupColumns+`, ts_ms, path, COALESCE(query, '') AS query, category, mcp_tool,
         mcp_agent, client_id, username, COALESCE(error_message, '') AS message,
         COALESCE(error_kind, '') AS kind,
@@ -281,7 +283,7 @@ WITH `+usageErrorRowsCTE+`, r AS (
 )
 SELECT `+usageErrorGroupColumns+`, ts_ms, path, query, category, mcp_tool, mcp_agent, client_id, username,
     message, kind
-FROM r WHERE rn <= ? ORDER BY `+usageErrorGroupColumns+`, rn`, q.fromMS, usageErrorExampleLimit)
+FROM r WHERE rn <= ? ORDER BY `+usageErrorGroupColumns+`, rn`, q.args(usageErrorExampleLimit)...)
 	if err != nil {
 		return err
 	}

@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type UsageSummaryState } from "@/app/(results)/usage/actions";
-import { usageSummarySchema, type UsageWindow } from "@/lib/contracts";
+import {
+    usageSummarySchema,
+    type UsageFilter,
+    type UsageWindow,
+} from "@/lib/contracts";
 
 import usageSummaryA3Fixture from "./fixtures/usage-summary-a3-24h.json";
 
@@ -43,11 +47,11 @@ function signedInAs(username: string | null): void {
     });
 }
 
-async function getUsageSummary(window: UsageWindow) {
+async function getUsageSummary(window: UsageWindow, filter?: UsageFilter) {
     const { getUsageSummaryAction } =
         await import("@/app/(results)/usage/actions");
 
-    return getUsageSummaryAction(window);
+    return getUsageSummaryAction(window, filter);
 }
 
 function onlyFetchCall(): { url: string; headers: Headers } {
@@ -160,6 +164,43 @@ describe("E3 getUsageSummaryAction: fetching the summary", () => {
         expect(vi.mocked(fetch).mock.calls[0][1]).toMatchObject({
             cache: "no-store",
         });
+    });
+
+    it("sends each filter field as a query parameter", async () => {
+        signedInAs("alice");
+        await writeToken("T");
+        vi.mocked(fetch).mockResolvedValue(
+            jsonResponse(usageSummaryA3Fixture, 200),
+        );
+
+        await getUsageSummary("30d", {
+            category: "mcp",
+            user: "a&b",
+            tool: "mlwh_export",
+            agent: "claude-code",
+            method: "GET",
+            route: "/studies/:id",
+        });
+
+        expect(onlyFetchCall().url).toBe(
+            `${base}/usage?window=30d&category=mcp&user=a%26b&tool=mlwh_export&agent=claude-code&method=GET&route=%2Fstudies%2F%3Aid`,
+        );
+    });
+
+    it.each<[string, unknown]>([
+        ["an unknown category", { category: "bogus" }],
+        ["method without route", { method: "GET" }],
+        ["a route without a slash", { method: "GET", route: "studies" }],
+        ["an over-long user", { user: "u".repeat(129) }],
+        ["an unknown key", { window: "24h" }],
+    ])("returns invalid_input for %s with no fetch", async (_name, filter) => {
+        signedInAs("alice");
+        await writeToken("T");
+
+        await expect(
+            getUsageSummary("24h", filter as UsageFilter),
+        ).resolves.toEqual({ status: "invalid_input" });
+        expect(fetch).not.toHaveBeenCalled();
     });
 
     it("sends the gate's session user as the usage identity, calling currentSession once", async () => {

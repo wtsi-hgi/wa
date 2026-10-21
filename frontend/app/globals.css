@@ -22,6 +22,17 @@
     --input: oklch(0.88 0.008 95.6);
     --ring: oklch(0.61 0.032 230.7);
     --radius: 1rem;
+    /* Usage dashboard: one fixed hue per caller category, in category order,
+       and the fault and caller error markers. */
+    --usage-cli: #2a78d6;
+    --usage-mcp: #eb6834;
+    --usage-web: #1baf7a;
+    --usage-results-server: #eda100;
+    --usage-mlwhdiff-server: #e87ba4;
+    --usage-other: #008300;
+    --usage-fault: #d03b3b;
+    --usage-caller: #b46f00;
+    --usage-good: #006300;
 }
 
 .dark {
@@ -43,6 +54,15 @@
     --border: oklch(0.344 0.012 95.2);
     --input: oklch(0.344 0.012 95.2);
     --ring: oklch(0.759 0.031 229.6);
+    --usage-cli: #3987e5;
+    --usage-mcp: #d95926;
+    --usage-web: #199e70;
+    --usage-results-server: #c98500;
+    --usage-mlwhdiff-server: #d55181;
+    --usage-other: #008300;
+    --usage-fault: #e66767;
+    --usage-caller: #fab219;
+    --usage-good: #0ca30c;
 }
 
 @theme inline {

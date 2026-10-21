@@ -556,12 +556,6 @@ export const usageCategorySchema = z.enum([
 export type UsageCategory = z.infer<typeof usageCategorySchema>;
 const countMap = z.record(z.string(), z.number().int().nonnegative());
 const count = z.number().int().nonnegative();
-// errors is absent from servers that predate error details.
-const usageValueCountSchema = z.object({
-    value: z.string(),
-    requests: count,
-    errors: count.optional(),
-});
 // Errors split by severity into parts that sum to their count
 // (UsageErrorBreakdown), with expected answers to probe requests counted as
 // probe. legacy counts, by severity, the rows among them recorded before
@@ -575,6 +569,64 @@ const usageErrorBreakdownSchema = z.object({
     legacy: z.object({ fault: count, caller: count, expected: count }),
 });
 export type UsageErrorBreakdown = z.infer<typeof usageErrorBreakdownSchema>;
+// errors is absent from servers that predate error details, and
+// error_severity from servers that predate per-list severities.
+const usageValueCountSchema = z.object({
+    value: z.string(),
+    requests: count,
+    errors: count.optional(),
+    error_severity: usageErrorBreakdownSchema.optional(),
+});
+// The narrowing GET /usage applied (mlwh/usage_filter.go UsageFilter). Only
+// servers that support filters echo it.
+export const usageFilterSchema = z.object({
+    category: usageCategorySchema.optional(),
+    user: z.string().optional(),
+    tool: z.string().optional(),
+    agent: z.string().optional(),
+    method: z.string().optional(),
+    route: z.string().optional(),
+});
+export type UsageFilter = z.infer<typeof usageFilterSchema>;
+// A filter the page may send: each value fits its wa column cap
+// (mlwh/usage_filter.go), and method and route come together.
+// filterValue is a non-empty string of at most maxBytes UTF-8 bytes, as wa
+// measures its caps.
+const filterValue = (maxBytes: number) =>
+    z
+        .string()
+        .min(1)
+        .refine((value) => new TextEncoder().encode(value).length <= maxBytes, {
+            message: `longer than ${maxBytes} bytes`,
+        });
+export const usageFilterInputSchema = usageFilterSchema
+    .extend({
+        user: filterValue(128).optional(),
+        tool: filterValue(128).optional(),
+        agent: filterValue(256).optional(),
+        method: filterValue(32).optional(),
+        route: filterValue(256)
+            .refine((route) => route.startsWith("/"))
+            .optional(),
+    })
+    .strict()
+    .refine(
+        (filter) =>
+            (filter.method === undefined) === (filter.route === undefined),
+        {
+            message: "method and route go together",
+        },
+    );
+const usageTotalsSchema = z.object({
+    requests: count,
+    errors: count,
+    error_rate: z.number(),
+    error_severity: usageErrorBreakdownSchema.optional(),
+    sessions: count,
+    ip_clients: count,
+    users: count,
+});
+export type UsageTotals = z.infer<typeof usageTotalsSchema>;
 // One group of GET /usage errors (mlwh/usage_summary.go UsageErrorGroup).
 // error_code is null for rows recorded before error details were stored.
 // severity (mlwh/usage_error_summary.go UsageErrorSeverity: fault, caller,
@@ -612,20 +664,16 @@ const usageErrorGroupSchema = z.object({
 });
 export const usageSummarySchema = z.object({
     window: usageWindowSchema,
+    // The fields marked optional below are absent from servers that predate
+    // them; previous_totals is null for the all window.
+    filter: usageFilterSchema.optional(),
     generated_at: z.string(),
     window_start: z.string(),
     earliest_record: z.string(),
     retention_days: z.number().int().positive(),
     dropped_events: count,
-    totals: z.object({
-        requests: count,
-        errors: count,
-        error_rate: z.number(),
-        error_severity: usageErrorBreakdownSchema.optional(),
-        sessions: count,
-        ip_clients: count,
-        users: count,
-    }),
+    totals: usageTotalsSchema,
+    previous_totals: usageTotalsSchema.nullable().optional(),
     categories: z.array(
         z.object({
             category: usageCategorySchema,
@@ -637,6 +685,7 @@ export const usageSummarySchema = z.object({
             users: count,
             requests_per_session_median: count,
             requests_per_session_max: count,
+            error_severity: usageErrorBreakdownSchema.optional(),
         }),
     ),
     endpoints: z.array(
@@ -649,6 +698,7 @@ export const usageSummarySchema = z.object({
             p50_ms: z.number(),
             p95_ms: z.number(),
             by_category: countMap,
+            error_severity: usageErrorBreakdownSchema.optional(),
         }),
     ),
     mcp_tools: z.array(usageValueCountSchema),
@@ -688,6 +738,18 @@ export const usageSummarySchema = z.object({
             error_severity: usageErrorBreakdownSchema.optional(),
         }),
     ),
+    // Hours for 24h, days for 7d and 30d, and days or weeks for all.
+    bucket_unit: z.enum(["hour", "day", "week"]).optional(),
+    buckets: z
+        .array(
+            z.object({
+                start: z.string(),
+                requests: count,
+                by_category: countMap,
+                error_severity: usageErrorBreakdownSchema,
+            }),
+        )
+        .optional(),
     series: z.array(
         z.object({
             start: z.string(),
@@ -695,6 +757,8 @@ export const usageSummarySchema = z.object({
             requests: count,
             by_category: countMap,
             by_endpoint: countMap,
+            by_tool: countMap.optional(),
+            by_user: countMap.optional(),
         }),
     ),
     // Absent from servers that predate error details.

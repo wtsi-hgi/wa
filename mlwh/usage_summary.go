@@ -44,7 +44,15 @@ const (
 	usageNoLimit = -1
 
 	usageDayLayout = "2006-01-02"
-	usageMSPerDay  = int64(24 * time.Hour / time.Millisecond)
+	usageMSPerHour = int64(time.Hour / time.Millisecond)
+	usageMSPerDay  = 24 * usageMSPerHour
+	usageMSPerWeek = 7 * usageMSPerDay
+	// usageWeekOffsetMS shifts week buckets to start on Mondays: the Unix
+	// epoch was a Thursday, so the first Monday is 4 days later.
+	usageWeekOffsetMS = 4 * usageMSPerDay
+	// usageWeeklyAfter is the history length beyond which the all window is
+	// bucketed by week instead of by day.
+	usageWeeklyAfter = 120 * usageMSPerDay
 
 	usageOtherFilter     = "category = '" + string(UsageCategoryOther) + "'"
 	usageUnmatchedFilter = "route = ''"
@@ -61,13 +69,22 @@ const usageAggregateColumns = `COUNT(*), COALESCE(SUM(status >= 400), 0),
     COUNT(DISTINCT CASE WHEN client_id = '' THEN remote_addr END),
     COUNT(DISTINCT NULLIF(username, ''))`
 
-// usageLatencyAtRankSQL selects one route's window latency at a 0-based
-// rank. Walking the (method, route, latency_us, ts_ms) index in latency order
-// finds the rank without sorting the route's rows. Its parameters are the
-// method, route, window start, and rank.
-const usageLatencyAtRankSQL = `SELECT latency_us FROM usage_requests
+// The UsageSummary.BucketUnit values.
+const (
+	UsageBucketHour = "hour"
+	UsageBucketDay  = "day"
+	UsageBucketWeek = "week"
+)
+
+// usageLatencyAtRankSQL selects one route's latency at a 0-based rank among
+// the rows where selects. Walking the (method, route, latency_us, ts_ms)
+// index in latency order finds the rank without sorting the route's rows.
+// Its parameters are the method, route, where's parameters, and rank.
+func usageLatencyAtRankSQL(where string) string {
+	return `SELECT latency_us FROM usage_requests
 INDEXED BY usage_requests_route_latency
-WHERE method = ? AND route = ? AND ts_ms > ? ORDER BY latency_us LIMIT 1 OFFSET ?`
+WHERE method = ? AND route = ? AND ` + where + ` ORDER BY latency_us LIMIT 1 OFFSET ?`
+}
 
 // UsageTotals are the window's request, error, and distinct-caller counts.
 type UsageTotals struct {
@@ -102,36 +119,39 @@ type UsageLegacyErrors struct {
 
 // UsageCategoryStats are the window's counts for one caller category.
 type UsageCategoryStats struct {
-	Category                 UsageCategory `json:"category"`
-	Requests                 int64         `json:"requests"`
-	Errors                   int64         `json:"errors"`
-	ErrorRate                float64       `json:"error_rate"`
-	Sessions                 int64         `json:"sessions"`
-	IPClients                int64         `json:"ip_clients"`
-	Users                    int64         `json:"users"`
-	RequestsPerSessionMedian int64         `json:"requests_per_session_median"`
-	RequestsPerSessionMax    int64         `json:"requests_per_session_max"`
+	Category                 UsageCategory       `json:"category"`
+	Requests                 int64               `json:"requests"`
+	Errors                   int64               `json:"errors"`
+	ErrorRate                float64             `json:"error_rate"`
+	Sessions                 int64               `json:"sessions"`
+	IPClients                int64               `json:"ip_clients"`
+	Users                    int64               `json:"users"`
+	RequestsPerSessionMedian int64               `json:"requests_per_session_median"`
+	RequestsPerSessionMax    int64               `json:"requests_per_session_max"`
+	ErrorSeverity            UsageErrorBreakdown `json:"error_severity"`
 }
 
 // UsageEndpointStats are the window's counts and latencies for one matched
 // route.
 type UsageEndpointStats struct {
-	Method     string           `json:"method"`
-	Route      string           `json:"route"`
-	Requests   int64            `json:"requests"`
-	Errors     int64            `json:"errors"`
-	ErrorRate  float64          `json:"error_rate"`
-	P50Ms      float64          `json:"p50_ms"`
-	P95Ms      float64          `json:"p95_ms"`
-	ByCategory map[string]int64 `json:"by_category"`
+	Method        string              `json:"method"`
+	Route         string              `json:"route"`
+	Requests      int64               `json:"requests"`
+	Errors        int64               `json:"errors"`
+	ErrorRate     float64             `json:"error_rate"`
+	P50Ms         float64             `json:"p50_ms"`
+	P95Ms         float64             `json:"p95_ms"`
+	ByCategory    map[string]int64    `json:"by_category"`
+	ErrorSeverity UsageErrorBreakdown `json:"error_severity"`
 }
 
 // UsageCount is a request and error count for one value, such as an MCP
 // tool.
 type UsageCount struct {
-	Value    string `json:"value"`
-	Requests int64  `json:"requests"`
-	Errors   int64  `json:"errors"`
+	Value         string              `json:"value"`
+	Requests      int64               `json:"requests"`
+	Errors        int64               `json:"errors"`
+	ErrorSeverity UsageErrorBreakdown `json:"error_severity"`
 }
 
 // UsageErrorMessage is how often one error message was returned.
@@ -205,6 +225,15 @@ type UsageDay struct {
 	ErrorSeverity UsageErrorBreakdown `json:"error_severity"`
 }
 
+// UsageBucket is the window's request count, and its errors' breakdown, in
+// one hour, day, or week (UsageSummary.BucketUnit) starting at Start.
+type UsageBucket struct {
+	Start         string              `json:"start"` // inclusive, RFC3339 UTC
+	Requests      int64               `json:"requests"`
+	ByCategory    map[string]int64    `json:"by_category"`
+	ErrorSeverity UsageErrorBreakdown `json:"error_severity"`
+}
+
 // UsagePeriod is the request count of one window-length period.
 type UsagePeriod struct {
 	Start      string           `json:"start"` // exclusive, RFC3339 UTC
@@ -212,18 +241,22 @@ type UsagePeriod struct {
 	Requests   int64            `json:"requests"`
 	ByCategory map[string]int64 `json:"by_category"`
 	ByEndpoint map[string]int64 `json:"by_endpoint"` // "<METHOD> <route>"
+	ByTool     map[string]int64 `json:"by_tool"`
+	ByUser     map[string]int64 `json:"by_user"`
 }
 
 // UsageSummary holds the aggregates of one usage window.
 type UsageSummary struct {
 	Window          UsageWindow          `json:"window"`
+	Filter          UsageFilter          `json:"filter"`
 	GeneratedAt     string               `json:"generated_at"`    // RFC3339 UTC
 	WindowStart     string               `json:"window_start"`    // "" for all
-	EarliestRecord  string               `json:"earliest_record"` // "" when empty
+	EarliestRecord  string               `json:"earliest_record"` // "" when empty, never filtered
 	RetentionDays   int                  `json:"retention_days"`
 	DroppedEvents   int64                `json:"dropped_events"`
 	Totals          UsageTotals          `json:"totals"`
-	Categories      []UsageCategoryStats `json:"categories"` // all six, fixed order
+	PreviousTotals  *UsageTotals         `json:"previous_totals"` // the preceding window; nil for all
+	Categories      []UsageCategoryStats `json:"categories"`      // all six, fixed order
 	Endpoints       []UsageEndpointStats `json:"endpoints"`
 	MCPTools        []UsageCount         `json:"mcp_tools"`
 	MCPAgents       []UsageCount         `json:"mcp_agents"`
@@ -232,16 +265,23 @@ type UsageSummary struct {
 	Users           []UsageActor         `json:"users"`
 	Clients         []UsageActor         `json:"clients"`
 	Days            []UsageDay           `json:"days"`
+	BucketUnit      string               `json:"bucket_unit"` // UsageBucketHour, Day, or Week
+	Buckets         []UsageBucket        `json:"buckets"`
 	Series          []UsagePeriod        `json:"series"`
 	Errors          []UsageErrorGroup    `json:"errors"`
 }
 
-// Summary flushes queued events, then aggregates window w at s.now().
-// An invalid w returns an error wrapping ErrUsageWindowInvalid. After
-// Close it returns a non-nil error.
-func (s *UsageStore) Summary(ctx context.Context, w UsageWindow) (UsageSummary, error) {
+// Summary flushes queued events, then aggregates the rows of window w at
+// s.now() that match filter. An invalid w returns an error wrapping
+// ErrUsageWindowInvalid, and an invalid filter one wrapping
+// ErrUsageFilterInvalid. After Close it returns a non-nil error.
+func (s *UsageStore) Summary(ctx context.Context, w UsageWindow, filter UsageFilter) (UsageSummary, error) {
 	if !w.Valid() {
 		return UsageSummary{}, fmt.Errorf("%w: %q", ErrUsageWindowInvalid, w)
+	}
+
+	if err := filter.Validate(); err != nil {
+		return UsageSummary{}, err
 	}
 
 	if err := s.Flush(ctx); err != nil {
@@ -256,17 +296,14 @@ func (s *UsageStore) Summary(ctx context.Context, w UsageWindow) (UsageSummary, 
 	defer func() { _ = tx.Rollback() }()
 
 	now := s.now().UTC()
-	q := usageSummaryQuery{
-		tx: tx, nowMS: now.UnixMilli(), windowMS: w.Duration().Milliseconds(), fromMS: math.MinInt64,
-	}
+	q := newUsageSummaryQuery(tx, now.UnixMilli(), w.Duration().Milliseconds(), filter)
 
 	summary := UsageSummary{
-		Window: w, GeneratedAt: now.Format(time.RFC3339),
+		Window: w, Filter: filter, GeneratedAt: now.Format(time.RFC3339),
 		RetentionDays: s.retentionDays, DroppedEvents: s.Dropped(),
 	}
 
 	if q.windowMS > 0 {
-		q.fromMS = q.nowMS - q.windowMS
 		summary.WindowStart = usageFormatMS(q.fromMS)
 	}
 
@@ -326,6 +363,71 @@ type usageSummaryQuery struct {
 	nowMS    int64
 	windowMS int64 // 0 for all
 	fromMS   int64 // rows with ts_ms > fromMS are in the window
+	// where selects the window's rows that match the filter, with
+	// whereArgs as its parameters. Every window aggregate reads only these.
+	where     string
+	whereArgs []any
+	// matches selects the rows of any time that match the filter ("1" for
+	// none), with matchArgs as its parameters.
+	matches   string
+	matchArgs []any
+}
+
+// newUsageSummaryQuery returns the query for the window of windowMS (0 for
+// all) ending at nowMS, over the rows matching filter. Rows after nowMS are
+// in the window.
+func newUsageSummaryQuery(tx *sql.Tx, nowMS, windowMS int64, filter UsageFilter) usageSummaryQuery {
+	q := usageSummaryQuery{tx: tx, nowMS: nowMS, windowMS: windowMS, fromMS: math.MinInt64, matches: "1"}
+
+	if windowMS > 0 {
+		q.fromMS = nowMS - windowMS
+	}
+
+	if terms, args := filter.sql(); terms != "" {
+		q.matches, q.matchArgs = terms, args
+	}
+
+	q.where, q.whereArgs = q.rangeWhere(nil)
+
+	return q
+}
+
+// rangeWhere returns where and its parameters for the rows after q.fromMS,
+// up to and including *toMS when toMS is not nil, that match the filter.
+func (q usageSummaryQuery) rangeWhere(toMS *int64) (string, []any) {
+	where, args := "ts_ms > ?", []any{q.fromMS}
+
+	if toMS != nil {
+		where += " AND ts_ms <= ?"
+		args = append(args, *toMS)
+	}
+
+	if q.matches != "1" {
+		where += " AND " + q.matches
+		args = append(args, q.matchArgs...)
+	}
+
+	return where, args
+}
+
+// args returns whereArgs followed by extra, for a query whose placeholders
+// after where's hold extra.
+func (q usageSummaryQuery) args(extra ...any) []any {
+	return append(slices.Clone(q.whereArgs), extra...)
+}
+
+// previous returns the query for the window of the same length before q's,
+// or false for all.
+func (q usageSummaryQuery) previous() (usageSummaryQuery, bool) {
+	if q.windowMS == 0 {
+		return q, false
+	}
+
+	prev := q
+	prev.fromMS = q.fromMS - q.windowMS
+	prev.where, prev.whereArgs = prev.rangeWhere(&q.fromMS)
+
+	return prev, true
 }
 
 // fill sets every aggregate field of summary.
@@ -339,16 +441,22 @@ func (q usageSummaryQuery) fill(ctx context.Context, summary *UsageSummary) erro
 		summary.EarliestRecord = usageFormatMS(earliest)
 	}
 
-	if summary.Totals, summary.Categories, err = q.categories(ctx); err != nil {
+	if summary.Totals, err = q.totals(ctx); err != nil {
 		return err
 	}
 
-	breakdowns, err := q.errorBreakdowns(ctx, "0")
-	if err != nil {
-		return err
+	if prev, ok := q.previous(); ok {
+		previous, err := prev.totals(ctx)
+		if err != nil {
+			return err
+		}
+
+		summary.PreviousTotals = &previous
 	}
 
-	summary.Totals.ErrorSeverity = breakdowns[0]
+	if summary.Categories, err = q.categories(ctx); err != nil {
+		return err
+	}
 
 	if summary.Endpoints, err = q.endpoints(ctx); err != nil {
 		return err
@@ -374,7 +482,7 @@ func (q usageSummaryQuery) fill(ctx context.Context, summary *UsageSummary) erro
 		return err
 	}
 
-	if summary.Days, err = q.days(ctx, earliest, hasRows); err != nil {
+	if err = q.fillTime(ctx, summary, earliest, hasRows); err != nil {
 		return err
 	}
 
@@ -396,25 +504,44 @@ func (q usageSummaryQuery) earliest(ctx context.Context) (int64, bool, error) {
 	return earliest.Int64, earliest.Valid, err
 }
 
-// categories returns the window totals and the stats of all six categories.
-func (q usageSummaryQuery) categories(ctx context.Context) (UsageTotals, []UsageCategoryStats, error) {
+// totals returns the window totals.
+func (q usageSummaryQuery) totals(ctx context.Context) (UsageTotals, error) {
 	var total usageAggregate
 
 	err := q.tx.QueryRowContext(ctx, "SELECT "+usageAggregateColumns+
-		" FROM usage_requests WHERE ts_ms > ?", q.fromMS).Scan(
+		" FROM usage_requests WHERE "+q.where, q.args()...).Scan(
 		&total.requests, &total.errors, &total.sessions, &total.ipClients, &total.users)
 	if err != nil {
-		return UsageTotals{}, nil, err
+		return UsageTotals{}, err
 	}
 
+	breakdowns, err := usageErrorBreakdowns[int64](ctx, q, "0", "1")
+	if err != nil {
+		return UsageTotals{}, err
+	}
+
+	return UsageTotals{
+		Requests: total.requests, Errors: total.errors,
+		ErrorRate: usageErrorRate(total.errors, total.requests), Sessions: total.sessions,
+		IPClients: total.ipClients, Users: total.users, ErrorSeverity: breakdowns[0],
+	}, nil
+}
+
+// categories returns the stats of all six categories.
+func (q usageSummaryQuery) categories(ctx context.Context) ([]UsageCategoryStats, error) {
 	byCategory, err := q.categoryAggregates(ctx)
 	if err != nil {
-		return UsageTotals{}, nil, err
+		return nil, err
 	}
 
 	spread, err := q.sessionSpread(ctx)
 	if err != nil {
-		return UsageTotals{}, nil, err
+		return nil, err
+	}
+
+	breakdowns, err := usageErrorBreakdowns[string](ctx, q, "category", "1")
+	if err != nil {
+		return nil, err
 	}
 
 	stats := make([]UsageCategoryStats, 0, len(UsageCategories()))
@@ -427,14 +554,11 @@ func (q usageSummaryQuery) categories(ctx context.Context) (UsageTotals, []Usage
 			IPClients: agg.ipClients, Users: agg.users,
 			RequestsPerSessionMedian: spread[string(category)].median,
 			RequestsPerSessionMax:    spread[string(category)].max,
+			ErrorSeverity:            breakdowns[string(category)],
 		})
 	}
 
-	return UsageTotals{
-		Requests: total.requests, Errors: total.errors,
-		ErrorRate: usageErrorRate(total.errors, total.requests), Sessions: total.sessions,
-		IPClients: total.ipClients, Users: total.users,
-	}, stats, nil
+	return stats, nil
 }
 
 func usageErrorRate(errs, requests int64) float64 {
@@ -447,7 +571,7 @@ func usageErrorRate(errs, requests int64) float64 {
 
 func (q usageSummaryQuery) categoryAggregates(ctx context.Context) (map[string]usageAggregate, error) {
 	rows, err := q.tx.QueryContext(ctx, "SELECT category, "+usageAggregateColumns+
-		" FROM usage_requests WHERE ts_ms > ? GROUP BY category", q.fromMS)
+		" FROM usage_requests WHERE "+q.where+" GROUP BY category", q.args()...)
 	if err != nil {
 		return nil, err
 	}
@@ -478,13 +602,13 @@ func (q usageSummaryQuery) sessionSpread(ctx context.Context) (map[string]usageS
 	rows, err := q.tx.QueryContext(ctx, `
 WITH s AS (
     SELECT category, COUNT(*) AS c FROM usage_requests
-    WHERE ts_ms > ? AND client_id <> '' GROUP BY category, client_id
+    WHERE `+q.where+` AND client_id <> '' GROUP BY category, client_id
 ), r AS (
     SELECT category, c, ROW_NUMBER() OVER (PARTITION BY category ORDER BY c) AS rn,
         COUNT(*) OVER (PARTITION BY category) AS n FROM s
 )
 SELECT category, MAX(CASE WHEN rn = `+usageNearestRankSQL(50)+` THEN c END), MAX(c)
-FROM r GROUP BY category`, q.fromMS)
+FROM r GROUP BY category`, q.args()...)
 	if err != nil {
 		return nil, err
 	}
@@ -522,7 +646,12 @@ func (q usageSummaryQuery) endpoints(ctx context.Context) ([]UsageEndpointStats,
 		return nil, err
 	}
 
-	latency, err := q.tx.PrepareContext(ctx, usageLatencyAtRankSQL)
+	breakdowns, err := usageErrorBreakdowns[string](ctx, q, usageEndpointKeySQL, "route <> ''")
+	if err != nil {
+		return nil, err
+	}
+
+	latency, err := q.tx.PrepareContext(ctx, usageLatencyAtRankSQL(q.where))
 	if err != nil {
 		return nil, err
 	}
@@ -535,6 +664,7 @@ func (q usageSummaryQuery) endpoints(ctx context.Context) ([]UsageEndpointStats,
 		stats := UsageEndpointStats{
 			Method: group.keys[0], Route: group.keys[1], Requests: group.requests, Errors: group.errors,
 			ErrorRate: usageErrorRate(group.errors, group.requests), ByCategory: group.by,
+			ErrorSeverity: breakdowns[group.keys[0]+" "+group.keys[1]],
 		}
 
 		if stats.P50Ms, err = q.latencyMS(ctx, latency, stats, 50); err != nil {
@@ -558,8 +688,9 @@ func (q usageSummaryQuery) latencyMS(ctx context.Context, latency *sql.Stmt, end
 ) (float64, error) {
 	var us int64
 
-	err := latency.QueryRowContext(ctx, endpoint.Method, endpoint.Route, q.fromMS,
-		usageNearestRank(p, endpoint.Requests)-1).Scan(&us)
+	args := append([]any{endpoint.Method, endpoint.Route}, q.args(usageNearestRank(p, endpoint.Requests)-1)...)
+
+	err := latency.QueryRowContext(ctx, args...).Scan(&us)
 
 	return usageMS(us), err
 }
@@ -582,10 +713,18 @@ func (q usageSummaryQuery) counts(ctx context.Context, column, filter string) ([
 		return nil, err
 	}
 
+	breakdowns, err := usageErrorBreakdowns[string](ctx, q, column, filter)
+	if err != nil {
+		return nil, err
+	}
+
 	counts := make([]UsageCount, 0, len(groups))
 
 	for _, group := range groups {
-		counts = append(counts, UsageCount{Value: group.keys[0], Requests: group.requests, Errors: group.errors})
+		counts = append(counts, UsageCount{
+			Value: group.keys[0], Requests: group.requests, Errors: group.errors,
+			ErrorSeverity: breakdowns[group.keys[0]],
+		})
 	}
 
 	return counts, nil
@@ -677,7 +816,7 @@ func (q usageSummaryQuery) actors(ctx context.Context) ([]UsageActor, []UsageAct
 func (q usageSummaryQuery) ranked(ctx context.Context, keys []string, filter, dimension string,
 	limit int,
 ) ([]usageRankedGroup, error) {
-	rows, err := q.tx.QueryContext(ctx, usageRankedSQL(keys, filter, dimension), q.fromMS, limit)
+	rows, err := q.tx.QueryContext(ctx, usageRankedSQL(keys, filter, dimension, q.where), q.args(limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -706,12 +845,13 @@ func (q usageSummaryQuery) ranked(ctx context.Context, keys []string, filter, di
 
 // usageRankedSQL builds the ranked query: one row per group and non-empty
 // dimension value (or one row with a NULL value for a group without any),
-// in rank order. Its parameters are the window start and the limit. Window
+// in rank order, over the rows where selects. Its parameters are where's
+// and the limit. Window
 // rows are grouped by keys and dimension once, so ranking and the breakdown
 // join read those groups rather than every row. INDEXED BY stops the planner
 // walking usage_requests_route_ts for the endpoint grouping, which reads the
 // table in route order and is slower than reading the window in ts order.
-func usageRankedSQL(keys []string, filter, dimension string) string {
+func usageRankedSQL(keys []string, filter, dimension, where string) string {
 	selected := make([]string, len(keys))
 	plain := make([]string, len(keys))
 	top := make([]string, len(keys))
@@ -729,59 +869,132 @@ func usageRankedSQL(keys []string, filter, dimension string) string {
 	return fmt.Sprintf(`
 WITH g AS (
     SELECT %s, %s AS d, COUNT(*) AS c, SUM(status >= 400) AS e
-    FROM usage_requests INDEXED BY usage_requests_ts WHERE ts_ms > ? AND (%s) GROUP BY %s, d
+    FROM usage_requests INDEXED BY usage_requests_ts WHERE %s AND (%s) GROUP BY %s, d
 ), top AS (
     SELECT %s, SUM(c) AS n, SUM(e) AS e FROM g GROUP BY %s ORDER BY n DESC, %s LIMIT ?
 )
 SELECT %s, top.n, top.e, g.d, COALESCE(g.c, 0)
 FROM top LEFT JOIN g ON %s AND g.d <> ''
 ORDER BY top.n DESC, %s`,
-		strings.Join(selected, ", "), dimension, filter, plainKeys,
+		strings.Join(selected, ", "), dimension, where, filter, plainKeys,
 		plainKeys, plainKeys, plainKeys,
 		topKeys, strings.Join(joins, " AND "), topKeys)
 }
 
-// days returns every UTC date from the window start (or the earliest row for
-// all) to now, with the window's rows counted per date. Rows after now count
-// on their own date when it is listed.
-func (q usageSummaryQuery) days(ctx context.Context, earliest int64, hasRows bool) ([]UsageDay, error) {
+// usageEndpointKeySQL is the "<METHOD> <route>" key of a row's endpoint.
+const usageEndpointKeySQL = "method || ' ' || route"
+
+// usageTimeBucket is the window's rows in one time bucket.
+type usageTimeBucket struct {
+	startMS    int64
+	byCategory map[string]int64
+	breakdown  UsageErrorBreakdown
+}
+
+// timeBuckets returns every bucket of sizeMS, aligned offsetMS after the
+// epoch, from the one holding the window start (or the earliest row for all)
+// to the one holding now, with the window's rows counted per bucket. Rows
+// after now count in their own bucket when it is listed.
+func (q usageSummaryQuery) timeBuckets(ctx context.Context, sizeMS, offsetMS, earliest int64,
+	hasRows bool,
+) ([]usageTimeBucket, error) {
 	firstMS := q.fromMS
 	if q.windowMS == 0 {
 		if !hasRows {
-			return []UsageDay{}, nil
+			return []usageTimeBucket{}, nil
 		}
 
 		firstMS = earliest
 	}
 
-	counts, err := q.groupCounts(ctx, `SELECT ts_ms / ?, category, COUNT(*)
-FROM usage_requests WHERE ts_ms > ? GROUP BY 1, 2`, usageMSPerDay, q.fromMS)
+	bucket := "(ts_ms - ?) / ?"
+
+	counts, err := usageGroupCounts[int64](ctx, q.tx, "SELECT "+bucket+`, category, COUNT(*)
+FROM usage_requests WHERE `+q.where+" GROUP BY 1, 2", append([]any{offsetMS, sizeMS}, q.args()...)...)
 	if err != nil {
 		return nil, err
 	}
 
-	breakdowns, err := q.errorBreakdowns(ctx, "ts_ms / ?", usageMSPerDay)
+	breakdowns, err := usageErrorBreakdowns[int64](ctx, q, bucket, "1", offsetMS, sizeMS)
 	if err != nil {
 		return nil, err
 	}
 
-	days := []UsageDay{}
+	buckets := []usageTimeBucket{}
 
-	for day := firstMS / usageMSPerDay; day <= q.nowMS/usageMSPerDay; day++ {
-		byCategory := counts[day]
-		if byCategory == nil {
-			byCategory = map[string]int64{}
-		}
-
-		days = append(days, UsageDay{
-			Date:          time.UnixMilli(day * usageMSPerDay).UTC().Format(usageDayLayout),
-			Requests:      usageSumCounts(byCategory),
-			ByCategory:    byCategory,
-			ErrorSeverity: breakdowns[day],
+	for i := (firstMS - offsetMS) / sizeMS; i <= (q.nowMS-offsetMS)/sizeMS; i++ {
+		buckets = append(buckets, usageTimeBucket{
+			startMS: i*sizeMS + offsetMS, byCategory: usageNonNilCounts(counts[i]), breakdown: breakdowns[i],
 		})
 	}
 
-	return days, nil
+	return buckets, nil
+}
+
+// fillTime sets summary's days, bucket unit, and buckets. When the unit is
+// day, days and buckets come from the same queries.
+func (q usageSummaryQuery) fillTime(ctx context.Context, summary *UsageSummary, earliest int64,
+	hasRows bool,
+) error {
+	summary.BucketUnit = q.bucketUnit(earliest, hasRows)
+	size := usageBucketSizes[summary.BucketUnit]
+
+	buckets, err := q.timeBuckets(ctx, size[0], size[1], earliest, hasRows)
+	if err != nil {
+		return err
+	}
+
+	days := buckets
+	if summary.BucketUnit != UsageBucketDay {
+		if days, err = q.timeBuckets(ctx, usageMSPerDay, 0, earliest, hasRows); err != nil {
+			return err
+		}
+	}
+
+	summary.Days = make([]UsageDay, 0, len(days))
+
+	for _, bucket := range days {
+		summary.Days = append(summary.Days, UsageDay{
+			Date:          time.UnixMilli(bucket.startMS).UTC().Format(usageDayLayout),
+			Requests:      usageSumCounts(bucket.byCategory),
+			ByCategory:    bucket.byCategory,
+			ErrorSeverity: bucket.breakdown,
+		})
+	}
+
+	summary.Buckets = make([]UsageBucket, 0, len(buckets))
+
+	for _, bucket := range buckets {
+		summary.Buckets = append(summary.Buckets, UsageBucket{
+			Start:         usageFormatMS(bucket.startMS),
+			Requests:      usageSumCounts(bucket.byCategory),
+			ByCategory:    bucket.byCategory,
+			ErrorSeverity: bucket.breakdown,
+		})
+	}
+
+	return nil
+}
+
+// bucketUnit returns the unit of the window's buckets: hours for 24h, days
+// for 7d and 30d, and for all days, or weeks once the history is longer than
+// usageWeeklyAfter.
+func (q usageSummaryQuery) bucketUnit(earliest int64, hasRows bool) string {
+	switch {
+	case q.windowMS > 0 && q.windowMS <= usageMSPerDay:
+		return UsageBucketHour
+	case q.windowMS == 0 && hasRows && q.nowMS-earliest > usageWeeklyAfter:
+		return UsageBucketWeek
+	default:
+		return UsageBucketDay
+	}
+}
+
+// usageBucketSizes are each bucket unit's length and alignment offset.
+var usageBucketSizes = map[string][2]int64{
+	UsageBucketHour: {usageMSPerHour, 0},
+	UsageBucketDay:  {usageMSPerDay, 0},
+	UsageBucketWeek: {usageMSPerWeek, usageWeekOffsetMS},
 }
 
 // series returns the consecutive window-length periods from the one holding
@@ -792,18 +1005,26 @@ func (q usageSummaryQuery) series(ctx context.Context, earliest int64, hasRows b
 	}
 
 	periodSQL := `SELECT CASE WHEN ts_ms > ? THEN 0 ELSE (? - ts_ms) / ? END AS k, %s, COUNT(*)
-FROM usage_requests WHERE %s GROUP BY 1, 2`
+FROM usage_requests WHERE ` + q.matches + ` AND %s GROUP BY 1, 2`
+	args := append([]any{q.nowMS, q.nowMS, q.windowMS}, q.matchArgs...)
 
-	byCategory, err := q.groupCounts(ctx, fmt.Sprintf(periodSQL, "category", "1"),
-		q.nowMS, q.nowMS, q.windowMS)
-	if err != nil {
-		return nil, err
+	dimensions := []struct{ value, filter string }{
+		{"category", "1"},
+		{usageEndpointKeySQL, "route <> ''"},
+		{"mcp_tool", "mcp_tool <> ''"},
+		{"username", "username <> ''"},
 	}
 
-	byEndpoint, err := q.groupCounts(ctx, fmt.Sprintf(periodSQL, "method || ' ' || route", "route <> ''"),
-		q.nowMS, q.nowMS, q.windowMS)
-	if err != nil {
-		return nil, err
+	counts := make([]map[int64]map[string]int64, len(dimensions))
+
+	for i, dimension := range dimensions {
+		var err error
+
+		counts[i], err = usageGroupCounts[int64](ctx, q.tx,
+			fmt.Sprintf(periodSQL, dimension.value, dimension.filter), args...)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	periods := max(q.nowMS-earliest, 0)/q.windowMS + 1
@@ -814,8 +1035,10 @@ FROM usage_requests WHERE %s GROUP BY 1, 2`
 		period := UsagePeriod{
 			Start:      usageFormatMS(q.nowMS - (k+1)*q.windowMS),
 			End:        usageFormatMS(q.nowMS - k*q.windowMS),
-			ByCategory: usageNonNilCounts(byCategory[k]),
-			ByEndpoint: usageNonNilCounts(byEndpoint[k]),
+			ByCategory: usageNonNilCounts(counts[0][k]),
+			ByEndpoint: usageNonNilCounts(counts[1][k]),
+			ByTool:     usageNonNilCounts(counts[2][k]),
+			ByUser:     usageNonNilCounts(counts[3][k]),
 		}
 		period.Requests = usageSumCounts(period.ByCategory)
 		series = append(series, period)
@@ -842,36 +1065,36 @@ func usageSumCounts(counts map[string]int64) int64 {
 	return total
 }
 
-// groupCounts runs a query returning (bucket, value, count) rows and returns
-// the counts keyed by bucket then value.
-func (q usageSummaryQuery) groupCounts(ctx context.Context, query string,
+// usageGroupCounts runs a query returning (key, value, count) rows and
+// returns the counts keyed by key then value.
+func usageGroupCounts[K comparable](ctx context.Context, tx *sql.Tx, query string,
 	args ...any,
-) (map[int64]map[string]int64, error) {
-	rows, err := q.tx.QueryContext(ctx, query, args...)
+) (map[K]map[string]int64, error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 
 	defer func() { _ = rows.Close() }()
 
-	counts := map[int64]map[string]int64{}
+	counts := map[K]map[string]int64{}
 
 	for rows.Next() {
 		var (
-			bucket int64
-			value  string
-			count  int64
+			key   K
+			value string
+			count int64
 		)
 
-		if err = rows.Scan(&bucket, &value, &count); err != nil {
+		if err = rows.Scan(&key, &value, &count); err != nil {
 			return nil, err
 		}
 
-		if counts[bucket] == nil {
-			counts[bucket] = map[string]int64{}
+		if counts[key] == nil {
+			counts[key] = map[string]int64{}
 		}
 
-		counts[bucket][value] = count
+		counts[key][value] = count
 	}
 
 	return counts, rows.Err()

@@ -1,0 +1,4233 @@
+{
+    "window": "30d",
+    "generated_at": "2026-10-21T15:49:43Z",
+    "window_start": "2026-09-21T15:49:43Z",
+    "earliest_record": "2026-10-20T08:39:29Z",
+    "retention_days": 365,
+    "dropped_events": 0,
+    "totals": {
+        "requests": 1578,
+        "errors": 483,
+        "error_rate": 0.3060836501901141,
+        "sessions": 292,
+        "ip_clients": 2,
+        "users": 12,
+        "error_severity": {
+            "fault": 15,
+            "caller": 3,
+            "expected": 465,
+            "probe": 0,
+            "legacy": {
+                "fault": 15,
+                "caller": 2,
+                "expected": 444
+            }
+        }
+    },
+    "categories": [
+        {
+            "category": "cli",
+            "requests": 1514,
+            "errors": 476,
+            "error_rate": 0.3143989431968296,
+            "sessions": 278,
+            "ip_clients": 0,
+            "users": 12,
+            "requests_per_session_median": 3,
+            "requests_per_session_max": 26,
+            "error_severity": {
+                "fault": 13,
+                "caller": 0,
+                "expected": 463,
+                "probe": 0,
+                "legacy": {
+                    "fault": 13,
+                    "caller": 0,
+                    "expected": 444
+                }
+            }
+        },
+        {
+            "category": "mcp",
+            "requests": 47,
+            "errors": 3,
+            "error_rate": 0.06382978723404255,
+            "sessions": 14,
+            "ip_clients": 0,
+            "users": 0,
+            "requests_per_session_median": 1,
+            "requests_per_session_max": 12,
+            "error_severity": {
+                "fault": 1,
+                "caller": 0,
+                "expected": 2,
+                "probe": 0,
+                "legacy": {
+                    "fault": 1,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "category": "web",
+            "requests": 0,
+            "errors": 0,
+            "error_rate": 0,
+            "sessions": 0,
+            "ip_clients": 0,
+            "users": 0,
+            "requests_per_session_median": 0,
+            "requests_per_session_max": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "category": "results_server",
+            "requests": 0,
+            "errors": 0,
+            "error_rate": 0,
+            "sessions": 0,
+            "ip_clients": 0,
+            "users": 0,
+            "requests_per_session_median": 0,
+            "requests_per_session_max": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "category": "mlwhdiff_server",
+            "requests": 0,
+            "errors": 0,
+            "error_rate": 0,
+            "sessions": 0,
+            "ip_clients": 0,
+            "users": 0,
+            "requests_per_session_median": 0,
+            "requests_per_session_max": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "category": "other",
+            "requests": 17,
+            "errors": 4,
+            "error_rate": 0.23529411764705882,
+            "sessions": 0,
+            "ip_clients": 2,
+            "users": 0,
+            "requests_per_session_median": 0,
+            "requests_per_session_max": 0,
+            "error_severity": {
+                "fault": 1,
+                "caller": 3,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 1,
+                    "caller": 2,
+                    "expected": 0
+                }
+            }
+        }
+    ],
+    "endpoints": [
+        {
+            "method": "GET",
+            "route": "/search/sample/:term",
+            "requests": 243,
+            "errors": 1,
+            "error_rate": 0.00411522633744856,
+            "p50_ms": 5.834,
+            "p95_ms": 50.635,
+            "by_category": {
+                "cli": 241,
+                "mcp": 2
+            },
+            "error_severity": {
+                "fault": 1,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 1,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/resolve/study/:id",
+            "requests": 231,
+            "errors": 221,
+            "error_rate": 0.9567099567099567,
+            "p50_ms": 3.85,
+            "p95_ms": 6.168,
+            "by_category": {
+                "cli": 231
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 221,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 213
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/resolve/sample-name/:id",
+            "requests": 221,
+            "errors": 98,
+            "error_rate": 0.4434389140271493,
+            "p50_ms": 2.3,
+            "p95_ms": 3.557,
+            "by_category": {
+                "cli": 221
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 98,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 94
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/export/:children/:parent_kind/:parent_id",
+            "requests": 147,
+            "errors": 26,
+            "error_rate": 0.17687074829931973,
+            "p50_ms": 10.6,
+            "p95_ms": 94.431,
+            "by_category": {
+                "cli": 141,
+                "mcp": 6
+            },
+            "error_severity": {
+                "fault": 6,
+                "caller": 0,
+                "expected": 20,
+                "probe": 0,
+                "legacy": {
+                    "fault": 6,
+                    "caller": 0,
+                    "expected": 19
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/classify/:id",
+            "requests": 106,
+            "errors": 40,
+            "error_rate": 0.37735849056603776,
+            "p50_ms": 8.326,
+            "p95_ms": 182.701,
+            "by_category": {
+                "cli": 98,
+                "mcp": 3,
+                "other": 5
+            },
+            "error_severity": {
+                "fault": 3,
+                "caller": 0,
+                "expected": 37,
+                "probe": 0,
+                "legacy": {
+                    "fault": 3,
+                    "caller": 0,
+                    "expected": 34
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/find/sample/sanger-id/:id",
+            "requests": 89,
+            "errors": 29,
+            "error_rate": 0.3258426966292135,
+            "p50_ms": 2.37,
+            "p95_ms": 56.847,
+            "by_category": {
+                "cli": 89
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 29,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 28
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/sample/:id/irods",
+            "requests": 71,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 21.51,
+            "p95_ms": 172.375,
+            "by_category": {
+                "cli": 67,
+                "mcp": 4
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/sample/:id/lanes",
+            "requests": 71,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 4.432,
+            "p95_ms": 93.6,
+            "by_category": {
+                "cli": 67,
+                "mcp": 2,
+                "other": 2
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/sample/:id/progress",
+            "requests": 71,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 14.316,
+            "p95_ms": 103.554,
+            "by_category": {
+                "cli": 67,
+                "mcp": 4
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/search/sample/:term/count",
+            "requests": 62,
+            "errors": 2,
+            "error_rate": 0.03225806451612903,
+            "p50_ms": 1.367,
+            "p95_ms": 2.967,
+            "by_category": {
+                "cli": 62
+            },
+            "error_severity": {
+                "fault": 2,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 2,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/freshness",
+            "requests": 53,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 16.37,
+            "p95_ms": 19.664,
+            "by_category": {
+                "cli": 44,
+                "mcp": 4,
+                "other": 5
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/find/sample/accession/:id",
+            "requests": 30,
+            "errors": 29,
+            "error_rate": 0.9666666666666667,
+            "p50_ms": 2.317,
+            "p95_ms": 4.862,
+            "by_category": {
+                "cli": 29,
+                "mcp": 1
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 29,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 28
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/find/sample/lims-id/:id",
+            "requests": 29,
+            "errors": 29,
+            "error_rate": 1,
+            "p50_ms": 2.323,
+            "p95_ms": 2.717,
+            "by_category": {
+                "cli": 29
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 29,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 28
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/study/:id/samples-with-data/count",
+            "requests": 20,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 4.477,
+            "p95_ms": 6.428,
+            "by_category": {
+                "cli": 20
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/search/study/:term",
+            "requests": 15,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 31.103,
+            "p95_ms": 129.794,
+            "by_category": {
+                "cli": 15
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/search/study/:term/count",
+            "requests": 15,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 10.374,
+            "p95_ms": 15.041,
+            "by_category": {
+                "cli": 15
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/study/:id/latest-data",
+            "requests": 12,
+            "errors": 1,
+            "error_rate": 0.08333333333333333,
+            "p50_ms": 11.659,
+            "p95_ms": 285.764,
+            "by_category": {
+                "cli": 10,
+                "mcp": 2
+            },
+            "error_severity": {
+                "fault": 1,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 1,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/study/:id/overview",
+            "requests": 12,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 41.404,
+            "p95_ms": 331.634,
+            "by_category": {
+                "cli": 10,
+                "mcp": 2
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/study/:id/status-breakdown",
+            "requests": 11,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 68.043,
+            "p95_ms": 1022.546,
+            "by_category": {
+                "cli": 10,
+                "mcp": 1
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/study/:id/libraries",
+            "requests": 10,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 59.914,
+            "p95_ms": 324.795,
+            "by_category": {
+                "cli": 10
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/study/:id/runs",
+            "requests": 10,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 51.602,
+            "p95_ms": 101.438,
+            "by_category": {
+                "cli": 10
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/study/:id/samples",
+            "requests": 10,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 22.226,
+            "p95_ms": 180.73,
+            "by_category": {
+                "cli": 10
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/openapi.json",
+            "requests": 6,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 6.133,
+            "p95_ms": 12.302,
+            "by_category": {
+                "cli": 5,
+                "other": 1
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/latest-data/faculty-sponsor/:name",
+            "requests": 3,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 402.32,
+            "p95_ms": 4339.092,
+            "by_category": {
+                "cli": 3
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/programmes",
+            "requests": 3,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 21.99,
+            "p95_ms": 125.407,
+            "by_category": {
+                "cli": 2,
+                "mcp": 1
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/resolve/sample/:id",
+            "requests": 3,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 4.631,
+            "p95_ms": 7.405,
+            "by_category": {
+                "mcp": 3
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/run/:id/status",
+            "requests": 3,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 10.286,
+            "p95_ms": 90.547,
+            "by_category": {
+                "mcp": 3
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/find/sample/supplier-name/:id",
+            "requests": 2,
+            "errors": 2,
+            "error_rate": 1,
+            "p50_ms": 2.12,
+            "p95_ms": 2.913,
+            "by_category": {
+                "mcp": 2
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 2,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/resolve-person/:term",
+            "requests": 2,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 161.232,
+            "p95_ms": 223.239,
+            "by_category": {
+                "cli": 2
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/run/:id/overview",
+            "requests": 2,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 269.401,
+            "p95_ms": 434.512,
+            "by_category": {
+                "mcp": 2
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/sample/:id/detail",
+            "requests": 2,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 12.031,
+            "p95_ms": 57.944,
+            "by_category": {
+                "mcp": 2
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/sequencing/aggregate",
+            "requests": 2,
+            "errors": 1,
+            "error_rate": 0.5,
+            "p50_ms": 11.641,
+            "p95_ms": 301.312,
+            "by_category": {
+                "cli": 2
+            },
+            "error_severity": {
+                "fault": 1,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 1,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/run/:id/detail",
+            "requests": 1,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 36.277,
+            "p95_ms": 36.277,
+            "by_category": {
+                "mcp": 1
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/runs/count",
+            "requests": 1,
+            "errors": 1,
+            "error_rate": 1,
+            "p50_ms": 11.039,
+            "p95_ms": 11.039,
+            "by_category": {
+                "cli": 1
+            },
+            "error_severity": {
+                "fault": 1,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 1,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/runs/monthly",
+            "requests": 1,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 149.627,
+            "p95_ms": 149.627,
+            "by_category": {
+                "cli": 1
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/sample/:id/runs",
+            "requests": 1,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 25324.861,
+            "p95_ms": 25324.861,
+            "by_category": {
+                "mcp": 1
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/studies",
+            "requests": 1,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 98.079,
+            "p95_ms": 98.079,
+            "by_category": {
+                "other": 1
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/studies/faculty-sponsor/:name",
+            "requests": 1,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 45.633,
+            "p95_ms": 45.633,
+            "by_category": {
+                "cli": 1
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/studies/faculty-sponsor/:name/count",
+            "requests": 1,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 5.048,
+            "p95_ms": 5.048,
+            "by_category": {
+                "cli": 1
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "route": "/study/:id/samples/count",
+            "requests": 1,
+            "errors": 0,
+            "error_rate": 0,
+            "p50_ms": 165.485,
+            "p95_ms": 165.485,
+            "by_category": {
+                "mcp": 1
+            },
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        }
+    ],
+    "mcp_tools": [
+        {
+            "value": "mlwh_export",
+            "requests": 6,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_freshness",
+            "requests": 4,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_irods_paths_for_sample",
+            "requests": 4,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_sample_progress",
+            "requests": 4,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_classify_identifier",
+            "requests": 3,
+            "errors": 1,
+            "error_severity": {
+                "fault": 1,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 1,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_find_samples",
+            "requests": 3,
+            "errors": 2,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 2,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_resolve_sample",
+            "requests": 3,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_run_status",
+            "requests": 3,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_lanes_for_sample",
+            "requests": 2,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_latest_data_for_study",
+            "requests": 2,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_run_overview",
+            "requests": 2,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_sample_detail",
+            "requests": 2,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_search_samples",
+            "requests": 2,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_study_overview",
+            "requests": 2,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_count_samples_for_study",
+            "requests": 1,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_programmes",
+            "requests": 1,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_run_detail",
+            "requests": 1,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_runs_for_sample",
+            "requests": 1,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "mlwh_study_status_breakdown",
+            "requests": 1,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        }
+    ],
+    "mcp_agents": [
+        {
+            "value": "claude-code/2.1.292 (cli)",
+            "requests": 12,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "claude-code/2.1.304 (cli)",
+            "requests": 12,
+            "errors": 1,
+            "error_severity": {
+                "fault": 1,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 1,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "claude-code/2.1.304 (sdk-cli)",
+            "requests": 10,
+            "errors": 2,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 2,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "curl/7.81.0",
+            "requests": 6,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "claude-code/2.1.278 (sdk-cli)",
+            "requests": 4,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "k8s-smoke-test/user01",
+            "requests": 2,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "claude-code/2.1.278 (claude-vscode, agent-sdk/0.3.301)",
+            "requests": 1,
+            "errors": 0,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        }
+    ],
+    "other_user_agents": [
+        {
+            "value": "curl/7.81.0",
+            "requests": 16,
+            "errors": 3,
+            "error_severity": {
+                "fault": 1,
+                "caller": 3,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 1,
+                    "caller": 2,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "requests": 1,
+            "errors": 1,
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        }
+    ],
+    "unmatched": [
+        {
+            "method": "GET",
+            "path": "/version",
+            "requests": 2,
+            "by_category": {
+                "other": 2
+            },
+            "by_tool": {},
+            "by_agent": {}
+        },
+        {
+            "method": "GET",
+            "path": "/",
+            "requests": 1,
+            "by_category": {
+                "other": 1
+            },
+            "by_tool": {},
+            "by_agent": {}
+        }
+    ],
+    "users": [
+        {
+            "name": "user01",
+            "by_ip": false,
+            "requests": 912,
+            "by_category": {
+                "cli": 912
+            }
+        },
+        {
+            "name": "user02",
+            "by_ip": false,
+            "requests": 301,
+            "by_category": {
+                "cli": 301
+            }
+        },
+        {
+            "name": "user03",
+            "by_ip": false,
+            "requests": 91,
+            "by_category": {
+                "cli": 91
+            }
+        },
+        {
+            "name": "user04",
+            "by_ip": false,
+            "requests": 57,
+            "by_category": {
+                "cli": 57
+            }
+        },
+        {
+            "name": "user05",
+            "by_ip": false,
+            "requests": 48,
+            "by_category": {
+                "cli": 48
+            }
+        },
+        {
+            "name": "user06",
+            "by_ip": false,
+            "requests": 38,
+            "by_category": {
+                "cli": 38
+            }
+        },
+        {
+            "name": "user07",
+            "by_ip": false,
+            "requests": 23,
+            "by_category": {
+                "cli": 23
+            }
+        },
+        {
+            "name": "user08",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "user09",
+            "by_ip": false,
+            "requests": 11,
+            "by_category": {
+                "cli": 11
+            }
+        },
+        {
+            "name": "user10",
+            "by_ip": false,
+            "requests": 8,
+            "by_category": {
+                "cli": 8
+            }
+        },
+        {
+            "name": "user11",
+            "by_ip": false,
+            "requests": 3,
+            "by_category": {
+                "cli": 3
+            }
+        },
+        {
+            "name": "user12",
+            "by_ip": false,
+            "requests": 1,
+            "by_category": {
+                "cli": 1
+            }
+        }
+    ],
+    "clients": [
+        {
+            "name": "client-01",
+            "by_ip": false,
+            "requests": 26,
+            "by_category": {
+                "cli": 26
+            }
+        },
+        {
+            "name": "client-02",
+            "by_ip": false,
+            "requests": 26,
+            "by_category": {
+                "cli": 26
+            }
+        },
+        {
+            "name": "client-03",
+            "by_ip": false,
+            "requests": 26,
+            "by_category": {
+                "cli": 26
+            }
+        },
+        {
+            "name": "client-04",
+            "by_ip": false,
+            "requests": 26,
+            "by_category": {
+                "cli": 26
+            }
+        },
+        {
+            "name": "client-05",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-06",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-07",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-08",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-09",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-10",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-11",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-12",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-13",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-14",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-15",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-16",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-17",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-18",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-19",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-20",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-21",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-22",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-23",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-24",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        },
+        {
+            "name": "client-25",
+            "by_ip": false,
+            "requests": 21,
+            "by_category": {
+                "cli": 21
+            }
+        }
+    ],
+    "days": [
+        {
+            "date": "2026-09-21",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-09-22",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-09-23",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-09-24",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-09-25",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-09-26",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-09-27",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-09-28",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-09-29",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-09-30",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-01",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-02",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-03",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-04",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-05",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-06",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-07",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-08",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-09",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-10",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-11",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-12",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-13",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-14",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-15",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-16",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-17",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-18",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-19",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-20",
+            "requests": 719,
+            "by_category": {
+                "cli": 679,
+                "mcp": 25,
+                "other": 15
+            },
+            "error_severity": {
+                "fault": 6,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 6,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "date": "2026-10-21",
+            "requests": 859,
+            "by_category": {
+                "cli": 835,
+                "mcp": 22,
+                "other": 2
+            },
+            "error_severity": {
+                "fault": 9,
+                "caller": 3,
+                "expected": 465,
+                "probe": 0,
+                "legacy": {
+                    "fault": 9,
+                    "caller": 2,
+                    "expected": 444
+                }
+            }
+        }
+    ],
+    "series": [
+        {
+            "start": "2026-09-21T15:49:43Z",
+            "end": "2026-10-21T15:49:43Z",
+            "requests": 1578,
+            "by_category": {
+                "cli": 1514,
+                "mcp": 47,
+                "other": 17
+            },
+            "by_endpoint": {
+                "GET /classify/:id": 106,
+                "GET /export/:children/:parent_kind/:parent_id": 147,
+                "GET /find/sample/accession/:id": 30,
+                "GET /find/sample/lims-id/:id": 29,
+                "GET /find/sample/sanger-id/:id": 89,
+                "GET /find/sample/supplier-name/:id": 2,
+                "GET /freshness": 53,
+                "GET /latest-data/faculty-sponsor/:name": 3,
+                "GET /openapi.json": 6,
+                "GET /programmes": 3,
+                "GET /resolve-person/:term": 2,
+                "GET /resolve/sample-name/:id": 221,
+                "GET /resolve/sample/:id": 3,
+                "GET /resolve/study/:id": 231,
+                "GET /run/:id/detail": 1,
+                "GET /run/:id/overview": 2,
+                "GET /run/:id/status": 3,
+                "GET /runs/count": 1,
+                "GET /runs/monthly": 1,
+                "GET /sample/:id/detail": 2,
+                "GET /sample/:id/irods": 71,
+                "GET /sample/:id/lanes": 71,
+                "GET /sample/:id/progress": 71,
+                "GET /sample/:id/runs": 1,
+                "GET /search/sample/:term": 243,
+                "GET /search/sample/:term/count": 62,
+                "GET /search/study/:term": 15,
+                "GET /search/study/:term/count": 15,
+                "GET /sequencing/aggregate": 2,
+                "GET /studies": 1,
+                "GET /studies/faculty-sponsor/:name": 1,
+                "GET /studies/faculty-sponsor/:name/count": 1,
+                "GET /study/:id/latest-data": 12,
+                "GET /study/:id/libraries": 10,
+                "GET /study/:id/overview": 12,
+                "GET /study/:id/runs": 10,
+                "GET /study/:id/samples": 10,
+                "GET /study/:id/samples-with-data/count": 20,
+                "GET /study/:id/samples/count": 1,
+                "GET /study/:id/status-breakdown": 11
+            },
+            "by_tool": {
+                "mlwh_export": 6,
+                "mlwh_freshness": 4,
+                "mlwh_irods_paths_for_sample": 4,
+                "mlwh_sample_progress": 4,
+                "mlwh_classify_identifier": 3,
+                "mlwh_find_samples": 3,
+                "mlwh_resolve_sample": 3,
+                "mlwh_run_status": 3,
+                "mlwh_lanes_for_sample": 2,
+                "mlwh_latest_data_for_study": 2,
+                "mlwh_run_overview": 2,
+                "mlwh_sample_detail": 2,
+                "mlwh_search_samples": 2,
+                "mlwh_study_overview": 2,
+                "mlwh_count_samples_for_study": 1,
+                "mlwh_programmes": 1,
+                "mlwh_run_detail": 1,
+                "mlwh_runs_for_sample": 1,
+                "mlwh_study_status_breakdown": 1
+            },
+            "by_user": {
+                "user01": 912,
+                "user02": 301,
+                "user03": 91,
+                "user04": 57,
+                "user05": 48,
+                "user06": 38,
+                "user07": 23,
+                "user08": 21,
+                "user09": 11,
+                "user10": 8,
+                "user11": 3,
+                "user12": 1
+            }
+        }
+    ],
+    "errors": [
+        {
+            "method": "GET",
+            "route": "/resolve/study/:id",
+            "status": 404,
+            "error_code": null,
+            "count": 213,
+            "first_seen": "2026-10-20T09:38:49Z",
+            "last_seen": "2026-10-21T14:09:31Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T14:09:31Z",
+                    "path": "/resolve/study/ID9001",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-91",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T14:09:31Z",
+                    "path": "/resolve/study/ID9002",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-92",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T14:09:31Z",
+                    "path": "/resolve/study/ID9003",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-93",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 213
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/resolve/sample-name/:id",
+            "status": 404,
+            "error_code": null,
+            "count": 94,
+            "first_seen": "2026-10-20T09:38:49Z",
+            "last_seen": "2026-10-21T14:08:05Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T14:08:05Z",
+                    "path": "/resolve/sample-name/ID9004",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-13",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T14:07:38Z",
+                    "path": "/resolve/sample-name/ID9005",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-01",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T14:06:41Z",
+                    "path": "/resolve/sample-name/ID9006",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-24",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 94
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/classify/:id",
+            "status": 409,
+            "error_code": null,
+            "count": 32,
+            "first_seen": "2026-10-20T10:41:30Z",
+            "last_seen": "2026-10-21T14:08:05Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T14:08:05Z",
+                    "path": "/classify/ID9007",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-13",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T14:07:38Z",
+                    "path": "/classify/ID9008",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-01",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T14:06:41Z",
+                    "path": "/classify/ID9009",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-24",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 32
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/find/sample/accession/:id",
+            "status": 404,
+            "error_code": null,
+            "count": 28,
+            "first_seen": "2026-10-21T09:12:42Z",
+            "last_seen": "2026-10-21T14:09:31Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T14:09:31Z",
+                    "path": "/find/sample/accession/ID9010",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-91",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T14:08:05Z",
+                    "path": "/find/sample/accession/ID9011",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-13",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T14:07:38Z",
+                    "path": "/find/sample/accession/ID9012",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-01",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 28
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/find/sample/lims-id/:id",
+            "status": 404,
+            "error_code": null,
+            "count": 28,
+            "first_seen": "2026-10-21T09:12:42Z",
+            "last_seen": "2026-10-21T14:09:31Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T14:09:31Z",
+                    "path": "/find/sample/lims-id/ID9013",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-94",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T14:08:05Z",
+                    "path": "/find/sample/lims-id/ID9014",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-13",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T14:07:38Z",
+                    "path": "/find/sample/lims-id/ID9015",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-01",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 28
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/find/sample/sanger-id/:id",
+            "status": 404,
+            "error_code": null,
+            "count": 28,
+            "first_seen": "2026-10-21T09:12:42Z",
+            "last_seen": "2026-10-21T14:09:30Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T14:09:30Z",
+                    "path": "/find/sample/sanger-id/ID9016",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-97",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T14:08:05Z",
+                    "path": "/find/sample/sanger-id/ID9017",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-13",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T14:07:38Z",
+                    "path": "/find/sample/sanger-id/ID9018",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-01",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 28
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/export/:children/:parent_kind/:parent_id",
+            "status": 409,
+            "error_code": null,
+            "count": 17,
+            "first_seen": "2026-10-20T13:49:00Z",
+            "last_seen": "2026-10-21T14:09:51Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T14:09:51Z",
+                    "path": "/export/ID9019/ID9019/ID9019",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-91",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T14:09:30Z",
+                    "path": "/export/ID9020/ID9020/ID9020",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-92",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T09:45:14Z",
+                    "path": "/export/ID9021/ID9021/ID9021",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-93",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 17
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/resolve/study/:id",
+            "status": 404,
+            "error_code": "not_found",
+            "count": 8,
+            "first_seen": "2026-10-21T14:45:34Z",
+            "last_seen": "2026-10-21T15:39:06Z",
+            "error_kinds": {},
+            "messages": [
+                {
+                    "message": "mlwh: identifier not found",
+                    "count": 8
+                }
+            ],
+            "examples": [
+                {
+                    "ts": "2026-10-21T15:39:06Z",
+                    "path": "/resolve/study/ID9022",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-94",
+                    "username": "user01",
+                    "message": "mlwh: identifier not found",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T15:39:03Z",
+                    "path": "/resolve/study/ID9023",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-95",
+                    "username": "user01",
+                    "message": "mlwh: identifier not found",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T15:27:13Z",
+                    "path": "/resolve/study/ID9024",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-96",
+                    "username": "user08",
+                    "message": "mlwh: identifier not found",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 8
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/export/:children/:parent_kind/:parent_id",
+            "status": 502,
+            "error_code": null,
+            "count": 6,
+            "first_seen": "2026-10-20T10:50:08Z",
+            "last_seen": "2026-10-21T09:52:43Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T09:52:43Z",
+                    "path": "/export/ID9025/ID9025/ID9025",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-97",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-20T19:12:07Z",
+                    "path": "/export/ID9026/ID9026/ID9026",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-98",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-20T18:41:46Z",
+                    "path": "/export/ID9027/ID9027/ID9027",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-90",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 6
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "fault",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/resolve/sample-name/:id",
+            "status": 404,
+            "error_code": "not_found",
+            "count": 4,
+            "first_seen": "2026-10-21T15:27:03Z",
+            "last_seen": "2026-10-21T15:39:06Z",
+            "error_kinds": {},
+            "messages": [
+                {
+                    "message": "mlwh: identifier not found",
+                    "count": 4
+                }
+            ],
+            "examples": [
+                {
+                    "ts": "2026-10-21T15:39:06Z",
+                    "path": "/resolve/sample-name/ID9028",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-91",
+                    "username": "user01",
+                    "message": "mlwh: identifier not found",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T15:39:03Z",
+                    "path": "/resolve/sample-name/ID9029",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-92",
+                    "username": "user01",
+                    "message": "mlwh: identifier not found",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T15:27:13Z",
+                    "path": "/resolve/sample-name/ID9030",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-93",
+                    "username": "user08",
+                    "message": "mlwh: identifier not found",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 4
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/classify/:id",
+            "status": 404,
+            "error_code": "not_found",
+            "count": 3,
+            "first_seen": "2026-10-21T15:27:03Z",
+            "last_seen": "2026-10-21T15:39:03Z",
+            "error_kinds": {},
+            "messages": [
+                {
+                    "message": "mlwh: identifier not found",
+                    "count": 3
+                }
+            ],
+            "examples": [
+                {
+                    "ts": "2026-10-21T15:39:03Z",
+                    "path": "/classify/ID9031",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-94",
+                    "username": "user01",
+                    "message": "mlwh: identifier not found",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T15:27:13Z",
+                    "path": "/classify/ID9032",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-95",
+                    "username": "user08",
+                    "message": "mlwh: identifier not found",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T15:27:03Z",
+                    "path": "/classify/ID9033",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-96",
+                    "username": "user08",
+                    "message": "mlwh: identifier not found",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 3
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/classify/:id",
+            "status": 502,
+            "error_code": null,
+            "count": 3,
+            "first_seen": "2026-10-20T09:31:39Z",
+            "last_seen": "2026-10-20T09:39:04Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-20T09:39:04Z",
+                    "path": "/classify/ID9034",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-97",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-20T09:36:48Z",
+                    "path": "/classify/ID9035",
+                    "query": "",
+                    "category": "other",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "",
+                    "username": "",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-20T09:31:39Z",
+                    "path": "/classify/ID9036",
+                    "query": "",
+                    "category": "mcp",
+                    "mcp_tool": "mlwh_classify_identifier",
+                    "mcp_agent": "claude-code/2.1.304 (cli)",
+                    "client_id": "client-90",
+                    "username": "",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 1,
+                "mcp": 1,
+                "other": 1
+            },
+            "by_tool": {
+                "mlwh_classify_identifier": 1
+            },
+            "by_agent": {
+                "claude-code/2.1.304 (cli)": 1
+            },
+            "severity": "fault",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "",
+            "status": 404,
+            "error_code": null,
+            "count": 2,
+            "first_seen": "2026-10-20T10:43:59Z",
+            "last_seen": "2026-10-21T09:45:14Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T09:45:14Z",
+                    "path": "/version",
+                    "query": "",
+                    "category": "other",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "",
+                    "username": "",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-20T10:43:59Z",
+                    "path": "/",
+                    "query": "",
+                    "category": "other",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "",
+                    "username": "",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "other": 2
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "caller",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/classify/:id",
+            "status": 404,
+            "error_code": null,
+            "count": 2,
+            "first_seen": "2026-10-20T10:41:17Z",
+            "last_seen": "2026-10-21T09:13:08Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T09:13:08Z",
+                    "path": "/classify/ID9039",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-93",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-20T10:41:17Z",
+                    "path": "/classify/ID9040",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-94",
+                    "username": "user10",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 2
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/export/:children/:parent_kind/:parent_id",
+            "status": 404,
+            "error_code": null,
+            "count": 2,
+            "first_seen": "2026-10-21T09:45:14Z",
+            "last_seen": "2026-10-21T14:09:26Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T14:09:26Z",
+                    "path": "/export/ID9041/ID9041/ID9041",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-95",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T09:45:14Z",
+                    "path": "/export/ID9042/ID9042/ID9042",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-96",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 2
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/find/sample/supplier-name/:id",
+            "status": 409,
+            "error_code": "ambiguous",
+            "count": 2,
+            "first_seen": "2026-10-21T15:00:26Z",
+            "last_seen": "2026-10-21T15:00:26Z",
+            "error_kinds": {},
+            "messages": [
+                {
+                    "message": "mlwh: identifier matches multiple records: \"ID0001\" ambiguous between ID0002 and ID0003",
+                    "count": 1
+                },
+                {
+                    "message": "mlwh: identifier matches multiple records: \"ID0004\" ambiguous between ID0005 and ID0006",
+                    "count": 1
+                }
+            ],
+            "examples": [
+                {
+                    "ts": "2026-10-21T15:00:26Z",
+                    "path": "/find/sample/supplier-name/ID9043",
+                    "query": "",
+                    "category": "mcp",
+                    "mcp_tool": "mlwh_find_samples",
+                    "mcp_agent": "claude-code/2.1.304 (sdk-cli)",
+                    "client_id": "client-97",
+                    "username": "",
+                    "message": "mlwh: identifier matches multiple records: \"ID0004\" ambiguous between ID0005 and ID0006",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T15:00:26Z",
+                    "path": "/find/sample/supplier-name/ID9044",
+                    "query": "",
+                    "category": "mcp",
+                    "mcp_tool": "mlwh_find_samples",
+                    "mcp_agent": "claude-code/2.1.304 (sdk-cli)",
+                    "client_id": "client-98",
+                    "username": "",
+                    "message": "mlwh: identifier matches multiple records: \"ID0001\" ambiguous between ID0002 and ID0003",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "mcp": 2
+            },
+            "by_tool": {
+                "mlwh_find_samples": 2
+            },
+            "by_agent": {
+                "claude-code/2.1.304 (sdk-cli)": 2
+            },
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/search/sample/:term/count",
+            "status": 502,
+            "error_code": null,
+            "count": 2,
+            "first_seen": "2026-10-21T09:52:40Z",
+            "last_seen": "2026-10-21T09:52:40Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T09:52:40Z",
+                    "path": "/search/sample/ID9045/count",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-90",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                },
+                {
+                    "ts": "2026-10-21T09:52:40Z",
+                    "path": "/search/sample/ID9046/count",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-91",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 2
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "fault",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "",
+            "status": 404,
+            "error_code": "no_route",
+            "count": 1,
+            "first_seen": "2026-10-21T14:43:03Z",
+            "last_seen": "2026-10-21T14:43:03Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T14:43:03Z",
+                    "path": "/version",
+                    "query": "",
+                    "category": "other",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "",
+                    "username": "",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "other": 1
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "caller",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/export/:children/:parent_kind/:parent_id",
+            "status": 409,
+            "error_code": "ambiguous",
+            "count": 1,
+            "first_seen": "2026-10-21T14:45:34Z",
+            "last_seen": "2026-10-21T14:45:34Z",
+            "error_kinds": {},
+            "messages": [
+                {
+                    "message": "mlwh: identifier matches multiple records: \"ID0001\" matches samples ID0002 and ID0003",
+                    "count": 1
+                }
+            ],
+            "examples": [
+                {
+                    "ts": "2026-10-21T14:45:34Z",
+                    "path": "/export/ID9048/ID9048/ID9048",
+                    "query": "format=tsv&limit=1000",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-93",
+                    "username": "user01",
+                    "message": "mlwh: identifier matches multiple records: \"ID0001\" matches samples ID0002 and ID0003",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 1
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/find/sample/accession/:id",
+            "status": 404,
+            "error_code": "not_found",
+            "count": 1,
+            "first_seen": "2026-10-21T14:45:34Z",
+            "last_seen": "2026-10-21T14:45:34Z",
+            "error_kinds": {},
+            "messages": [
+                {
+                    "message": "mlwh: identifier not found",
+                    "count": 1
+                }
+            ],
+            "examples": [
+                {
+                    "ts": "2026-10-21T14:45:34Z",
+                    "path": "/find/sample/accession/ID9049",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-94",
+                    "username": "user01",
+                    "message": "mlwh: identifier not found",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 1
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/find/sample/lims-id/:id",
+            "status": 404,
+            "error_code": "not_found",
+            "count": 1,
+            "first_seen": "2026-10-21T14:45:34Z",
+            "last_seen": "2026-10-21T14:45:34Z",
+            "error_kinds": {},
+            "messages": [
+                {
+                    "message": "mlwh: identifier not found",
+                    "count": 1
+                }
+            ],
+            "examples": [
+                {
+                    "ts": "2026-10-21T14:45:34Z",
+                    "path": "/find/sample/lims-id/ID9050",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-95",
+                    "username": "user01",
+                    "message": "mlwh: identifier not found",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 1
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/find/sample/sanger-id/:id",
+            "status": 404,
+            "error_code": "not_found",
+            "count": 1,
+            "first_seen": "2026-10-21T14:45:34Z",
+            "last_seen": "2026-10-21T14:45:34Z",
+            "error_kinds": {},
+            "messages": [
+                {
+                    "message": "mlwh: identifier not found",
+                    "count": 1
+                }
+            ],
+            "examples": [
+                {
+                    "ts": "2026-10-21T14:45:34Z",
+                    "path": "/find/sample/sanger-id/ID9051",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-96",
+                    "username": "user01",
+                    "message": "mlwh: identifier not found",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 1
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "expected",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/runs/count",
+            "status": 502,
+            "error_code": null,
+            "count": 1,
+            "first_seen": "2026-10-20T19:12:12Z",
+            "last_seen": "2026-10-20T19:12:12Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-20T19:12:12Z",
+                    "path": "/runs/count",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-97",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 1
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "fault",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/search/sample/:term",
+            "status": 502,
+            "error_code": null,
+            "count": 1,
+            "first_seen": "2026-10-21T09:52:40Z",
+            "last_seen": "2026-10-21T09:52:40Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-21T09:52:40Z",
+                    "path": "/search/sample/ID9053",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-98",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 1
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "fault",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/sequencing/aggregate",
+            "status": 502,
+            "error_code": null,
+            "count": 1,
+            "first_seen": "2026-10-20T19:12:12Z",
+            "last_seen": "2026-10-20T19:12:12Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-20T19:12:12Z",
+                    "path": "/sequencing/aggregate",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-90",
+                    "username": "user01",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 1
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "fault",
+            "probe": false
+        },
+        {
+            "method": "GET",
+            "route": "/study/:id/latest-data",
+            "status": 400,
+            "error_code": null,
+            "count": 1,
+            "first_seen": "2026-10-20T10:50:09Z",
+            "last_seen": "2026-10-20T10:50:09Z",
+            "error_kinds": {},
+            "messages": [],
+            "examples": [
+                {
+                    "ts": "2026-10-20T10:50:09Z",
+                    "path": "/study/ID9055/latest-data",
+                    "query": "",
+                    "category": "cli",
+                    "mcp_tool": "",
+                    "mcp_agent": "",
+                    "client_id": "client-91",
+                    "username": "user05",
+                    "message": "",
+                    "error_kind": ""
+                }
+            ],
+            "by_category": {
+                "cli": 1
+            },
+            "by_tool": {},
+            "by_agent": {},
+            "severity": "fault",
+            "probe": false
+        }
+    ],
+    "previous_totals": {
+        "requests": 0,
+        "errors": 0,
+        "error_rate": 0,
+        "error_severity": {
+            "fault": 0,
+            "caller": 0,
+            "expected": 0,
+            "probe": 0,
+            "legacy": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0
+            }
+        },
+        "sessions": 0,
+        "ip_clients": 0,
+        "users": 0
+    },
+    "filter": {},
+    "bucket_unit": "day",
+    "buckets": [
+        {
+            "start": "2026-09-21T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-09-22T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-09-23T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-09-24T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-09-25T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-09-26T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-09-27T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-09-28T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-09-29T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-09-30T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-01T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-02T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-03T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-04T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-05T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-06T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-07T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-08T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-09T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-10T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-11T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-12T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-13T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-14T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-15T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-16T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-17T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-18T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-19T00:00:00Z",
+            "requests": 0,
+            "by_category": {},
+            "error_severity": {
+                "fault": 0,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 0,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-20T00:00:00Z",
+            "requests": 719,
+            "by_category": {
+                "cli": 679,
+                "mcp": 25,
+                "other": 15
+            },
+            "error_severity": {
+                "fault": 6,
+                "caller": 0,
+                "expected": 0,
+                "probe": 0,
+                "legacy": {
+                    "fault": 6,
+                    "caller": 0,
+                    "expected": 0
+                }
+            }
+        },
+        {
+            "start": "2026-10-21T00:00:00Z",
+            "requests": 859,
+            "by_category": {
+                "cli": 835,
+                "mcp": 22,
+                "other": 2
+            },
+            "error_severity": {
+                "fault": 9,
+                "caller": 3,
+                "expected": 465,
+                "probe": 0,
+                "legacy": {
+                    "fault": 9,
+                    "caller": 2,
+                    "expected": 444
+                }
+            }
+        }
+    ]
+}

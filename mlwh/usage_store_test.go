@@ -362,7 +362,7 @@ func TestUsageStoreA2(t *testing.T) {
 		convey.So(store.Flush(context.Background()), convey.ShouldBeNil)
 		convey.So(time.Since(start), convey.ShouldBeLessThan, time.Second)
 
-		_, err := store.Summary(context.Background(), UsageWindow7d)
+		_, err := store.Summary(context.Background(), UsageWindow7d, UsageFilter{})
 		convey.So(err, convey.ShouldNotBeNil)
 	})
 }
@@ -518,7 +518,7 @@ func TestUsageStoreErrorColumnsMigration(t *testing.T) {
 			convey.So(rows[1].ErrorKind.String, convey.ShouldEqual, "timeout")
 			convey.So(rows[1].ErrorMessage.String, convey.ShouldEqual, "no X")
 
-			summary, err := store.Summary(ctx, UsageWindowAll)
+			summary, err := store.Summary(ctx, UsageWindowAll, UsageFilter{})
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(summary.Errors, convey.ShouldHaveLength, 2)
 		})

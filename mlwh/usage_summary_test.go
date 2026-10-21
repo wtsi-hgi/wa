@@ -76,6 +76,7 @@ func TestUsageSummaryA3(t *testing.T) {
 			convey.So(cats[0], convey.ShouldResemble, UsageCategoryStats{
 				Category: UsageCategoryCLI, Requests: 3, Errors: 1, Sessions: 2, Users: 2,
 				RequestsPerSessionMedian: 1, RequestsPerSessionMax: 2,
+				ErrorSeverity: usageBreakdownOfOneForTest(UsageErrorSeverityExpected, false),
 			})
 			convey.So(cats[1], convey.ShouldResemble, UsageCategoryStats{
 				Category: UsageCategoryMCP, Requests: 1, Sessions: 1,
@@ -86,6 +87,7 @@ func TestUsageSummaryA3(t *testing.T) {
 			convey.So(cats[4], convey.ShouldResemble, UsageCategoryStats{Category: UsageCategoryMLWHDiffServer})
 			convey.So(cats[5], convey.ShouldResemble, UsageCategoryStats{
 				Category: UsageCategoryOther, Requests: 2, Errors: 2, ErrorRate: 1.0, IPClients: 1,
+				ErrorSeverity: UsageErrorBreakdown{Fault: 1, Caller: 1, Legacy: UsageLegacyErrors{Fault: 1}},
 			})
 		})
 
@@ -94,10 +96,12 @@ func TestUsageSummaryA3(t *testing.T) {
 				{
 					Method: "GET", Route: usageSummaryTestRouteStudies, Requests: 4, Errors: 1, ErrorRate: 0.25,
 					P50Ms: 20, P95Ms: 40, ByCategory: map[string]int64{"cli": 2, "mcp": 1, "other": 1},
+					ErrorSeverity: usageBreakdownOfOneForTest(UsageErrorSeverityFault, true),
 				},
 				{
 					Method: "GET", Route: "/classify/:id", Requests: 1, Errors: 1, ErrorRate: 1.0,
 					P50Ms: 5, P95Ms: 5, ByCategory: map[string]int64{"cli": 1},
+					ErrorSeverity: usageBreakdownOfOneForTest(UsageErrorSeverityExpected, false),
 				},
 			})
 		})
@@ -106,7 +110,10 @@ func TestUsageSummaryA3(t *testing.T) {
 			convey.So(summary.MCPTools, convey.ShouldResemble, []UsageCount{{Value: "mlwh_list_studies", Requests: 1}})
 			convey.So(summary.MCPAgents, convey.ShouldResemble, []UsageCount{{Value: usageSummaryTestAgent, Requests: 1}})
 			convey.So(summary.OtherUserAgents, convey.ShouldResemble, []UsageCount{
-				{Value: "curl/8.5.0", Requests: 2, Errors: 2},
+				{
+					Value: "curl/8.5.0", Requests: 2, Errors: 2,
+					ErrorSeverity: UsageErrorBreakdown{Fault: 1, Caller: 1, Legacy: UsageLegacyErrors{Fault: 1}},
+				},
 			})
 		})
 
@@ -151,6 +158,8 @@ func TestUsageSummaryA3(t *testing.T) {
 			Start: "2026-10-09T12:00:00Z", End: "2026-10-10T12:00:00Z", Requests: 6,
 			ByCategory: map[string]int64{"cli": 3, "mcp": 1, "other": 2},
 			ByEndpoint: map[string]int64{usageSummaryTestLatestStudies: 4, usageSummaryTestClassify: 1},
+			ByTool:     map[string]int64{"mlwh_list_studies": 1},
+			ByUser:     map[string]int64{"alice": 2, "bob": 1},
 		})
 		convey.So(series[8].Requests, convey.ShouldEqual, 1)
 		convey.So(series[8].ByCategory, convey.ShouldResemble, map[string]int64{"cli": 1})
@@ -233,7 +242,7 @@ func TestUsageSummaryA3(t *testing.T) {
 			Route: usageSummaryTestRouteStudies, RemoteAddr: "10.0.0.1", Status: 200,
 		}))
 
-		summary, err := store.Summary(context.Background(), UsageWindow24h)
+		summary, err := store.Summary(context.Background(), UsageWindow24h, UsageFilter{})
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(summary.Totals.Requests, convey.ShouldEqual, 7)
 		convey.So(summary.Series[len(summary.Series)-1].Requests, convey.ShouldEqual, 7)
@@ -249,7 +258,7 @@ func TestUsageSummaryA3(t *testing.T) {
 		store := openTestUsageStore(t, filepath.Join(t.TempDir(), "u.sqlite"), 365, usageQueueSize, usageSummaryTestNow)
 
 		convey.Convey("when 7d is summarised, then everything is zero or empty except days", func() {
-			summary, err := store.Summary(context.Background(), UsageWindow7d)
+			summary, err := store.Summary(context.Background(), UsageWindow7d, UsageFilter{})
 			convey.So(err, convey.ShouldBeNil)
 
 			convey.So(summary.Totals, convey.ShouldResemble, UsageTotals{})
@@ -275,7 +284,7 @@ func TestUsageSummaryA3(t *testing.T) {
 		})
 
 		convey.Convey("when all is summarised, then days is empty", func() {
-			summary, err := store.Summary(context.Background(), UsageWindowAll)
+			summary, err := store.Summary(context.Background(), UsageWindowAll, UsageFilter{})
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(summary.Days, convey.ShouldResemble, []UsageDay{})
 		})
@@ -422,7 +431,7 @@ func TestUsageSummaryA3(t *testing.T) {
 		store.Record(fixture[0])
 		store.Record(fixture[1])
 
-		summary, err := store.Summary(context.Background(), UsageWindow24h)
+		summary, err := store.Summary(context.Background(), UsageWindow24h, UsageFilter{})
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(summary.Totals.Requests, convey.ShouldEqual, 2)
 	})
@@ -430,7 +439,7 @@ func TestUsageSummaryA3(t *testing.T) {
 	convey.Convey("A3.12: Given window 1h, then Summary returns ErrUsageWindowInvalid", t, func() {
 		store := openTestUsageStore(t, filepath.Join(t.TempDir(), "u.sqlite"), 365, usageQueueSize, usageSummaryTestNow)
 
-		_, err := store.Summary(context.Background(), UsageWindow("1h"))
+		_, err := store.Summary(context.Background(), UsageWindow("1h"), UsageFilter{})
 		convey.So(errors.Is(err, ErrUsageWindowInvalid), convey.ShouldBeTrue)
 	})
 
@@ -456,7 +465,7 @@ func TestUsageSummaryA3(t *testing.T) {
 		recordUsageEventsForTest(store, usageFixtureFForTest())
 		store.dropped.Add(3)
 
-		summary, err := store.Summary(context.Background(), UsageWindow24h)
+		summary, err := store.Summary(context.Background(), UsageWindow24h, UsageFilter{})
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(summary.DroppedEvents, convey.ShouldEqual, 3)
 	})
@@ -480,7 +489,7 @@ func TestUsageSummaryA3(t *testing.T) {
 	convey.Convey("A3.15: Given an empty store and 7d, when JSON-marshalled, then every list is an array", t, func() {
 		store := openTestUsageStore(t, filepath.Join(t.TempDir(), "u.sqlite"), 365, usageQueueSize, usageSummaryTestNow)
 
-		summary, err := store.Summary(context.Background(), UsageWindow7d)
+		summary, err := store.Summary(context.Background(), UsageWindow7d, UsageFilter{})
 		convey.So(err, convey.ShouldBeNil)
 
 		data, err := json.Marshal(summary)
@@ -722,10 +731,16 @@ func TestUsageSummaryErrors(t *testing.T) {
 
 		convey.Convey("then MCP tools and agents carry their error counts", func() {
 			convey.So(summary.MCPTools, convey.ShouldResemble, []UsageCount{
-				{Value: "mlwh_classify_identifier", Requests: 2, Errors: 1},
+				{
+					Value: "mlwh_classify_identifier", Requests: 2, Errors: 1,
+					ErrorSeverity: usageBreakdownOfOneForTest(UsageErrorSeverityExpected, false),
+				},
 			})
 			convey.So(summary.MCPAgents, convey.ShouldResemble, []UsageCount{
-				{Value: usageSummaryTestAgent, Requests: 2, Errors: 1},
+				{
+					Value: usageSummaryTestAgent, Requests: 2, Errors: 1,
+					ErrorSeverity: usageBreakdownOfOneForTest(UsageErrorSeverityExpected, false),
+				},
 			})
 		})
 
@@ -1097,10 +1112,19 @@ func usageFixtureFForTest() []UsageEvent {
 func summariseEventsForTest(t *testing.T, events []UsageEvent, w UsageWindow) UsageSummary {
 	t.Helper()
 
+	return summariseFilteredEventsForTest(t, events, w, UsageFilter{})
+}
+
+// summariseFilteredEventsForTest is summariseEventsForTest narrowed by filter.
+func summariseFilteredEventsForTest(t *testing.T, events []UsageEvent, w UsageWindow,
+	filter UsageFilter,
+) UsageSummary {
+	t.Helper()
+
 	store := openTestUsageStore(t, filepath.Join(t.TempDir(), "u.sqlite"), 365, usageQueueSize, usageSummaryTestNow)
 	recordUsageEventsForTest(store, events)
 
-	summary, err := store.Summary(context.Background(), w)
+	summary, err := store.Summary(context.Background(), w, filter)
 	convey.So(err, convey.ShouldBeNil)
 
 	return summary
