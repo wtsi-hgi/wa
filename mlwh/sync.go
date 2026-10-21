@@ -2409,17 +2409,27 @@ func splitSeqProductIRODSLocationsSyncStage(tables []string) ([]string, bool) {
 	return preIRODS, syncIRODS
 }
 
-func syncResultsContainDependencyError(results []syncResult, dependencies map[string]struct{}) bool {
-	for _, result := range results {
-		if result.err == nil {
-			continue
-		}
-		if _, ok := dependencies[result.report.Table]; ok {
-			return true
-		}
+// syncSeqProductIRODSLocationsStage syncs the iRODS table after the product
+// mirrors it reads. When a dependency failed, or its indexes cannot be
+// repaired, it records the table as skipped instead.
+func (c *Client) syncSeqProductIRODSLocationsStage(ctx context.Context, preIRODSResults []syncResult) ([]SyncReport, []error) {
+	if failed := failedSyncDependencies(preIRODSResults, seqProductIRODSLocationsSyncDependencies); len(failed) > 0 {
+		skipErr := fmt.Errorf("skipped: dependency sync failed: %s", strings.Join(failed, ", "))
+
+		return nil, nonNilErrors(c.recordSyncFailure(ctx, syncTableSeqProductIRODSLocations, skipErr, failed))
 	}
 
-	return false
+	if repairErr := c.repairSeqProductIRODSLocationsDependencyIndexes(ctx); repairErr != nil {
+		skipErr := fmt.Errorf("skipped: repair dependency indexes: %w", repairErr)
+
+		return nil, nonNilErrors(repairErr, c.recordSyncFailure(ctx, syncTableSeqProductIRODSLocations, skipErr, nil))
+	}
+
+	return collectSyncResults(c.syncTablesInParallel(ctx, []string{syncTableSeqProductIRODSLocations}), 1)
+}
+
+func nonNilErrors(errs ...error) []error {
+	return slices.DeleteFunc(errs, func(err error) bool { return err == nil })
 }
 
 func collectSyncResults(results []syncResult, reportCapacity int) ([]SyncReport, []error) {
@@ -2454,6 +2464,9 @@ func (c *Client) syncTablesInParallel(ctx context.Context, tables []string) []sy
 			defer waitGroup.Done()
 
 			report, syncErr := c.syncTable(ctx, table)
+			if recordErr := c.recordSyncOutcome(ctx, table, syncErr); recordErr != nil {
+				syncErr = errors.Join(syncErr, recordErr)
+			}
 			if syncErr != nil {
 				resultCh <- syncResult{report: report, err: fmt.Errorf("%s: %w", table, syncErr)}
 				return
@@ -2586,19 +2599,13 @@ func (c *Client) syncTables(ctx context.Context) (reports []SyncReport, err erro
 	preIRODSResults := c.syncTablesInParallel(ctx, preIRODSTables)
 	reports, errs = collectSyncResults(preIRODSResults, len(tables))
 
-	if syncIRODS && !syncResultsContainDependencyError(preIRODSResults, seqProductIRODSLocationsSyncDependencies) {
-		if repairErr := c.repairSeqProductIRODSLocationsDependencyIndexes(ctx); repairErr != nil {
-			errs = append(errs, repairErr)
-		} else {
-			irodsReports, irodsErrs := collectSyncResults(c.syncTablesInParallel(ctx, []string{syncTableSeqProductIRODSLocations}), 1)
-			reports = append(reports, irodsReports...)
-			errs = append(errs, irodsErrs...)
-		}
+	if syncIRODS {
+		irodsReports, irodsErrs := c.syncSeqProductIRODSLocationsStage(ctx, preIRODSResults)
+		reports = append(reports, irodsReports...)
+		errs = append(errs, irodsErrs...)
 	}
 	if len(errs) == 0 {
-		if repairErr := repairDroppedMirrorIndexes(ctx, c.cache.DB(), c.cache.Dialect()); repairErr != nil {
-			errs = append(errs, repairErr)
-		}
+		errs = append(errs, c.repairDroppedMirrorIndexesAfterSync(ctx)...)
 	}
 
 	return reports, errors.Join(errs...)
@@ -2851,6 +2858,23 @@ func formatSyncDate(value time.Time) string {
 	}
 
 	return value.UTC().Format(time.DateOnly)
+}
+
+// repairDroppedMirrorIndexesAfterSync rebuilds indexes a cold load dropped,
+// recording a failure against the table whose indexes could not be rebuilt.
+func (c *Client) repairDroppedMirrorIndexesAfterSync(ctx context.Context) []error {
+	for _, indexSet := range syncMirrorIndexSets {
+		err := repairDroppedMirrorIndexSet(ctx, c.cache.DB(), c.cache.Dialect(), indexSet)
+		if err == nil {
+			continue
+		}
+
+		repairErr := fmt.Errorf("rebuild dropped indexes: %w", err)
+
+		return nonNilErrors(err, c.recordSyncFailure(ctx, indexSet.SyncTable, repairErr, nil))
+	}
+
+	return nil
 }
 
 func (c *Client) repairSeqProductIRODSLocationsDependencyIndexes(ctx context.Context) error {

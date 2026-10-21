@@ -1,6 +1,6 @@
 # wa mlwh API endpoint reference
 
-**API version:** `1.11.0`
+**API version:** `1.12.0`
 
 This catalogue lists every endpoint of the cache-backed, read-only `wa mlwh
 serve` REST API. It is **generated** from the same enriched `Registry`
@@ -914,7 +914,7 @@ Returns the number of distinct samples whose library type exactly matches the gi
 
 Report cache freshness
 
-Reports, per mirrored sync table, sync progress and cache currency (UTC RFC3339) and whether it has ever synced. high_water is sync-mode-specific source progress: the latest source-row change for incremental tables, the refresh/snapshot time for full-refresh tables, or empty for unsynced tables and modes without a meaningful watermark; it may remain old when source data is unchanged and must not be used as cache currency. last_run is the table's last cache sync/refresh time and is the timestamp to use for cache-currency and as-of caveats. Succeeds even on a never-synced cache so callers can degrade gracefully.
+Reports, per mirrored sync table, sync progress and cache currency (UTC RFC3339), whether it has ever synced, and the outcome and health of its syncs. high_water is sync-mode-specific source progress: the latest source-row change for incremental tables, the refresh/snapshot time for full-refresh tables, or empty for unsynced tables and modes without a meaningful watermark; it may remain old when source data is unchanged and must not be used as cache currency. last_run is the table's last cache sync/refresh time and is the timestamp to use for cache-currency and as-of caveats. last_success_at is when the table's sync last completed without error; last_error and last_error_at describe its most recent failed or skipped sync and clear on its next success; blocked_by names failed dependencies that made the sync skip it. status is failing when the most recent sync failed or was skipped, never_synced when it has neither succeeded nor synced data, stale when its last success is older than stale_after_seconds (server setting WA_MLWH_STALE_AFTER, default 2h) or unknown although data was synced, and ok otherwise; the top-level status is the most severe table status, ranked failing, never_synced, stale, ok. Succeeds even on a never-synced cache so callers can degrade gracefully.
 
 - Path parameters: none
 - Query parameters: none

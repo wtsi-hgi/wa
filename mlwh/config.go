@@ -46,6 +46,17 @@ type Config struct {
 
 // Open constructs a cache-backed MLWH client.
 func Open(ctx context.Context, cfg Config) (*Client, error) {
+	return open(ctx, cfg, false)
+}
+
+// OpenForSync is Open for wa mlwh sync. When the source cannot be reached, it
+// records that failure against every sync table before returning it, so the
+// cache's freshness reports the failed run.
+func OpenForSync(ctx context.Context, cfg Config) (*Client, error) {
+	return open(ctx, cfg, true)
+}
+
+func open(ctx context.Context, cfg Config, recordSourceFailure bool) (*Client, error) {
 	cache, err := OpenCache(ctx, cfg.Cache)
 	if err != nil {
 		return nil, err
@@ -55,6 +66,7 @@ func Open(ctx context.Context, cfg Config) (*Client, error) {
 		cache:       cache,
 		cacheReader: readDBFromCache(cache),
 		syncSource:  cfg.Source,
+		syncSecrets: []string{cfg.Password, cfg.Cache.Password},
 	}
 
 	if client.syncSource != nil {
@@ -63,6 +75,11 @@ func Open(ctx context.Context, cfg Config) (*Client, error) {
 
 	sourceDB, err := OpenSource(ctx, cfg.DSN, cfg.Password)
 	if err != nil {
+		if recordSourceFailure {
+			recordErr := client.recordSyncFailureForAllTables(ctx, fmt.Errorf("connect to MLWH source: %w", err))
+			err = errors.Join(err, recordErr)
+		}
+
 		_ = cache.Close()
 
 		return nil, err

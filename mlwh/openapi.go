@@ -37,13 +37,14 @@ import (
 // schema or contract change: it tracked the cache schema-version lineage
 // (CacheSchemaVersion) through 1.8, 1.9 adds the documented POST /feedback
 // endpoint without a cache schema change, 1.10 documents the optional
-// client identification headers that usage tracking records, and 1.11 adds the
-// Export multi_sample opt-in plus sample columns on lanes exports. The patch
+// client identification headers that usage tracking records, 1.11 adds the
+// Export multi_sample opt-in plus sample columns on lanes exports, and 1.12
+// adds per-table sync outcomes and statuses to GET /freshness. The patch
 // component is reserved for documentation-only revisions. It is a compiled-in
 // constant: reading it never contacts a live server, letting an external
 // consumer (such as an MCP server importing this package) read the targeted API
 // version with compile-time safety.
-const APIVersion = "1.11.0"
+const APIVersion = "1.12.0"
 
 // mlwhAPIVersion is the unexported alias of APIVersion retained for internal
 // references; it shares APIVersion's single source of truth so the served

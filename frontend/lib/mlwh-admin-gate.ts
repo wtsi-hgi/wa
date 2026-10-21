@@ -11,13 +11,12 @@ export type MLWHAdminGateState =
 
 type ParseResult<T> = { success: true; data: T } | { success: false };
 
-// authorizeMLWHAdmin runs the session, allowlist, and argument checks in that
-// order, then reads the MLWH server token, all before any fetch. It returns
-// the token, parsed arguments, and session username, or the state to return
-// without calling wa. currentSession runs once.
-export async function authorizeMLWHAdmin<T>(
-    parseArgs: () => ParseResult<T>,
-): Promise<(MLWHAdminAuth & { args: T }) | MLWHAdminGateState> {
+// authorizeMLWHAdminSession runs the session and allowlist checks, returning
+// the admin's username or the state to return without calling wa. Pages that
+// read only unauthenticated wa routes need no server token, so stop here.
+export async function authorizeMLWHAdminSession(): Promise<
+    { username: string | null } | { status: "unauthenticated" | "forbidden" }
+> {
     const session = await currentSession();
 
     if (!session.authenticated) {
@@ -26,6 +25,22 @@ export async function authorizeMLWHAdmin<T>(
 
     if (!isMLWHAdmin(session.username)) {
         return { status: "forbidden" };
+    }
+
+    return { username: session.username };
+}
+
+// authorizeMLWHAdmin runs the session, allowlist, and argument checks in that
+// order, then reads the MLWH server token, all before any fetch. It returns
+// the token, parsed arguments, and session username, or the state to return
+// without calling wa. currentSession runs once.
+export async function authorizeMLWHAdmin<T>(
+    parseArgs: () => ParseResult<T>,
+): Promise<(MLWHAdminAuth & { args: T }) | MLWHAdminGateState> {
+    const session = await authorizeMLWHAdminSession();
+
+    if ("status" in session) {
+        return session;
     }
 
     const parsed = parseArgs();

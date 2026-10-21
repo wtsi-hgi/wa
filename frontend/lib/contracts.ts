@@ -681,3 +681,44 @@ export const usageSummarySchema = z.object({
     errors: z.array(usageErrorGroupSchema).optional(),
 });
 export type UsageSummary = z.infer<typeof usageSummarySchema>;
+
+// Cache freshness from wa Go GET /freshness (mlwh/freshness.go Freshness).
+// Servers older than MLWH API 1.12.0 send only table, high_water, last_run
+// and ever_synced, and no overall status.
+const freshnessTableSchema = z.object({
+    table: z.string(),
+    high_water: z.string(),
+    last_run: z.string(),
+    ever_synced: z.boolean(),
+    last_success_at: z.string().optional(),
+    last_error: z.string().optional(),
+    last_error_at: z.string().optional(),
+    blocked_by: z.array(z.string()).nullable().optional(),
+    status: z.string().optional(),
+});
+export const freshnessSchema = z.object({
+    status: z.string().optional(),
+    stale_after_seconds: z.number().optional(),
+    tables: z.array(freshnessTableSchema),
+});
+export type Freshness = z.infer<typeof freshnessSchema>;
+
+// The /freshness document from a server that reports sync status (MLWH API
+// 1.12.0 or later): every status and outcome field is present.
+export const mlwhSyncStatusSchema = z.object({
+    status: z.string(),
+    stale_after_seconds: z.number().int().nonnegative(),
+    tables: z.array(
+        freshnessTableSchema.extend({
+            last_success_at: z.string(),
+            last_error: z.string(),
+            last_error_at: z.string(),
+            blocked_by: z
+                .array(z.string())
+                .nullable()
+                .transform((tables) => tables ?? []),
+            status: z.string(),
+        }),
+    ),
+});
+export type MLWHSyncStatus = z.infer<typeof mlwhSyncStatusSchema>;

@@ -75,6 +75,7 @@ var schemaStatementOrder = []string{
 	"sample_search_token",
 	commonNameWordMirrorTable,
 	"sync_state",
+	syncOutcomeTable,
 	"schema_version",
 	"sync_lock",
 }

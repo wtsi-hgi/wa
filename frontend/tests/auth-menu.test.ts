@@ -582,7 +582,7 @@ describe("E5 auth menu feedback link", () => {
             within(menu)
                 .getAllByRole("menuitem")
                 .map((item) => item.textContent),
-        ).toEqual(["Feedback", "Usage", "Log out"]);
+        ).toEqual(["Feedback", "Usage", "MLWH sync", "Log out"]);
     });
 
     it("closes the account menu when navigation changes the route", async () => {
@@ -793,7 +793,7 @@ describe("E5 auth menu feedback link", () => {
             within(menu)
                 .getAllByRole("menuitem")
                 .map((item) => item.textContent),
-        ).toEqual(["Feedback", "Usage", "Log out"]);
+        ).toEqual(["Feedback", "Usage", "MLWH sync", "Log out"]);
         expect(
             within(menu)
                 .getByRole("menuitem", { name: "Feedback" })
@@ -924,7 +924,45 @@ describe("E5 auth menu usage link", () => {
             within(menu)
                 .getAllByRole("menuitem")
                 .map((item) => item.textContent),
-        ).toEqual(["Feedback", "Usage", "Log out"]);
+        ).toEqual(["Feedback", "Usage", "MLWH sync", "Log out"]);
+    });
+
+    it("shows an MLWH sync menu link to /mlwh-sync after Usage", async () => {
+        stubSessionRefresh({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
+
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: true,
+            username: "alice",
+        });
+
+        const menu = openAccountMenu("alice");
+        const sync = within(menu).getByRole("menuitem", { name: "MLWH sync" });
+
+        expect(sync.tagName).toBe("A");
+        expect(sync.getAttribute("href")).toBe("/mlwh-sync");
+    });
+
+    it("hides the MLWH sync link from a non-admin authenticated session", async () => {
+        stubSessionRefresh({
+            authenticated: true,
+            isAdmin: false,
+            username: "bob",
+        });
+
+        await renderAuthMenu({
+            authenticated: true,
+            isAdmin: false,
+            username: "bob",
+        });
+
+        openAccountMenu("bob");
+
+        expect(document.querySelector('a[href="/mlwh-sync"]')).toBeNull();
     });
 
     it("hides the Usage link from a non-admin authenticated session", async () => {
