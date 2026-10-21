@@ -1046,16 +1046,58 @@ func writeLibraryPanel(out io.Writer, report infoReport, style infoStyle) {
 	}
 }
 
+// reportInfoCandidates handles an identifier that names several samples: as
+// JSON, as a plain list, or by asking the user to choose one and then printing
+// what `wa mlwh info` prints for the chosen sample's identifier.
+func reportInfoCandidates(ctx context.Context, client mlwhInfoClient, report infoCandidatesReport, opts infoOptions) error {
+	report.CacheSyncedAt = mlwhCacheSyncedAt(ctx, client)
+
+	switch {
+	case opts.jsonOut:
+		return writeInfoCandidatesJSON(opts.out, report)
+	case !opts.interactive:
+		return writeInfoCandidatesList(opts.out, report)
+	}
+
+	identifier, err := chooseInfoCandidate(ctx, opts.in, opts.out, report)
+	if err != nil {
+		return err
+	}
+
+	opts.typeFlag, opts.interactive = "", false
+
+	return runMLWHInfo(ctx, client, identifier, opts)
+}
+
+// infoReportCacheSyncedAt picks the same cache-synced timestamp the human panel
+// shows, falling back to the oldest sync across the cache when the panel's
+// aggregate did not report one.
+func infoReportCacheSyncedAt(ctx context.Context, client mlwhInfoClient, report infoReport) string {
+	var synced string
+	switch {
+	case report.Sample != nil:
+		synced = sampleCacheSyncedAt(report)
+	case report.Study != nil:
+		synced = studyCacheSyncedAt(report)
+	case report.Run != nil:
+		synced = runCacheSyncedAt(report)
+	}
+	if strings.TrimSpace(synced) != "" {
+		return synced
+	}
+
+	return mlwhCacheSyncedAt(ctx, client)
+}
+
 type mlwhInfoSampleNameResolver interface {
 	ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error)
 }
 
-// runMLWHInfo resolves identifier and prints its report. canSync reports whether
-// the caller is in local operator upstream-DSN mode (the only mode where
-// 'wa mlwh sync' works); when false the failed-query messages omit any sync hint,
-// because an end-user going via the server or a cache-only path cannot sync.
-func runMLWHInfo(ctx context.Context, client mlwhInfoClient, out io.Writer, identifier, typeFlag, since string, jsonOut, canSync bool) error {
-	match, err := classifyForInfo(ctx, client, identifier, typeFlag)
+// runMLWHInfo resolves identifier and prints its report.
+func runMLWHInfo(ctx context.Context, client mlwhInfoClient, identifier string, opts infoOptions) error {
+	out, jsonOut, canSync := opts.out, opts.jsonOut, opts.canSync
+
+	match, err := classifyForInfo(ctx, client, identifier, opts.typeFlag)
 	if err != nil {
 		cacheUnavailable := errors.Is(err, mlwh.ErrCacheNeverSynced) ||
 			errors.Is(err, mlwh.ErrNotFound) && mlwhClientNeverSynced(ctx, client)
@@ -1072,10 +1114,21 @@ func runMLWHInfo(ctx context.Context, client mlwhInfoClient, out io.Writer, iden
 			return nil
 		}
 
+		if errors.Is(err, mlwh.ErrAmbiguous) {
+			candidatesCtx, cancel := context.WithTimeout(ctx, infoCandidatesTimeout)
+			report, ok := buildInfoCandidatesReport(candidatesCtx, client, identifier)
+			cancel()
+
+			if ok {
+				return reportInfoCandidates(ctx, client, report, opts)
+			}
+		}
+
 		return infoQueryError(identifier, err, canSync)
 	}
 
-	report := buildInfoReport(ctx, client, identifier, since, match)
+	report := buildInfoReport(ctx, client, identifier, opts.since, match)
+	report.CacheSyncedAt = infoReportCacheSyncedAt(ctx, client, report)
 
 	if jsonOut {
 		return writeInfoReportJSON(out, report)
@@ -1122,7 +1175,7 @@ func buildInfoReport(ctx context.Context, client mlwhInfoClient, identifier, sin
 	return report
 }
 
-func writeInfoReportJSON(out io.Writer, report infoReport) error {
+func writeInfoReportJSON(out io.Writer, report any) error {
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
 
@@ -1500,6 +1553,22 @@ func populateRunFeatures(ctx context.Context, client mlwhInfoClient, report *inf
 	}
 }
 
+// infoOptions holds how one `wa mlwh info` run reports. canSync reports whether
+// the caller is in local operator upstream-DSN mode (the only mode where
+// 'wa mlwh sync' works); when false the failed-query messages omit any sync hint,
+// because an end-user going via the server or a cache-only path cannot sync.
+// interactive allows asking the user, through in, to choose among the samples
+// an identifier names.
+type infoOptions struct {
+	out         io.Writer
+	in          io.Reader
+	typeFlag    string
+	since       string
+	jsonOut     bool
+	canSync     bool
+	interactive bool
+}
+
 type infoProductRow struct {
 	Name            string `json:"name"`
 	SupplierName    string `json:"supplier_name"`
@@ -1536,6 +1605,9 @@ type infoReport struct {
 	RunOverview             *mlwh.RunOverview         `json:"run_overview,omitempty"`
 	RunStatus               *mlwh.RunStatusTimeline   `json:"run_status,omitempty"`
 	RunIRODSPaths           []mlwh.IRODSPath          `json:"run_irods_paths,omitempty"`
+
+	// CacheSyncedAt is the as-of time the human panel shows as "Cache synced".
+	CacheSyncedAt string `json:"cache_synced_at,omitempty"`
 
 	Warnings []string `json:"warnings,omitempty"`
 
@@ -1588,6 +1660,31 @@ func newMLWHInfoCommand() *cobra.Command {
 			"adds its progress timeline and a run report adds the run overview",
 			"and within-sequencing status.",
 			"",
+			"An identifier that names several samples (such as a supplier name",
+			"shared by a top-up and its original) does not resolve to one",
+			"record. When stdin and stdout are both terminals and --json is not",
+			"given, the command lists the samples by number (Sanger name, Sanger",
+			"sample id, supplier name, whether each has deliverable data, and",
+			"studies) and asks you to choose one; it then prints that sample's",
+			"report, exactly as 'wa mlwh info' on that sample's identifier would.",
+			"An empty answer, end of input or Ctrl-C cancels, as do three invalid",
+			"answers.",
+			"",
+			"Otherwise the command prints the numbered list without asking, or,",
+			"with --json, one object:",
+			`  {"kind": "ambiguous_sample", "identifier": <id>, "candidates": [`,
+			`    {"identifier", "name", "sanger_sample_id", "supplier_name",`,
+			`     "accession_number", "studies": [...], "has_data"}, ...],`,
+			`   "cache_synced_at": <time>, "warnings": [...]}`,
+			"warnings, present only when non-empty, notes lookups that failed or",
+			"timed out, so some identifiers or has_data values may be missing.",
+			"Each candidate's identifier names that sample alone in 'wa mlwh",
+			"info': its Sanger name, or, when another sample shares the name, its",
+			"Sanger sample id, LIMS id, UUID or accession; it is empty when none",
+			"is unique. When no sample is chosen, the command exits with status",
+			"3; other failures exit with status 1. --json output carries",
+			"cache_synced_at, the cache sync time the text output shows.",
+			"",
 			mlwhInfoCommandConfigurationHelp,
 			"",
 			"Examples:",
@@ -1627,7 +1724,15 @@ func newMLWHInfoCommand() *cobra.Command {
 			// mention sync.
 			canSync := strings.TrimSpace(serverURL) == "" && strings.TrimSpace(firstEnv("WA_MLWH_DSN")) != ""
 
-			return runMLWHInfo(cmd.Context(), client, cmd.OutOrStdout(), identifier, typeFlag, since, jsonOut, canSync)
+			return runMLWHInfo(cmd.Context(), client, identifier, infoOptions{
+				out:         cmd.OutOrStdout(),
+				in:          cmd.InOrStdin(),
+				typeFlag:    typeFlag,
+				since:       since,
+				jsonOut:     jsonOut,
+				canSync:     canSync,
+				interactive: !jsonOut && infoPromptAllowed(cmd.InOrStdin(), cmd.OutOrStdout()),
+			})
 		},
 	}
 

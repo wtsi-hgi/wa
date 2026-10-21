@@ -60,49 +60,49 @@ func studyScanTargets(study *Study) ([]any, func()) {
 	nullable := &nullableStudyScanFields{}
 
 	return []any{
-			&study.IDStudyTmp,
-			&nullable.idLims,
-			&nullable.idStudyLims,
-			&nullable.uuidStudyLims,
-			&nullable.name,
-			&nullable.accessionNumber,
-			&nullable.studyTitle,
-			&nullable.facultySponsor,
-			&nullable.state,
-			&nullable.dataReleaseStrategy,
-			&nullable.dataAccessGroup,
-			&nullable.programme,
-			&nullable.referenceGenome,
-			&nullable.ethicallyApproved,
-			&nullable.studyType,
-			&nullable.containsHumanDNA,
-			&nullable.contaminatedHumanDNA,
-			&nullable.studyVisibility,
-			&nullable.egaDACAccessionNumber,
-			&nullable.egaPolicyAccessionNumber,
-			&nullable.dataReleaseTiming,
-		}, func() {
-			study.IDLims = nullStringValue(nullable.idLims)
-			study.IDStudyLims = nullStringValue(nullable.idStudyLims)
-			study.UUIDStudyLims = nullStringValue(nullable.uuidStudyLims)
-			study.Name = nullStringValue(nullable.name)
-			study.AccessionNumber = nullStringValue(nullable.accessionNumber)
-			study.StudyTitle = nullStringValue(nullable.studyTitle)
-			study.FacultySponsor = nullStringValue(nullable.facultySponsor)
-			study.State = nullStringValue(nullable.state)
-			study.DataReleaseStrategy = nullStringValue(nullable.dataReleaseStrategy)
-			study.DataAccessGroup = nullStringValue(nullable.dataAccessGroup)
-			study.Programme = nullStringValue(nullable.programme)
-			study.ReferenceGenome = nullStringValue(nullable.referenceGenome)
-			study.EthicallyApproved = nullable.ethicallyApproved.Valid && nullable.ethicallyApproved.Bool
-			study.StudyType = nullStringValue(nullable.studyType)
-			study.ContainsHumanDNA = nullable.containsHumanDNA.Valid && nullable.containsHumanDNA.Bool
-			study.ContaminatedHumanDNA = nullable.contaminatedHumanDNA.Valid && nullable.contaminatedHumanDNA.Bool
-			study.StudyVisibility = nullStringValue(nullable.studyVisibility)
-			study.EGADACAccessionNumber = nullStringValue(nullable.egaDACAccessionNumber)
-			study.EGAPolicyAccessionNumber = nullStringValue(nullable.egaPolicyAccessionNumber)
-			study.DataReleaseTiming = nullStringValue(nullable.dataReleaseTiming)
-		}
+		&study.IDStudyTmp,
+		&nullable.idLims,
+		&nullable.idStudyLims,
+		&nullable.uuidStudyLims,
+		&nullable.name,
+		&nullable.accessionNumber,
+		&nullable.studyTitle,
+		&nullable.facultySponsor,
+		&nullable.state,
+		&nullable.dataReleaseStrategy,
+		&nullable.dataAccessGroup,
+		&nullable.programme,
+		&nullable.referenceGenome,
+		&nullable.ethicallyApproved,
+		&nullable.studyType,
+		&nullable.containsHumanDNA,
+		&nullable.contaminatedHumanDNA,
+		&nullable.studyVisibility,
+		&nullable.egaDACAccessionNumber,
+		&nullable.egaPolicyAccessionNumber,
+		&nullable.dataReleaseTiming,
+	}, func() {
+		study.IDLims = nullStringValue(nullable.idLims)
+		study.IDStudyLims = nullStringValue(nullable.idStudyLims)
+		study.UUIDStudyLims = nullStringValue(nullable.uuidStudyLims)
+		study.Name = nullStringValue(nullable.name)
+		study.AccessionNumber = nullStringValue(nullable.accessionNumber)
+		study.StudyTitle = nullStringValue(nullable.studyTitle)
+		study.FacultySponsor = nullStringValue(nullable.facultySponsor)
+		study.State = nullStringValue(nullable.state)
+		study.DataReleaseStrategy = nullStringValue(nullable.dataReleaseStrategy)
+		study.DataAccessGroup = nullStringValue(nullable.dataAccessGroup)
+		study.Programme = nullStringValue(nullable.programme)
+		study.ReferenceGenome = nullStringValue(nullable.referenceGenome)
+		study.EthicallyApproved = nullable.ethicallyApproved.Valid && nullable.ethicallyApproved.Bool
+		study.StudyType = nullStringValue(nullable.studyType)
+		study.ContainsHumanDNA = nullable.containsHumanDNA.Valid && nullable.containsHumanDNA.Bool
+		study.ContaminatedHumanDNA = nullable.contaminatedHumanDNA.Valid && nullable.contaminatedHumanDNA.Bool
+		study.StudyVisibility = nullStringValue(nullable.studyVisibility)
+		study.EGADACAccessionNumber = nullStringValue(nullable.egaDACAccessionNumber)
+		study.EGAPolicyAccessionNumber = nullStringValue(nullable.egaPolicyAccessionNumber)
+		study.DataReleaseTiming = nullStringValue(nullable.dataReleaseTiming)
+	}
 }
 
 func nullStringValue(value sql.NullString) string {

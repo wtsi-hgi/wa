@@ -127,6 +127,7 @@ func newMLWHSearchCommand() *cobra.Command {
 		limit            int
 		offset           int
 		jsonOut          bool
+		withData         bool
 	)
 
 	command := &cobra.Command{
@@ -150,6 +151,22 @@ func newMLWHSearchCommand() *cobra.Command {
 			"--limit/--offset to page results and --json for a single JSON object",
 			"suitable for piping into jq. Each section reports a total match count;",
 			"a very common sample term reports its count as a floor (e.g. 10000+).",
+			"The JSON object also carries cache_synced_at, the oldest sync time",
+			"across the cache's tables.",
+			"",
+			"Add --with-data to list each returned sample's sequencing data under",
+			"it: one row per product that has an iRODS object (the sample's",
+			"deliverable CRAMs, as 'wa mlwh export irods sample <name>' lists them),",
+			"so products without an iRODS object do not appear. Text output shows",
+			"'<study> <platform> <run>_<lane>#<tag> <manual_qc> <irods_path>' per",
+			"row, or 'no data'; --json adds a data array to each sample of",
+			"{id_study_lims, study_accession_number, platform, id_run, lane,",
+			"tag_index, manual_qc, irods_path}. A sample whose data could not be",
+			"listed shows 'data unavailable: <reason>' in text, and has no data",
+			"array but a data_error string in --json. It costs one export per",
+			"returned sample, so --limit bounds it; at most 4 run at once. If the",
+			"exports run out of time, the samples cut off show 'timed out' as",
+			"their reason and the output is marked timed out (timed_out in --json).",
 			"",
 			mlwhQueryCommandConfigurationHelp,
 			"",
@@ -176,7 +193,17 @@ func newMLWHSearchCommand() *cobra.Command {
 			// Bound the whole invocation so a slow term cannot hang the CLI; the
 			// deadline propagates to the search (and, in server mode, the remote
 			// query). runMLWHSearch turns a resulting deadline into a clear message.
-			ctx, cancel := context.WithTimeout(cmd.Context(), mlwhSearchTimeout)
+			timeout := mlwhSearchTimeout
+			if withData {
+				wantStudies, wantSamples, err := searchTypeSelection(typeFlag)
+				if err == nil && wantStudies && !wantSamples {
+					return usageError("--with-data needs a sample search")
+				}
+
+				timeout = mlwhSearchWithDataTimeout
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
 
 			client, err := openMLWHSearchConfiguredClient(ctx, serverURL)
@@ -193,7 +220,7 @@ func newMLWHSearchCommand() *cobra.Command {
 				DeliverablesOnly: deliverablesOnly,
 			}
 
-			return runMLWHSearch(ctx, client, cmd.OutOrStdout(), term, typeFlag, opts, limit, offset, jsonOut)
+			return runMLWHSearch(ctx, client, cmd.OutOrStdout(), term, typeFlag, opts, searchPage{limit: limit, offset: offset, withData: withData}, jsonOut)
 		},
 	}
 
@@ -207,11 +234,14 @@ func newMLWHSearchCommand() *cobra.Command {
 	command.Flags().IntVar(&limit, "limit", 50, "maximum number of results to return per kind")
 	command.Flags().IntVar(&offset, "offset", 0, "number of results to skip per kind (for pagination)")
 	command.Flags().BoolVar(&jsonOut, "json", false, "emit a single JSON object instead of human-readable text")
+	command.Flags().BoolVar(&withData, "with-data", false, "list each returned sample's products that have an iRODS object (study, platform, run, lane, tag, manual QC, iRODS path)")
 
 	return command
 }
 
-func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, term, typeFlag string, sampleOpts mlwh.SampleSearchOptions, limit, offset int, jsonOut bool) error {
+func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, term, typeFlag string, sampleOpts mlwh.SampleSearchOptions, page searchPage, jsonOut bool) error {
+	limit, offset := page.limit, page.offset
+
 	wantStudies, wantSamples, err := searchTypeSelection(typeFlag)
 	if err != nil {
 		return err
@@ -241,7 +271,15 @@ func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, 
 		}
 	}
 
+	if page.withData && report.Samples != nil {
+		if err := addSampleSearchData(ctx, client, &report); err != nil {
+			return err
+		}
+	}
+
 	if jsonOut {
+		report.CacheSyncedAt = mlwhCacheSyncedAt(ctx, client)
+
 		return writeSearchReportJSON(out, report)
 	}
 
@@ -377,11 +415,12 @@ func buildSampleSearchSection(ctx context.Context, client mlwhSearchClient, term
 		emptyCache = true
 	}
 
-	if samples == nil {
-		samples = []mlwh.Sample{}
+	results := make([]searchSample, len(samples))
+	for index, sample := range samples {
+		results[index] = searchSample{Sample: sample}
 	}
 
-	return &sampleSearchSection{Count: count.Count, Results: samples}, emptyCache, nil
+	return &sampleSearchSection{Count: count.Count, Results: results}, emptyCache, nil
 }
 
 func writeSearchReportJSON(out io.Writer, report searchReport) error {
@@ -410,7 +449,10 @@ func writeSearchReportText(out io.Writer, report searchReport) {
 		_, _ = fmt.Fprintf(out, "\n%s\n", mlwhCacheUnavailableMessage)
 	}
 
-	if report.TimedOut {
+	switch {
+	case report.dataTimedOut:
+		_, _ = fmt.Fprintf(out, "\n%s\n", mlwhSearchDataTimedOutMessage)
+	case report.TimedOut:
 		_, _ = fmt.Fprintf(out, "\n%s\n", mlwhSearchTimedOutMessage)
 	}
 }
@@ -455,7 +497,16 @@ func writeSampleSearchSection(out io.Writer, section *sampleSearchSection) {
 		writeSearchField(out, "donor_id", sample.DonorID)
 		writeSearchField(out, "accession_number", sample.AccessionNumber)
 		_, _ = fmt.Fprintln(out)
+		writeSearchSampleData(out, sample)
 	}
+}
+
+// searchPage selects which results `wa mlwh search` returns per kind, and
+// whether each sample's data is added.
+type searchPage struct {
+	limit    int
+	offset   int
+	withData bool
 }
 
 // studySearchSection is the JSON shape of the studies block. Results is always a
@@ -470,8 +521,8 @@ type studySearchSection struct {
 // sampleSearchSection is the JSON shape of the samples block; see
 // studySearchSection for the always-present Results array contract.
 type sampleSearchSection struct {
-	Count   int           `json:"count"`
-	Results []mlwh.Sample `json:"results"`
+	Count   int            `json:"count"`
+	Results []searchSample `json:"results"`
 }
 
 // searchReport is the JSON-friendly shape of `wa mlwh search` results. A section
@@ -482,10 +533,15 @@ type sampleSearchSection struct {
 // cacheUnavailable is set (text-only, never serialised) when a never-synced/empty
 // cache was observed, so the text renderer can show a neutral note without any
 // sync hint.
+// dataTimedOut (text-only) records that the timeout cut off --with-data's
+// per-sample exports rather than a section search.
 type searchReport struct {
-	Term             string               `json:"term"`
-	Studies          *studySearchSection  `json:"studies,omitempty"`
-	Samples          *sampleSearchSection `json:"samples,omitempty"`
-	TimedOut         bool                 `json:"timed_out,omitempty"`
+	Term     string               `json:"term"`
+	Studies  *studySearchSection  `json:"studies,omitempty"`
+	Samples  *sampleSearchSection `json:"samples,omitempty"`
+	TimedOut bool                 `json:"timed_out,omitempty"`
+	// CacheSyncedAt is the oldest last_run across the cache's synced tables.
+	CacheSyncedAt    string `json:"cache_synced_at,omitempty"`
 	cacheUnavailable bool
+	dataTimedOut     bool
 }

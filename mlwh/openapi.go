@@ -36,13 +36,14 @@ import (
 // info.version in the OpenAPI document. Its minor component moves with each
 // schema or contract change: it tracked the cache schema-version lineage
 // (CacheSchemaVersion) through 1.8, 1.9 adds the documented POST /feedback
-// endpoint without a cache schema change, and 1.10 documents the optional
-// client identification headers that usage tracking records. The patch
+// endpoint without a cache schema change, 1.10 documents the optional
+// client identification headers that usage tracking records, and 1.11 adds the
+// Export multi_sample opt-in plus sample columns on lanes exports. The patch
 // component is reserved for documentation-only revisions. It is a compiled-in
 // constant: reading it never contacts a live server, letting an external
 // consumer (such as an MCP server importing this package) read the targeted API
 // version with compile-time safety.
-const APIVersion = "1.10.0"
+const APIVersion = "1.11.0"
 
 // mlwhAPIVersion is the unexported alias of APIVersion retained for internal
 // references; it shares APIVersion's single source of truth so the served

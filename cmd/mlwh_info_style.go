@@ -69,11 +69,9 @@ type infoStyle struct {
 func resolveInfoStyle(out io.Writer) infoStyle {
 	style := infoStyle{width: infoFallbackWidth}
 
-	file, isFile := out.(*os.File)
-	isTTY := isFile && term.IsTerminal(int(file.Fd()))
-
+	isTTY := isTerminalStream(out)
 	if isTTY {
-		if width, _, err := term.GetSize(int(file.Fd())); err == nil && width > 0 {
+		if width, _, err := term.GetSize(int(out.(*os.File).Fd())); err == nil && width > 0 {
 			style.width = width
 		}
 	}
@@ -131,4 +129,12 @@ func (s infoStyle) qcColour(verdict, text string) string {
 	default:
 		return s.wrap(ansiYellow, text)
 	}
+}
+
+// isTerminalStream reports whether stream, a command's input or output, is a
+// terminal.
+func isTerminalStream(stream any) bool {
+	file, isFile := stream.(*os.File)
+
+	return isFile && term.IsTerminal(int(file.Fd()))
 }

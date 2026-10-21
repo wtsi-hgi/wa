@@ -16,7 +16,7 @@ import (
 
 func main() {
 	if err := run(os.Args[1:], os.Stderr); err != nil {
-		os.Exit(1)
+		os.Exit(cmd.ExitCode(err))
 	}
 }
 

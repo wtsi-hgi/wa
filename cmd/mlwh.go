@@ -80,6 +80,35 @@ type mlwhFreshnessClient interface {
 	Freshness(context.Context) (mlwh.Freshness, error)
 }
 
+// mlwhCacheSyncedAt returns the oldest last_run across the cache's synced
+// tables (UTC RFC3339), the as-of time for output drawn from several tables. It
+// is empty when the client cannot report freshness or nothing has synced.
+func mlwhCacheSyncedAt(ctx context.Context, client any) string {
+	freshClient, ok := client.(mlwhFreshnessClient)
+	if !ok {
+		return ""
+	}
+
+	freshness, err := freshClient.Freshness(ctx)
+	if err != nil {
+		return ""
+	}
+
+	oldest := ""
+	for _, table := range freshness.Tables {
+		if !table.EverSynced || table.LastRun == "" {
+			continue
+		}
+		// Freshness renders every last_run as UTC RFC3339 with a Z suffix, so
+		// string order is time order.
+		if oldest == "" || table.LastRun < oldest {
+			oldest = table.LastRun
+		}
+	}
+
+	return oldest
+}
+
 func mlwhClientNeverSynced(ctx context.Context, client any) bool {
 	freshClient, ok := client.(mlwhFreshnessClient)
 	if !ok {

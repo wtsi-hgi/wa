@@ -1799,6 +1799,10 @@ func mlwhExportOptionsFromQuery(c *gin.Context) (ExportOptions, bool) {
 	if !ok {
 		return ExportOptions{}, false
 	}
+	multiSample, ok := mlwhQueryBool(c, "multi_sample")
+	if !ok {
+		return ExportOptions{}, false
+	}
 	fileType, ok := mlwhFileTypeFromQuery(c)
 	if !ok {
 		return ExportOptions{}, false
@@ -1824,6 +1828,7 @@ func mlwhExportOptionsFromQuery(c *gin.Context) (ExportOptions, bool) {
 		All:              all,
 		Cursor:           c.Query("cursor"),
 		Format:           c.Query("format"),
+		MultiSample:      multiSample,
 	}, true
 }
 

@@ -56,7 +56,16 @@ redirect to a file.`
 
 const mlwhExportParentIDHelp = `Parent kinds and parent-id values:
   study: a study LIMS id, study UUID, accession number or study name
-  sample: a sample UUID, LIMS id, Sanger sample name/id, supplier name, accession or donor id
+  sample: a sample UUID, LIMS id, Sanger sample name/id, supplier name, accession or donor id;
+    a value naming several samples fails as ambiguous with exit status 3,
+    listing the samples on stderr and writing nothing to stdout. With
+    --all-samples, a supplier name or donor id shared by several samples
+    exports the rows of every matching sample (samples with no matching rows
+    add none), and lanes and irods rows carry sanger_sample_id and
+    supplier_name to tell them apart; a value that is also some sample's
+    name, Sanger sample id, LIMS id or accession still fails as ambiguous.
+    --all-samples needs a server at MLWH API 1.11.0 or later; against an
+    older server it fails with exit status 1
   run: an Illumina NPG id_run
   library: a pipeline_id_lims, library_id, id_library_lims or library type
   faculty-sponsor: a case-insensitive faculty_sponsor substring
@@ -107,6 +116,7 @@ const mlwhExportExamplesHelp = `Examples:
   wa --env development mlwh export irods study 5901 --file-type cram
   wa mlwh export products study 7568 --file-type cram --columns name,supplier_name,accession_number,sanger_sample_id,id_run,lane,tag_index,manual_qc,irods_path,irods_unmatched,reason
   wa mlwh export runs sample DN1234 --columns id_run,platform,run_date
+  wa mlwh export lanes sample PD42478a --all-samples
   wa mlwh export irods study 5901 --sort created-desc --since 2026-07-01T00:00:00Z
   wa mlwh export irods study 5901 --server http://host:8091 --json`
 
@@ -125,6 +135,15 @@ var openMLWHExportRemoteClient = func(_ context.Context, cfg mlwh.RemoteConfig) 
 	}
 
 	return &mlwhExportRemoteClient{remote: remote}, nil
+}
+
+func needsShellQuoting(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return false
+	default:
+		return !strings.ContainsRune("_@%+=:,./-", r)
+	}
 }
 
 type mlwhExportClient interface {
@@ -205,6 +224,7 @@ func newMLWHExportCommand() *cobra.Command {
 	command.Flags().StringVar(&flags.organism, "organism", "", "restrict sample-backed exports by organism/common name")
 	command.Flags().StringVar(&flags.sort, "sort", "", "explicit iRODS sort order; only created-desc is supported, for newest-created exports")
 	command.Flags().StringVar(&flags.since, "since", "", "inclusive RFC3339 lower bound for created-date iRODS exports, e.g. 2026-07-01T00:00:00Z")
+	command.Flags().BoolVar(&flags.allSamples, "all-samples", false, "for a sample parent, span every sample sharing the supplier name or donor id; rows carry sanger_sample_id and supplier_name")
 	command.Flags().StringVar(&flags.until, "until", "", "exclusive RFC3339 upper bound for created-date iRODS exports, e.g. 2026-08-01T00:00:00Z")
 
 	return command
@@ -300,6 +320,15 @@ func runMLWHExport(
 			return handleErr
 		}
 
+		var unsupported *mlwh.MultiSampleUnsupportedError
+		if errors.As(err, &unsupported) {
+			return mlwhExportMultiSampleUnsupportedError(rel, parentID, unsupported)
+		}
+
+		if rel.ParentKind == "sample" && errors.Is(err, mlwh.ErrAmbiguous) {
+			return mlwhExportAmbiguousSampleError(ctx, client, rel, parentID, opts.MultiSample)
+		}
+
 		return fmt.Errorf("export %s of %s %q: %w", rel.Children, rel.ParentKind, parentID, err)
 	}
 
@@ -320,6 +349,28 @@ func runMLWHExport(
 	}
 
 	return nil
+}
+
+// mlwhExportMultiSampleUnsupportedError explains that the server is too old to
+// export several samples at once, that a newer one could only when the
+// identifier is a shared supplier name or donor id, and how to export the
+// samples one by one instead.
+func mlwhExportMultiSampleUnsupportedError(rel mlwh.ExportRelationship, parentID string, err *mlwh.MultiSampleUnsupportedError) error {
+	return fmt.Errorf(
+		"export %s of %s %q: %q names several samples on the MLWH server at %s, which runs API %s, too old to export several samples at once; "+
+			"if it is a supplier name or donor id the samples share, a server with API %s or later can export them together; "+
+			"otherwise, or with this server, export each sample by its Sanger sample name, listing them with:\n  wa mlwh search --type sample %s",
+		rel.Children, rel.ParentKind, parentID, parentID, err.ServerURL, err.ServerAPIVersion, mlwh.MultiSampleExportAPIVersion, shellQuote(parentID))
+}
+
+// shellQuote returns value as one POSIX shell word, single-quoting it unless it
+// holds only characters the shell never interprets.
+func shellQuote(value string) string {
+	if value != "" && strings.IndexFunc(value, needsShellQuoting) < 0 {
+		return value
+	}
+
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func handleMLWHExportCleanError(
@@ -378,6 +429,46 @@ func writeMLWHExportBoundedPageStatus(out io.Writer, result mlwh.ExportResult) e
 	return err
 }
 
+// mlwhExportAmbiguousSampleError reports that parentID names several samples,
+// listing them when the client can, and exits with ExitCodeAmbiguous. Without
+// --all-samples it points to that flag; with it, the identifier is one that
+// must be unique, so the samples cannot be exported together.
+func mlwhExportAmbiguousSampleError(ctx context.Context, client mlwhExportClient, rel mlwh.ExportRelationship, parentID string, allSamples bool) error {
+	advice := "pass --all-samples to export every sample when it is a supplier name or donor id they share, or give one sample's Sanger name"
+	if allSamples {
+		advice = "it is also some sample's name, Sanger sample id, LIMS id or accession, so --all-samples cannot span it; give one sample's Sanger name"
+	}
+
+	var listing strings.Builder
+	if infoClient, ok := mlwhExportCandidateClient(client); ok {
+		if report, found := buildInfoCandidatesReport(ctx, infoClient, parentID); found {
+			_, _ = fmt.Fprintf(&listing, " matches %d samples:\n\n", len(report.Candidates))
+			writeInfoCandidateRows(&listing, report.Candidates)
+			listing.WriteString("\n")
+		}
+	}
+	if listing.Len() == 0 {
+		listing.WriteString(" names several samples; ")
+	}
+
+	return exitCodeError{
+		code: ExitCodeAmbiguous,
+		err:  fmt.Errorf("export %s of sample %q: %q%s%s", rel.Children, parentID, parentID, listing.String(), advice),
+	}
+}
+
+// mlwhExportCandidateClient returns the client to list an ambiguous sample's
+// candidates with, when the export client offers one.
+func mlwhExportCandidateClient(client mlwhExportClient) (mlwhInfoClient, bool) {
+	if remote, ok := client.(*mlwhExportRemoteClient); ok {
+		return remote.remote, true
+	}
+
+	infoClient, ok := client.(mlwhInfoClient)
+
+	return infoClient, ok
+}
+
 type mlwhExportRemoteClient struct {
 	remote *mlwh.RemoteClient
 }
@@ -413,6 +504,7 @@ type mlwhExportFlags struct {
 	sort             string
 	since            string
 	until            string
+	allSamples       bool
 	limit            int
 	cursor           string
 }
@@ -442,6 +534,10 @@ func (f mlwhExportFlags) options(rel mlwh.ExportRelationship, cmd *cobra.Command
 		return mlwh.ExportOptions{}, usageError("--cursor requires a positive explicit --limit to continue a bounded export")
 	}
 
+	if f.allSamples && rel.ParentKind != "sample" {
+		return mlwh.ExportOptions{}, usageError("--all-samples applies only to sample exports")
+	}
+
 	opts := mlwh.ExportOptions{
 		Columns:          columns,
 		FileType:         mlwhExportFileTypeDefault(rel, f.fileType, cmd.Flags().Changed("file-type")),
@@ -454,6 +550,7 @@ func (f mlwhExportFlags) options(rel mlwh.ExportRelationship, cmd *cobra.Command
 		Since:            f.since,
 		Until:            f.until,
 		Format:           format,
+		MultiSample:      f.allSamples,
 	}
 	if f.limit > 0 {
 		opts.Limit = f.limit
