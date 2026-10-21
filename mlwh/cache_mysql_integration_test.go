@@ -3467,3 +3467,88 @@ func assertJ1FileTypeStudyIRODSIndexServed(t *testing.T, db *sql.DB) {
 	plans := explainPlanRows(t, db, query, args...)
 	assertMirrorIndexServed(plans, "spi")
 }
+
+func TestRunUnionQueriesMixNumericAndTextRunIDsOnMySQLCache(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	client, err := OpenCacheOnly(context.Background(), CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	if client.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", client.cache.Dialect())
+	}
+
+	convey.Convey("Given numeric-id (Illumina, Elembio, Ultimagen) and text-id (PacBio, ONT) runs are seeded once into the MySQL cache", t, func() {
+		db := client.cache.DB()
+		seedExportMultiPlatformRunScenario(t, db)
+		seedIseqProductMetricsMirrorRow(t, db, 7100201, 71002, 61010, 1, 2, "RUNX")
+	})
+
+	convey.Convey("Given a MySQL cache whose run union mixes numeric and text run ids", t, func() {
+		ctx := context.Background()
+
+		convey.Convey("when runs are exported for a study, then every platform arm of the union is returned", func() {
+			result, err := client.Export(ctx, ExportRelationship{Children: "runs", ParentKind: "study"}, "RUNX", ExportOptions{
+				Columns: []string{"id", "native_id", "id_run", "platform", "run_date"},
+				Limit:   20,
+			})
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"elembio:77010", "77010", "77010", "Elembio", "2026-06-07"},
+				{"illumina:61010", "61010", "61010", "Illumina", "2026-06-03"},
+				{"ont:ONTRUN-71005", "ONTRUN-71005", "", "ONT", "2026-06-10"},
+				{"pacbio:pb-export-run-1", "pb-export-run-1", "", "PacBio", "2026-06-05"},
+				{"ultimagen:88010", "88010", "88010", "Ultimagen", "2026-06-09"},
+			})
+			convey.So(result.Total, convey.ShouldEqual, 5)
+		})
+
+		convey.Convey("when runs are exported for a sample sequenced on Illumina and PacBio, then both runs are returned", func() {
+			result, err := client.Export(ctx, ExportRelationship{Children: "runs", ParentKind: "sample"}, "runs-pacbio", ExportOptions{
+				Columns: []string{"id", "native_id", "id_run", "platform"},
+				Limit:   10,
+			})
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result.Rows, convey.ShouldResemble, [][]string{
+				{"illumina:61010", "61010", "61010", "Illumina"},
+				{"pacbio:pb-export-run-1", "pb-export-run-1", "", "PacBio"},
+			})
+			convey.So(result.Total, convey.ShouldEqual, 2)
+		})
+
+		convey.Convey("when the global run listing is read, then numeric and text run ids are listed together", func() {
+			rows, err := client.RunListing(ctx, RunAggregationOptions{Since: "2026-06-01", Until: "2026-07-01"}, 20, "")
+			convey.So(err, convey.ShouldBeNil)
+
+			ids := make([]string, 0, len(rows))
+			for _, row := range rows {
+				ids = append(ids, row.ID)
+			}
+			convey.So(ids, convey.ShouldResemble, []string{
+				"elembio:77010", "illumina:61010", "illumina:61011", "ont:ONTRUN-71005", "pacbio:pb-export-run-1", "ultimagen:88010",
+			})
+		})
+
+		convey.Convey("when runs are aggregated by platform, then every platform is counted", func() {
+			rows, err := client.SequencingAggregate(ctx, SequencingAggregateOptions{
+				GroupBy: []string{"platform"},
+				Unit:    "runs",
+				Since:   "2026-06-01",
+				Until:   "2026-07-01",
+			})
+			convey.So(err, convey.ShouldBeNil)
+
+			counts := make(map[string]int, len(rows))
+			for _, row := range rows {
+				counts[row.Group["platform"]] = row.Count
+			}
+			convey.So(counts, convey.ShouldResemble, map[string]int{
+				"Elembio": 1, "Illumina": 2, "ONT": 1, "PacBio": 1, "Ultimagen": 1,
+			})
+		})
+	})
+}

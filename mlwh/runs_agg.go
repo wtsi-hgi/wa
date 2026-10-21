@@ -640,9 +640,16 @@ func runListingArmQuery(spec runAggregationPlatformSpec, opts RunAggregationOpti
 	return query, args
 }
 
+// runListingIntegerTextExpr renders an integer run/sample id as text so it can
+// share a UNION column with text ids such as pac_bio_run_name. On MySQL,
+// CAST(... AS CHAR) takes the connection collation (utf8mb4_general_ci by
+// go-sql-driver default) with implicit coercibility, the same coercibility as the
+// mirror columns' schema text collation, so the UNION fails with error 1271.
+// Concatenating onto a string literal yields coercible text, which the UNION
+// resolves to the column collation whatever the server version or DSN collation.
 func runListingIntegerTextExpr(dialect, expr string) string {
 	if dialect == "mysql" {
-		return "CAST(" + expr + " AS CHAR)"
+		return "CONCAT('', " + expr + ")"
 	}
 
 	return "CAST(" + expr + " AS TEXT)"
