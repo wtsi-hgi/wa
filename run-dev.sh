@@ -1518,6 +1518,12 @@ try {
     ],
   );
 
+  // Derive donor_samples from sample_mirror, as mlwh sync's cold-load rebuild
+  // does, so the fixture samples resolve by donor id.
+  db.exec(
+    "INSERT OR IGNORE INTO donor_samples(donor_id, id_sample_tmp) SELECT donor_id, id_sample_tmp FROM sample_mirror",
+  );
+
   // Populate the sample_search_token prefix index from sample_mirror, the same
   // cold-load rebuild mlwh sync performs: one row per distinct word token of the
   // four searchable fields per sample.

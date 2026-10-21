@@ -584,7 +584,7 @@ func TestClassifyIdentifierTextStopsAtStudyAccessionHit(t *testing.T) {
 		defer cleanup()
 
 		const raw = "EGAS00001005445"
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`)).
+		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 11`)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(studyResolverColumns()).AddRow(studyResolverRow(31, "7031", "study-uuid-31", "Study 31", raw)...))
 
@@ -617,10 +617,10 @@ func TestClassifyIdentifierTextPrefersStudyOverDonorID(t *testing.T) {
 		client.syncSource = nil
 
 		const raw = "Shared Identifier"
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`)).
+		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 11`)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(studyResolverColumns()))
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`)).
+		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 11`)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(studyResolverColumns()).AddRow(studyResolverRow(41, "7041", "study-uuid-41", raw, "EGAS00001004141")...))
 

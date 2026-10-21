@@ -1176,48 +1176,63 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 		}
 	case "FindSamplesBySangerID":
 		return func(c *gin.Context) {
-			id, ok := mlwhPathParam(c, "id")
+			id, pagination, ok := mlwhIDAndPagination(c)
 			if !ok {
 				return
 			}
-			result, err := queryer.FindSamplesBySangerID(c.Request.Context(), id)
-			writeMLWHResult(c, result, err)
+			ctx := c.Request.Context()
+			result, err := queryer.FindSamplesBySangerID(ctx, id, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountFindSamplesBySangerID(ctx, id))
+			})
 		}
 	case "FindSamplesByIDSampleLims":
 		return func(c *gin.Context) {
-			id, ok := mlwhPathParam(c, "id")
+			id, pagination, ok := mlwhIDAndPagination(c)
 			if !ok {
 				return
 			}
-			result, err := queryer.FindSamplesByIDSampleLims(c.Request.Context(), id)
-			writeMLWHResult(c, result, err)
+			ctx := c.Request.Context()
+			result, err := queryer.FindSamplesByIDSampleLims(ctx, id, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountFindSamplesByIDSampleLims(ctx, id))
+			})
 		}
 	case "FindSamplesByAccessionNumber":
 		return func(c *gin.Context) {
-			id, ok := mlwhPathParam(c, "id")
+			id, pagination, ok := mlwhIDAndPagination(c)
 			if !ok {
 				return
 			}
-			result, err := queryer.FindSamplesByAccessionNumber(c.Request.Context(), id)
-			writeMLWHResult(c, result, err)
+			ctx := c.Request.Context()
+			result, err := queryer.FindSamplesByAccessionNumber(ctx, id, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountFindSamplesByAccessionNumber(ctx, id))
+			})
 		}
 	case "FindSamplesBySupplierName":
 		return func(c *gin.Context) {
-			id, ok := mlwhPathParam(c, "id")
+			id, pagination, ok := mlwhIDAndPagination(c)
 			if !ok {
 				return
 			}
-			result, err := queryer.FindSamplesBySupplierName(c.Request.Context(), id)
-			writeMLWHResult(c, result, err)
+			ctx := c.Request.Context()
+			result, err := queryer.FindSamplesBySupplierName(ctx, id, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountFindSamplesBySupplierName(ctx, id))
+			})
 		}
 	case "FindSamplesByLibraryType":
 		return func(c *gin.Context) {
-			id, ok := mlwhPathParam(c, "id")
+			id, pagination, ok := mlwhIDAndPagination(c)
 			if !ok {
 				return
 			}
-			result, err := queryer.FindSamplesByLibraryType(c.Request.Context(), id)
-			writeMLWHResult(c, result, err)
+			ctx := c.Request.Context()
+			result, err := queryer.FindSamplesByLibraryType(ctx, id, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountFindSamplesByLibraryType(ctx, id))
+			})
 		}
 	case "ExpandIdentifier":
 		return func(c *gin.Context) {

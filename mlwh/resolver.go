@@ -321,7 +321,7 @@ func (c *Client) ResolveStudy(ctx context.Context, raw string) (Match, error) {
 
 	study, err := c.resolveAmbiguousStudyFromCache(
 		ctx,
-		`SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`,
+		`SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp`,
 		raw,
 	)
 	if err == nil {
@@ -366,7 +366,7 @@ func (c *Client) resolveStudyFromCache(ctx context.Context, query, raw string) (
 }
 
 func (c *Client) resolveAmbiguousStudyFromCache(ctx context.Context, query, raw string) (*Study, error) {
-	studies, err := c.queryStudiesFromCache(ctx, query, raw)
+	studies, err := c.queryStudiesFromCache(ctx, query+ambiguousCandidatesLimit, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -377,7 +377,17 @@ func (c *Client) resolveAmbiguousStudyFromCache(ctx context.Context, query, raw 
 	case 1:
 		return studies[0], nil
 	default:
-		return nil, fmt.Errorf("%w: %q matches studies %s and %s", ErrAmbiguous, raw, studies[0].IDStudyLims, studies[1].IDStudyLims)
+		total, countErr := c.ambiguousTotal(ctx, len(studies), `SELECT COUNT(*) FROM (`+query+`) AS candidates`, raw)
+		if countErr != nil {
+			return nil, countErr
+		}
+
+		labels := make([]string, len(studies))
+		for index, study := range studies {
+			labels[index] = study.IDStudyLims
+		}
+
+		return nil, ambiguousError(raw, "studies", labels, total)
 	}
 }
 
@@ -412,5 +422,5 @@ func (c *Client) queryStudiesFromCache(ctx context.Context, query, raw string) (
 }
 
 func (c *Client) resolveStudyByName(ctx context.Context, raw string) (*Study, error) {
-	return c.resolveAmbiguousStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`, raw)
+	return c.resolveAmbiguousStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp`, raw)
 }

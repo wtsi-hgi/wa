@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -74,9 +75,9 @@ type mlwhInfoClient interface {
 	ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveRun(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error)
-	FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error)
-	FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error)
-	FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error)
+	FindSamplesBySangerID(ctx context.Context, sangerID string, limit, offset int) ([]mlwh.Sample, error)
+	FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string, limit, offset int) ([]mlwh.Sample, error)
+	FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string, limit, offset int) ([]mlwh.Sample, error)
 
 	StudiesForSample(ctx context.Context, sangerName string) ([]mlwh.Study, error)
 	LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error)
@@ -1356,8 +1357,10 @@ func populateSampleInfo(ctx context.Context, client mlwhInfoClient, report *info
 }
 
 // refreshSampleFanOut fills sample's studies and libraries from the first of
-// its Sanger id, LIMS id, and accession lookups that finds it. Each lookup is
-// a probe: a miss moves on to the next.
+// its Sanger id, LIMS id, and accession lookups that finds it. Other samples
+// can share these values, so each lookup's results are searched for sample
+// itself. Each lookup is a probe: a miss, or an older server's ambiguous
+// answer, moves on to the next.
 func refreshSampleFanOut(ctx context.Context, client mlwhInfoClient, sample *mlwh.Sample) error {
 	if sample == nil {
 		return nil
@@ -1368,38 +1371,34 @@ func refreshSampleFanOut(ctx context.Context, client mlwhInfoClient, sample *mlw
 
 	ctx = mlwh.WithLookupProbe(ctx)
 
-	lookups := []func(context.Context) ([]mlwh.Sample, error){}
-	if strings.TrimSpace(sample.SangerSampleID) != "" {
-		lookups = append(lookups, func(ctx context.Context) ([]mlwh.Sample, error) {
-			return client.FindSamplesBySangerID(ctx, sample.SangerSampleID)
-		})
-	}
-	if strings.TrimSpace(sample.IDSampleLims) != "" {
-		lookups = append(lookups, func(ctx context.Context) ([]mlwh.Sample, error) {
-			return client.FindSamplesByIDSampleLims(ctx, sample.IDSampleLims)
-		})
-	}
-	if strings.TrimSpace(sample.AccessionNumber) != "" {
-		lookups = append(lookups, func(ctx context.Context) ([]mlwh.Sample, error) {
-			return client.FindSamplesByAccessionNumber(ctx, sample.AccessionNumber)
-		})
-	}
+	for _, lookup := range []struct {
+		value string
+		find  infoSampleFinder
+	}{
+		{sample.SangerSampleID, client.FindSamplesBySangerID},
+		{sample.IDSampleLims, client.FindSamplesByIDSampleLims},
+		{sample.AccessionNumber, client.FindSamplesByAccessionNumber},
+	} {
+		if strings.TrimSpace(lookup.value) == "" {
+			continue
+		}
 
-	for _, lookup := range lookups {
-		samples, err := lookup(ctx)
+		samples, err := lookup.find(ctx, lookup.value, infoCandidateLimit, 0)
 		if err != nil {
-			if errors.Is(err, mlwh.ErrNotFound) {
+			if errors.Is(err, mlwh.ErrNotFound) || errors.Is(err, mlwh.ErrAmbiguous) {
 				continue
 			}
 
 			return err
 		}
-		if len(samples) == 0 {
+
+		index := slices.IndexFunc(samples, func(found mlwh.Sample) bool { return found.IDSampleTmp == sample.IDSampleTmp })
+		if index < 0 {
 			continue
 		}
 
-		sample.Studies = append([]mlwh.Study(nil), samples[0].Studies...)
-		sample.Libraries = append([]mlwh.Library(nil), samples[0].Libraries...)
+		sample.Studies = append([]mlwh.Study(nil), samples[index].Studies...)
+		sample.Libraries = append([]mlwh.Library(nil), samples[index].Libraries...)
 
 		return nil
 	}

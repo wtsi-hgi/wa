@@ -1075,21 +1075,21 @@ func sampleIdentifierType(kind IdentifierKind) (IdentifierKind, bool) {
 func classifySangerSampleID(ctx context.Context, client *Client, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
 	return classifySampleIdentifier(ctx, client, identifier, KindSangerSampleID,
 		func(ctx context.Context, client *Client, identifier string) ([]Sample, error) {
-			return client.FindSamplesBySangerID(ctx, identifier)
+			return client.findUniqueSample(ctx, sangerIDSampleFinder, identifier)
 		})
 }
 
 func classifySampleLimsID(ctx context.Context, client *Client, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
 	return classifySampleIdentifier(ctx, client, identifier, KindSampleLimsID,
 		func(ctx context.Context, client *Client, identifier string) ([]Sample, error) {
-			return client.FindSamplesByIDSampleLims(ctx, identifier)
+			return client.findUniqueSample(ctx, limsIDSampleFinder, identifier)
 		})
 }
 
 func classifySampleAccession(ctx context.Context, client *Client, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
 	return classifySampleIdentifier(ctx, client, identifier, KindSampleAccession,
 		func(ctx context.Context, client *Client, identifier string) ([]Sample, error) {
-			return client.FindSamplesByAccessionNumber(ctx, identifier)
+			return client.findUniqueSample(ctx, accessionSampleFinder, identifier)
 		})
 }
 
@@ -1366,7 +1366,7 @@ func (c *Client) samplesForLibraryType(ctx context.Context, identifier string) (
 		return samples, nil
 	}
 
-	return c.FindSamplesByLibraryType(ctx, identifier)
+	return c.FindSamplesByLibraryType(ctx, identifier, MaxSamplesPerHop+1, 0)
 }
 
 func (c *Client) libraryStudyDetails(

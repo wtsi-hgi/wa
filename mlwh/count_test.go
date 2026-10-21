@@ -58,8 +58,7 @@ const (
 	e1FindAccession    = "accession-1"
 	e1FindSupplier     = "e1-supplier-1"
 
-	// e1SoloLibraryType is a library type with exactly one sample, so the
-	// find-by-library-type cross-check resolves to a unique match.
+	// e1SoloLibraryType is a library type with exactly one sample.
 	e1SoloLibraryType = "SoloLib"
 )
 
@@ -496,37 +495,45 @@ func e1CountCases() []e1Count {
 			},
 		},
 		{
-			name:           "CountFindSamplesBySangerID",
-			count:          func(c *Client) (Count, error) { return c.CountFindSamplesBySangerID(ctx, e1FindSangerID) },
-			listLen:        func(c *Client) (int, error) { return listLen(c.FindSamplesBySangerID(ctx, e1FindSangerID)) },
+			name:  "CountFindSamplesBySangerID",
+			count: func(c *Client) (Count, error) { return c.CountFindSamplesBySangerID(ctx, e1FindSangerID) },
+			listLen: func(c *Client) (int, error) {
+				return listLen(c.FindSamplesBySangerID(ctx, e1FindSangerID, countListFetchAll, 0))
+			},
 			zeroIsNotFound: true,
 		},
 		{
-			name:           "CountFindSamplesByIDSampleLims",
-			count:          func(c *Client) (Count, error) { return c.CountFindSamplesByIDSampleLims(ctx, e1FindIDSampleLims) },
-			listLen:        func(c *Client) (int, error) { return listLen(c.FindSamplesByIDSampleLims(ctx, e1FindIDSampleLims)) },
+			name:  "CountFindSamplesByIDSampleLims",
+			count: func(c *Client) (Count, error) { return c.CountFindSamplesByIDSampleLims(ctx, e1FindIDSampleLims) },
+			listLen: func(c *Client) (int, error) {
+				return listLen(c.FindSamplesByIDSampleLims(ctx, e1FindIDSampleLims, countListFetchAll, 0))
+			},
 			zeroIsNotFound: true,
 		},
 		{
-			name:           "CountFindSamplesByAccessionNumber",
-			count:          func(c *Client) (Count, error) { return c.CountFindSamplesByAccessionNumber(ctx, e1FindAccession) },
-			listLen:        func(c *Client) (int, error) { return listLen(c.FindSamplesByAccessionNumber(ctx, e1FindAccession)) },
+			name:  "CountFindSamplesByAccessionNumber",
+			count: func(c *Client) (Count, error) { return c.CountFindSamplesByAccessionNumber(ctx, e1FindAccession) },
+			listLen: func(c *Client) (int, error) {
+				return listLen(c.FindSamplesByAccessionNumber(ctx, e1FindAccession, countListFetchAll, 0))
+			},
 			zeroIsNotFound: true,
 		},
 		{
-			name:           "CountFindSamplesBySupplierName",
-			count:          func(c *Client) (Count, error) { return c.CountFindSamplesBySupplierName(ctx, e1FindSupplier) },
-			listLen:        func(c *Client) (int, error) { return listLen(c.FindSamplesBySupplierName(ctx, e1FindSupplier)) },
+			name:  "CountFindSamplesBySupplierName",
+			count: func(c *Client) (Count, error) { return c.CountFindSamplesBySupplierName(ctx, e1FindSupplier) },
+			listLen: func(c *Client) (int, error) {
+				return listLen(c.FindSamplesBySupplierName(ctx, e1FindSupplier, countListFetchAll, 0))
+			},
 			zeroIsNotFound: true,
 		},
 		{
-			// FindSamplesByLibraryType requires a UNIQUE match, so the cross-check
-			// targets the single-sample "SoloLib" library type (the multi-sample
-			// "Standard" type, used by CountSamplesForLibraryType above, would make
-			// the Find list raise ErrAmbiguous rather than return one row).
-			name:           "CountFindSamplesByLibraryType",
-			count:          func(c *Client) (Count, error) { return c.CountFindSamplesByLibraryType(ctx, e1SoloLibraryType) },
-			listLen:        func(c *Client) (int, error) { return listLen(c.FindSamplesByLibraryType(ctx, e1SoloLibraryType)) },
+			// The multi-sample "Standard" type proves the Find list holds every
+			// match, not just a unique one.
+			name:  "CountFindSamplesByLibraryType",
+			count: func(c *Client) (Count, error) { return c.CountFindSamplesByLibraryType(ctx, "Standard") },
+			listLen: func(c *Client) (int, error) {
+				return listLen(c.FindSamplesByLibraryType(ctx, "Standard", countListFetchAll, 0))
+			},
 			zeroIsNotFound: true,
 		},
 	}
@@ -655,8 +662,7 @@ func seedE1CountScenario(t *testing.T, db *sql.DB) {
 		seedLibrarySample(t, db, "Standard", id, "E1")
 	}
 
-	// A sixth sample in a single-sample "SoloLib" library type, so the
-	// find-by-library-type count resolves to a unique match for the cross-check.
+	// A sixth sample in a single-sample "SoloLib" library type.
 	seedSampleMirrorSearchRow(t, db, 6, "e1-sample-6", "e1-supplier-6", "Homo sapiens", "e1-donor-6")
 	seedLibrarySample(t, db, e1SoloLibraryType, 6, "E1")
 

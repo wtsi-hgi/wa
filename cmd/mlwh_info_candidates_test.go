@@ -340,6 +340,19 @@ func TestMLWHInfoNonInteractiveSampleList(t *testing.T) {
 			convey.So(names, convey.ShouldResemble, []string{"5534STDY0000300", "5534STDY0000301", "5534STDY0000302"})
 		})
 
+		convey.Convey("when an identifier is an accession two samples share, then both are listed", func() {
+			stdout, _, err := executeInfoCommandForTest(t, []string{"mlwh", "info", "TWIN-ACC", "--server", serverURL, "--json"}, strings.NewReader(""), false)
+
+			convey.So(ExitCode(err), convey.ShouldEqual, ExitCodeAmbiguous)
+			var report infoCandidatesJSONForTest
+			convey.So(json.Unmarshal([]byte(stdout), &report), convey.ShouldBeNil)
+			names := []string{}
+			for _, candidate := range report.Results.Candidates {
+				names = append(names, candidate.Identifier)
+			}
+			convey.So(names, convey.ShouldResemble, []string{"5534STDY0000801", "5534STDY0000802"})
+		})
+
 		convey.Convey("when the identifier names one sample, then the sample report is printed and the command succeeds", func() {
 			stdout, _, err := executeInfoCommandForTest(t, []string{"mlwh", "info", "5534STDY0000102", "--server", serverURL, "--json"}, strings.NewReader(""), false)
 
@@ -429,12 +442,12 @@ type slowSangerIDLookupClientForTest struct {
 	*mlwh.RemoteClient
 }
 
-func (c slowSangerIDLookupClientForTest) FindSamplesBySangerID(ctx context.Context, value string) ([]mlwh.Sample, error) {
+func (c slowSangerIDLookupClientForTest) FindSamplesBySangerID(ctx context.Context, value string, limit, offset int) ([]mlwh.Sample, error) {
 	if strings.HasPrefix(value, "5534STDY00006") {
 		<-ctx.Done()
 
 		return nil, ctx.Err()
 	}
 
-	return c.RemoteClient.FindSamplesBySangerID(ctx, value)
+	return c.RemoteClient.FindSamplesBySangerID(ctx, value, limit, offset)
 }

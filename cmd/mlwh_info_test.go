@@ -250,7 +250,7 @@ func (s *stubMLWHInfoClient) ResolveLibrary(ctx context.Context, raw string) (ml
 	return mlwh.Match{}, errors.New("resolveLibrary not stubbed")
 }
 
-func (s *stubMLWHInfoClient) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error) {
+func (s *stubMLWHInfoClient) FindSamplesBySangerID(ctx context.Context, sangerID string, _, _ int) ([]mlwh.Sample, error) {
 	if s.findBySangerID != nil {
 		return s.findBySangerID(ctx, sangerID)
 	}
@@ -258,7 +258,7 @@ func (s *stubMLWHInfoClient) FindSamplesBySangerID(ctx context.Context, sangerID
 	return nil, mlwh.ErrNotFound
 }
 
-func (s *stubMLWHInfoClient) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error) {
+func (s *stubMLWHInfoClient) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string, _, _ int) ([]mlwh.Sample, error) {
 	if s.findByLimsID != nil {
 		return s.findByLimsID(ctx, idSampleLims)
 	}
@@ -266,7 +266,7 @@ func (s *stubMLWHInfoClient) FindSamplesByIDSampleLims(ctx context.Context, idSa
 	return nil, mlwh.ErrNotFound
 }
 
-func (s *stubMLWHInfoClient) FindSamplesByAccessionNumber(ctx context.Context, accession string) ([]mlwh.Sample, error) {
+func (s *stubMLWHInfoClient) FindSamplesByAccessionNumber(ctx context.Context, accession string, _, _ int) ([]mlwh.Sample, error) {
 	if s.findByAccession != nil {
 		return s.findByAccession(ctx, accession)
 	}
@@ -1809,5 +1809,27 @@ func TestMLWHInfoCommandCacheOnlyNeverSyncedDoesNotMentionSync(t *testing.T) {
 		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
 		convey.So(output, convey.ShouldNotContainSubstring, mlwh.ErrCacheNeverSynced.Error())
 		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "not available")
+	})
+}
+
+func TestRefreshSampleFanOutUsesTheSampleItselfAmongSharedValueMatches(t *testing.T) {
+	convey.Convey("Given a sample whose Sanger sample id lookup is ambiguous and whose LIMS id another sample shares", t, func() {
+		other := mlwh.Sample{IDSampleTmp: 1, Name: "OTHER", Studies: []mlwh.Study{{IDStudyLims: "1111"}}}
+		self := mlwh.Sample{IDSampleTmp: 2, Name: "SELF", Studies: []mlwh.Study{{IDStudyLims: "2222"}}, Libraries: []mlwh.Library{{PipelineIDLims: "Standard"}}}
+		client := &stubMLWHInfoClient{
+			findBySangerID: func(context.Context, string) ([]mlwh.Sample, error) {
+				return nil, mlwh.ErrAmbiguous
+			},
+			findByLimsID: func(context.Context, string) ([]mlwh.Sample, error) {
+				return []mlwh.Sample{other, self}, nil
+			},
+		}
+		sample := &mlwh.Sample{IDSampleTmp: 2, Name: "SELF", SangerSampleID: "SHARED", IDSampleLims: "LIMS"}
+
+		err := refreshSampleFanOut(context.Background(), client, sample)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(sample.Studies, convey.ShouldResemble, self.Studies)
+		convey.So(sample.Libraries, convey.ShouldResemble, self.Libraries)
 	})
 }

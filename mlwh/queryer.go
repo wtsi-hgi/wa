@@ -92,11 +92,11 @@ type Queryer interface {
 	CountResolvePerson(ctx context.Context, term string) (Count, error)
 
 	// Sample finders.
-	FindSamplesBySangerID(ctx context.Context, sangerID string) ([]Sample, error)
-	FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]Sample, error)
-	FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]Sample, error)
-	FindSamplesBySupplierName(ctx context.Context, supplierName string) ([]Sample, error)
-	FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]Sample, error)
+	FindSamplesBySangerID(ctx context.Context, sangerID string, limit, offset int) ([]Sample, error)
+	FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string, limit, offset int) ([]Sample, error)
+	FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string, limit, offset int) ([]Sample, error)
+	FindSamplesBySupplierName(ctx context.Context, supplierName string, limit, offset int) ([]Sample, error)
+	FindSamplesByLibraryType(ctx context.Context, libraryType string, limit, offset int) ([]Sample, error)
 
 	// Substring search (term is a path param; limit/offset pagination).
 	SearchStudies(ctx context.Context, term string, limit, offset int) ([]Study, error)

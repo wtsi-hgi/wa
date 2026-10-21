@@ -111,13 +111,14 @@ func TestServerOpenAPIRouteServesDocumentC2(t *testing.T) {
 func TestAPIVersionIsThePhase1DocumentationPatch(t *testing.T) {
 	// Usage C2 acceptance test 1 moved the version to 1.10.0 for the optional
 	// identification headers; the additive Export multi_sample opt-in made it
-	// 1.11.0, and the additive /freshness sync status fields are the next minor
-	// change, so the version is 1.12.0 and the served info.version follows it.
-	convey.Convey("Given the public APIVersion constant, then it equals 1.12.0 and the served info.version equals it", t, func() {
-		convey.So(APIVersion, convey.ShouldEqual, "1.12.0")
+	// 1.11.0, the additive /freshness sync status fields made it 1.12.0, and
+	// the /find/sample lookups listing every match are the next minor change,
+	// so the version is 1.13.0 and the served info.version follows it.
+	convey.Convey("Given the public APIVersion constant, then it equals 1.13.0 and the served info.version equals it", t, func() {
+		convey.So(APIVersion, convey.ShouldEqual, "1.13.0")
 
 		info := servedOpenAPIInfoForTest(t)
-		convey.So(info["version"], convey.ShouldEqual, "1.12.0")
+		convey.So(info["version"], convey.ShouldEqual, "1.13.0")
 	})
 }
 

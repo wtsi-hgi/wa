@@ -101,13 +101,14 @@ func TestEndpointReferenceIncludesAPIVersion(t *testing.T) {
 func TestEndpointReferenceCommittedAtUsageVersionC2(t *testing.T) {
 	// Usage C2 acceptance test 6 regenerated the committed reference for API
 	// 1.10.0; it was regenerated for 1.11.0, which adds the Export
-	// multi_sample opt-in, and is now regenerated for 1.12.0, which adds sync
-	// statuses to /freshness. The no-drift half is
+	// multi_sample opt-in, for 1.12.0, which adds sync statuses to
+	// /freshness, and is now regenerated for 1.13.0, which pages every
+	// /find/sample match. The no-drift half is
 	// TestEndpointReferenceMatchesCommittedDocumentG1.
-	convey.Convey("Given the committed MLWH reference, then it carries the 1.12.0 API version line", t, func() {
+	convey.Convey("Given the committed MLWH reference, then it carries the 1.13.0 API version line", t, func() {
 		committed, err := os.ReadFile(apiReferenceDocPath)
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(string(committed), convey.ShouldContainSubstring, "**API version:** `1.12.0`")
+		convey.So(string(committed), convey.ShouldContainSubstring, "**API version:** `1.13.0`")
 	})
 }
 

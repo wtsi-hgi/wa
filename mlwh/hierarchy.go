@@ -112,11 +112,7 @@ var (
 	samplesForLibraryTypeCacheSQL  = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 	samplesForLibraryCacheSQL      = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 	samplesForRunCacheSQL          = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM iseq_product_metrics_mirror INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = iseq_product_metrics_mirror.id_sample_tmp WHERE iseq_product_metrics_mirror.id_run = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
-	findSamplesBySangerIDSQL       = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
-	findSamplesByIDSampleLimsSQL   = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
-	findSamplesByAccessionSQL      = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
-	findSamplesBySupplierSQL       = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
-	findSamplesByLibraryTypeSQL    = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND sample_mirror.id_lims = 'SQSCP' ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT 2`
+	findSamplesByLibraryTypeSQL    = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND sample_mirror.id_lims = 'SQSCP' ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 	searchSamplesBySangerIDSQL     = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 	searchSamplesByIDSampleLimsSQL = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 	searchSamplesByAccessionSQL    = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
@@ -624,15 +620,57 @@ func queryExists(ctx context.Context, querier Querier, query, action string, arg
 	return true, nil
 }
 
-func sampleMatchResult(raw string, samples []Sample) ([]Sample, error) {
-	switch len(samples) {
-	case 0:
-		return nil, ErrNotFound
-	case 1:
-		return samples, nil
-	default:
-		return nil, fmt.Errorf("%w: %q ambiguous between %d and %d", ErrAmbiguous, raw, samples[0].IDSampleTmp, samples[1].IDSampleTmp)
+// ambiguousCandidateCap bounds how many candidates an ambiguity error names.
+const ambiguousCandidateCap = 10
+
+// ambiguousCandidatesLimit is the LIMIT clause of a lookup that must find one
+// record: one row more than the cap tells whether a count is needed to report
+// how many candidates an ambiguity error leaves unnamed.
+var ambiguousCandidatesLimit = " LIMIT " + strconv.Itoa(ambiguousCandidateCap+1)
+
+// ambiguousError reports that raw matches total records, naming up to
+// ambiguousCandidateCap of them by labels so the caller can choose one.
+func ambiguousError(raw, noun string, labels []string, total int) error {
+	shown := labels[:min(len(labels), ambiguousCandidateCap)]
+	list := strings.Join(shown, ", ")
+	if more := total - len(shown); more > 0 {
+		list += fmt.Sprintf(" and %d more", more)
 	}
+
+	return fmt.Errorf("%w: %q matches %d %s: %s", ErrAmbiguous, raw, total, noun, list)
+}
+
+// ambiguousSamplesError is ambiguousError for samples, named by their Sanger
+// sample names because internal ids mean nothing to a caller.
+func ambiguousSamplesError(raw string, samples []Sample, total int) error {
+	labels := make([]string, len(samples))
+	for index, sample := range samples {
+		labels[index] = sampleCandidateLabel(sample)
+	}
+
+	return ambiguousError(raw, "samples", labels, total)
+}
+
+func sampleCandidateLabel(sample Sample) string {
+	switch {
+	case sample.Name != "":
+		return sample.Name
+	case sample.SangerSampleID != "":
+		return sample.SangerSampleID
+	default:
+		return fmt.Sprintf("unnamed sample (internal id_sample_tmp %d)", sample.IDSampleTmp)
+	}
+}
+
+// ambiguousTotal returns how many records an ambiguous lookup matched: the
+// rows it fetched, or the count query's answer when it fetched more than the
+// cap.
+func (c *Client) ambiguousTotal(ctx context.Context, fetched int, countQuery string, args ...any) (int, error) {
+	if fetched <= ambiguousCandidateCap {
+		return fetched, nil
+	}
+
+	return c.queryCount(ctx, countQuery, "count ambiguous candidates", args...)
 }
 
 func addSampleTags(taggedIDSet map[TaggedID]struct{}, samples []Sample) {
@@ -972,59 +1010,134 @@ func (c *Client) cacheSampleExists(ctx context.Context, sangerName string) (bool
 	return queryExists(ctx, db, `SELECT 1 FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, "query sample mirror existence", sangerName)
 }
 
-func (c *Client) findSamplesByQuery(ctx context.Context, query, raw, action string, syncTables ...string) ([]Sample, error) {
+// sampleFinder is one exact-match sample lookup behind a /find/sample route.
+// Several samples can hold the same value of any of these fields, so the list
+// query pages every match and the count query sizes it.
+type sampleFinder struct {
+	listSQL    string
+	countSQL   string
+	action     string
+	syncTables []string
+}
+
+var (
+	sangerIDSampleFinder = sampleFinder{
+		listSQL: searchSamplesBySangerIDSQL, countSQL: countFindSamplesBySangerIDSQL,
+		action: "query samples by sanger sample id", syncTables: []string{syncTableSample},
+	}
+	limsIDSampleFinder = sampleFinder{
+		listSQL: searchSamplesByIDSampleLimsSQL, countSQL: countFindSamplesByIDSampleLimsSQL,
+		action: "query samples by id_sample_lims", syncTables: []string{syncTableSample},
+	}
+	accessionSampleFinder = sampleFinder{
+		listSQL: searchSamplesByAccessionSQL, countSQL: countFindSamplesByAccessionSQL,
+		action: "query samples by accession number", syncTables: []string{syncTableSample},
+	}
+	supplierSampleFinder = sampleFinder{
+		listSQL: searchSamplesBySupplierSQL, countSQL: countFindSamplesBySupplierSQL,
+		action: "query samples by supplier name", syncTables: []string{syncTableSample},
+	}
+	libraryTypeSampleFinder = sampleFinder{
+		listSQL: findSamplesByLibraryTypeSQL, countSQL: countFindSamplesByLibraryTypeSQL,
+		action: "query samples by library type", syncTables: []string{syncTableSample, syncTableIseqFlowcell},
+	}
+)
+
+// findSamples returns one page of the samples holding raw, with their fan-out.
+// A page past the last match is empty; a value no sample holds is not found.
+func (c *Client) findSamples(ctx context.Context, finder sampleFinder, raw string, limit, offset int) ([]Sample, error) {
+	samples, err := c.findSamplePage(ctx, finder, raw, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	if err = hydrateSampleFanOut(ctx, c, samples); err != nil {
+		return nil, err
+	}
+
+	return samples, nil
+}
+
+func (c *Client) findSamplePage(ctx context.Context, finder sampleFinder, raw string, limit, offset int) ([]Sample, error) {
 	db := c.readCacheDB()
 	if db == nil {
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	samples, err := querySampleMatches(ctx, db, query, action, raw)
+	samples, err := querySampleMatches(ctx, db, finder.listSQL, finder.action, raw, limit, offset)
 	if err != nil {
 		return nil, err
 	}
-
-	matched, err := sampleMatchResult(raw, samples)
-	if err == nil {
-		if hydrateErr := hydrateSampleFanOut(ctx, c, matched); hydrateErr != nil {
-			return nil, hydrateErr
-		}
-
-		return matched, nil
+	if len(samples) > 0 {
+		return samples, nil
 	}
-	if !errors.Is(err, ErrNotFound) {
+
+	// An empty page (past the end, or limit 0) of a value some sample holds
+	// is an empty list, not a miss.
+	count, err := c.queryCount(ctx, finder.countSQL, finder.action, raw)
+	if err != nil {
 		return nil, err
 	}
+	if count > 0 {
+		return []Sample{}, nil
+	}
 
-	if syncErr := c.requireAnySyncState(ctx, syncTables...); syncErr != nil {
+	if syncErr := c.requireAnySyncState(ctx, finder.syncTables...); syncErr != nil {
 		return nil, syncErr
 	}
 
 	return nil, ErrNotFound
 }
 
-// FindSamplesBySangerID returns the unique sample matching sanger_sample_id.
-func (c *Client) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]Sample, error) {
-	return c.findSamplesByQuery(ctx, findSamplesBySangerIDSQL, sangerID, "query samples by sanger sample id", syncTableSample)
+// findUniqueSample returns the one sample holding raw, with its fan-out, for
+// callers that need a single sample; several matches are ErrAmbiguous.
+func (c *Client) findUniqueSample(ctx context.Context, finder sampleFinder, raw string) ([]Sample, error) {
+	samples, err := c.findSamplePage(ctx, finder, raw, ambiguousCandidateCap+1, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(samples) > 1 {
+		total, countErr := c.ambiguousTotal(ctx, len(samples), finder.countSQL, raw)
+		if countErr != nil {
+			return nil, countErr
+		}
+
+		return nil, ambiguousSamplesError(raw, samples, total)
+	}
+	if err = hydrateSampleFanOut(ctx, c, samples); err != nil {
+		return nil, err
+	}
+
+	return samples, nil
 }
 
-// FindSamplesByIDSampleLims returns the unique sample matching id_sample_lims.
-func (c *Client) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]Sample, error) {
-	return c.findSamplesByQuery(ctx, findSamplesByIDSampleLimsSQL, idSampleLims, "query samples by id_sample_lims", syncTableSample)
+// FindSamplesBySangerID returns a page of the samples whose sanger_sample_id
+// matches, ordered by Sanger name.
+func (c *Client) FindSamplesBySangerID(ctx context.Context, sangerID string, limit, offset int) ([]Sample, error) {
+	return c.findSamples(ctx, sangerIDSampleFinder, sangerID, limit, offset)
 }
 
-// FindSamplesByAccessionNumber returns the unique sample matching accession_number.
-func (c *Client) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]Sample, error) {
-	return c.findSamplesByQuery(ctx, findSamplesByAccessionSQL, accessionNumber, "query samples by accession number", syncTableSample)
+// FindSamplesByIDSampleLims returns a page of the samples whose id_sample_lims
+// matches, ordered by Sanger name.
+func (c *Client) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string, limit, offset int) ([]Sample, error) {
+	return c.findSamples(ctx, limsIDSampleFinder, idSampleLims, limit, offset)
 }
 
-// FindSamplesBySupplierName returns the unique sample matching supplier_name.
-func (c *Client) FindSamplesBySupplierName(ctx context.Context, supplierName string) ([]Sample, error) {
-	return c.findSamplesByQuery(ctx, findSamplesBySupplierSQL, supplierName, "query samples by supplier name", syncTableSample)
+// FindSamplesByAccessionNumber returns a page of the samples whose
+// accession_number matches, ordered by Sanger name.
+func (c *Client) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string, limit, offset int) ([]Sample, error) {
+	return c.findSamples(ctx, accessionSampleFinder, accessionNumber, limit, offset)
 }
 
-// FindSamplesByLibraryType returns the unique sample matching pipeline_id_lims.
-func (c *Client) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]Sample, error) {
-	return c.findSamplesByQuery(ctx, findSamplesByLibraryTypeSQL, libraryType, "query samples by library type", syncTableSample, syncTableIseqFlowcell)
+// FindSamplesBySupplierName returns a page of the samples whose supplier_name
+// matches, ordered by Sanger name.
+func (c *Client) FindSamplesBySupplierName(ctx context.Context, supplierName string, limit, offset int) ([]Sample, error) {
+	return c.findSamples(ctx, supplierSampleFinder, supplierName, limit, offset)
+}
+
+// FindSamplesByLibraryType returns a page of the distinct SQSCP samples in
+// libraries of the given pipeline_id_lims, ordered by Sanger name.
+func (c *Client) FindSamplesByLibraryType(ctx context.Context, libraryType string, limit, offset int) ([]Sample, error) {
+	return c.findSamples(ctx, libraryTypeSampleFinder, libraryType, limit, offset)
 }
 
 func (c *Client) samplesForSampleSearchIdentifier(ctx context.Context, kind IdentifierKind, canonical string) ([]Sample, error) {

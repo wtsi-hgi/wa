@@ -749,11 +749,11 @@ func (c *mlwhdiffTestClient) AllSamplesForStudy(ctx context.Context, studyLimsID
 	return c.provider.AllSamplesForStudy(ctx, studyLimsID)
 }
 
-func (c *mlwhdiffTestClient) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error) {
+func (c *mlwhdiffTestClient) FindSamplesBySangerID(ctx context.Context, sangerID string, _, _ int) ([]mlwh.Sample, error) {
 	return c.provider.FindSamplesBySangerID(ctx, sangerID)
 }
 
-func (c *mlwhdiffTestClient) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error) {
+func (c *mlwhdiffTestClient) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string, _, _ int) ([]mlwh.Sample, error) {
 	return c.provider.FindSamplesByIDSampleLims(ctx, idSampleLims)
 }
 
@@ -761,11 +761,11 @@ func (c *mlwhdiffTestClient) FindSamplesByRunID(ctx context.Context, idRun int) 
 	return c.provider.FindSamplesByRunID(ctx, idRun)
 }
 
-func (c *mlwhdiffTestClient) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]mlwh.Sample, error) {
+func (c *mlwhdiffTestClient) FindSamplesByLibraryType(ctx context.Context, libraryType string, _, _ int) ([]mlwh.Sample, error) {
 	return c.provider.FindSamplesByLibraryType(ctx, libraryType)
 }
 
-func (c *mlwhdiffTestClient) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error) {
+func (c *mlwhdiffTestClient) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string, _, _ int) ([]mlwh.Sample, error) {
 	return c.provider.FindSamplesByAccessionNumber(ctx, accessionNumber)
 }
 

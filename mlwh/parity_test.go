@@ -223,19 +223,19 @@ func parityQueryCases() []parityQueryCase {
 			return q.CountResolvePerson(ctx, parityResolvePersonTerm)
 		}},
 		{name: "FindSamplesBySangerID", call: func(ctx context.Context, q Queryer) (any, error) {
-			return q.FindSamplesBySangerID(ctx, paritySampleSangerID)
+			return q.FindSamplesBySangerID(ctx, paritySampleSangerID, 1000, 0)
 		}},
 		{name: "FindSamplesByIDSampleLims", call: func(ctx context.Context, q Queryer) (any, error) {
-			return q.FindSamplesByIDSampleLims(ctx, paritySampleLimsID)
+			return q.FindSamplesByIDSampleLims(ctx, paritySampleLimsID, 1000, 0)
 		}},
 		{name: "FindSamplesByAccessionNumber", call: func(ctx context.Context, q Queryer) (any, error) {
-			return q.FindSamplesByAccessionNumber(ctx, paritySampleAccession)
+			return q.FindSamplesByAccessionNumber(ctx, paritySampleAccession, 1000, 0)
 		}},
 		{name: "FindSamplesBySupplierName", call: func(ctx context.Context, q Queryer) (any, error) {
-			return q.FindSamplesBySupplierName(ctx, paritySampleSupplier)
+			return q.FindSamplesBySupplierName(ctx, paritySampleSupplier, 1000, 0)
 		}},
 		{name: "FindSamplesByLibraryType", call: func(ctx context.Context, q Queryer) (any, error) {
-			return q.FindSamplesByLibraryType(ctx, parityFindLibraryType)
+			return q.FindSamplesByLibraryType(ctx, parityFindLibraryType, 1000, 0)
 		}},
 		{name: "ExpandIdentifier", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.ExpandIdentifier(ctx, KindStudyLimsID, parityStudyID)
