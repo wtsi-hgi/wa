@@ -373,9 +373,10 @@ func TestMLWHSearchCommandJSONOutput(t *testing.T) {
 
 		decoded := map[string]any{}
 		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
-		convey.So(decoded["term"], convey.ShouldEqual, "malaria")
+		query, results := mlwhJSONDocumentPartsForTest(decoded)
+		convey.So(query["term"], convey.ShouldEqual, "malaria")
 
-		studies, ok := decoded["studies"].(map[string]any)
+		studies, ok := results["studies"].(map[string]any)
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(studies["count"], convey.ShouldEqual, 3)
 		studyResults, ok := studies["results"].([]any)
@@ -384,13 +385,125 @@ func TestMLWHSearchCommandJSONOutput(t *testing.T) {
 		firstStudy := studyResults[0].(map[string]any)
 		convey.So(firstStudy["id_study_lims"], convey.ShouldEqual, "6568")
 
-		samples, ok := decoded["samples"].(map[string]any)
+		samples, ok := results["samples"].(map[string]any)
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(samples["count"], convey.ShouldEqual, 2)
 		sampleResults, ok := samples["results"].([]any)
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(sampleResults, convey.ShouldHaveLength, 1)
 	})
+}
+
+func TestMLWHSearchCommandJSONEnvelope(t *testing.T) {
+	convey.Convey("Given a cache last synced at a known time", t, func() {
+		var gotOpts mlwh.SampleSearchOptions
+		stub := &stubMLWHSearchClient{
+			searchStudies: func(_ context.Context, _ string, _, _ int) ([]mlwh.Study, error) {
+				return []mlwh.Study{{IDStudyLims: "6568", Name: "Malaria"}}, nil
+			},
+			countStudySearch: func(_ context.Context, _ string) (mlwh.Count, error) {
+				return mlwh.Count{Count: 1}, nil
+			},
+			searchSamplesWithOptions: func(_ context.Context, _ string, opts mlwh.SampleSearchOptions, _, _ int) ([]mlwh.Sample, error) {
+				gotOpts = opts
+
+				return []mlwh.Sample{{Name: "DN1234", SupplierName: "PD42478a"}}, nil
+			},
+			countSampleSearchWithOptions: func(_ context.Context, _ string, _ mlwh.SampleSearchOptions) (mlwh.Count, error) {
+				return mlwh.Count{Count: 1}, nil
+			},
+		}
+		withStubMLWHSearchClient(t, stub)
+		openMLWHSearchClient = func(context.Context, mlwh.Config) (mlwhSearchClient, error) {
+			return freshStubMLWHSearchClientForTest{stubMLWHSearchClient: stub, lastRun: "2026-10-21T08:00:00Z"}, nil
+		}
+
+		convey.Convey("when wa mlwh search --json runs with every sample option, then query echoes them with the cache sync time and wa version, and results holds only the sections", func() {
+			output, err := executeRootCommandForTest(t, []string{
+				"mlwh", "search", "PD42478a", "--type", "Sample", "--words", "--organism", "Homo sapiens",
+				"--library-type", "Standard", "--qc", "pass", "--deliverables-only", "--limit", "5", "--offset", "2", "--json",
+			})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(gotOpts.DeliverablesOnly, convey.ShouldBeTrue)
+			convey.So(output, convey.ShouldEqual, `{
+  "query": {
+    "term": "PD42478a",
+    "type": "sample",
+    "words": true,
+    "organism": "Homo sapiens",
+    "library_type": "Standard",
+    "qc": "pass",
+    "deliverables_only": true,
+    "with_data": false,
+    "limit": 5,
+    "offset": 2,
+    "cache_synced_at": "2026-10-21T08:00:00Z",
+    "wa_version": "`+waBuildVersion()+`"
+  },
+  "results": {
+    "samples": {
+      "count": 1,
+      "results": [
+        {
+          "id_sample_tmp": 0,
+          "id_lims": "",
+          "id_sample_lims": "",
+          "uuid_sample_lims": "",
+          "name": "DN1234",
+          "sanger_sample_id": "",
+          "supplier_name": "PD42478a",
+          "accession_number": "",
+          "donor_id": "",
+          "taxon_id": 0,
+          "common_name": "",
+          "description": ""
+        }
+      ]
+    }
+  }
+}`)
+		})
+
+		convey.Convey("when wa mlwh search --json runs with default options, then query says both types and omits the unset sample filters", func() {
+			output, err := executeRootCommandForTest(t, []string{"mlwh", "search", "malaria", "--json"})
+
+			convey.So(err, convey.ShouldBeNil)
+
+			var document map[string]json.RawMessage
+			convey.So(json.Unmarshal([]byte(output), &document), convey.ShouldBeNil)
+			convey.So(document, convey.ShouldHaveLength, 2)
+			convey.So(string(document["query"]), convey.ShouldEqual, `{
+    "term": "malaria",
+    "type": "both",
+    "words": false,
+    "deliverables_only": false,
+    "with_data": false,
+    "limit": 50,
+    "offset": 0,
+    "cache_synced_at": "2026-10-21T08:00:00Z",
+    "wa_version": "`+waBuildVersion()+`"
+  }`)
+
+			var results map[string]json.RawMessage
+			convey.So(json.Unmarshal(document["results"], &results), convey.ShouldBeNil)
+			convey.So(results, convey.ShouldContainKey, "studies")
+			convey.So(results, convey.ShouldContainKey, "samples")
+			convey.So(results, convey.ShouldHaveLength, 2)
+		})
+	})
+}
+
+// freshStubMLWHSearchClientForTest is a search stub whose cache reports one
+// table last synced at lastRun.
+type freshStubMLWHSearchClientForTest struct {
+	*stubMLWHSearchClient
+
+	lastRun string
+}
+
+func (c freshStubMLWHSearchClientForTest) Freshness(context.Context) (mlwh.Freshness, error) {
+	return mlwh.Freshness{Tables: []mlwh.TableFreshness{{Table: "sample", EverSynced: true, LastRun: c.lastRun}}}, nil
 }
 
 func TestMLWHSearchCommandJSONOmitsUnrequestedSection(t *testing.T) {
@@ -412,9 +525,10 @@ func TestMLWHSearchCommandJSONOmitsUnrequestedSection(t *testing.T) {
 
 		decoded := map[string]any{}
 		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
-		_, hasStudies := decoded["studies"]
+		_, results := mlwhJSONDocumentPartsForTest(decoded)
+		_, hasStudies := results["studies"]
 		convey.So(hasStudies, convey.ShouldBeTrue)
-		_, hasSamples := decoded["samples"]
+		_, hasSamples := results["samples"]
 		convey.So(hasSamples, convey.ShouldBeFalse)
 	})
 }
@@ -557,16 +671,17 @@ func TestMLWHSearchCommandNeverSyncedJSONOmitsSyncHint(t *testing.T) {
 
 		decoded := map[string]any{}
 		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
-		convey.So(decoded["term"], convey.ShouldEqual, "malaria")
+		query, results := mlwhJSONDocumentPartsForTest(decoded)
+		convey.So(query["term"], convey.ShouldEqual, "malaria")
 
-		studies := decoded["studies"].(map[string]any)
+		studies := results["studies"].(map[string]any)
 		convey.So(studies["count"], convey.ShouldEqual, 0)
 		studyResults, ok := studies["results"].([]any)
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(studyResults, convey.ShouldNotBeNil)
 		convey.So(studyResults, convey.ShouldBeEmpty)
 
-		samples := decoded["samples"].(map[string]any)
+		samples := results["samples"].(map[string]any)
 		convey.So(samples["count"], convey.ShouldEqual, 0)
 		sampleResults, ok := samples["results"].([]any)
 		convey.So(ok, convey.ShouldBeTrue)
@@ -626,8 +741,11 @@ func TestMLWHSearchCommandJSONTimeoutEmitsValidJSON(t *testing.T) {
 		// stdout must remain a single valid JSON object, not a plain-text line.
 		decoded := map[string]any{}
 		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
-		convey.So(decoded["term"], convey.ShouldEqual, "homo sapiens")
+		query, results := mlwhJSONDocumentPartsForTest(decoded)
+		convey.So(query["term"], convey.ShouldEqual, "homo sapiens")
 		convey.So(decoded["timed_out"], convey.ShouldEqual, true)
+		convey.So(query, convey.ShouldNotContainKey, "timed_out")
+		convey.So(results, convey.ShouldNotContainKey, "timed_out")
 
 		// No raw error, no plain-text timeout line, no sync hint leaks into output.
 		convey.So(output, convey.ShouldNotContainSubstring, mlwhSearchTimedOutMessage)
@@ -700,10 +818,11 @@ func TestMLWHSearchCommandJSONTimeoutPreservesCollectedStudies(t *testing.T) {
 
 		decoded := map[string]any{}
 		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
+		_, results := mlwhJSONDocumentPartsForTest(decoded)
 		convey.So(decoded["timed_out"], convey.ShouldEqual, true)
 
 		// The collected studies section must survive the timeout.
-		studies, ok := decoded["studies"].(map[string]any)
+		studies, ok := results["studies"].(map[string]any)
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(studies["count"], convey.ShouldEqual, 1)
 		studyResults, ok := studies["results"].([]any)
@@ -753,4 +872,15 @@ func withStubMLWHSearchClient(t *testing.T, stub *stubMLWHSearchClient) {
 	openMLWHSearchClient = func(context.Context, mlwh.Config) (mlwhSearchClient, error) {
 		return stub, nil
 	}
+}
+
+// mlwhJSONDocumentPartsForTest returns a decoded --json document's "query" and
+// "results" objects, failing the assertion when either is missing.
+func mlwhJSONDocumentPartsForTest(decoded map[string]any) (query, results map[string]any) {
+	query, queryOK := decoded["query"].(map[string]any)
+	results, resultsOK := decoded["results"].(map[string]any)
+	convey.So(queryOK, convey.ShouldBeTrue)
+	convey.So(resultsOK, convey.ShouldBeTrue)
+
+	return query, results
 }

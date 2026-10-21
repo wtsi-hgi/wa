@@ -61,8 +61,13 @@ const (
 )
 
 type multiSampleInfoJSONForTest struct {
-	Kind          string `json:"kind"`
-	CacheSyncedAt string `json:"cache_synced_at"`
+	Query struct {
+		CacheSyncedAt string `json:"cache_synced_at"`
+	} `json:"query"`
+	Results struct {
+		Kind          string  `json:"kind"`
+		CacheSyncedAt *string `json:"cache_synced_at"`
+	} `json:"results"`
 }
 
 func TestMLWHInfoAndSearchReportCacheSyncedAt(t *testing.T) {
@@ -76,11 +81,12 @@ func TestMLWHInfoAndSearchReportCacheSyncedAt(t *testing.T) {
 			convey.So(err, convey.ShouldBeNil)
 			var report multiSampleInfoJSONForTest
 			convey.So(json.Unmarshal([]byte(stdout), &report), convey.ShouldBeNil)
-			convey.So(report.Kind, convey.ShouldNotEqual, "ambiguous_sample")
+			convey.So(report.Results.Kind, convey.ShouldNotEqual, "ambiguous_sample")
 			// A sample report keeps its progress timeline's as-of time: the oldest
 			// sync of the tables progress reads, of which only
 			// iseq_product_metrics is seeded here.
-			convey.So(report.CacheSyncedAt, convey.ShouldEqual, "2026-07-01T05:30:00Z")
+			convey.So(report.Query.CacheSyncedAt, convey.ShouldEqual, "2026-07-01T05:30:00Z")
+			convey.So(report.Results.CacheSyncedAt, convey.ShouldBeNil)
 		})
 
 		convey.Convey("when wa mlwh search --json runs, then the report carries cache_synced_at", func() {
@@ -88,10 +94,12 @@ func TestMLWHInfoAndSearchReportCacheSyncedAt(t *testing.T) {
 
 			convey.So(err, convey.ShouldBeNil)
 			var report struct {
-				CacheSyncedAt string `json:"cache_synced_at"`
+				Query struct {
+					CacheSyncedAt string `json:"cache_synced_at"`
+				} `json:"query"`
 			}
 			convey.So(json.Unmarshal([]byte(stdout), &report), convey.ShouldBeNil)
-			convey.So(report.CacheSyncedAt, convey.ShouldEqual, multiSampleSyncedAtForTest)
+			convey.So(report.Query.CacheSyncedAt, convey.ShouldEqual, multiSampleSyncedAtForTest)
 		})
 	})
 }

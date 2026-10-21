@@ -27,6 +27,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -78,6 +79,31 @@ type mlwhSyncReportingClient interface {
 
 type mlwhFreshnessClient interface {
 	Freshness(context.Context) (mlwh.Freshness, error)
+}
+
+// mlwhJSONDocument is the --json envelope of `wa mlwh search` and `wa mlwh
+// info`: Query echoes what was asked and how (with cache_synced_at and
+// wa_version), Results holds what was found. TimedOut and Warnings sit beside
+// them because they qualify the whole answer: they say the results are
+// incomplete, so they are neither part of the request nor a result.
+type mlwhJSONDocument[Q, R any] struct {
+	Query    Q        `json:"query"`
+	Results  R        `json:"results"`
+	TimedOut bool     `json:"timed_out,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// writeMLWHJSONDocument prints document as indented JSON; what names it in an
+// encode error.
+func writeMLWHJSONDocument[Q, R any](out io.Writer, what string, document mlwhJSONDocument[Q, R]) error {
+	encoder := json.NewEncoder(out)
+	encoder.SetIndent("", "  ")
+
+	if err := encoder.Encode(document); err != nil {
+		return fmt.Errorf("encode %s: %w", what, err)
+	}
+
+	return nil
 }
 
 // mlwhCacheSyncedAt returns the oldest last_run across the cache's synced

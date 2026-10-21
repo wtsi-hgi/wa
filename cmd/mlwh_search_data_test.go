@@ -62,10 +62,11 @@ func TestMLWHSearchWithData(t *testing.T) {
 			convey.So(err, convey.ShouldBeNil)
 			var report searchWithDataJSONForTest
 			convey.So(json.Unmarshal([]byte(stdout), &report), convey.ShouldBeNil)
-			convey.So(report.Samples.Results, convey.ShouldHaveLength, 4)
+			convey.So(report.Query.WithData, convey.ShouldBeTrue)
+			convey.So(report.Results.Samples.Results, convey.ShouldHaveLength, 4)
 
 			rows := map[string][]searchDataRowForTest{}
-			for _, sample := range report.Samples.Results {
+			for _, sample := range report.Results.Samples.Results {
 				convey.So(sample.Data, convey.ShouldNotBeNil)
 				rows[sample.Name] = *sample.Data
 			}
@@ -108,9 +109,9 @@ func TestMLWHSearchWithData(t *testing.T) {
 			convey.So(err, convey.ShouldBeNil)
 			var report searchWithDataJSONForTest
 			convey.So(json.Unmarshal([]byte(stdout), &report), convey.ShouldBeNil)
-			convey.So(report.Samples.Results, convey.ShouldHaveLength, 2)
-			convey.So(report.Samples.Results[0].Name, convey.ShouldEqual, "5534STDY0000102")
-			convey.So(*report.Samples.Results[0].Data, convey.ShouldHaveLength, 1)
+			convey.So(report.Results.Samples.Results, convey.ShouldHaveLength, 2)
+			convey.So(report.Results.Samples.Results[0].Name, convey.ShouldEqual, "5534STDY0000102")
+			convey.So(*report.Results.Samples.Results[0].Data, convey.ShouldHaveLength, 1)
 		})
 
 		convey.Convey("when --with-data is given for a study-only search, then it is a usage error", func() {
@@ -234,8 +235,8 @@ func TestMLWHSearchWithDataExportFailures(t *testing.T) {
 
 				report := decodeSearchWithDataForTest(out.String())
 				convey.So(report.TimedOut, convey.ShouldBeTrue)
-				convey.So(report.Samples.Results, convey.ShouldHaveLength, 4)
-				for _, sample := range report.Samples.Results {
+				convey.So(report.Results.Samples.Results, convey.ShouldHaveLength, 4)
+				for _, sample := range report.Results.Samples.Results {
 					convey.So(sample.DataError, convey.ShouldEqual, "timed out")
 				}
 			}
@@ -275,14 +276,19 @@ type searchDataSampleForTest struct {
 
 type searchWithDataJSONForTest struct {
 	TimedOut bool `json:"timed_out"`
-	Samples  struct {
-		Count   int                       `json:"count"`
-		Results []searchDataSampleForTest `json:"results"`
-	} `json:"samples"`
+	Query    struct {
+		WithData bool `json:"with_data"`
+	} `json:"query"`
+	Results struct {
+		Samples struct {
+			Count   int                       `json:"count"`
+			Results []searchDataSampleForTest `json:"results"`
+		} `json:"samples"`
+	} `json:"results"`
 }
 
 func (r searchWithDataJSONForTest) sample(name string) searchDataSampleForTest {
-	for _, sample := range r.Samples.Results {
+	for _, sample := range r.Results.Samples.Results {
 		if sample.Name == name {
 			return sample
 		}

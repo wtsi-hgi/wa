@@ -605,14 +605,75 @@ func TestMLWHInfoCommandSampleIncludesLibraryIdentifiersAndIRODSPaths(t *testing
 
 		decoded := map[string]any{}
 		convey.So(json.Unmarshal([]byte(jsonOutput), &decoded), convey.ShouldBeNil)
-		sample := decoded["sample"].(map[string]any)
+		_, results := mlwhJSONDocumentPartsForTest(decoded)
+		sample := results["sample"].(map[string]any)
 		libraries := sample["libraries"].([]any)
 		library := libraries[0].(map[string]any)
 		convey.So(library["library_id"], convey.ShouldEqual, "71046409")
 		convey.So(library["id_library_lims"], convey.ShouldEqual, "SQPP-47463-G:B1")
-		paths := decoded["irods_paths"].([]any)
+		paths := results["irods_paths"].([]any)
 		path := paths[0].(map[string]any)
 		convey.So(path["irods_path"], convey.ShouldEqual, "/seq/illumina/runs/48/48522/plex1/48522#1.cram")
+	})
+}
+
+func TestMLWHInfoCommandJSONEnvelope(t *testing.T) {
+	convey.Convey("Given a library identifier, when wa mlwh info --type library --json runs, then query holds the identifier, type and wa version and results holds the report", t, func() {
+		withStubMLWHInfoClient(t, &stubMLWHInfoClient{
+			resolveLibrary: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{
+					Kind:      mlwh.KindLibraryID,
+					Canonical: raw,
+					Library:   &mlwh.Library{PipelineIDLims: raw, IDStudyLims: "5901"},
+				}, nil
+			},
+		})
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "LIB-1", "--type", "library", "--json"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldEqual, `{
+  "query": {
+    "identifier": "LIB-1",
+    "type": "library",
+    "wa_version": "`+waBuildVersion()+`"
+  },
+  "results": {
+    "kind": "library_id",
+    "canonical": "LIB-1",
+    "library": {
+      "pipeline_id_lims": "LIB-1",
+      "id_study_lims": "5901"
+    }
+  }
+}`)
+	})
+
+	convey.Convey("Given a run whose related lookups fail, when wa mlwh info --json runs, then the warnings sit beside query and results", t, func() {
+		withStubMLWHInfoClient(t, &stubMLWHInfoClient{
+			resolveRun: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{Kind: mlwh.KindRunID, Canonical: raw, Run: &mlwh.Run{IDRun: 49001}}, nil
+			},
+			samplesForRun: func(context.Context, string, int, int) ([]mlwh.Sample, error) {
+				return nil, errors.New("samples lookup refused for test")
+			},
+		})
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "49001", "--type", "run", "--json"})
+
+		convey.So(err, convey.ShouldBeNil)
+
+		decoded := map[string]any{}
+		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
+		query, results := mlwhJSONDocumentPartsForTest(decoded)
+		convey.So(decoded, convey.ShouldHaveLength, 3)
+		warnings, ok := decoded["warnings"].([]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(warnings, convey.ShouldContain, "samples for run: samples lookup refused for test")
+		convey.So(query, convey.ShouldNotContainKey, "warnings")
+		convey.So(results, convey.ShouldNotContainKey, "warnings")
+		convey.So(results, convey.ShouldNotContainKey, "identifier")
+		convey.So(results, convey.ShouldNotContainKey, "cache_synced_at")
 	})
 }
 
@@ -647,14 +708,15 @@ func TestMLWHInfoCommandJSONOutput(t *testing.T) {
 
 		decoded := map[string]any{}
 		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
-		convey.So(decoded["identifier"], convey.ShouldEqual, "5901")
-		convey.So(decoded["kind"], convey.ShouldEqual, string(mlwh.KindStudyLimsID))
+		query, results := mlwhJSONDocumentPartsForTest(decoded)
+		convey.So(query["identifier"], convey.ShouldEqual, "5901")
+		convey.So(results["kind"], convey.ShouldEqual, string(mlwh.KindStudyLimsID))
 
-		study, ok := decoded["study"].(map[string]any)
+		study, ok := results["study"].(map[string]any)
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(study["id_study_lims"], convey.ShouldEqual, "5901")
 
-		libraries, ok := decoded["libraries"].([]any)
+		libraries, ok := results["libraries"].([]any)
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(libraries, convey.ShouldHaveLength, 1)
 	})
@@ -956,9 +1018,10 @@ func TestMLWHInfoStudyProductsUseProductsExportH1(t *testing.T) {
 
 		var decoded map[string]any
 		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
-		convey.So(decoded, convey.ShouldNotContainKey, "study_manifest")
+		_, results := mlwhJSONDocumentPartsForTest(decoded)
+		convey.So(results, convey.ShouldNotContainKey, "study_manifest")
 
-		products, ok := decoded["products"].([]any)
+		products, ok := results["products"].([]any)
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(products, convey.ShouldHaveLength, 2)
 
@@ -1132,8 +1195,9 @@ func TestMLWHInfoRunIRODSPathsJSON(t *testing.T) {
 
 		decoded := map[string]any{}
 		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
+		_, results := mlwhJSONDocumentPartsForTest(decoded)
 
-		paths, ok := decoded["run_irods_paths"].([]any)
+		paths, ok := results["run_irods_paths"].([]any)
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(paths, convey.ShouldHaveLength, 1)
 		path := paths[0].(map[string]any)
@@ -1391,20 +1455,24 @@ func TestMLWHInfoStudyFeatureSections(t *testing.T) {
 
 			decoded := map[string]any{}
 			convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
+			query, results := mlwhJSONDocumentPartsForTest(decoded)
+			convey.So(query["type"], convey.ShouldEqual, "auto")
+			convey.So(query["since"], convey.ShouldNotBeEmpty)
+			convey.So(query["since"], convey.ShouldEqual, results["samples_with_data_count"].(map[string]any)["since"])
 
-			overview := decoded["study_overview"].(map[string]any)
+			overview := results["study_overview"].(map[string]any)
 			convey.So(overview["samples_total"], convey.ShouldEqual, 100)
 
-			breakdown := decoded["status_breakdown"].(map[string]any)
+			breakdown := results["status_breakdown"].(map[string]any)
 			distinct := breakdown["distinct"].(map[string]any)
 			convey.So(distinct["with_data"], convey.ShouldEqual, 80)
 
-			withData := decoded["samples_with_data_count"].(map[string]any)
+			withData := results["samples_with_data_count"].(map[string]any)
 			convey.So(withData["all_time"], convey.ShouldEqual, 80)
 			convey.So(withData["added_since"], convey.ShouldEqual, 3)
 			convey.So(withData["since"], convey.ShouldNotEqual, "")
 
-			withoutData := decoded["samples_without_data_count"].(map[string]any)
+			withoutData := results["samples_without_data_count"].(map[string]any)
 			convey.So(withoutData["count"], convey.ShouldEqual, 20)
 		})
 	})
@@ -1561,7 +1629,8 @@ func TestMLWHInfoSampleProgressSection(t *testing.T) {
 
 			decoded := map[string]any{}
 			convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
-			progress := decoded["sample_progress"].(map[string]any)
+			_, results := mlwhJSONDocumentPartsForTest(decoded)
+			progress := results["sample_progress"].(map[string]any)
 			convey.So(progress["baseline_phase"], convey.ShouldEqual, "delivered")
 			convey.So(progress["qc"], convey.ShouldEqual, "pass")
 		})
@@ -1659,11 +1728,14 @@ func TestMLWHInfoRunFeatureSections(t *testing.T) {
 
 			decoded := map[string]any{}
 			convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
+			query, results := mlwhJSONDocumentPartsForTest(decoded)
+			convey.So(query["type"], convey.ShouldEqual, "run")
+			convey.So(query, convey.ShouldNotContainKey, "since")
 
-			overview := decoded["run_overview"].(map[string]any)
+			overview := results["run_overview"].(map[string]any)
 			convey.So(overview["samples"], convey.ShouldEqual, 96)
 
-			status := decoded["run_status"].(map[string]any)
+			status := results["run_status"].(map[string]any)
 			convey.So(status["current"], convey.ShouldEqual, "qc complete")
 		})
 	})

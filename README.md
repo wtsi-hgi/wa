@@ -265,20 +265,26 @@ as do three invalid answers. When stdin or stdout is not a terminal, or with
 
 ```json
 {
-    "kind": "ambiguous_sample",
-    "identifier": "PD42478a",
-    "candidates": [
-        {
-            "identifier": "<Sanger name, another unique key, or empty>",
-            "name": "...",
-            "sanger_sample_id": "...",
-            "supplier_name": "PD42478a",
-            "accession_number": "...",
-            "studies": [{ "id_study_lims": "...", "name": "..." }],
-            "has_data": true
-        }
-    ],
-    "cache_synced_at": "...",
+    "query": {
+        "identifier": "PD42478a",
+        "type": "auto",
+        "cache_synced_at": "...",
+        "wa_version": "..."
+    },
+    "results": {
+        "kind": "ambiguous_sample",
+        "candidates": [
+            {
+                "identifier": "<Sanger name, another unique key, or empty>",
+                "name": "...",
+                "sanger_sample_id": "...",
+                "supplier_name": "PD42478a",
+                "accession_number": "...",
+                "studies": [{ "id_study_lims": "...", "name": "..." }],
+                "has_data": true
+            }
+        ]
+    },
     "warnings": ["..."]
 }
 ```
@@ -286,10 +292,49 @@ as do three invalid answers. When stdin or stdout is not a terminal, or with
 Each candidate's `identifier` is a value that `wa mlwh info` resolves to that
 sample alone, or `""` when none of the sample's identifiers is unique.
 `warnings` appears only when some lookups failed or timed out, so some
-identifiers or `has_data` values may be missing. When no sample is chosen, `wa mlwh info` exits with status 3;
-other failures exit with status 1. The `--json` output of `wa mlwh info` and
-`wa mlwh search` carries `cache_synced_at`, the cache sync time the human
-`info` output shows. Export output stays data only.
+identifiers or `has_data` values may be missing. When no sample is chosen, `wa
+mlwh info` exits with status 3; other failures exit with status 1.
+
+The `--json` output of `wa mlwh search` and `wa mlwh info` is one object split
+into the request and its answer. `query` echoes the term or identifier, the
+options that shaped the results, `cache_synced_at` (the cache sync time the
+human `info` output shows) and `wa_version` (the version of this `wa` client).
+`results` holds what was found. `timed_out` (search) and `warnings` (info) sit
+beside them, present only when set, because they say the results are
+incomplete. For example, `wa mlwh search PD42478a --type sample
+--deliverables-only --with-data --json` prints:
+
+```json
+{
+    "query": {
+        "term": "PD42478a",
+        "type": "sample",
+        "words": false,
+        "deliverables_only": true,
+        "with_data": true,
+        "limit": 50,
+        "offset": 0,
+        "cache_synced_at": "2026-10-21T08:00:00Z",
+        "wa_version": "..."
+    },
+    "results": {
+        "samples": {
+            "count": 1,
+            "results": [{ "name": "...", "data": [{ "irods_path": "..." }] }]
+        }
+    }
+}
+```
+
+Search's `type` is `study`, `sample` or `both`, and `organism`,
+`library_type` and `qc` appear only when given; `results` has `studies` and
+`samples` sections for the requested types. Info's `query` has `identifier`,
+`type` (the `--type` given, or `auto`) and, for a study, `since` (the start of
+the samples-with-data window); its `results` is the report, with `kind` first.
+The output does not include the server's API version, which `wa` learns only
+by fetching `GET /openapi.json`. This shape replaced the flat objects of wa
+v1.0.0, which had `term` or `identifier`, `cache_synced_at` and `warnings`
+beside the results. Export output stays data only.
 
 #### Agent feedback
 

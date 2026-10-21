@@ -27,7 +27,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1054,7 +1053,7 @@ func reportInfoCandidates(ctx context.Context, client mlwhInfoClient, report inf
 
 	switch {
 	case opts.jsonOut:
-		return writeInfoCandidatesJSON(opts.out, report)
+		return writeInfoCandidatesJSON(opts.out, report, opts.typeFlag)
 	case !opts.interactive:
 		return writeInfoCandidatesList(opts.out, report)
 	}
@@ -1106,7 +1105,7 @@ func runMLWHInfo(ctx context.Context, client mlwhInfoClient, identifier string, 
 				return writeInfoReportJSON(out, infoReport{
 					Identifier: identifier,
 					Warnings:   []string{mlwhCacheUnavailableMessage},
-				})
+				}, opts)
 			}
 
 			_, _ = fmt.Fprintf(out, "%s\n", mlwhCacheUnavailableMessage)
@@ -1131,7 +1130,7 @@ func runMLWHInfo(ctx context.Context, client mlwhInfoClient, identifier string, 
 	report.CacheSyncedAt = infoReportCacheSyncedAt(ctx, client, report)
 
 	if jsonOut {
-		return writeInfoReportJSON(out, report)
+		return writeInfoReportJSON(out, report, opts)
 	}
 
 	writeInfoReportText(out, report, resolveInfoStyle(out))
@@ -1173,17 +1172,6 @@ func buildInfoReport(ctx context.Context, client mlwhInfoClient, identifier, sin
 	}
 
 	return report
-}
-
-func writeInfoReportJSON(out io.Writer, report any) error {
-	encoder := json.NewEncoder(out)
-	encoder.SetIndent("", "  ")
-
-	if err := encoder.Encode(report); err != nil {
-		return fmt.Errorf("encode info report: %w", err)
-	}
-
-	return nil
 }
 
 func writeInfoReportText(out io.Writer, report infoReport, style infoStyle) {
@@ -1591,9 +1579,52 @@ type infoProductRow struct {
 	ManualQC        string `json:"manual_qc"`
 }
 
-// infoReport is the JSON-friendly shape of `wa mlwh info` results.
+// infoQuery is the --json "query" object of `wa mlwh info`: the identifier,
+// the effective options that shaped the report, the cache sync time and the wa
+// client version. Type is the forced --type, or "auto"; Since, the start of the
+// samples-with-data window, is set only for a study report.
+type infoQuery struct {
+	Identifier    string `json:"identifier"`
+	Type          string `json:"type"`
+	Since         string `json:"since,omitempty"`
+	CacheSyncedAt string `json:"cache_synced_at,omitempty"`
+	WAVersion     string `json:"wa_version"`
+}
+
+func newInfoQuery(identifier, typeFlag, cacheSyncedAt string) infoQuery {
+	infoType := strings.ToLower(strings.TrimSpace(typeFlag))
+	if infoType == "" {
+		infoType = "auto"
+	}
+
+	return infoQuery{
+		Identifier:    identifier,
+		Type:          infoType,
+		CacheSyncedAt: cacheSyncedAt,
+		WAVersion:     waBuildVersion(),
+	}
+}
+
+// writeInfoReportJSON prints report as the "results" of the --json document,
+// with its identifier and cache sync time in "query" and its warnings beside.
+func writeInfoReportJSON(out io.Writer, report infoReport, opts infoOptions) error {
+	query := newInfoQuery(report.Identifier, opts.typeFlag, report.CacheSyncedAt)
+	if report.Study != nil {
+		query.Since = opts.since
+	}
+
+	return writeMLWHJSONDocument(out, "info report", mlwhJSONDocument[infoQuery, infoReport]{
+		Query:    query,
+		Results:  report,
+		Warnings: report.Warnings,
+	})
+}
+
+// infoReport holds `wa mlwh info` results; as JSON it is the "results" object
+// of the --json document, while Identifier and CacheSyncedAt go in "query"
+// and Warnings beside it.
 type infoReport struct {
-	Identifier string           `json:"identifier"`
+	Identifier string           `json:"-"`
 	Kind       string           `json:"kind"`
 	Canonical  string           `json:"canonical,omitempty"`
 	Sample     *mlwh.Sample     `json:"sample,omitempty"`
@@ -1618,9 +1649,9 @@ type infoReport struct {
 	RunIRODSPaths           []mlwh.IRODSPath          `json:"run_irods_paths,omitempty"`
 
 	// CacheSyncedAt is the as-of time the human panel shows as "Cache synced".
-	CacheSyncedAt string `json:"cache_synced_at,omitempty"`
+	CacheSyncedAt string `json:"-"`
 
-	Warnings []string `json:"warnings,omitempty"`
+	Warnings []string `json:"-"`
 
 	productsTotal int
 }
@@ -1663,6 +1694,18 @@ func newMLWHInfoCommand() *cobra.Command {
 			"a specific resolver. Pass --json for a single JSON object suitable",
 			"for piping into jq.",
 			"",
+			"The --json object has two parts:",
+			`  {"query": {"identifier", "type", "since", "cache_synced_at",`,
+			`             "wa_version"},`,
+			`   "results": {"kind", "canonical", "sample", "study", ...},`,
+			`   "warnings": [...]}`,
+			"query echoes the identifier, type (the --type given, or auto), since",
+			"(for a study: the start of the samples-with-data window),",
+			"cache_synced_at (the cache sync time the text output shows) and",
+			"wa_version (this client's version). results is the report. warnings,",
+			"present only when non-empty, notes lookups that failed, so parts of",
+			"the report may be missing.",
+			"",
 			"For a study, the report also includes the overview, status",
 			"breakdown, samples-with-data counts and samples-without-data count.",
 			"Use --since to set the start of the samples-with-data recency window",
@@ -1682,19 +1725,19 @@ func newMLWHInfoCommand() *cobra.Command {
 			"answers.",
 			"",
 			"Otherwise the command prints the numbered list without asking, or,",
-			"with --json, one object:",
-			`  {"kind": "ambiguous_sample", "identifier": <id>, "candidates": [`,
-			`    {"identifier", "name", "sanger_sample_id", "supplier_name",`,
-			`     "accession_number", "studies": [...], "has_data"}, ...],`,
-			`   "cache_synced_at": <time>, "warnings": [...]}`,
-			"warnings, present only when non-empty, notes lookups that failed or",
-			"timed out, so some identifiers or has_data values may be missing.",
+			"with --json, one object with the same query part:",
+			`  {"query": {"identifier": <id>, ...},`,
+			`   "results": {"kind": "ambiguous_sample", "candidates": [`,
+			`     {"identifier", "name", "sanger_sample_id", "supplier_name",`,
+			`      "accession_number", "studies": [...], "has_data"}, ...]},`,
+			`   "warnings": [...]}`,
+			"Here warnings notes lookups that failed or timed out, so some",
+			"identifiers or has_data values may be missing.",
 			"Each candidate's identifier names that sample alone in 'wa mlwh",
 			"info': its Sanger name, or, when another sample shares the name, its",
 			"Sanger sample id, LIMS id, UUID or accession; it is empty when none",
 			"is unique. When no sample is chosen, the command exits with status",
-			"3; other failures exit with status 1. --json output carries",
-			"cache_synced_at, the cache sync time the text output shows.",
+			"3; other failures exit with status 1.",
 			"",
 			mlwhInfoCommandConfigurationHelp,
 			"",
