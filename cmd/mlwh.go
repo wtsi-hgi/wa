@@ -610,6 +610,7 @@ func newMLWHCommand() *cobra.Command {
 	}
 
 	command.AddCommand(newMLWHSyncCommand())
+	command.AddCommand(newMLWHCheckSourceCommand())
 	command.AddCommand(newMLWHInfoCommand())
 	command.AddCommand(newMLWHSearchCommand())
 	command.AddCommand(newMLWHExportCommand())
