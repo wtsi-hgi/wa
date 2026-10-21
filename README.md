@@ -428,6 +428,20 @@ older than `--usage-retention-days` days at startup and every hour. The flag
 defaults to `WA_MLWH_USAGE_RETENTION_DAYS`, else 365, and must be at least 1.
 An explicit flag overrides the env var.
 
+Usage rows and feedback reports store the client IP. By default that is the
+socket IP, so behind a reverse proxy every row holds the proxy's IP. Pass
+`--trusted-proxies` (default `WA_MLWH_TRUSTED_PROXIES`), a comma-separated
+list of the proxies' IPs or CIDRs, to read the client from their
+`X-Forwarded-For` or `X-Real-IP` header instead:
+
+```bash
+wa mlwh serve --port 8091 --usage-db /var/lib/wa/mlwh-usage.sqlite --trusted-proxies 10.42.0.0/16
+```
+
+Headers are honoured only on connections from those addresses, and
+`X-Forwarded-For` is read from the right, skipping trusted proxies, so a
+client cannot choose its recorded IP by sending the header itself.
+
 `GET /usage?window=24h|7d|30d|all` (default `7d`) returns the aggregates. It
 sits at the server root in both modes and needs the same
 `Authorization: Bearer <token>` as the feedback admin routes, read from the
@@ -502,7 +516,8 @@ Known limits:
 - The Next.js `/studies` cache fetch carries no session or user.
 - Clients by IP are distinct socket IPs among rows with no client ID, so
   callers behind one host merge. All MCP HTTP users share the MCP host's IP.
-- Each row stores the socket IP, never `X-Forwarded-For`.
+- Each row stores the socket IP, or the forwarded client IP when the
+  connection comes from a `--trusted-proxies` address.
 - The server queues rows for one writer goroutine. If the queue of 4096 rows
   fills, new rows are dropped; the page reports how many since server start.
 - gin answers a trailing-slash request such as `GET /studies/` with a

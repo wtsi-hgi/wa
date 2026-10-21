@@ -691,6 +691,7 @@ func startMLWHServeEndToEndWithEnvForTest(t *testing.T, stateDir string, env map
 	t.Setenv("WA_MLWH_FEEDBACK_PATH", "")
 	t.Setenv("WA_MLWH_USAGE_PATH", "")
 	t.Setenv("WA_MLWH_USAGE_RETENTION_DAYS", "")
+	t.Setenv("WA_MLWH_TRUSTED_PROXIES", "")
 
 	for name, value := range env {
 		t.Setenv(name, value)
@@ -1836,6 +1837,7 @@ func installFakeMLWHServeAuthServer(t *testing.T, fake *fakeMLWHServeAuthServer)
 	t.Setenv("WA_MLWH_FEEDBACK_PATH", "")
 	t.Setenv("WA_MLWH_USAGE_PATH", "")
 	t.Setenv("WA_MLWH_USAGE_RETENTION_DAYS", "")
+	t.Setenv("WA_MLWH_TRUSTED_PROXIES", "")
 
 	originalNewAuthServer := mlwhServeNewAuthServer
 	mlwhServeNewAuthServer = func(io.Writer) mlwhServeAuthServer {

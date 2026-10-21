@@ -377,10 +377,16 @@ func newFeedbackServerTestStore(t *testing.T) *FeedbackStore {
 }
 
 func newFeedbackTestRouter(store *FeedbackStore) *gin.Engine {
+	return newFeedbackTestRouterWithOptions(store)
+}
+
+func newFeedbackTestRouterWithOptions(store *FeedbackStore, opts ...ServerOption) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 
+	opts = append(opts, WithFeedback(store, []byte("admin-token")))
+
 	router := gin.New()
-	NewServer(&serverFakeQueryer{}, WithFeedback(store, []byte("admin-token"))).RegisterRoutes(router, nil)
+	NewServer(&serverFakeQueryer{}, opts...).RegisterRoutes(router, nil)
 
 	return router
 }

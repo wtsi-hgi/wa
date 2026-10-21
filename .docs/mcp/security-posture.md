@@ -131,8 +131,11 @@ written.
   in the `$XDG_STATE_HOME` (or home directory) of the OS user who started the
   server: `.wa-mlwh-server.token` in plain mode, the `--server-token` file in
   secured mode. They are the only routes that return stored reports.
-- Each report stores the host part of the TCP peer address as `remote_addr`,
-  never a forwarded header. For MCP traffic that is the MCP server host, not
+- Each report stores the client IP as `remote_addr`: the host part of the
+  TCP peer address, or, when the peer is one of the `--trusted-proxies`
+  (`WA_MLWH_TRUSTED_PROXIES`, empty by default), the address its
+  `X-Forwarded-For` or `X-Real-IP` header names. Forwarded headers from any
+  other peer are ignored. For MCP traffic that is the MCP server host, not
   the end user's machine. No other reporter identity is stored, though the
   report text may quote the user's request.
 
@@ -151,8 +154,8 @@ Each row stores:
   when no route matched), status, and latency;
 - the caller category, parsed from the `User-Agent` product, plus the client
   version and the full `User-Agent` up to 512 bytes;
-- the host part of the TCP peer address (socket IP), never a forwarded
-  header;
+- the client IP, chosen as for feedback reports: the socket IP, or the
+  forwarded client when the peer is a trusted proxy;
 - the caller-declared `X-WA-Client-ID`, `X-WA-Client-User`,
   `X-WA-MCP-Transport`, `X-WA-MCP-Agent`, and `X-WA-MCP-Tool` headers, each
   cut to its cap.

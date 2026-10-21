@@ -29,6 +29,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -420,6 +421,7 @@ type Server struct {
 	feedbackAdminToken []byte
 	usage              *UsageStore
 	usageAdminToken    []byte
+	trustedProxies     []netip.Prefix
 }
 
 // NewServer constructs an MLWH API server.
@@ -448,7 +450,9 @@ func NewServer(q Queryer, opts ...ServerOption) *Server {
 // token, registers on the router whether or not usage is enabled. None of
 // these is a Registry entry. When usage is enabled, the Registry endpoints,
 // /openapi.json, POST /feedback, and unmatched requests are counted; /health,
-// GET /usage, and the feedback admin routes are not.
+// GET /usage, and the feedback admin routes are not. It also sets router's
+// trusted proxies to those from WithTrustedProxies, none by default, replacing
+// gin's default of trusting every proxy.
 func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
 	if s == nil {
 		return
@@ -456,6 +460,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
 
 	if router != nil {
 		configureMLWHRouter(router)
+		s.applyTrustedProxies(router)
 		s.registerMLWHPlainRoutes(router)
 		s.registerFeedbackAdminRoutes(router)
 		s.registerUsageAdminRoute(router)

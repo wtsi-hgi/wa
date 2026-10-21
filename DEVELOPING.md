@@ -885,6 +885,7 @@ trusted by the system.
 | `WA_MLWH_CACHE_PATH`           | For `wa mlwh serve` and local operators | SQLite path or passwordless MySQL cache DSN used by server-side MLWH lookups                             |
 | `WA_MLWH_CACHE_PASSWORD`       | Optional                                | MLWH cache MySQL password                                                                                |
 | `WA_MLWH_STALE_AFTER`          | Optional                                | Go duration after a table's last successful sync before `/freshness` reports it stale (default: `2h`)    |
+| `WA_MLWH_TRUSTED_PROXIES`      | Optional                                | Comma-separated proxy IPs/CIDRs whose `X-Forwarded-For` `mlwh serve` trusts (default: none)              |
 | `WA_MLWH_SERVER_URL`           | For results/mlwhdiff/mlwh info clients  | Remote `wa mlwh serve` URL, equivalent to `--mlwh-server-url` / `wa mlwh info --server`; not a bind host |
 | `WA_RESULTS_SERVER_CERT`       | For results                             | TLS certificate path and CLI trust root; `run-dev.sh` resolves relative paths from the repo root         |
 | `WA_RESULTS_SERVER_KEY`        | For results                             | TLS private key path for `wa results serve`; `run-dev.sh` resolves relative paths from the repo root     |
@@ -921,6 +922,8 @@ WA_MLWH_CACHE_PATH='user@tcp(cache-host:3306)/wa_mlwh_cache'
 WA_MLWH_CACHE_PASSWORD='...'
 WA_MLWH_FEEDBACK_PATH=/data/mlwh-feedback.sqlite
 WA_MLWH_USAGE_PATH=/data/mlwh-usage.sqlite
+# Behind a Kubernetes ingress, the cluster's pod CIDR (see below), such as
+# WA_MLWH_TRUSTED_PROXIES=10.42.0.0/16
 ```
 
 Run the MLWH API and a periodic sync in one container by overriding the
@@ -951,6 +954,39 @@ reading the cache, so use that for probes. A failed sync is logged and retried
 on the next loop, and serve keeps running. `GET /health` stays ok while syncs
 fail; watch sync health as described in
 [Monitoring MLWH sync](#monitoring-mlwh-sync).
+
+Behind the cluster's ingress controller every request reaches serve from an
+ingress pod, so feedback `remote_addr` and usage rows record the ingress
+pod's IP rather than the client's, and the `/usage` clients-by-IP count is
+the number of ingress pods. To record the client instead, set
+`WA_MLWH_TRUSTED_PROXIES` in `/app/.env.production.local` to the addresses
+the ingress pods connect from, then restart the deployment. No helm change is
+needed. Serve then reads the client from the `X-Forwarded-For` (else
+`X-Real-IP`) header that ingress-nginx sets, but only on connections from
+those addresses. It walks `X-Forwarded-For` from the right and takes the
+first address that is not a trusted proxy, so a client cannot spoof its IP by
+sending the header itself. Unset, no proxy is trusted and the socket IP is
+stored, as before.
+
+Use the cluster's pod CIDR, which covers the ingress pods wherever they are
+rescheduled, for example `WA_MLWH_TRUSTED_PROXIES=10.42.0.0/16`. Trust only
+addresses that clients cannot connect from directly: a client inside the pod
+CIDR could otherwise claim any IP. To find the value:
+
+```bash
+# Per-node pod ranges; the cluster pod CIDR contains them all
+kubectl get nodes -o jsonpath='{range .items[*]}{.spec.podCIDR}{"\n"}{end}'
+# The ingress controller pods and their IPs
+kubectl get pods -A -l app.kubernetes.io/name=ingress-nginx -o wide
+```
+
+The current IPs in the usage database are the ingress pods' IPs and should
+fall inside that range. If the ingress controller uses `hostNetwork`, its
+pods have node IPs: trust the node IPs instead. If a load balancer in front of
+the ingress rewrites source addresses, ingress-nginx sees the load balancer,
+and the ingress itself must be configured to pass the client on; serve cannot
+recover it. After the restart, new feedback reports and usage rows show client
+IPs; existing rows keep the ingress IPs.
 
 ### Monitoring MLWH sync
 
