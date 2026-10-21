@@ -71,6 +71,10 @@ the read SQL, not checked against a running cache:
 - Reads that `INNER JOIN sample_mirror`, such as sample lookups and per-sample
   listings, drop them.
 
+This is intended: the data belongs to Sequencescape studies, so study-level
+answers include it, while the samples themselves stay out of scope. Do not
+filter these rows out without a user request.
+
 ## Supporting another LIMS
 
 If users ask for another LIMS, the change touches:
