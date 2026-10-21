@@ -1,4 +1,4 @@
-.PHONY: help dev dev-fixtures prod prod-start prod-stop prod-status prod-restart lint lint-go lint-frontend lint-prettier-root format format-go format-frontend format-prettier-root test test-go test-frontend test-e2e clean-test-tmp
+.PHONY: help build install dev dev-fixtures prod prod-start prod-stop prod-status prod-restart lint lint-go lint-frontend lint-prettier-root format format-go format-frontend format-prettier-root test test-go test-frontend test-e2e clean-test-tmp
 
 SHELL := bash
 FRONTEND_DIR := frontend
@@ -6,6 +6,12 @@ FRONTEND_DIR := frontend
 # lookups to work for the LDAP auth in the results service and netgo doesn't
 # support that.
 export CGO_ENABLED := 1
+
+# `wa version` prints VERSION, stamped into cmd.Version at build time. Override
+# it with `make build VERSION=...`; outside a git checkout it is empty and wa
+# falls back to the module version in its build info.
+VERSION := $(shell git describe --tags --always --long --dirty 2>/dev/null)
+GO_LDFLAGS := -X github.com/wtsi-hgi/wa/cmd.Version=$(VERSION)
 
 # Scenario loaders source the dotenv-style files directly so `make` targets and
 # `wa --env ...` share the same environment naming.
@@ -47,6 +53,9 @@ DEV_FIXTURES_FLAG := $(if $(filter 1 yes true,$(FIXTURES)),--fixtures,)
 
 help:
 	@printf 'Usage: make <target>\n\n'
+	@printf 'Build:\n'
+	@printf '  build             Build ./wa with its version stamped from git describe.\n'
+	@printf '  install           Install wa into $$GOBIN (or $$GOPATH/bin), version stamped likewise.\n\n'
 	@printf 'Bring-up:\n'
 	@printf '  dev               Run the dev stack (no fixtures). Persistent DB from .env.development + .env.development.local.\n'
 	@printf '  dev FIXTURES=1    Same as above but seed demo fixtures.\n'
@@ -60,6 +69,13 @@ help:
 	@printf '  lint              Run Go and frontend linters.\n'
 	@printf '  format            Apply Go and frontend formatters.\n'
 	@printf '  test              Run Go + Vitest + Playwright tests under .env.test.\n'
+
+# ---- Build ---------------------------------------------------------------
+build:
+	go build -ldflags "$(GO_LDFLAGS)" -o wa .
+
+install:
+	go install -ldflags "$(GO_LDFLAGS)" .
 
 # ---- Test scenario --------------------------------------------------------
 # Hermetic: ephemeral DBs, throwaway ports, never touches dev/prod state.

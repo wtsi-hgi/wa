@@ -28,7 +28,9 @@ Download from the GitHub releases page and place `wa` on your `PATH`.
 go install github.com/wtsi-hgi/wa@latest
 ```
 
-Requires **Go 1.27+**.
+Requires **Go 1.27+**. From a clone, `make install` does the same and stamps
+the `git describe` version, such as `v1.0.0-0-g803a7ae`, that `wa version`
+prints.
 
 ## Usage
 
@@ -38,6 +40,7 @@ Requires **Go 1.27+**.
 wa results   — Pipeline results tracker
 wa mlwh      — MLWH cache sync, query server, inspector, and reporting tools
 wa mlwhdiff  — MLWH change detection
+wa version   — Print the wa version
 ```
 
 ### Register a result set

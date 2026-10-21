@@ -34,9 +34,14 @@ jobs:
                   load: true
                   push: false
                   tags: wa:ci
+                  build-args: |
+                      VERSION=pr-${{ github.event.pull_request.number }}
 
             - name: Run wa --help
               run: docker run --rm wa:ci --help
+
+            - name: Check wa version prints the build-arg version
+              run: test "$(docker run --rm wa:ci version)" = "pr-${{ github.event.pull_request.number }}"
 
             - name: Serve an empty cache and check /health and /freshness
               run: |
@@ -103,5 +108,7 @@ jobs:
               with:
                   context: .
                   push: true
+                  build-args: |
+                      VERSION=${{ github.ref_name }}
                   tags: ${{ steps.meta.outputs.tags }}
                   labels: ${{ steps.meta.outputs.labels }}

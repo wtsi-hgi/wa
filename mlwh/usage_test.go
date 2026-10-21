@@ -66,6 +66,8 @@ func TestUsageModelA1(t *testing.T) {
 			version  string
 		}{
 			{"wa-cli/v0.11.0", UsageCategoryCLI, "v0.11.0"},
+			{"wa-cli/v1.0.0-3-g803a7ae-dirty", UsageCategoryCLI, "v1.0.0-3-g803a7ae-dirty"},
+			{"wa-cli/v1.0.1-0.20261021120000-803a7ae1b2c3+dirty", UsageCategoryCLI, "v1.0.1-0.20261021120000-803a7ae1b2c3+dirty"},
 			{"mlwh-mcp-server/0.5.0", UsageCategoryMCP, "0.5.0"},
 			{"wa-web", UsageCategoryWeb, ""},
 			{"wa-results-server/v0.11.0", UsageCategoryResultsServer, "v0.11.0"},

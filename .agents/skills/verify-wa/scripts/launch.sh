@@ -30,8 +30,11 @@ if [[ ! -x frontend/node_modules/.bin/next ]]; then
 fi
 
 # Standalone binary for drive-feedback-modes.sh and the CLIs; run-dev.sh
-# builds its own copy and deletes it on shutdown.
-CGO_ENABLED=1 go build -o "$RUN/wa" .
+# builds its own copy and deletes it on shutdown. Stamped like `make build` so
+# `wa version` and the MLWH User-Agent match run-dev.sh's copy.
+CGO_ENABLED=1 go build \
+  -ldflags "-X github.com/wtsi-hgi/wa/cmd.Version=$(git describe --tags --always --long --dirty 2>/dev/null || true)" \
+  -o "$RUN/wa" .
 
 # %q so values with spaces, quotes or `$` (checkout path, the dirty-tree
 # REVISION suffix) survive `. stack.env`; stack-env.mjs reads it via bash.

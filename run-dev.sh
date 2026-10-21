@@ -1562,7 +1562,11 @@ preflight_service_ports
 
 printf 'Building Go binary at %s\n' "$BIN_PATH"
 rm -f "$BIN_PATH"
-go build -o "$BIN_PATH" .
+# Stamp `wa version` and the MLWH User-Agent version the same way as
+# `make build`. Outside a git checkout this is empty and wa falls back to its
+# build info.
+wa_version="$(git -C "$REPO_ROOT" describe --tags --always --long --dirty 2>/dev/null || true)"
+go build -o "$BIN_PATH" -ldflags "-X github.com/wtsi-hgi/wa/cmd.Version=${wa_version}" .
 update_stable_bin_symlink
 
 # Choose the database path per scenario: test gets a throwaway file under
