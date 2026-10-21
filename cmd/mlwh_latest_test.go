@@ -27,10 +27,14 @@ package cmd
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/wa/mlwh"
 )
@@ -205,5 +209,47 @@ func TestMLWHLatestRejectsNegativePaginationBeforeOpeningLocalClient(t *testing.
 			convey.So(opened, convey.ShouldBeFalse)
 			convey.So(output, convey.ShouldContainSubstring, "limit and offset must be non-negative")
 		}
+	})
+}
+
+func TestMLWHLatestOverMaxLimitNeverSendsAServerRejectedRequest(t *testing.T) {
+	convey.Convey("Given a real in-process mlwh server over a synced cache", t, func() {
+		client, err := mlwh.OpenCacheOnly(context.Background(), mlwh.CacheConfig{Path: prepareMLWHServeCacheForTest(t, true)})
+		convey.So(err, convey.ShouldBeNil)
+		t.Cleanup(func() { _ = client.Close() })
+
+		var statuses []int
+		gin.SetMode(gin.TestMode)
+		router := gin.New()
+		configureMLWHServeRouter(router)
+		router.Use(func(c *gin.Context) {
+			c.Next()
+			statuses = append(statuses, c.Writer.Status())
+		})
+		mlwh.NewServer(client).RegisterRoutes(router, nil)
+		server := httptest.NewServer(router)
+		t.Cleanup(server.Close)
+
+		overMax := strconv.Itoa(mlwh.SearchMaxLimit + 1)
+
+		for _, args := range [][]string{
+			{"mlwh", "latest", "6568", "--limit", overMax, "--server", server.URL},
+			{"mlwh", "latest", "--faculty-sponsor", "Anderson", "--limit", overMax, "--server", server.URL},
+		} {
+			convey.Convey("when wa mlwh "+strings.Join(args[1:4], " ")+" asks for more rows than the server allows, then it fails locally without a 400 from the server", func() {
+				output, err := executeRootCommandForTest(t, args)
+
+				convey.So(err, convey.ShouldNotBeNil)
+				convey.So(output, convey.ShouldContainSubstring, "--limit must not exceed "+strconv.Itoa(mlwh.SearchMaxLimit))
+				convey.So(statuses, convey.ShouldBeEmpty)
+			})
+		}
+
+		convey.Convey("when wa mlwh latest asks for exactly the maximum, then the server does not reject it as bad", func() {
+			_, _ = executeRootCommandForTest(t, []string{"mlwh", "latest", "6568", "--limit", strconv.Itoa(mlwh.SearchMaxLimit), "--server", server.URL})
+
+			convey.So(statuses, convey.ShouldHaveLength, 1)
+			convey.So(statuses[0], convey.ShouldNotEqual, http.StatusBadRequest)
+		})
 	})
 }
