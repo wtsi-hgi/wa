@@ -1010,7 +1010,9 @@ releases ignore the new `sync_outcome` table, so rolling back is safe.
 Mount a persistent volume at `/data` for the feedback and usage SQLite files.
 The image sets `XDG_STATE_HOME=/data`, so the admin token for `/feedback` and
 `/usage`, `.wa-mlwh-server.token`, is created there on first start and
-survives restarts. Read it with
+survives restarts. The `fsGroup` ownership change below adds group
+permissions to the token on every mount; serve restores mode `0600` and keeps
+the token, logging a warning. Read it with
 `kubectl exec <pod> -- cat /data/.wa-mlwh-server.token`. A freshly provisioned
 volume is usually owned by root, so it must be writable by UID `10001`: set
 the pod's `securityContext.fsGroup: 10001` or fix ownership another way, such

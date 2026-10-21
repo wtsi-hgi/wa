@@ -271,7 +271,7 @@ func TestOpenMLWHServeFeedbackD1(t *testing.T) {
 		t.Setenv("XDG_STATE_HOME", stateDir)
 
 		for _, blank := range []string{"", "  \t"} {
-			store, token, err := openMLWHServeFeedback(context.Background(), blank, mlwhServeConfig{})
+			store, token, err := openMLWHServeFeedback(context.Background(), blank, mlwhServeConfig{}, nil)
 
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(store, convey.ShouldBeNil)
@@ -288,7 +288,7 @@ func TestOpenMLWHServeFeedbackD1(t *testing.T) {
 		t.Setenv("XDG_STATE_HOME", stateDir)
 		dbPath := filepath.Join(t.TempDir(), "sub", "fb.sqlite")
 
-		store, token, err := openMLWHServeFeedback(context.Background(), dbPath, mlwhServeConfig{addr: "127.0.0.1:0"})
+		store, token, err := openMLWHServeFeedback(context.Background(), dbPath, mlwhServeConfig{addr: "127.0.0.1:0"}, nil)
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(store, convey.ShouldNotBeNil)
 		closeMLWHFeedbackStoreForTest(t, store)
@@ -321,7 +321,7 @@ func TestOpenMLWHServeFeedbackD1(t *testing.T) {
 		t.Setenv("XDG_STATE_HOME", stateDir)
 		dbPath := filepath.Join(t.TempDir(), "fb.sqlite")
 
-		firstStore, firstToken, err := openMLWHServeFeedback(context.Background(), dbPath, mlwhServeConfig{})
+		firstStore, firstToken, err := openMLWHServeFeedback(context.Background(), dbPath, mlwhServeConfig{}, nil)
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(firstStore.Close(), convey.ShouldBeNil)
 
@@ -329,7 +329,7 @@ func TestOpenMLWHServeFeedbackD1(t *testing.T) {
 		before, err := os.Stat(tokenPath)
 		convey.So(err, convey.ShouldBeNil)
 
-		secondStore, secondToken, err := openMLWHServeFeedback(context.Background(), dbPath, mlwhServeConfig{})
+		secondStore, secondToken, err := openMLWHServeFeedback(context.Background(), dbPath, mlwhServeConfig{}, nil)
 		convey.So(err, convey.ShouldBeNil)
 		closeMLWHFeedbackStoreForTest(t, secondStore)
 
@@ -373,6 +373,7 @@ func TestOpenMLWHServeFeedbackD1(t *testing.T) {
 				context.Background(),
 				filepath.Join(t.TempDir(), "fb.sqlite"),
 				mlwhServeConfig{cert: "cert.pem", key: "key.pem", serverToken: serverToken, secured: true},
+				nil,
 			)
 			convey.So(err, convey.ShouldBeNil)
 			closeMLWHFeedbackStoreForTest(t, store)
@@ -395,7 +396,7 @@ func TestOpenMLWHServeFeedbackD1(t *testing.T) {
 		stateDir := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", stateDir)
 
-		store, token, err := openMLWHServeFeedback(context.Background(), "user@tcp(db:3306)/fb", mlwhServeConfig{})
+		store, token, err := openMLWHServeFeedback(context.Background(), "user@tcp(db:3306)/fb", mlwhServeConfig{}, nil)
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "SQLite file path")
@@ -413,7 +414,7 @@ func TestOpenMLWHServeFeedbackD1(t *testing.T) {
 		uriPath := "file:" + filepath.Join(t.TempDir(), "fb.sqlite")
 
 		for _, value := range []string{":memory:", " :memory: ", uriPath, "file::memory:?cache=shared"} {
-			store, token, err := openMLWHServeFeedback(context.Background(), value, mlwhServeConfig{})
+			store, token, err := openMLWHServeFeedback(context.Background(), value, mlwhServeConfig{}, nil)
 
 			convey.So(err, convey.ShouldNotBeNil)
 			convey.So(err.Error(), convey.ShouldContainSubstring, "SQLite file path")
@@ -1560,6 +1561,160 @@ func TestMLWHServeSecuredFeedbackUsesServerTokenD1(t *testing.T) {
 		entries, err := os.ReadDir(stateDir)
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(entries, convey.ShouldBeEmpty)
+	})
+}
+
+func TestMLWHServeAdminTokenSurvivesGroupPermissionChanges(t *testing.T) {
+	writeTokenForTest := func(tokenPath, token string, mode os.FileMode) {
+		convey.So(os.WriteFile(tokenPath, []byte(token), mode), convey.ShouldBeNil)
+		convey.So(os.Chmod(tokenPath, mode), convey.ShouldBeNil)
+	}
+
+	tokenModeForTest := func(tokenPath string) os.FileMode {
+		info, err := os.Stat(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+
+		return info.Mode()
+	}
+
+	convey.Convey("Given a valid admin token whose group bits were loosened, as a Kubernetes fsGroup mount does on every pod start", t, func() {
+		for _, mode := range []os.FileMode{0o660, 0o640, 0o400} {
+			stateDir := t.TempDir()
+			t.Setenv("XDG_STATE_HOME", stateDir)
+			tokenPath := filepath.Join(stateDir, mlwhServeDefaultServerTokenBasename)
+			existing, err := gas.GenerateToken()
+			convey.So(err, convey.ShouldBeNil)
+			writeTokenForTest(tokenPath, string(existing), mode)
+
+			warnings := &bytes.Buffer{}
+			token, err := mlwhServeAdminToken(mlwhServeConfig{}, warnings)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(string(token), convey.ShouldEqual, string(existing))
+			convey.So(tokenModeForTest(tokenPath), convey.ShouldEqual, os.FileMode(0o600))
+
+			contents, err := os.ReadFile(tokenPath)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(string(contents), convey.ShouldEqual, string(existing))
+			convey.So(warnings.String(), convey.ShouldContainSubstring, tokenPath)
+			convey.So(warnings.String(), convey.ShouldContainSubstring, fmt.Sprintf("%04o", mode))
+		}
+	})
+
+	convey.Convey("Given no admin token file, then one is generated at mode 0600 without a warning", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		tokenPath := filepath.Join(stateDir, mlwhServeDefaultServerTokenBasename)
+
+		warnings := &bytes.Buffer{}
+		token, err := mlwhServeAdminToken(mlwhServeConfig{}, warnings)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(len(token), convey.ShouldEqual, 43)
+		convey.So(tokenModeForTest(tokenPath), convey.ShouldEqual, os.FileMode(0o600))
+
+		contents, err := os.ReadFile(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(contents), convey.ShouldEqual, string(token))
+		convey.So(warnings.String(), convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given a valid admin token at mode 0600, then it is reused unchanged without a warning", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		tokenPath := filepath.Join(stateDir, mlwhServeDefaultServerTokenBasename)
+		existing := strings.Repeat("b", 43)
+		writeTokenForTest(tokenPath, existing, 0o600)
+
+		warnings := &bytes.Buffer{}
+		token, err := mlwhServeAdminToken(mlwhServeConfig{}, warnings)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(token), convey.ShouldEqual, existing)
+		convey.So(tokenModeForTest(tokenPath), convey.ShouldEqual, os.FileMode(0o600))
+		convey.So(warnings.String(), convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given a world-readable admin token, then it is treated as leaked and replaced at mode 0600", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		tokenPath := filepath.Join(stateDir, mlwhServeDefaultServerTokenBasename)
+		leaked := strings.Repeat("c", 43)
+		writeTokenForTest(tokenPath, leaked, 0o664)
+
+		token, err := mlwhServeAdminToken(mlwhServeConfig{}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(len(token), convey.ShouldEqual, 43)
+		convey.So(string(token), convey.ShouldNotEqual, leaked)
+		convey.So(tokenModeForTest(tokenPath), convey.ShouldEqual, os.FileMode(0o600))
+
+		contents, err := os.ReadFile(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(contents), convey.ShouldEqual, string(token))
+	})
+
+	convey.Convey("Given a group-readable admin token file too short to hold a token, then a new token is generated at mode 0600", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		tokenPath := filepath.Join(stateDir, mlwhServeDefaultServerTokenBasename)
+		writeTokenForTest(tokenPath, "short", 0o660)
+
+		token, err := mlwhServeAdminToken(mlwhServeConfig{}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(len(token), convey.ShouldEqual, 43)
+		convey.So(tokenModeForTest(tokenPath), convey.ShouldEqual, os.FileMode(0o600))
+
+		contents, err := os.ReadFile(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(contents), convey.ShouldEqual, string(token))
+	})
+
+	convey.Convey("Given secured serve whose --server-token file holds a valid token at mode 0660, then auth setup reuses it and admin routes accept it", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		cachePath := prepareMLWHServeCacheForTest(t, true)
+		tokenPath := filepath.Join(stateDir, "mlwh-server.token")
+		existing, err := gas.GenerateToken()
+		convey.So(err, convey.ShouldBeNil)
+		writeTokenForTest(tokenPath, string(existing), 0o660)
+
+		fakeAuth := newFakeMLWHServeAuthServer()
+		fakeAuth.onEnable = func() error {
+			_, err := gas.GenerateAndStoreTokenForSelfClient(tokenPath)
+
+			return err
+		}
+
+		var listCode int
+
+		fakeAuth.onStart = func(server *fakeMLWHServeAuthServer) error {
+			listCode = performMLWHServeJSONRequestForTest(server.router, http.MethodGet, "/feedback", "", "Bearer "+string(existing)).Code
+
+			return nil
+		}
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+
+		output, err := executeRootCommandForTest(t, []string{
+			"mlwh", "serve",
+			"--port", "0",
+			"--mlwh-cache", cachePath,
+			"--cert", "cert.pem",
+			"--key", "key.pem",
+			"--server-token", "mlwh-server.token",
+			"--feedback-db", filepath.Join(t.TempDir(), "fb.sqlite"),
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
+		convey.So(listCode, convey.ShouldEqual, http.StatusOK)
+		convey.So(output, convey.ShouldContainSubstring, tokenPath)
+
+		contents, err := os.ReadFile(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(contents), convey.ShouldEqual, string(existing))
+		convey.So(tokenModeForTest(tokenPath), convey.ShouldEqual, os.FileMode(0o600))
 	})
 }
 

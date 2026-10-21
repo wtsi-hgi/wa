@@ -331,6 +331,12 @@ func newMLWHServeCommand() *cobra.Command {
 
 			authServer := mlwhServeNewAuthServer(cmd.ErrOrStderr())
 			if serveConfig.secured {
+				// go-authserver replaces a server token whose mode is not
+				// exactly 0600, so repair a loosened mode first.
+				if err = repairMLWHServeServerTokenPerms(serveConfig, cmd.ErrOrStderr()); err != nil {
+					return err
+				}
+
 				// In secured mode the feedback admin token is the server token
 				// file, which may not exist until this creates it.
 				if err = authServer.EnableAuthWithServerToken(
@@ -345,7 +351,7 @@ func newMLWHServeCommand() *cobra.Command {
 				configureMLWHServeRouter(authServer.Router())
 			}
 
-			feedbackStore, feedbackToken, err := openMLWHServeFeedback(commandContext(cmd), feedbackDB, serveConfig)
+			feedbackStore, feedbackToken, err := openMLWHServeFeedback(commandContext(cmd), feedbackDB, serveConfig, cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -365,7 +371,7 @@ func newMLWHServeCommand() *cobra.Command {
 
 			adminToken := feedbackToken
 			if usageStore != nil && adminToken == nil {
-				if adminToken, err = mlwhServeAdminToken(serveConfig); err != nil {
+				if adminToken, err = mlwhServeAdminToken(serveConfig, cmd.ErrOrStderr()); err != nil {
 					return fmt.Errorf("usage admin token: %w", err)
 				}
 			}
@@ -509,7 +515,7 @@ func openMLWHServeUsage(ctx context.Context, usageDB string, retentionDays int) 
 // directory, opens the store, and resolves the admin token: the --server-token
 // file in secured mode, else mlwhServeDefaultServerTokenBasename, created if
 // absent.
-func openMLWHServeFeedback(ctx context.Context, feedbackDB string, config mlwhServeConfig) (*mlwh.FeedbackStore, []byte, error) {
+func openMLWHServeFeedback(ctx context.Context, feedbackDB string, config mlwhServeConfig, warn io.Writer) (*mlwh.FeedbackStore, []byte, error) {
 	dbPath := strings.TrimSpace(feedbackDB)
 	if dbPath == "" {
 		return nil, nil, nil
@@ -532,7 +538,7 @@ func openMLWHServeFeedback(ctx context.Context, feedbackDB string, config mlwhSe
 		return nil, nil, err
 	}
 
-	token, err := mlwhServeAdminToken(config)
+	token, err := mlwhServeAdminToken(config, warn)
 	if err != nil {
 		_ = store.Close()
 
@@ -544,8 +550,9 @@ func openMLWHServeFeedback(ctx context.Context, feedbackDB string, config mlwhSe
 
 // mlwhServeAdminToken returns the admin token shared by the feedback and
 // usage admin routes: the --server-token file in secured mode, else
-// mlwhServeDefaultServerTokenBasename, created if absent.
-func mlwhServeAdminToken(config mlwhServeConfig) ([]byte, error) {
+// mlwhServeDefaultServerTokenBasename, created if absent. warn receives a
+// warning if the file's permissions had to be restored.
+func mlwhServeAdminToken(config mlwhServeConfig, warn io.Writer) ([]byte, error) {
 	tokenBasename := mlwhServeDefaultServerTokenBasename
 	if config.secured {
 		tokenBasename = config.serverToken
@@ -556,7 +563,24 @@ func mlwhServeAdminToken(config mlwhServeConfig) ([]byte, error) {
 		return nil, err
 	}
 
-	return resultsServeServerToken(tokenPath)
+	return resultsServeServerToken(tokenPath, warn)
+}
+
+// repairMLWHServeServerTokenPerms restores mode 0600 on the secured-mode
+// --server-token file if group permissions were loosened, as
+// repairResultsServeServerTokenPerms describes. An absent file is left for
+// auth setup to create.
+func repairMLWHServeServerTokenPerms(config mlwhServeConfig, warn io.Writer) error {
+	tokenPath, err := resultsServeServerTokenPath(config.serverToken)
+	if err != nil {
+		return err
+	}
+
+	if err := repairResultsServeServerTokenPerms(tokenPath, warn); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	return nil
 }
 
 // shutdownHTTPOnCancel gracefully shuts httpServer down once ctx is
