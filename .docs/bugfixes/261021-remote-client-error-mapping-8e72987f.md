@@ -8,7 +8,7 @@
 - [x] `RemoteClient` (CLI `--server` mode, and the MCP server through the Go
       client) maps any error envelope code it has no sentinel for to
       `ErrUpstreamImpaired`. A 400 `bad_request` such as `limit must not
-      exceed 1000` therefore reaches users as
+    exceed 1000` therefore reaches users as
       `limit must not exceed 1000: mlwh: upstream database impaired`.
     - Red commands:
       `go test ./mlwh -run 'TestRemoteClient(Maps(BadRequest|UnknownClientErrors|UnknownServerErrors)|KeepsMappedCodes)FromRealServer' -count=1`
