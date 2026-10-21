@@ -31,7 +31,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 )
 
 // Supplier names and donor ids legitimately name several Sanger samples. A
@@ -203,48 +202,6 @@ func projectLanes(lanes []exportLaneRow, columns []exportColumn) [][]string {
 	}
 
 	return rows
-}
-
-// MultiSampleExportCovers applies manyToOneSampleScope's rule to the samples an
-// ambiguous identifier names: a multi-sample export accepts identifier only
-// when no sample holds it as an identifier that must be unique and at least two
-// samples share it as their supplier name or donor id.
-func MultiSampleExportCovers(samples []Sample, identifier string) bool {
-	var suppliers, donors int
-	for _, sample := range samples {
-		for _, step := range resolveSampleTextSteps {
-			if step.mustBeUnique() && strings.EqualFold(sampleIdentifier(sample, step.kind), identifier) {
-				return false
-			}
-		}
-
-		if strings.EqualFold(sample.SupplierName, identifier) {
-			suppliers++
-		}
-		if strings.EqualFold(sample.DonorID, identifier) {
-			donors++
-		}
-	}
-
-	return suppliers > 1 || donors > 1
-}
-
-// sampleIdentifier returns the sample's value for a text resolver step kind.
-func sampleIdentifier(sample Sample, kind IdentifierKind) string {
-	switch kind {
-	case KindSangerSampleName:
-		return sample.Name
-	case KindSangerSampleID:
-		return sample.SangerSampleID
-	case KindSampleLimsID:
-		return sample.IDSampleLims
-	case KindSupplierName:
-		return sample.SupplierName
-	case KindSampleAccession:
-		return sample.AccessionNumber
-	default:
-		return ""
-	}
 }
 
 // mustBeUnique reports whether the step's identifier names at most one sample,

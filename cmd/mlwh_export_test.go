@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -122,7 +123,8 @@ func TestMLWHExportHelpDocumentsGrammarVocabularyAndFilters(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "2026-07-01T00:00:00Z")
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh export sample-crams study 5901")
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh export products study 7568 --file-type cram --columns name,supplier_name,accession_number,sanger_sample_id,id_run,lane,tag_index,manual_qc,irods_path,irods_unmatched,reason")
-		convey.So(output, convey.ShouldNotContainSubstring, "--all")
+		convey.So(regexp.MustCompile(`--all([^-]|$)`).MatchString(output), convey.ShouldBeFalse)
+		convey.So(output, convey.ShouldContainSubstring, "--all-samples")
 		convey.So(output, convey.ShouldContainSubstring, "--limit")
 		convey.So(output, convey.ShouldContainSubstring, "--cursor")
 		convey.So(output, convey.ShouldNotContainSubstring, "--offset")

@@ -208,12 +208,16 @@ for sample-grained CRAM exports: each row is one selected, merged-aware CRAM for
 a sample.
 
 A supplier name or donor id often names several Sanger samples, for example a
-top-up or a sample that was registered again and never sequenced. Sample
-exports cover all of them:
+top-up or a sample that was registered again and never sequenced. A sample
+export of such a value fails as ambiguous with exit status 3: stdout stays
+empty, and stderr lists the matching samples (Sanger name and id, supplier
+name, whether each has deliverable data, studies). This keeps pipelines that
+expect one sample per id from silently spanning several. To export every
+matching sample, ask for it with `--all-samples`:
 
 ```bash
-wa mlwh export irods sample PD42478a
-wa mlwh export lanes sample PD42478a
+wa mlwh export irods sample PD42478a --all-samples
+wa mlwh export lanes sample PD42478a --all-samples
 ```
 
 Each row names its sample (`supplier_name` and `sanger_sample_id` are in the
@@ -221,8 +225,24 @@ default `irods` and `lanes` columns). A sample with no matching rows adds none,
 so samples that were never sequenced drop out. `runs` and `studies` exports
 list each run or study once across the samples. Identifiers that must be unique
 (Sanger sample name or id, UUID, LIMS id, accession) still fail as ambiguous if
-they ever match several samples. This needs a server at MLWH API 1.11.0 or
-later; an older server makes the export fail with a message saying so.
+they ever match several samples, even with `--all-samples`. `--all-samples`
+needs a server at MLWH API 1.11.0 or later; an older server makes the export
+fail with exit status 1 and a message saying so.
+
+To see which of the samples have data, `wa mlwh search --with-data` lists each
+returned sample's products that have an iRODS object (study, platform, run,
+lane, tag, manual QC and iRODS path) under it; `--json` adds them as a `data`
+array per sample. It lists the CRAMs `wa mlwh export irods sample <name>`
+lists, so products without an iRODS object do not appear. A sample whose data
+could not be listed shows `data unavailable: <reason>` in text, and in `--json`
+has no `data` array but a `data_error` string. If the exports run out of time,
+those samples give `timed out` as the reason and the output is marked timed out
+(`"timed_out": true` in `--json`). It runs one export per returned sample, so
+`--limit` bounds it:
+
+```bash
+wa mlwh search --type sample PD42478a --with-data
+```
 
 MLWH API 1.11.0 changed the default `lanes` export columns for every caller,
 including single-sample exports, from `id_run,lane,tag_index` to
@@ -233,11 +253,38 @@ old three-column output should ask for it explicitly:
 wa mlwh export lanes sample <sample> --columns id_run,lane,tag_index
 ```
 
-`wa mlwh info` on such an identifier lists the matching samples, their studies
-and whether each has deliverable data, then suggests the export and
-`wa mlwh search --type sample <id> --deliverables-only` commands. It exits
-non-zero because the identifier did not resolve to one record; `--json` prints
-the list as `candidates`. The `--json` output of `wa mlwh info` and
+`wa mlwh info` on such an identifier lists the matching samples by number,
+with each one's Sanger name, Sanger sample id, supplier name, whether it has
+deliverable data, and studies. In a terminal it asks you to choose one, then
+prints that sample's report. An empty answer, end of input or Ctrl-C cancels,
+as do three invalid answers. When stdin or stdout is not a terminal, or with
+`--json`, it does not ask. `--json` prints one object:
+
+```json
+{
+    "kind": "ambiguous_sample",
+    "identifier": "PD42478a",
+    "candidates": [
+        {
+            "identifier": "<Sanger name, another unique key, or empty>",
+            "name": "...",
+            "sanger_sample_id": "...",
+            "supplier_name": "PD42478a",
+            "accession_number": "...",
+            "studies": [{ "id_study_lims": "...", "name": "..." }],
+            "has_data": true
+        }
+    ],
+    "cache_synced_at": "...",
+    "warnings": ["..."]
+}
+```
+
+Each candidate's `identifier` is a value that `wa mlwh info` resolves to that
+sample alone, or `""` when none of the sample's identifiers is unique.
+`warnings` appears only when some lookups failed or timed out, so some
+identifiers or `has_data` values may be missing. When no sample is chosen, `wa mlwh info` exits with status 3;
+other failures exit with status 1. The `--json` output of `wa mlwh info` and
 `wa mlwh search` carries `cache_synced_at`, the cache sync time the human
 `info` output shows. Export output stays data only.
 
