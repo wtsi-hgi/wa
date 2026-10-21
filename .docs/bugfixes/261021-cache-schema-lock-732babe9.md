@@ -8,7 +8,7 @@
 - [x] Several processes opening a new SQLite cache at once, such as
       `wa mlwh serve` and `wa mlwh sync` starting in one pod, can fail at
       once with `mlwh: ping sqlite cache: database is locked (5)
-      (SQLITE_BUSY)`. The container command in `DEVELOPING.md` slept 60
+    (SQLITE_BUSY)`. The container command in `DEVELOPING.md` slept 60
       seconds before the first sync to avoid it.
     - Red command:
       `go test ./mlwh/ -run TestConcurrentProcessesOpenAFreshSQLiteCache -count=1`
