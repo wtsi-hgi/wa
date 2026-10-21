@@ -170,9 +170,7 @@ func TestSyncSourceSchemaMatchesRealMLWH(t *testing.T) {
 		validateAllSupportedSyncTablesCovered(queries)
 
 		convey.Convey("when every sync source query is prepared against it, then each one validates", func() {
-			for _, query := range queries {
-				prepareAndCloseSourceQuery(t, db, query)
-			}
+			assertSourceQueriesPrepare(db, queries...)
 		})
 	})
 }
@@ -236,7 +234,7 @@ func TestRealMLWHSourcePreparesA3CompositeRecoveryQuery(t *testing.T) {
 	db := openRealMLWHSourceOrSkip(t)
 
 	convey.Convey("Given a live connection to the real upstream MLWH source", t, func() {
-		prepareAndCloseSourceQuery(t, db, SyncSourceQuery{
+		assertSourceQueriesPrepare(db, SyncSourceQuery{
 			Name:  "A3 composite recovery probe",
 			Query: `SELECT recovery.id_product, recovery.id_sample_tmp, recovery.id_study_lims FROM (` + seqProductIRODSLocationsIlluminaCompositionRecovery + `) recovery WHERE 1 = 0`,
 		})
@@ -316,7 +314,7 @@ func TestRealMLWHSourceHasNewColumns(t *testing.T) {
 				Query: `SELECT study.faculty_sponsor, study.data_access_group, iseq_product_metrics.qc, oseq_flowcell.experiment_name, oseq_flowcell.run_id, oseq_flowcell.run_uuid, oseq_flowcell.last_updated FROM study, iseq_product_metrics, oseq_flowcell WHERE 1 = 0`,
 			}
 
-			prepareAndCloseSourceQuery(t, db, probe)
+			assertSourceQueriesPrepare(db, probe)
 		})
 	})
 }
@@ -332,45 +330,17 @@ func openRealMLWHSourceOrSkip(t *testing.T) *sql.DB {
 		t.Skip("WA_MLWH_DSN not set; skipping real MLWH source schema integration test")
 	}
 
-	resolvedDSN, err := ResolveDSN(dsn, os.Getenv("WA_MLWH_PASSWORD"))
-	if err != nil {
-		t.Skipf("could not resolve WA_MLWH_DSN (%v); skipping real MLWH source schema integration test", err)
-	}
-
-	db, err := sql.Open("mysql", resolvedDSN)
-	if err != nil {
-		t.Skipf("could not open real MLWH source (%v); skipping real MLWH source schema integration test", err)
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err = db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		t.Skipf("could not ping real MLWH source (%v); skipping real MLWH source schema integration test", err)
+	db, err := OpenSource(ctx, dsn, os.Getenv("WA_MLWH_PASSWORD"))
+	if err != nil {
+		t.Skipf("could not open real MLWH source (%v); skipping real MLWH source schema integration test", err)
 	}
 
 	t.Cleanup(func() { _ = db.Close() })
 
 	return db
-}
-
-// prepareAndCloseSourceQuery prepares one sync source query against the live
-// server (validating every column / table / schema it references) and closes it.
-func prepareAndCloseSourceQuery(t *testing.T, db *sql.DB, query SyncSourceQuery) {
-	t.Helper()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	stmt, err := db.PrepareContext(ctx, query.Query)
-	if err != nil {
-		t.Errorf("sync source query %q failed to prepare against the real MLWH source: %v\nquery: %s", query.Name, err, query.Query)
-
-		return
-	}
-
-	convey.So(stmt.Close(), convey.ShouldBeNil)
 }
 
 // validateAllSupportedSyncTablesCovered asserts that every supported sync table
@@ -423,6 +393,21 @@ func sourceTableForSyncTable(table string) string {
 	}
 
 	return table
+}
+
+// assertSourceQueriesPrepare prepares each query against the live server with
+// the same PrepareSyncSourceQueries `wa mlwh check-source` uses, and asserts
+// none failed. Each failure names the query, the server error and the query
+// text, so the broken column can be found without rerunning.
+func assertSourceQueriesPrepare(db *sql.DB, queries ...SyncSourceQuery) {
+	var failed []string
+	for i, check := range PrepareSyncSourceQueries(context.Background(), db, queries) {
+		if !check.OK {
+			failed = append(failed, fmt.Sprintf("%s: %s\n%s", check.Name, check.Error, queries[i].Query))
+		}
+	}
+
+	convey.So(failed, convey.ShouldBeEmpty)
 }
 
 func assertSourceRunStatusDateExists(t *testing.T, db *sql.DB, status string) {

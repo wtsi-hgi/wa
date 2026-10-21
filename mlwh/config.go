@@ -61,31 +61,39 @@ func Open(ctx context.Context, cfg Config) (*Client, error) {
 		return client, nil
 	}
 
-	resolvedDSN, err := ResolveDSN(cfg.DSN, cfg.Password)
+	sourceDB, err := OpenSource(ctx, cfg.DSN, cfg.Password)
 	if err != nil {
 		_ = cache.Close()
 
 		return nil, err
 	}
 
+	client.syncSource = sourceDB
+	client.sourceDB = sourceDB
+
+	return client, nil
+}
+
+// OpenSource opens and pings the upstream MLWH MySQL source described by dsn,
+// applying password separately as WA_MLWH_PASSWORD does.
+func OpenSource(ctx context.Context, dsn, password string) (*sql.DB, error) {
+	resolvedDSN, err := ResolveDSN(dsn, password)
+	if err != nil {
+		return nil, err
+	}
+
 	sourceDB, err := sqlOpenFunc("mysql", resolvedDSN)
 	if err != nil {
-		_ = cache.Close()
-
 		return nil, fmt.Errorf("mlwh: open source db: %w", err)
 	}
 
 	if err = sourceDB.PingContext(ctx); err != nil {
 		_ = sourceDB.Close()
-		_ = cache.Close()
 
 		return nil, fmt.Errorf("mlwh: ping source db: %w", err)
 	}
 
-	client.syncSource = sourceDB
-	client.sourceDB = sourceDB
-
-	return client, nil
+	return sourceDB, nil
 }
 
 // OpenCacheOnly constructs a cache-backed MLWH client without opening an upstream source connection.

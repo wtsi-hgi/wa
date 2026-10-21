@@ -25,6 +25,99 @@ Use the read-path audit in `.docs/mlwh-sync/spec.md` for every served column:
 it must be traceable to an indexed read path. Keep `TestParseSchemaShapeParity`
 passing so SQLite and MySQL table, column, and index sets stay aligned.
 
+## Upstream MLWH schema changes
+
+The MLWH team announces Unified Warehouse schema releases ahead of time. Ship
+any wa change that a release needs before the release date, in a form that
+works on both the old and the new schema, so nobody has to deploy wa at the
+moment upstream changes. `.docs/upstream/` records past assessments; the
+`mlwh-upstream-change` skill walks an agent through one.
+
+### How wa reads the source
+
+Only `wa mlwh sync` reads rows from the upstream MLWH. `wa mlwh check-source`
+connects to it too but only PREPAREs the sync queries. Every other command
+reads the cache.
+
+- Every source query names its columns, so a new upstream column changes
+  nothing until wa selects it. A dropped or renamed column that wa selects
+  breaks the sync of that table.
+- `AllSyncSourceQueries()` in `mlwh/sync.go` lists every source query. A new
+  source query must be added there; `TestSyncSourceSchemaMatchesRealMLWH` and
+  `wa mlwh check-source` prepare everything it lists.
+- wa keeps only Sequencescape studies. Each source query that reads `study`
+  filters on `id_lims = 'SQSCP'`, `syncStudyTable` drops any other row, and
+  each cache read of `study_mirror` filters on `id_lims = 'SQSCP'` again. A
+  study from another LIMS that shares a uuid or `id_study_lims` with a
+  Sequencescape study therefore never reaches an answer.
+- The cache relies on no upstream uniqueness beyond the primary and `UNIQUE`
+  keys in `mlwh/cache_schema/`.
+- When the source schema differs between servers, sync probes and falls back
+  instead of failing. The study query retries with the columns a
+  `SELECT * ... LIMIT 0` probe finds, mapping upstream aliases onto the cache
+  name (`studySourceColumnSpecs`, from `.docs/bugfixes/260509-2.md`), and the
+  warm product queries fall back to their legacy variants when the server
+  rejects `JSON_TABLE` (`isUnsupportedCompositionQueryError`).
+
+### Assess an announcement
+
+For each announced change:
+
+1. Find whether wa reads the table or column: search `mlwh/*.go` for it, and
+   check the queries in `AllSyncSourceQueries()` and the cache schema.
+2. Check uniqueness: does any join, `LIMIT 1` lookup or cache key assume the
+   old key or index?
+3. Check filters: can new rows (another LIMS, a new platform, a new state)
+   pass a filter that used to exclude them?
+4. Classify it as no impact, compatible both ways, breaks sync, or gives wrong
+   results.
+
+### Make a change ship before the release
+
+- Renamed or dropped column: probe the source and fall back, like
+  `studySourceColumnSpecs`, so the same query works on both shapes.
+- New column wa wants: select it only when a probe finds it, and leave the
+  feature off until it does. Never make sync require a column that does not
+  exist yet.
+- Key or filter change: add the filter in the source query and in the cache
+  reads, as the `id_lims = 'SQSCP'` filters are.
+
+### Test
+
+- Hermetic: seed both schema shapes on the SQLite source fixture
+  (`openRealMLWHSchemaSource`, then `ALTER TABLE` or `CREATE INDEX` for the new
+  shape) and on the cache, with a MySQL cache twin when the read SQL differs by
+  dialect. `mlwh/upstream_schema_change_test.go` is an example. Show by
+  mutation that each new filter or fallback is load-bearing.
+- Live: `make test-go` loads `WA_MLWH_DSN` and `WA_MLWH_PASSWORD` from
+  `.env.development.local` and runs the real-source tests, and
+  `wa mlwh check-source` prepares every source query against the configured
+  MLWH without executing any of them.
+
+```bash
+wa --env development mlwh check-source
+wa --env development mlwh check-source --json
+```
+
+### Release and deploy
+
+Release wa as usual, then restart the Kubernetes MLWH API (deployment
+`mlwh-api` in namespace `apps` on the HGI apps cluster) so it pulls the new
+image, then update the farm stack:
+
+```bash
+kubectl -n apps rollout restart deploy/mlwh-api
+# on the farm host
+git pull && make prod-restart
+```
+
+After the upstream release, check the production source from inside the pod,
+then watch `/freshness` until every table has synced since the release:
+
+```bash
+kubectl -n apps exec deploy/mlwh-api -- wa --env production mlwh check-source
+```
+
 ## Repository Layout
 
 ```
@@ -777,7 +870,7 @@ trusted by the system.
 | `WA_RESULTS_SERVER_URL`        | For remote CLI                          | Full Results API URL equivalent to `--server`, for example `https://results.example.org:8090`            |
 | `WA_RESULTS_DB_PATH`           | For results                             | SQLite path, full DSN, or passwordless MySQL DSN                                                         |
 | `WA_RESULTS_DB_PASSWORD`       | Optional                                | MySQL password paired with a passwordless DSN                                                            |
-| `WA_MLWH_DSN`                  | For `wa mlwh sync`                      | Passwordless MLWH DSN                                                                                    |
+| `WA_MLWH_DSN`                  | For `wa mlwh sync` and `check-source`   | Passwordless MLWH DSN                                                                                    |
 | `WA_MLWH_PASSWORD`             | Optional                                | MLWH password paired with a passwordless DSN                                                             |
 | `WA_MLWH_CACHE_PATH`           | For `wa mlwh serve` and local operators | SQLite path or passwordless MySQL cache DSN used by server-side MLWH lookups                             |
 | `WA_MLWH_CACHE_PASSWORD`       | Optional                                | MLWH cache MySQL password                                                                                |
