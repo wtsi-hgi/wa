@@ -11,8 +11,8 @@
       caller of that endpoint (and of `/latest-data/faculty-sponsor/:name`).
     - Red command: `wa mlwh latest 6568 --limit 1001 --server <url>` against
       a real in-process server -> server answers 400 `limit must not exceed
-      1000`, and the CLI reports `Error: latest data: limit must not exceed
-      1000: mlwh: upstream database impaired`.
+1000`, and the CLI reports `Error: latest data: limit must not exceed
+1000: mlwh: upstream database impaired`.
     - Cause: `validateLatestPagination` (`cmd/mlwh_latest.go`) only rejected
       negative values, while `mlwhLatestDataPaginationFromQuery`
       (`mlwh/server.go`) caps `limit` at `SearchMaxLimit` (1000). Every other
