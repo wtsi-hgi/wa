@@ -49,7 +49,9 @@ reads the cache.
   filters on `id_lims = 'SQSCP'`, `syncStudyTable` drops any other row, and
   each cache read of `study_mirror` filters on `id_lims = 'SQSCP'` again. A
   study from another LIMS that shares a uuid or `id_study_lims` with a
-  Sequencescape study therefore never reaches an answer.
+  Sequencescape study therefore never reaches an answer. What this scope
+  excludes, and what adding a LIMS involves, is in
+  [`.docs/scope/lims-coverage.md`](.docs/scope/lims-coverage.md).
 - The cache relies on no upstream uniqueness beyond the primary and `UNIQUE`
   keys in `mlwh/cache_schema/`.
 - When the source schema differs between servers, sync probes and falls back

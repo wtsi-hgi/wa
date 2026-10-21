@@ -9,7 +9,8 @@ DEVELOPING.md, section "Upstream MLWH schema changes", holds how wa reads the
 source, the assessment checklist, the compatibility patterns, the tests and
 the deploy order. Read it first. [The 2026-10-22
 assessment](../../../.docs/upstream/2026-10-22-uwh.md) is a worked example of
-the record and the report.
+the record and the report. When a change lets rows from another LIMS in, read
+[LIMS coverage](../../../.docs/scope/lims-coverage.md): wa serves only `SQSCP`.
 
 The goal is a wa that works on both the old and the new schema, shipped before
 the release date, so that nobody deploys wa at the moment upstream changes. A
