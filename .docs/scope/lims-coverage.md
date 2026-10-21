@@ -3,7 +3,10 @@
 wa mirrors and serves only Sequencescape studies and samples, the MLWH rows
 with `id_lims = 'SQSCP'`. Every source query that reads `study` or `sample`
 keeps only `SQSCP` rows, and every cache read of `study_mirror` filters on
-`id_lims = 'SQSCP'` again. Rows from any other LIMS are out of scope.
+`id_lims = 'SQSCP'` again. Rows from any other LIMS, including the GCLP
+LIMSes, Traction and Sapio, are out of scope. wa could support them if users
+ask for that data; [Supporting another LIMS](#supporting-another-lims) lists
+what the change involves.
 
 ## Origin
 
