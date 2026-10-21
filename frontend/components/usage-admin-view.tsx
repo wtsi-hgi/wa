@@ -1,5 +1,9 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
+import {
+    createElement,
+    type ComponentPropsWithoutRef,
+    type ReactNode,
+} from "react";
 
 import { LocalTimestamp } from "@/components/local-timestamp";
 import {
@@ -13,6 +17,7 @@ import {
 import {
     usageCategorySchema,
     type UsageCategory,
+    type UsageErrorBreakdown,
     type UsageSummary,
     type UsageWindow,
 } from "@/lib/contracts";
@@ -357,10 +362,13 @@ function errorEndpointLabel(method: string, route: string): string {
     return route ? `${method} ${route}` : `${method} (no matching route)`;
 }
 
-// errorEndpointId is the element id of an endpoint's errors. Distinct labels
-// can share an id; a link then reaches the first, which is harmless.
-function errorEndpointId(label: string): string {
-    return `usage-errors-${label.replace(/[^A-Za-z0-9]+/g, "-")}`;
+// errorEndpointId is the element id of an endpoint's errors in the listing
+// prefix names ("" when there is one listing). Distinct labels can share an
+// id; a link then reaches the first, which is harmless.
+function errorEndpointId(prefix: string, label: string): string {
+    const slug = label.replace(/[^A-Za-z0-9]+/g, "-");
+
+    return prefix ? `usage-errors-${prefix}-${slug}` : `usage-errors-${slug}`;
 }
 
 type ErrorEndpoint = {
@@ -416,14 +424,19 @@ function errorKindHelpId(kind: string): string {
 
 type ErrorGuideEntry = { action: string; id: string; label: string };
 
-// errorGuideEntries returns one "What to do" entry per code in endpoints, in
+// displayOrder returns errors in the order ErrorEndpointList shows them.
+function displayOrder(errors: UsageErrorGroup[]): UsageErrorGroup[] {
+    return errorEndpoints(errors).flatMap((endpoint) => endpoint.groups);
+}
+
+// errorGuideEntries returns one "What to do" entry per code in groups, in
 // the order the codes first appear, then one per known kind (timeout,
 // canceled) any group recorded.
-function errorGuideEntries(endpoints: ErrorEndpoint[]): ErrorGuideEntry[] {
+function errorGuideEntries(groups: UsageErrorGroup[]): ErrorGuideEntry[] {
     const entries = new Map<string, ErrorGuideEntry>();
     const kinds = new Set<string>();
 
-    for (const group of endpoints.flatMap((endpoint) => endpoint.groups)) {
+    for (const group of groups) {
         const id = errorHelpId(group.error_code);
 
         if (!entries.has(id)) {
@@ -556,11 +569,24 @@ function ErrorCausesLine({ kinds }: { kinds: CountMap }) {
     );
 }
 
+// Heading renders an h<level> heading, at most h6.
+function Heading({
+    level,
+    ...props
+}: { level: number } & ComponentPropsWithoutRef<"h3">) {
+    return createElement(`h${Math.min(level, 6)}`, props);
+}
+
 function ErrorGroupEntry({
     group,
+    guided,
+    headingLevel,
     id,
 }: {
     group: UsageErrorGroup;
+    // guided entries link to their code's "What to do" guide entry.
+    guided: boolean;
+    headingLevel: number;
     id: string;
 }) {
     const help = usageErrorHelp(group.error_code);
@@ -576,8 +602,9 @@ function ErrorGroupEntry({
             )}
         >
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h4
+                <Heading
                     className="flex min-w-0 items-baseline gap-2 font-medium"
+                    level={headingLevel}
                     id={headingId}
                 >
                     <span
@@ -598,10 +625,15 @@ function ErrorGroupEntry({
                     >
                         {help.label}
                     </span>
-                </h4>
+                </Heading>
                 <span className="text-sm font-semibold tabular-nums">
                     {pluralise(group.count, "error")}
                 </span>
+                {group.probe ? (
+                    <span className="text-xs text-muted-foreground">
+                        from lookup probes
+                    </span>
+                ) : null}
                 <span className="text-xs text-muted-foreground">
                     first{" "}
                     <LocalTimestamp
@@ -613,14 +645,19 @@ function ErrorGroupEntry({
                 </span>
             </div>
             <p className="max-w-3xl text-sm">
-                {help.meaning}{" "}
-                <a
-                    aria-label={`What to do about ${help.label}`}
-                    className={helpLinkClassName}
-                    href={`#${errorHelpId(group.error_code)}`}
-                >
-                    What to do
-                </a>
+                {help.meaning}
+                {guided ? (
+                    <>
+                        {" "}
+                        <a
+                            aria-label={`What to do about ${help.label}`}
+                            className={helpLinkClassName}
+                            href={`#${errorHelpId(group.error_code)}`}
+                        >
+                            What to do
+                        </a>
+                    </>
+                ) : null}
             </p>
             <ErrorCausesLine kinds={group.error_kinds} />
             <details className="mt-1 rounded-lg border border-border/70 bg-muted/30 open:bg-transparent">
@@ -645,12 +682,13 @@ function ErrorGroupEntry({
                     </div>
                     {group.messages.length > 0 ? (
                         <div className="flex flex-col gap-1">
-                            <h5
+                            <Heading
+                                level={headingLevel + 1}
                                 className="text-sm font-medium"
                                 id={`${id}-messages`}
                             >
                                 Top messages
-                            </h5>
+                            </Heading>
                             <ol
                                 aria-labelledby={`${id}-messages`}
                                 className="flex flex-col divide-y divide-border/60 rounded-lg border border-border/70 bg-card"
@@ -672,7 +710,12 @@ function ErrorGroupEntry({
                         </div>
                     ) : null}
                     <div className="flex flex-col gap-1">
-                        <h5 className="text-sm font-medium">Latest examples</h5>
+                        <Heading
+                            level={headingLevel + 1}
+                            className="text-sm font-medium"
+                        >
+                            Latest examples
+                        </Heading>
                         <UsageTable<UsageErrorExample>
                             columns={[
                                 {
@@ -715,6 +758,239 @@ function ErrorGroupEntry({
     );
 }
 
+// ErrorEndpointList renders errors grouped by endpoint, each endpoint headed
+// at headingLevel and its groups one level below.
+function ErrorEndpointList({
+    errors,
+    guided,
+    headingLevel,
+    idPrefix,
+}: {
+    errors: UsageErrorGroup[];
+    guided: boolean;
+    headingLevel: number;
+    idPrefix: string;
+}) {
+    return (
+        <div className="flex flex-col gap-4">
+            {errorEndpoints(errors).map((endpoint) => {
+                const id = errorEndpointId(idPrefix, endpoint.label);
+
+                return (
+                    <div
+                        aria-labelledby={`${id}-heading`}
+                        className="scroll-mt-6 overflow-hidden rounded-xl border border-border/70 bg-card text-card-foreground shadow-sm"
+                        id={id}
+                        key={endpoint.label}
+                        role="group"
+                    >
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border/70 bg-muted/40 px-4 py-3">
+                            <Heading
+                                className="font-mono text-sm font-semibold wrap-anywhere"
+                                level={headingLevel}
+                                id={`${id}-heading`}
+                            >
+                                {endpoint.label}
+                            </Heading>
+                            <p className="text-sm text-muted-foreground tabular-nums">
+                                {pluralise(endpoint.total, "error")}
+                            </p>
+                        </div>
+                        <div className="divide-y divide-border/70">
+                            {endpoint.groups.map((group, index) => (
+                                <ErrorGroupEntry
+                                    group={group}
+                                    guided={guided}
+                                    headingLevel={headingLevel + 1}
+                                    id={`${id}-${index}`}
+                                    key={`${group.status} ${group.error_code} ${group.severity} ${group.probe}`}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+type ErrorBucket = {
+    // guided buckets are the actionable ones the "What to do" guide covers.
+    guided: boolean;
+    id: string;
+    intro: string;
+    open: boolean;
+    severity: string;
+    title: string;
+};
+
+// errorBuckets are the Errors subsections of a server that reports
+// severities, in display order.
+const errorBuckets: ErrorBucket[] = [
+    {
+        severity: "fault",
+        id: "faults",
+        title: "Faults",
+        intro: "Server failures, and requests wa's own CLI, web pages, or servers got wrong: wa needs fixing.",
+        guided: true,
+        open: true,
+    },
+    {
+        severity: "caller",
+        id: "caller",
+        title: "Caller errors",
+        intro: "Requests an MCP agent or another client got wrong. Repeats may mean a tool description or a client needs work.",
+        guided: true,
+        open: true,
+    },
+    {
+        severity: "expected",
+        id: "expected",
+        title: "Expected outcomes",
+        intro: "Lookups whose answer was that the identifier is unknown or names several records. Nothing to fix; lookup probes are the CLI trying each kind of identifier in turn.",
+        guided: false,
+        open: false,
+    },
+];
+
+const legacyBucketTitle = "Recorded before error details";
+
+// isLegacy reports whether group was recorded before error details.
+function isLegacy(group: UsageErrorGroup): boolean {
+    return group.error_code === null;
+}
+
+// bucketGroups returns bucket's groups: those with error details, then those
+// recorded before them.
+function bucketGroups(
+    errors: UsageErrorGroup[],
+    bucket: ErrorBucket,
+): { detailed: UsageErrorGroup[]; legacy: UsageErrorGroup[] } {
+    const groups = errors.filter((group) => group.severity === bucket.severity);
+
+    return {
+        detailed: groups.filter((group) => !isLegacy(group)),
+        legacy: groups.filter(isLegacy),
+    };
+}
+
+// hasSeverities reports whether the server classified every error group.
+function hasSeverities(errors: UsageErrorGroup[]): boolean {
+    return errors.every((group) =>
+        (errorBuckets.map((bucket) => bucket.severity) as string[]).includes(
+            group.severity ?? "",
+        ),
+    );
+}
+
+// errorAnchors maps each endpoint label with errors to the element id of its
+// first listing: by bucket, detailed before legacy.
+function errorAnchors(errors: UsageErrorGroup[]): Map<string, string> {
+    const anchors = new Map<string, string>();
+    const add = (prefix: string, groups: UsageErrorGroup[]) => {
+        for (const group of groups) {
+            const label = errorEndpointLabel(group.method, group.route);
+
+            if (!anchors.has(label)) {
+                anchors.set(label, errorEndpointId(prefix, label));
+            }
+        }
+    };
+
+    if (!hasSeverities(errors)) {
+        add("", errors);
+
+        return anchors;
+    }
+
+    for (const bucket of errorBuckets) {
+        const { detailed, legacy } = bucketGroups(errors, bucket);
+        add(bucket.id, detailed);
+        add(`${bucket.id}-legacy`, legacy);
+    }
+
+    return anchors;
+}
+
+function sumCounts(groups: UsageErrorGroup[]): number {
+    return groups.reduce((sum, group) => sum + group.count, 0);
+}
+
+function ErrorBucketSection({
+    bucket,
+    errors,
+}: {
+    bucket: ErrorBucket;
+    errors: UsageErrorGroup[];
+}) {
+    const { detailed, legacy } = bucketGroups(errors, bucket);
+    const total = sumCounts(detailed) + sumCounts(legacy);
+    const headingId = `usage-errors-${bucket.id}-heading`;
+    const heading = (
+        <h3 className="inline text-base font-semibold" id={headingId}>
+            {`${bucket.title} (${formatCount(total)})`}
+        </h3>
+    );
+    const body =
+        total === 0 ? (
+            <EmptyNote>None.</EmptyNote>
+        ) : (
+            <>
+                <ErrorEndpointList
+                    errors={detailed}
+                    guided={bucket.guided}
+                    headingLevel={4}
+                    idPrefix={bucket.id}
+                />
+                {legacy.length > 0 ? (
+                    <details className="rounded-xl border border-border/70 bg-muted/30">
+                        <summary className="cursor-pointer rounded-xl px-4 py-2 text-sm font-medium hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+                            {`${legacyBucketTitle} (${pluralise(sumCounts(legacy), "error")})`}
+                        </summary>
+                        <div className="flex flex-col gap-3 px-3 pt-1 pb-3">
+                            <p className="max-w-3xl text-sm text-muted-foreground">
+                                These have no error code or message; their
+                                severity is judged from the status and caller.
+                            </p>
+                            <ErrorEndpointList
+                                errors={legacy}
+                                guided={false}
+                                headingLevel={4}
+                                idPrefix={`${bucket.id}-legacy`}
+                            />
+                        </div>
+                    </details>
+                ) : null}
+            </>
+        );
+
+    return (
+        <section aria-labelledby={headingId} className="flex flex-col gap-2">
+            {bucket.open ? (
+                <>
+                    {heading}
+                    <p className="max-w-3xl text-sm text-muted-foreground">
+                        {bucket.intro}
+                    </p>
+                    {body}
+                </>
+            ) : (
+                <details className="rounded-xl border border-border/70">
+                    <summary className="cursor-pointer rounded-xl px-4 py-2 hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+                        {heading}
+                    </summary>
+                    <div className="flex flex-col gap-2 px-3 pb-3">
+                        <p className="max-w-3xl text-sm text-muted-foreground">
+                            {bucket.intro}
+                        </p>
+                        {body}
+                    </div>
+                </details>
+            )}
+        </section>
+    );
+}
+
 function ErrorsSection({
     errors,
     totalErrors,
@@ -741,61 +1017,83 @@ function ErrorsSection({
         );
     }
 
-    const endpoints = errorEndpoints(errors);
-    const shownErrors = errors.reduce((sum, group) => sum + group.count, 0);
+    const shownErrors = sumCounts(errors);
+    const capNote =
+        shownErrors < totalErrors ? (
+            <p className="max-w-3xl text-sm text-muted-foreground">
+                Showing the {formatCount(errors.length)} largest groups (
+                {formatCount(shownErrors)} of {formatCount(totalErrors)}{" "}
+                errors).
+            </p>
+        ) : null;
+
+    if (!hasSeverities(errors)) {
+        return (
+            <UsageSection id="errors" title="Errors">
+                <p className="max-w-3xl text-sm text-muted-foreground">
+                    Grouped by endpoint, then by status and error code. Expand
+                    an entry for its most common messages and latest examples.
+                </p>
+                {capNote}
+                <ErrorGuide entries={errorGuideEntries(displayOrder(errors))} />
+                <ErrorEndpointList
+                    errors={errors}
+                    guided
+                    headingLevel={3}
+                    idPrefix=""
+                />
+            </UsageSection>
+        );
+    }
+
+    const guided = errorBuckets
+        .filter((bucket) => bucket.guided)
+        .flatMap((bucket) =>
+            displayOrder(bucketGroups(errors, bucket).detailed),
+        );
 
     return (
         <UsageSection id="errors" title="Errors">
             <p className="max-w-3xl text-sm text-muted-foreground">
-                Grouped by endpoint, then by status and error code. Expand an
-                entry for its most common messages and latest examples.
+                By severity, then endpoint, then status and error code. Expand
+                an entry for its most common messages and latest examples.
             </p>
-            {shownErrors < totalErrors ? (
-                <p className="max-w-3xl text-sm text-muted-foreground">
-                    Showing the {formatCount(errors.length)} largest groups (
-                    {formatCount(shownErrors)} of {formatCount(totalErrors)}{" "}
-                    errors).
-                </p>
+            {capNote}
+            {guided.length > 0 ? (
+                <ErrorGuide entries={errorGuideEntries(guided)} />
             ) : null}
-            <ErrorGuide entries={errorGuideEntries(endpoints)} />
-            <div className="flex flex-col gap-4">
-                {endpoints.map((endpoint) => {
-                    const id = errorEndpointId(endpoint.label);
-
-                    return (
-                        <div
-                            aria-labelledby={`${id}-heading`}
-                            className="scroll-mt-6 overflow-hidden rounded-xl border border-border/70 bg-card text-card-foreground shadow-sm"
-                            id={id}
-                            key={endpoint.label}
-                            role="group"
-                        >
-                            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border/70 bg-muted/40 px-4 py-3">
-                                <h3
-                                    className="font-mono text-sm font-semibold wrap-anywhere"
-                                    id={`${id}-heading`}
-                                >
-                                    {endpoint.label}
-                                </h3>
-                                <p className="text-sm text-muted-foreground tabular-nums">
-                                    {pluralise(endpoint.total, "error")}
-                                </p>
-                            </div>
-                            <div className="divide-y divide-border/70">
-                                {endpoint.groups.map((group, index) => (
-                                    <ErrorGroupEntry
-                                        group={group}
-                                        id={`${id}-${index}`}
-                                        key={`${group.status} ${group.error_code}`}
-                                    />
-                                ))}
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
+            {errorBuckets.map((bucket) => (
+                <ErrorBucketSection
+                    bucket={bucket}
+                    errors={errors}
+                    key={bucket.id}
+                />
+            ))}
         </UsageSection>
     );
+}
+
+// errorBreakdownText summarises how the window's errors split by severity.
+function errorBreakdownText(
+    errors: number,
+    severity: UsageErrorBreakdown,
+): string {
+    const legacy =
+        severity.legacy.fault +
+        severity.legacy.caller +
+        severity.legacy.expected;
+    const parts = [
+        pluralise(severity.fault, "fault"),
+        pluralise(severity.caller, "caller error"),
+        pluralise(severity.expected, "expected outcome"),
+        `${formatCount(severity.probe)} lookup probe ${severity.probe === 1 ? "miss" : "misses"}`,
+    ];
+    const legacyNote =
+        legacy > 0
+            ? ` ${formatCount(legacy)} (${formatCount(severity.legacy.fault)} of the faults) were recorded before error details and are judged by status.`
+            : "";
+
+    return `Of ${pluralise(errors, "error")}: ${parts.join(", ")}.${legacyNote}`;
 }
 
 function StatTile({ label, children }: { children: ReactNode; label: string }) {
@@ -845,11 +1143,8 @@ function valueCountSection(id: string, title: string, rows: ValueCount[]) {
 
 export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
     const { totals } = summary;
-    const endpointsWithErrors = new Set(
-        (summary.errors ?? []).map((group) =>
-            errorEndpointLabel(group.method, group.route),
-        ),
-    );
+    const errorAnchorIds = errorAnchors(summary.errors ?? []);
+    const severity = totals.error_severity;
 
     return (
         <main className="mx-auto flex min-h-screen w-full max-w-[84rem] flex-col gap-6 px-4 py-6 sm:px-8 lg:py-8">
@@ -893,6 +1188,11 @@ export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
                     requests that reached the MLWH server; lookups served from
                     browser or Next.js caches are not counted.
                 </p>
+                {severity ? (
+                    <p data-testid="usage-error-breakdown">
+                        {errorBreakdownText(totals.errors, severity)}
+                    </p>
+                ) : null}
                 {summary.dropped_events > 0 ? (
                     <p className="font-medium text-foreground">
                         {formatCount(summary.dropped_events)} requests were not
@@ -905,12 +1205,21 @@ export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
                 <StatTile label="Requests">
                     {formatCount(totals.requests)}
                 </StatTile>
-                <StatTile label="Errors">
-                    {formatCount(totals.errors)}
-                    <span className="text-base font-normal text-muted-foreground">
-                        {` (${formatRate(totals.error_rate)})`}
-                    </span>
-                </StatTile>
+                {severity ? (
+                    <StatTile label="Faults">
+                        {formatCount(severity.fault)}
+                        <span className="text-base font-normal text-muted-foreground">
+                            {` (${formatRate(totals.requests > 0 ? severity.fault / totals.requests : 0)})`}
+                        </span>
+                    </StatTile>
+                ) : (
+                    <StatTile label="Errors">
+                        {formatCount(totals.errors)}
+                        <span className="text-base font-normal text-muted-foreground">
+                            {` (${formatRate(totals.error_rate)})`}
+                        </span>
+                    </StatTile>
+                )}
                 <StatTile label="Sessions">
                     {formatCount(totals.sessions)}
                 </StatTile>
@@ -1002,11 +1311,13 @@ export function UsageAdminView({ summary, window }: UsageAdminViewProps) {
                                     row.route,
                                 );
 
-                                return endpointsWithErrors.has(label) ? (
+                                const anchor = errorAnchorIds.get(label);
+
+                                return anchor ? (
                                     <a
                                         aria-label={`${pluralise(row.errors, "error")} on ${label}, see details`}
                                         className="underline decoration-border underline-offset-4 hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                                        href={`#${errorEndpointId(label)}`}
+                                        href={`#${anchor}`}
                                     >
                                         {formatCount(row.errors)}
                                     </a>

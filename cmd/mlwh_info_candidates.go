@@ -78,8 +78,10 @@ type mlwhInfoCandidateSearcher interface {
 // id, LIMS id, UUID and accession that no other sample holds and that
 // `wa mlwh info` resolves to sample, or "" when none qualifies. Some resolvers
 // pick the first of several matching samples, so resolving to sample alone
-// does not prove the value is unique.
+// does not prove the value is unique. Its requests are probes.
 func infoUniqueIdentifier(ctx context.Context, client mlwhInfoClient, searcher mlwhInfoCandidateSearcher, sample mlwh.Sample) string {
+	ctx = mlwh.WithLookupProbe(ctx)
+
 	samplesNamed := func(ctx context.Context, name string) ([]mlwh.Sample, error) {
 		found, err := searcher.SearchSamplesWithOptions(ctx, name, mlwh.SampleSearchOptions{}, infoCandidateLimit, 0)
 
@@ -319,8 +321,10 @@ func sampleHasIdentifier(sample mlwh.Sample, identifier string) bool {
 
 // addUniqueIdentifierMatches adds the samples holding identifier as a Sanger
 // sample id, LIMS id or accession, which sample search does not index. The
-// result is ordered by Sanger name.
+// result is ordered by Sanger name. Its lookups are probes.
 func addUniqueIdentifierMatches(ctx context.Context, client mlwhInfoClient, identifier string, matches []mlwh.Sample) []mlwh.Sample {
+	ctx = mlwh.WithLookupProbe(ctx)
+
 	for _, find := range []func(context.Context, string) ([]mlwh.Sample, error){
 		client.FindSamplesBySangerID, client.FindSamplesByIDSampleLims, client.FindSamplesByAccessionNumber,
 	} {

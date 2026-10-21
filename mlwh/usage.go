@@ -189,6 +189,7 @@ type UsageEvent struct {
 	ErrorCode     string // envelope code (or no_route), only for errors
 	ErrorKind     string // UsageErrorKind* cause, when known
 	ErrorMessage  string // envelope message, only for errors
+	Probe         bool   // the request carried HeaderLookup LookupProbe
 }
 
 // truncateUTF8 returns s cut to at most maxBytes bytes, backing off to a rune

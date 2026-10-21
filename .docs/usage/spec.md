@@ -94,6 +94,19 @@ The version is the text after the first `/` up to the next space, or `""`.
 Internal servers send no `X-WA-Client-ID` or `X-WA-Client-User`; they do not
 carry the originating end user.
 
+`X-WA-Lookup: probe` (`mlwh.HeaderLookup`, `mlwh.LookupProbe`) marks a probe:
+one of several requests a client tries in turn to find what an identifier
+names, so a `not_found` or `ambiguous` answer only moves it on to the next
+try. `RemoteClient` sends it for requests made with a
+`mlwh.WithLookupProbe(ctx)` context. `wa mlwh info` marks its study and
+sample-name tries before the final classify (and the sample-name try before
+`--type sample`'s resolve), its Sanger id, LIMS id, and accession fan-out,
+and the lookups that list an ambiguous identifier's candidates (also used by
+`wa mlwh export`). The server stores `lookup = 'probe'` for exactly that
+value and NULL otherwise, for every counted request. The header is a hint
+between wa's own clients and its usage summary, so it is not in the OpenAPI
+document and `APIVersion` is unchanged.
+
 ### What is counted
 
 | Request                                                         | Counted | `route`                               | `path`             |
@@ -167,7 +180,8 @@ CREATE TABLE IF NOT EXISTS usage_requests (
     query          TEXT,
     error_code     TEXT,
     error_kind     TEXT,
-    error_message  TEXT
+    error_message  TEXT,
+    lookup         TEXT
 );
 CREATE INDEX IF NOT EXISTS usage_requests_ts ON usage_requests (ts_ms);
 CREATE INDEX IF NOT EXISTS usage_requests_route_ts
@@ -179,7 +193,8 @@ CREATE INDEX IF NOT EXISTS usage_requests_errors
     WHERE status >= 400;
 ```
 
-The last four columns were added after the first release. On open, the
+The last five columns were added after the first release (`lookup` after
+the other four). On open, the
 store adds any that an existing table lacks (`ALTER TABLE ... ADD COLUMN`),
 then creates `usage_requests_errors`. The column check and the `ALTER`s run
 in one `BEGIN IMMEDIATE` transaction on one connection, so stores opening
@@ -267,13 +282,51 @@ Request bodies and headers are never stored. Stored error paths are decoded
 and can include people's names, for example `/studies/user/:person` or
 `/resolve-person/:term`; retention limits how long they are kept.
 
+#### Severity
+
+Every error row has a severity (`UsageErrorSeverity`, computed in SQL by
+`usageErrorSeveritySQL`), checked in this order:
+
+1. `fault`: status >= 500 (`upstream_impaired`, its `timeout` and
+   `canceled` kinds, `cache_never_synced`, `internal_error`, ...).
+2. `expected`: code `not_found` or `ambiguous`, on any route. These are a
+   lookup's answer: the identifier is unknown or names several records.
+3. `fault`: any other 4xx from wa's own clients, categories `cli`, `web`,
+   `results_server`, and `mlwhdiff_server` (`bad_request`,
+   `unsupported_identifier`, `no_route`, `uncoded`, ...). wa sent a request
+   its own server rejects, so wa needs fixing.
+4. `caller`: any other 4xx, from `mcp` or `other`. MCP tools pass the
+   agent's arguments through, so their rejected requests are usually the
+   agent's.
+
+Rows recorded before error details (`error_code` NULL) are judged by status
+and caller alone: on a matched route, only `not_found` answers 404 and only
+`ambiguous` answers 409, so those count as `expected`; other statuses follow
+rules 1, 3, and 4. So the 502s and CLI 400 of an old window are faults.
+
+`totals.error_severity` and each `days[].error_severity` are a
+`UsageErrorBreakdown`: `fault`, `caller`, `expected`, and `probe` sum to
+the errors, where `probe` counts expected answers to probe requests and
+`expected` the rest. A failed probe (5xx) is still a `fault`. `legacy`
+holds `{fault, caller, expected}`: of those counts, the rows recorded before
+error details. Legacy rows are never probes. The other `errors` and
+`error_rate` fields are unchanged.
+
+#### Groups
+
 `UsageSummary.errors` lists the window's error rows grouped by `method`,
-`route`, `status`, and `error_code`, ranked by count descending, then by
-those keys ascending (NULL codes first), capped at 50 groups. Each
-`UsageErrorGroup` has:
+`route`, `status`, `error_code`, `severity`, and `probe`, capped at 50
+groups. Groups with an error code rank before legacy groups, then faults
+before caller errors before expected answers, then by count descending, then
+by the keys ascending, so the cap drops expected and legacy groups before
+faults. One route's 400s can therefore form a `fault` group (from the CLI)
+and a `caller` group (from other clients). Each `UsageErrorGroup` has:
 
 - `error_code`: the code, or `null` for rows recorded before error details
   were stored.
+- `severity`: `fault`, `caller`, or `expected`; judged by status for legacy
+  groups.
+- `probe`: whether the group's rows were sent as probes.
 - `count`, `first_seen`, `last_seen` (RFC3339 UTC).
 - `error_kinds`, `by_category`, `by_tool`, `by_agent`: non-nil count maps of
   non-empty values.
@@ -285,9 +338,9 @@ those keys ascending (NULL codes first), capped at 50 groups. Each
 
 `mcp_tools`, `mcp_agents`, and `other_user_agents` entries also carry
 `errors`. All of this is additive: `/usage` is outside OpenAPI, so
-`APIVersion` is unchanged, and the frontend contract makes `errors` and
-the per-value `errors` optional so a newer frontend still reads an older
-server.
+`APIVersion` is unchanged, and the frontend contract makes `errors`, the
+per-value `errors`, `error_severity`, `severity`, and `probe` optional so a
+newer frontend still reads an older server.
 
 ### Known limits (documented, not fixed)
 
@@ -1465,8 +1518,14 @@ I can see at a glance whether and how the server is used.
       that reached the MLWH server; lookups served from browser or Next.js
       caches are not counted." When `dropped_events > 0`, also
       "<n> requests were not recorded because the usage queue was full."
-    - Stat tiles: "Requests", "Errors" (`<n> (<rate>)`), "Sessions",
-      "Clients by IP", "Users (self-declared)".
+    - Stat tiles: "Requests", "Faults" (`<fault> (<fault/requests>)`), or
+      "Errors" (`<n> (<rate>)`) from a server without
+      `totals.error_severity`, "Sessions", "Clients by IP", "Users
+      (self-declared)". With a breakdown, the notes add "Of <n> errors:
+      <f> faults, <c> caller errors, <e> expected outcomes, <p> lookup probe
+      misses." and, when some were recorded before error details, "<l> (<lf>
+      of the faults) were recorded before error details and are judged by
+      status."
     - Category labels: `cli` "CLI", `mcp` "MCP", `web` "Web",
       `results_server` "Results server", `mlwhdiff_server` "mlwhdiff
       server", `other` "Other API". A categories cell lists non-zero
@@ -1513,6 +1572,21 @@ I can see at a glance whether and how the server is used.
           Message. Empty: "No errors in this window." Absent (older
           server): "This MLWH server does not report error details.
           Upgrade wa mlwh serve to see them."
+          When every group has a known `severity`, the Errors region
+          instead holds the "What to do" guide for the codes of fault and
+          caller groups with error details only, then three `region`s
+          headed (`h3`) "Faults (<n>)", "Caller errors (<n>)", and
+          "Expected outcomes (<n>)", each with a one-line intro. Faults and
+          caller errors are open; expected outcomes sit in a closed
+          `details` whose `summary` holds the heading. Each lists its
+          groups with error details by endpoint (`h4`, entries `h5`), then
+          a closed `details` "Recorded before error details (<n> errors)"
+          listing its legacy groups. Expected and legacy entries have no
+          "What to do" link; probe groups say "from lookup probes". An
+          endpoint's Errors cell links to its first listing (faults, caller,
+          expected; detailed before legacy), e.g.
+          `#usage-errors-faults-GET-studies`. The page is due a redesign
+          that will chart `days[].error_severity`.
         - "MCP tools", "MCP agents", "Other API user agents": Value,
           Requests, Errors (`""` renders as "(none)"; Errors `-` when the
           server sends none).
@@ -1672,6 +1746,22 @@ Release step, no tests.
 - **Error = status >= 400.** Client errors (bad parameters, unknown IDs)
   are what LLM callers most often hit, so they count. Unmatched paths are
   listed separately as well.
+- **Severity on the server.** Most errors in real use were `wa mlwh info`
+  trying each kind of identifier and lookups answering `not_found` or
+  `ambiguous`, which buried the few real faults. The server classifies
+  each row so every consumer agrees, and computes it at summary time from
+  stored columns, so old rows are classified too and the rules can change
+  without a migration. `not_found` and `ambiguous` are expected on every
+  route, not only lookup routes: every `:id` route resolves its identifier
+  first, and a list of lookup routes would need upkeep. 4xx from MCP count
+  as caller errors, not faults, because MCP tools forward agent arguments.
+- **Probe header, not a different lookup order.** `wa mlwh info` tries
+  study first and sample name second on purpose (they take precedence over
+  classify's answer), and its fan-out and candidate lookups are needed, so
+  calling classify first would change behaviour. Marking those requests
+  with `X-WA-Lookup: probe` keeps the CLI's behaviour and lets the summary
+  count their misses apart. It is outside OpenAPI because only wa's own
+  clients send it and no response changes.
 - **Nearest-rank percentiles.** Deterministic integer ranks keep tests
   exact.
 - **Client-side sanitising.** `net/http` and Node `fetch` reject some header

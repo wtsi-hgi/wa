@@ -142,6 +142,22 @@ func TestRemoteClientIdentityHeadersC1(t *testing.T) {
 		}
 	})
 
+	convey.Convey("Given a WithLookupProbe context, then only its requests send X-WA-Lookup: probe", t, func() {
+		recorder := newIdentityRecordingServerForTest(t)
+		client := newIdentityClientForTest(t, RemoteConfig{BaseURL: recorder.server.URL, UserAgent: "wa-cli/v1"})
+
+		_, err := client.AllStudies(WithLookupProbe(context.Background()), 1, 0)
+		convey.So(err, convey.ShouldBeNil)
+
+		_, err = client.AllStudies(context.Background(), 2, 0)
+		convey.So(err, convey.ShouldBeNil)
+
+		headers := recorder.all()
+		convey.So(headers, convey.ShouldHaveLength, 2)
+		convey.So(headers[0].Get(HeaderLookup), convey.ShouldEqual, LookupProbe)
+		convey.So(headers[1].Values(HeaderLookup), convey.ShouldBeEmpty)
+	})
+
 	convey.Convey("C1.3: Given MCP config and a context identity, when Call runs, then all five headers arrive", t, func() {
 		recorder := newIdentityRecordingServerForTest(t)
 		client := newIdentityClientForTest(t, RemoteConfig{

@@ -32,6 +32,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -414,6 +415,69 @@ func TestMLWHInfoCommandUsesConfiguredServerWithoutLocalCredentials(t *testing.T
 		// standalone "Lanes (N)" header.
 		convey.So(output, convey.ShouldContainSubstring, "Run 49001")
 		convey.So(output, convey.ShouldNotContainSubstring, "Lanes (")
+	})
+}
+
+func TestMLWHInfoCommandMarksProbeRequests(t *testing.T) {
+	convey.Convey("Given a server that knows only sample DN1234 by name, when wa mlwh info looks it up", t, func() {
+		var (
+			mu     sync.Mutex
+			probes = map[string]bool{}
+		)
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			probes[r.URL.Path] = r.Header.Get(mlwh.HeaderLookup) == mlwh.LookupProbe
+			mu.Unlock()
+
+			w.Header().Set("Content-Type", "application/json")
+
+			if r.URL.Path == "/resolve/sample-name/DN1234" {
+				writeMLWHInfoServerJSONForTest(w, mlwh.Match{
+					Kind: mlwh.KindSangerSampleName, Canonical: "DN1234",
+					Sample: &mlwh.Sample{Name: "DN1234", SangerSampleID: "DN1234", IDSampleLims: "86"},
+				})
+
+				return
+			}
+
+			w.WriteHeader(http.StatusNotFound)
+			writeMLWHInfoServerJSONForTest(w, map[string]string{"code": "not_found", "message": "not found"})
+		}))
+		defer server.Close()
+
+		t.Setenv("WA_MLWH_SERVER_URL", server.URL)
+		t.Setenv("WA_MLWH_DSN", "")
+		t.Setenv("WA_MLWH_CACHE_PATH", "")
+
+		convey.Convey("then the study try and the sample fan-out are probes, and the follow-up reads are not", func() {
+			_, err := executeRootCommandForTest(t, []string{"mlwh", "info", "DN1234"})
+			convey.So(err, convey.ShouldBeNil)
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			convey.So(probes["/resolve/study/DN1234"], convey.ShouldBeTrue)
+			convey.So(probes["/resolve/sample-name/DN1234"], convey.ShouldBeTrue)
+			convey.So(probes["/find/sample/sanger-id/DN1234"], convey.ShouldBeTrue)
+			convey.So(probes["/find/sample/lims-id/86"], convey.ShouldBeTrue)
+			convey.So(probes, convey.ShouldContainKey, "/sample/DN1234/lanes")
+			convey.So(probes["/sample/DN1234/lanes"], convey.ShouldBeFalse)
+		})
+
+		convey.Convey("then for an unknown identifier the final classify and the never-synced check are not "+
+			"probes", func() {
+			_, err := executeRootCommandForTest(t, []string{"mlwh", "info", "NOPE"})
+			convey.So(err, convey.ShouldNotBeNil)
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			convey.So(probes, convey.ShouldResemble, map[string]bool{
+				"/resolve/study/NOPE": true, "/resolve/sample-name/NOPE": true, "/classify/NOPE": false,
+				"/freshness": false,
+			})
+		})
 	})
 }
 

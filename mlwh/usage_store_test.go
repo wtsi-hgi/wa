@@ -86,6 +86,7 @@ type usageRowForTest struct {
 	ErrorCode     sql.NullString
 	ErrorKind     sql.NullString
 	ErrorMessage  sql.NullString
+	Lookup        sql.NullString
 }
 
 func TestUsageStoreA2(t *testing.T) {
@@ -444,7 +445,7 @@ func usageRowsForTest(path string) []usageRowForTest {
 
 	rows, err := db.QueryContext(context.Background(), `SELECT ts_ms, category, method, route, path,
     client_id, username, remote_addr, client_version, user_agent, mcp_transport, mcp_agent,
-    mcp_tool, status, latency_us, query, error_code, error_kind, error_message
+    mcp_tool, status, latency_us, query, error_code, error_kind, error_message, lookup
     FROM usage_requests ORDER BY id`)
 	convey.So(err, convey.ShouldBeNil)
 
@@ -458,7 +459,7 @@ func usageRowsForTest(path string) []usageRowForTest {
 		convey.So(rows.Scan(&r.TSMS, &r.Category, &r.Method, &r.Route, &r.Path, &r.ClientID,
 			&r.Username, &r.RemoteAddr, &r.ClientVersion, &r.UserAgent, &r.MCPTransport,
 			&r.MCPAgent, &r.MCPTool, &r.Status, &r.LatencyUS, &r.Query, &r.ErrorCode, &r.ErrorKind,
-			&r.ErrorMessage), convey.ShouldBeNil)
+			&r.ErrorMessage, &r.Lookup), convey.ShouldBeNil)
 
 		got = append(got, r)
 	}

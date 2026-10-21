@@ -150,6 +150,28 @@ func TestUsageMiddlewareB1(t *testing.T) {
 		convey.So(rows[0].Status, convey.ShouldEqual, http.StatusNotFound)
 	})
 
+	convey.Convey("a probe header of exactly probe stores lookup probe; any other value or none stores NULL", t,
+		func() {
+			router, store, path := newUsageTestRouter(t, classifyQueryerForUsageTest(ErrNotFound))
+
+			for _, value := range []string{LookupProbe, "", "Probe", "yes"} {
+				headers := map[string]string{"User-Agent": "wa-cli/v1.0.0"}
+				if value != "" {
+					headers[HeaderLookup] = value
+				}
+
+				usageRequestForTest(router, http.MethodGet, "/classify/X", headers)
+			}
+
+			rows := flushedUsageRowsForTest(store, path)
+			convey.So(rows, convey.ShouldHaveLength, 4)
+			convey.So(rows[0].Lookup, convey.ShouldResemble, usageNullStringForTest(LookupProbe))
+
+			for _, row := range rows[1:] {
+				convey.So(row.Lookup.Valid, convey.ShouldBeFalse)
+			}
+		})
+
 	convey.Convey("health, the usage summary, and the feedback admin list are not counted", t, func() {
 		router, store, path := newUsageTestRouter(t, &serverFakeQueryer{},
 			WithFeedback(newFeedbackServerTestStore(t), []byte(usageTestAdminToken)))

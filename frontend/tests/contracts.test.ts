@@ -1092,6 +1092,42 @@ describe("E2 usage contracts", () => {
         expect(parsed.mcp_tools[0].errors).toBeUndefined();
     });
 
+    it("parses error severities, probes, and per-day breakdowns", () => {
+        const breakdown = {
+            fault: 2,
+            caller: 1,
+            expected: 3,
+            probe: 4,
+            legacy: { fault: 1, caller: 0, expected: 0 },
+        };
+        const [group] = usageSummaryA3Fixture.errors;
+        const [day] = usageSummaryA3Fixture.days;
+        const parsed = contracts.usageSummarySchema.parse({
+            ...usageSummaryA3,
+            totals: {
+                ...usageSummaryA3Fixture.totals,
+                error_severity: breakdown,
+            },
+            days: [{ ...day, error_severity: breakdown }],
+            errors: [{ ...group, severity: "expected", probe: true }],
+        });
+
+        expect(parsed.totals.error_severity).toEqual(breakdown);
+        expect(parsed.days[0].error_severity).toEqual(breakdown);
+        expect(parsed.errors?.[0].severity).toBe("expected");
+        expect(parsed.errors?.[0].probe).toBe(true);
+
+        expect(
+            contracts.usageSummarySchema.safeParse({
+                ...usageSummaryA3,
+                totals: {
+                    ...usageSummaryA3Fixture.totals,
+                    error_severity: { ...breakdown, legacy: 1 },
+                },
+            }).success,
+        ).toBe(false);
+    });
+
     it("rejects a usage error group with a bad code, category, or example", () => {
         const [group] = usageSummaryA3Fixture.errors as Record<
             string,

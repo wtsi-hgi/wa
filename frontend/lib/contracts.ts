@@ -562,13 +562,31 @@ const usageValueCountSchema = z.object({
     requests: count,
     errors: count.optional(),
 });
+// Errors split by severity into parts that sum to their count
+// (UsageErrorBreakdown), with expected answers to probe requests counted as
+// probe. legacy counts, by severity, the rows among them recorded before
+// error details, which the server judges by status. Absent from servers that
+// predate it.
+const usageErrorBreakdownSchema = z.object({
+    fault: count,
+    caller: count,
+    expected: count,
+    probe: count,
+    legacy: z.object({ fault: count, caller: count, expected: count }),
+});
+export type UsageErrorBreakdown = z.infer<typeof usageErrorBreakdownSchema>;
 // One group of GET /usage errors (mlwh/usage_summary.go UsageErrorGroup).
 // error_code is null for rows recorded before error details were stored.
+// severity (mlwh/usage_error_summary.go UsageErrorSeverity: fault, caller,
+// or expected) is a string, so a severity added later still parses; it and
+// probe are absent from servers that predate them.
 const usageErrorGroupSchema = z.object({
     method: z.string(),
     route: z.string(),
     status: z.number().int(),
     error_code: z.string().nullable(),
+    severity: z.string().optional(),
+    probe: z.boolean().optional(),
     count,
     first_seen: z.string(),
     last_seen: z.string(),
@@ -603,6 +621,7 @@ export const usageSummarySchema = z.object({
         requests: count,
         errors: count,
         error_rate: z.number(),
+        error_severity: usageErrorBreakdownSchema.optional(),
         sessions: count,
         ip_clients: count,
         users: count,
@@ -666,6 +685,7 @@ export const usageSummarySchema = z.object({
             date: z.string(),
             requests: count,
             by_category: countMap,
+            error_severity: usageErrorBreakdownSchema.optional(),
         }),
     ),
     series: z.array(

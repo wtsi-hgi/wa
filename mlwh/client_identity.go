@@ -40,6 +40,16 @@ const (
 	HeaderMCPTool      = "X-WA-MCP-Tool"
 )
 
+// HeaderLookup marks a request's part in a client's lookup. Its one value,
+// LookupProbe, marks a probe: one of several requests a client tries in turn
+// to find what an identifier names, so a not_found or ambiguous answer is
+// routine. wa's CLI sends it; the server records it for usage only, and it is
+// not part of the documented API.
+const (
+	HeaderLookup = "X-WA-Lookup"
+	LookupProbe  = "probe"
+)
+
 // ClientIdentity is optional caller identification. Empty fields send no
 // header.
 type ClientIdentity struct {
@@ -84,6 +94,17 @@ func (rc *RemoteClient) setIdentityHeaders(req *http.Request) {
 	setIdentityHeader(req.Header, HeaderMCPTransport, id.MCPTransport, UsageMaxMCPTransportBytes)
 	setIdentityHeader(req.Header, HeaderMCPAgent, id.MCPAgent, UsageMaxMCPAgentBytes)
 	setIdentityHeader(req.Header, HeaderMCPTool, id.MCPTool, UsageMaxMCPToolBytes)
+
+	if probe, _ := req.Context().Value(lookupProbeContextKey{}).(bool); probe {
+		req.Header.Set(HeaderLookup, LookupProbe)
+	}
+}
+
+// WithLookupProbe returns ctx marking RemoteClient requests made with it as
+// probes (HeaderLookup LookupProbe), so usage summaries can tell a probe's
+// expected miss from the miss that ends a lookup.
+func WithLookupProbe(ctx context.Context) context.Context {
+	return context.WithValue(ctx, lookupProbeContextKey{}, true)
 }
 
 // setIdentityHeader sets name to value after sanitising it and cutting it to
@@ -116,3 +137,5 @@ func sanitiseIdentityValue(value string) string {
 }
 
 type clientIdentityContextKey struct{}
+
+type lookupProbeContextKey struct{}

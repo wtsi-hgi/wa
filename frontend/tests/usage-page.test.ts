@@ -1272,3 +1272,179 @@ describe("usage errors section", () => {
         ).toEqual(["mlwh_classify_identifier", "5", "2"]);
     });
 });
+
+// severitySummary is the A3 fixture as a server that classifies errors sends
+// it: faults (one recorded before error details), a caller error, and
+// expected outcomes from probes, a final lookup, and before error details.
+function severitySummary(): UsageSummary {
+    const base = a3Summary();
+
+    return {
+        ...base,
+        totals: {
+            ...base.totals,
+            requests: 400,
+            errors: 259,
+            error_severity: {
+                fault: 2,
+                caller: 1,
+                expected: 35,
+                probe: 221,
+                legacy: { fault: 1, caller: 0, expected: 32 },
+            },
+        },
+        errors: [
+            errorGroup({
+                route: "/studies",
+                status: 502,
+                error_code: "upstream_impaired",
+                severity: "fault",
+                probe: false,
+            }),
+            errorGroup({
+                route: "/studies",
+                status: 502,
+                error_code: null,
+                severity: "fault",
+                probe: false,
+            }),
+            errorGroup({
+                route: "/runs",
+                status: 400,
+                error_code: "bad_request",
+                severity: "caller",
+                probe: false,
+                by_category: { other: 1 },
+            }),
+            errorGroup({
+                route: "/resolve/study/:id",
+                severity: "expected",
+                probe: true,
+                count: 221,
+            }),
+            errorGroup({ severity: "expected", probe: false, count: 3 }),
+            errorGroup({
+                status: 409,
+                error_code: null,
+                severity: "expected",
+                probe: false,
+                count: 32,
+            }),
+        ],
+    };
+}
+
+// bucket returns the Errors subsection headed by a title starting with name.
+function bucket(name: string): HTMLElement {
+    return within(section("Errors")).getByRole("region", {
+        name: new RegExp(`^${name} \\(`),
+    });
+}
+
+describe("usage errors by severity", () => {
+    it("headlines faults and says how all errors split", async () => {
+        await renderView(severitySummary(), "24h");
+
+        expect(statValue("Faults")).toBe("2 (0.5%)");
+        expect(screen.queryByText("Errors", { selector: "dt" })).toBeNull();
+        expect(screen.getByTestId("usage-error-breakdown").textContent).toBe(
+            "Of 259 errors: 2 faults, 1 caller error, 35 expected outcomes, 221 lookup probe misses. 33 (1 of the faults) were recorded before error details and are judged by status.",
+        );
+    });
+
+    it("keeps the Errors tile for servers without a severity breakdown", async () => {
+        await renderView(a3Summary(), "24h");
+
+        expect(statValue("Errors")).toBe("3 (50.0%)");
+        expect(screen.queryByText("Faults", { selector: "dt" })).toBeNull();
+        expect(screen.queryByTestId("usage-error-breakdown")).toBeNull();
+    });
+
+    it("lists faults and caller errors openly and collapses expected outcomes", async () => {
+        await renderView(severitySummary(), "24h");
+
+        expect(
+            within(section("Errors"))
+                .getAllByRole("heading", { level: 3 })
+                .map((heading) => heading.textContent),
+        ).toEqual([
+            "What to do",
+            "Faults (2)",
+            "Caller errors (1)",
+            "Expected outcomes (256)",
+        ]);
+
+        expect(
+            bucket("Faults").querySelector("details > summary h3"),
+        ).toBeNull();
+        expect(bucket("Caller errors").textContent).toContain("GET /runs");
+
+        const expected = bucket("Expected outcomes");
+        const details = expected.querySelector("details");
+        expect(details?.open).toBe(false);
+        expect(details?.querySelector("summary h3")?.textContent).toBe(
+            "Expected outcomes (256)",
+        );
+        expect(
+            within(expected).getAllByRole("article", { name: "404 not_found" }),
+        ).toHaveLength(2);
+    });
+
+    it("guides only the codes of faults and caller errors", async () => {
+        await renderView(severitySummary(), "24h");
+
+        expect(
+            within(errorGuide())
+                .getAllByRole("term")
+                .map((term) => term.textContent),
+        ).toEqual(["upstream_impaired", "bad_request"]);
+
+        const expected = bucket("Expected outcomes");
+        expect(within(expected).queryAllByRole("link")).toEqual([]);
+        expect(
+            within(bucket("Faults")).getByRole("link", {
+                name: "What to do about upstream_impaired",
+            }),
+        ).toBeTruthy();
+    });
+
+    it("marks probe groups and tucks legacy groups into their own collapsed list", async () => {
+        await renderView(severitySummary(), "24h");
+
+        const probes = within(bucket("Expected outcomes")).getByRole("group", {
+            name: "GET /resolve/study/:id",
+        });
+        expect(probes.textContent).toContain("221 errors");
+        expect(probes.textContent).toContain("from lookup probes");
+
+        const faults = bucket("Faults");
+        const legacy = within(faults).getByText(
+            "Recorded before error details (1 error)",
+        );
+        const legacyList = legacy.closest("details");
+        expect(legacyList?.open).toBe(false);
+        expect(
+            within(legacyList as HTMLElement).getByRole("article", {
+                name: "502 unknown (recorded before error details were captured)",
+            }),
+        ).toBeTruthy();
+        expect(
+            within(faults)
+                .getAllByRole("article")
+                .filter((article) => !legacyList?.contains(article))
+                .map((article) => article.getAttribute("aria-labelledby"))
+                .map((id) => document.getElementById(id ?? "")?.textContent),
+        ).toEqual(["502 upstream_impaired"]);
+    });
+
+    it("links an endpoint's error count to its first listing by severity", async () => {
+        await renderView(severitySummary(), "24h");
+
+        const link = within(section("Endpoints")).getByRole("link", {
+            name: /on GET \/studies, see details/,
+        });
+        const target = link.getAttribute("href")?.slice(1) ?? "";
+        expect(target).toBe("usage-errors-faults-GET-studies");
+        expect(bucket("Faults").querySelector(`#${target}`)).not.toBeNull();
+    });
+});

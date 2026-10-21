@@ -61,6 +61,9 @@ func TestUsageSummaryA3(t *testing.T) {
 		convey.Convey("then the totals count the window's rows", func() {
 			convey.So(summary.Totals, convey.ShouldResemble, UsageTotals{
 				Requests: 6, Errors: 3, ErrorRate: 0.5, Sessions: 3, IPClients: 1, Users: 2,
+				ErrorSeverity: UsageErrorBreakdown{
+					Fault: 1, Caller: 1, Expected: 1, Legacy: UsageLegacyErrors{Fault: 1},
+				},
 			})
 		})
 
@@ -130,7 +133,12 @@ func TestUsageSummaryA3(t *testing.T) {
 		convey.Convey("then days count only rows inside the window", func() {
 			convey.So(summary.Days, convey.ShouldResemble, []UsageDay{
 				{Date: "2026-10-09", ByCategory: map[string]int64{}},
-				{Date: "2026-10-10", Requests: 6, ByCategory: map[string]int64{"cli": 3, "mcp": 1, "other": 2}},
+				{
+					Date: "2026-10-10", Requests: 6, ByCategory: map[string]int64{"cli": 3, "mcp": 1, "other": 2},
+					ErrorSeverity: UsageErrorBreakdown{
+						Fault: 1, Caller: 1, Expected: 1, Legacy: UsageLegacyErrors{Fault: 1},
+					},
+				},
 			})
 		})
 	})
@@ -231,6 +239,9 @@ func TestUsageSummaryA3(t *testing.T) {
 		convey.So(summary.Series[len(summary.Series)-1].Requests, convey.ShouldEqual, 7)
 		convey.So(summary.Days[len(summary.Days)-1], convey.ShouldResemble, UsageDay{
 			Date: "2026-10-10", Requests: 7, ByCategory: map[string]int64{"cli": 4, "mcp": 1, "other": 2},
+			ErrorSeverity: UsageErrorBreakdown{
+				Fault: 1, Caller: 1, Expected: 1, Legacy: UsageLegacyErrors{Fault: 1},
+			},
 		})
 	})
 
@@ -640,7 +651,8 @@ func TestUsageSummaryErrors(t *testing.T) {
 	convey.Convey("Given error rows of several endpoints, codes, and kinds", t, func() {
 		summary := summariseEventsForTest(t, usageErrorFixtureForTest(), UsageWindow24h)
 
-		convey.Convey("then errors are grouped by method, route, status, and code, largest first", func() {
+		convey.Convey("then errors are grouped by method, route, status, code, and severity, detailed "+
+			"before legacy, then faults, caller errors, and expected answers, then largest first", func() {
 			keys := make([]string, 0, len(summary.Errors))
 			for _, group := range summary.Errors {
 				code := "<nil>"
@@ -648,20 +660,26 @@ func TestUsageSummaryErrors(t *testing.T) {
 					code = *group.ErrorCode
 				}
 
-				keys = append(keys, fmt.Sprintf("%s %s %d %s %d", group.Method, group.Route, group.Status, code,
-					group.Count))
+				keys = append(keys, fmt.Sprintf("%s %s %d %s %s %d", group.Method, group.Route, group.Status, code,
+					group.Severity, group.Count))
 			}
 
 			convey.So(keys, convey.ShouldResemble, []string{
-				"GET /classify/:id 404 not_found 3",
-				"GET  404 no_route 1",
-				"GET /classify/:id 404 <nil> 1",
-				"GET /classify/:id 502 upstream_impaired 1",
+				"GET /classify/:id 502 upstream_impaired fault 1",
+				"GET  404 no_route caller 1",
+				"GET /classify/:id 404 not_found expected 3",
+				"GET /classify/:id 404 <nil> expected 1",
+			})
+		})
+
+		convey.Convey("then the totals split errors by severity, with legacy rows apart", func() {
+			convey.So(summary.Totals.ErrorSeverity, convey.ShouldResemble, UsageErrorBreakdown{
+				Fault: 1, Caller: 1, Expected: 4, Legacy: UsageLegacyErrors{Expected: 1},
 			})
 		})
 
 		convey.Convey("then a group holds its time span, messages, examples, and breakdowns", func() {
-			group := summary.Errors[0]
+			group := summary.Errors[2]
 			convey.So(group.FirstSeen, convey.ShouldEqual, "2026-10-10T09:00:00Z")
 			convey.So(group.LastSeen, convey.ShouldEqual, "2026-10-10T11:00:00Z")
 			convey.So(group.ErrorKinds, convey.ShouldResemble, map[string]int64{})
@@ -689,7 +707,7 @@ func TestUsageSummaryErrors(t *testing.T) {
 		})
 
 		convey.Convey("then legacy rows have a null code and examples without details", func() {
-			group := summary.Errors[2]
+			group := summary.Errors[3]
 			convey.So(group.ErrorCode, convey.ShouldBeNil)
 			convey.So(group.Messages, convey.ShouldResemble, []UsageErrorMessage{})
 			convey.So(group.Examples, convey.ShouldResemble, []UsageErrorExample{
@@ -698,7 +716,7 @@ func TestUsageSummaryErrors(t *testing.T) {
 		})
 
 		convey.Convey("then error kinds are counted and unmatched rows keep their path", func() {
-			convey.So(summary.Errors[3].ErrorKinds, convey.ShouldResemble, map[string]int64{UsageErrorKindTimeout: 1})
+			convey.So(summary.Errors[0].ErrorKinds, convey.ShouldResemble, map[string]int64{UsageErrorKindTimeout: 1})
 			convey.So(summary.Errors[1].Examples[0].Path, convey.ShouldEqual, "/bogus")
 		})
 
@@ -718,6 +736,10 @@ func TestUsageSummaryErrors(t *testing.T) {
 			}
 
 			convey.So(total, convey.ShouldEqual, summary.Totals.Errors)
+
+			breakdown := summary.Totals.ErrorSeverity
+			convey.So(breakdown.Fault+breakdown.Caller+breakdown.Expected+breakdown.Probe, convey.ShouldEqual,
+				summary.Totals.Errors)
 		})
 	})
 
@@ -771,6 +793,239 @@ func TestUsageSummaryErrors(t *testing.T) {
 		convey.So(json.Unmarshal(data, &doc), convey.ShouldBeNil)
 		convey.So(countNonArraysForTest(doc, []string{"errors"}), convey.ShouldEqual, 0)
 	})
+}
+
+func TestUsageErrorSeverity(t *testing.T) {
+	convey.Convey("Given one error row, then its group's severity follows status, code, route, and caller", t,
+		func() {
+			for _, tc := range []struct {
+				name     string
+				category UsageCategory
+				route    string
+				status   int
+				code     string // "" for a legacy row
+				want     UsageErrorSeverity
+			}{
+				{"a CLI 502", UsageCategoryCLI, "/classify/:id", 502, httpErrorCodeUpstreamImpaired, "fault"},
+				{"another client's 503", UsageCategoryOther, "/studies", 503, httpErrorCodeCacheNeverSynced, "fault"},
+				{"an MCP 500", UsageCategoryMCP, "/studies", 500, httpErrorCodeInternal, "fault"},
+				{"a legacy CLI 502", UsageCategoryCLI, "/runs/count", 502, "", "fault"},
+				{"a CLI not_found", UsageCategoryCLI, "/resolve/study/:id", 404, httpErrorCodeNotFound, "expected"},
+				{"an MCP not_found", UsageCategoryMCP, "/study/:id/samples", 404, httpErrorCodeNotFound, "expected"},
+				{"an MCP ambiguous", UsageCategoryMCP, "/find/sample/supplier-name/:id", 409,
+					httpErrorCodeAmbiguous, "expected"},
+				{"another client's ambiguous", UsageCategoryOther, "/classify/:id", 409, httpErrorCodeAmbiguous,
+					"expected"},
+				{"a legacy CLI 404", UsageCategoryCLI, "/resolve/sample-name/:id", 404, "", "expected"},
+				{"a legacy CLI 409", UsageCategoryCLI, "/export/:children/:parent_kind/:parent_id", 409, "",
+					"expected"},
+				{"a CLI bad_request", UsageCategoryCLI, "/study/:id/latest-data", 400, httpErrorCodeBadRequest,
+					"fault"},
+				{"a legacy CLI 400", UsageCategoryCLI, "/study/:id/latest-data", 400, "", "fault"},
+				{"a web unsupported_identifier", UsageCategoryWeb, "/export/:children/:parent_kind/:parent_id", 422,
+					httpErrorCodeUnsupportedIdentifier, "fault"},
+				{"a results server bad_request", UsageCategoryResultsServer, "/studies", 400,
+					httpErrorCodeBadRequest, "fault"},
+				{"an mlwhdiff server no_route", UsageCategoryMLWHDiffServer, "", 404, UsageErrorCodeNoRoute,
+					"fault"},
+				{"a CLI uncoded 404", UsageCategoryCLI, "/studies", 404, usageErrorCodeUncoded, "fault"},
+				{"an MCP bad_request", UsageCategoryMCP, "/runs", 400, httpErrorCodeBadRequest, "caller"},
+				{"an MCP unsupported_identifier", UsageCategoryMCP, "/sample/:id/irods", 422,
+					httpErrorCodeUnsupportedIdentifier, "caller"},
+				{"another client's bad_request", UsageCategoryOther, "/runs", 400, httpErrorCodeBadRequest, "caller"},
+				{"another client's no_route", UsageCategoryOther, "", 404, UsageErrorCodeNoRoute, "caller"},
+				{"a legacy unmatched 404", UsageCategoryOther, "", 404, "", "caller"},
+				{"an MCP unauthorized", UsageCategoryMCP, "/feedback", 401, httpErrorCodeUnauthorized, "caller"},
+			} {
+				convey.Convey("given "+tc.name+", then it is "+string(tc.want), func() {
+					summary := summariseEventsForTest(t, []UsageEvent{{
+						Time: usageSummaryTestNow.Add(-time.Minute), Category: tc.category, Method: "GET",
+						Route: tc.route, Path: "/p", Status: tc.status, ErrorCode: tc.code,
+					}}, UsageWindow24h)
+
+					convey.So(summary.Errors, convey.ShouldHaveLength, 1)
+					convey.So(summary.Errors[0].Severity, convey.ShouldEqual, tc.want)
+
+					want := usageBreakdownOfOneForTest(tc.want, tc.code == "")
+
+					convey.So(summary.Totals.ErrorSeverity, convey.ShouldResemble, want)
+				})
+			}
+		})
+
+	convey.Convey("Given one route's 400s from the CLI and from another client, then they form a fault group "+
+		"and a caller group", t, func() {
+		events := make([]UsageEvent, 0, 3)
+		for _, category := range []UsageCategory{UsageCategoryCLI, UsageCategoryOther, UsageCategoryOther} {
+			events = append(events, UsageEvent{
+				Time: usageSummaryTestNow.Add(-time.Minute), Category: category, Method: "GET", Route: "/runs",
+				Status: 400, ErrorCode: httpErrorCodeBadRequest,
+			})
+		}
+
+		groups := summariseEventsForTest(t, events, UsageWindow24h).Errors
+		convey.So(groups, convey.ShouldHaveLength, 2)
+		convey.So(groups[0].Severity, convey.ShouldEqual, UsageErrorSeverityFault)
+		convey.So(groups[0].ByCategory, convey.ShouldResemble, map[string]int64{"cli": 1})
+		convey.So(groups[1].Severity, convey.ShouldEqual, UsageErrorSeverityCaller)
+		convey.So(groups[1].Count, convey.ShouldEqual, 2)
+	})
+
+	convey.Convey("Given 60 large expected and legacy groups and one small fault and caller group, "+
+		"then the group cap keeps the fault and caller groups", t, func() {
+		events := make([]UsageEvent, 0, 124)
+
+		for i := range 60 {
+			for _, code := range []string{httpErrorCodeNotFound, ""} {
+				events = append(events, UsageEvent{
+					Time: usageSummaryTestNow.Add(-time.Minute), Category: UsageCategoryCLI, Method: "GET",
+					Route: fmt.Sprintf("/r%02d/:id", i), Status: 404, ErrorCode: code,
+				})
+			}
+		}
+
+		events = append(events,
+			UsageEvent{
+				Time: usageSummaryTestNow.Add(-time.Minute), Category: UsageCategoryOther, Method: "GET",
+				Route: "/runs", Status: 400, ErrorCode: httpErrorCodeBadRequest,
+			},
+			UsageEvent{
+				Time: usageSummaryTestNow.Add(-time.Minute), Category: UsageCategoryCLI, Method: "GET",
+				Route: "/runs", Status: 502, ErrorCode: httpErrorCodeUpstreamImpaired,
+			},
+		)
+
+		summary := summariseEventsForTest(t, events, UsageWindow24h)
+		groups := summary.Errors
+		convey.So(groups, convey.ShouldHaveLength, 50)
+		convey.So(groups[0].Severity, convey.ShouldEqual, UsageErrorSeverityFault)
+		convey.So(groups[1].Severity, convey.ShouldEqual, UsageErrorSeverityCaller)
+		convey.So(groups[2].ErrorCode, convey.ShouldNotBeNil)
+		convey.So(groups[49].ErrorCode, convey.ShouldNotBeNil)
+		convey.So(summary.Totals.ErrorSeverity, convey.ShouldResemble, UsageErrorBreakdown{
+			Fault: 1, Caller: 1, Expected: 120, Legacy: UsageLegacyErrors{Expected: 60},
+		})
+	})
+}
+
+func TestUsageLegacyErrorTotals(t *testing.T) {
+	convey.Convey("Given legacy 502s, a legacy CLI 400, legacy lookup misses, and a detailed fault", t, func() {
+		legacy := func(route string, status int, category UsageCategory) UsageEvent {
+			return UsageEvent{
+				Time: usageSummaryTestNow.Add(-time.Hour), Category: category, Method: "GET", Route: route,
+				Status: status,
+			}
+		}
+
+		events := []UsageEvent{
+			legacy("/export/:children/:parent_kind/:parent_id", 502, UsageCategoryCLI),
+			legacy("/export/:children/:parent_kind/:parent_id", 502, UsageCategoryCLI),
+			legacy("/classify/:id", 502, UsageCategoryOther),
+			legacy("/study/:id/latest-data", 400, UsageCategoryCLI),
+			legacy("/resolve/study/:id", 404, UsageCategoryCLI),
+			legacy("/classify/:id", 409, UsageCategoryCLI),
+			legacy("", 404, UsageCategoryOther),
+			{
+				Time: usageSummaryTestNow.Add(-time.Hour), Category: UsageCategoryCLI, Method: "GET",
+				Route: "/runs", Status: 503, ErrorCode: httpErrorCodeCacheNeverSynced,
+			},
+		}
+
+		summary := summariseEventsForTest(t, events, UsageWindow24h)
+
+		convey.Convey("then the totals judge legacy rows by status, as their groups do, and count them apart", func() {
+			convey.So(summary.Totals.ErrorSeverity, convey.ShouldResemble, UsageErrorBreakdown{
+				Fault: 5, Caller: 1, Expected: 2,
+				Legacy: UsageLegacyErrors{Fault: 4, Caller: 1, Expected: 2},
+			})
+
+			bySeverity := map[UsageErrorSeverity]int64{}
+			for _, group := range summary.Errors {
+				bySeverity[group.Severity] += group.Count
+			}
+
+			convey.So(bySeverity, convey.ShouldResemble, map[UsageErrorSeverity]int64{
+				UsageErrorSeverityFault: 5, UsageErrorSeverityCaller: 1, UsageErrorSeverityExpected: 2,
+			})
+		})
+	})
+}
+
+func TestUsageErrorProbes(t *testing.T) {
+	convey.Convey("Given misses from probes and from a final lookup, and a probe that failed", t, func() {
+		at := func(hoursAgo int) time.Time { return usageSummaryTestNow.Add(-time.Duration(hoursAgo) * time.Hour) }
+		miss := func(hoursAgo int, route string, probe bool) UsageEvent {
+			return UsageEvent{
+				Time: at(hoursAgo), Category: UsageCategoryCLI, Method: "GET", Route: route, Status: 404,
+				ErrorCode: httpErrorCodeNotFound, Probe: probe,
+			}
+		}
+
+		summary := summariseEventsForTest(t, []UsageEvent{
+			miss(1, "/resolve/study/:id", true),
+			miss(2, "/resolve/study/:id", true),
+			miss(30, "/resolve/study/:id", true),
+			miss(1, "/resolve/study/:id", false),
+			miss(1, "/classify/:id", false),
+			{
+				Time: at(1), Category: UsageCategoryCLI, Method: "GET", Route: "/resolve/study/:id", Status: 502,
+				ErrorCode: httpErrorCodeUpstreamImpaired, Probe: true,
+			},
+			{Time: at(1), Category: UsageCategoryCLI, Method: "GET", Route: "/classify/:id", Status: 200, Probe: true},
+		}, UsageWindow7d)
+
+		convey.Convey("then probe and final misses form separate groups, and a failed probe is a fault", func() {
+			keys := make([]string, 0, len(summary.Errors))
+			for _, group := range summary.Errors {
+				keys = append(keys, fmt.Sprintf("%s %d %s %t %d", group.Route, group.Status, group.Severity,
+					group.Probe, group.Count))
+			}
+
+			convey.So(keys, convey.ShouldResemble, []string{
+				"/resolve/study/:id 502 fault true 1",
+				"/resolve/study/:id 404 expected true 3",
+				"/classify/:id 404 expected false 1",
+				"/resolve/study/:id 404 expected false 1",
+			})
+		})
+
+		convey.Convey("then the totals count expected probe answers apart from other expected answers", func() {
+			convey.So(summary.Totals.ErrorSeverity, convey.ShouldResemble, UsageErrorBreakdown{
+				Fault: 1, Expected: 2, Probe: 3,
+			})
+		})
+
+		convey.Convey("then each day carries its own breakdown", func() {
+			breakdowns := map[string]UsageErrorBreakdown{}
+			for _, day := range summary.Days {
+				breakdowns[day.Date] = day.ErrorSeverity
+			}
+
+			convey.So(breakdowns["2026-10-09"], convey.ShouldResemble, UsageErrorBreakdown{Probe: 1})
+			convey.So(breakdowns["2026-10-10"], convey.ShouldResemble, UsageErrorBreakdown{
+				Fault: 1, Expected: 2, Probe: 2,
+			})
+			convey.So(breakdowns["2026-10-08"], convey.ShouldResemble, UsageErrorBreakdown{})
+		})
+	})
+}
+
+// usageBreakdownOfOneForTest returns the breakdown of one error row of
+// severity, recorded before error details when legacy.
+func usageBreakdownOfOneForTest(severity UsageErrorSeverity, legacy bool) UsageErrorBreakdown {
+	var one int64
+	if legacy {
+		one = 1
+	}
+
+	switch severity {
+	case UsageErrorSeverityFault:
+		return UsageErrorBreakdown{Fault: 1, Legacy: UsageLegacyErrors{Fault: one}}
+	case UsageErrorSeverityCaller:
+		return UsageErrorBreakdown{Caller: 1, Legacy: UsageLegacyErrors{Caller: one}}
+	default:
+		return UsageErrorBreakdown{Expected: 1, Legacy: UsageLegacyErrors{Expected: one}}
+	}
 }
 
 // usageFixtureFForTest returns the nine rows of spec fixture F.
