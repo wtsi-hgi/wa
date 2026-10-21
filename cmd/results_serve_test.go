@@ -709,7 +709,7 @@ func TestResultsServeCommandA2(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(info.Mode().Perm(), convey.ShouldEqual, 0o644)
 
-		ownerConfig, err := resultsServeOwnerSessionConfig(tokenPath, results.NewOwnerSessionStore())
+		ownerConfig, err := resultsServeOwnerSessionConfig(tokenPath, results.NewOwnerSessionStore(), nil)
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(bytes.Equal(ownerConfig.ServerToken, leakedToken), convey.ShouldBeFalse)
 

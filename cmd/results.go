@@ -318,7 +318,7 @@ func validateResultsServeACMECache(cacheDir string) error {
 	return nil
 }
 
-func resultsServeOwnerSessionConfig(tokenBasename string, store results.OwnerSessionStore) (results.OwnerSessionConfig, error) {
+func resultsServeOwnerSessionConfig(tokenBasename string, store results.OwnerSessionStore, warn io.Writer) (results.OwnerSessionConfig, error) {
 	currentUser, err := osuser.Current()
 	if err != nil {
 		return results.OwnerSessionConfig{}, err
@@ -329,7 +329,7 @@ func resultsServeOwnerSessionConfig(tokenBasename string, store results.OwnerSes
 		return results.OwnerSessionConfig{}, err
 	}
 
-	serverToken, err := resultsServeServerToken(tokenPath)
+	serverToken, err := resultsServeServerToken(tokenPath, warn)
 	if err != nil {
 		return results.OwnerSessionConfig{}, err
 	}
@@ -341,12 +341,30 @@ func resultsServeOwnerSessionConfig(tokenBasename string, store results.OwnerSes
 	}, nil
 }
 
-func resultsServeServerToken(tokenPath string) ([]byte, error) {
-	if token, err := gas.GetStoredToken(tokenPath); err == nil && token != nil {
+// resultsServeServerToken returns the server token stored at tokenPath,
+// generating and storing a new one when the file is absent, too short to hold
+// a token, or accessible to other users. A token whose only fault is loosened
+// group or owner permission bits has mode 0600 restored and is reused, with a
+// warning written to warn (which may be nil); see
+// repairResultsServeServerTokenPerms. Any other problem, such as an unreadable
+// file or one whose permissions cannot be restored, is returned rather than
+// silently replacing a token that clients may hold.
+func resultsServeServerToken(tokenPath string, warn io.Writer) ([]byte, error) {
+	if err := repairResultsServeServerTokenPerms(tokenPath, warn); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	token, err := gas.GetStoredToken(tokenPath)
+	if err == nil && token != nil {
 		return token, nil
 	}
 
-	token, err := gas.GenerateToken()
+	var permissionsErr gas.JWTPermissionsError
+	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.As(err, &permissionsErr) {
+		return nil, fmt.Errorf("read server token: %w", err)
+	}
+
+	token, err = gas.GenerateToken()
 	if err != nil {
 		return nil, err
 	}
@@ -356,6 +374,48 @@ func resultsServeServerToken(tokenPath string) ([]byte, error) {
 	}
 
 	return token, nil
+}
+
+// repairResultsServeServerTokenPerms restores mode 0600 on an existing server
+// token file whose permissions grant nothing to other users but are not
+// exactly 0600, writing a warning to warn (which may be nil). go-authserver
+// refuses such a file, so without this the token would be replaced on every
+// start.
+//
+// The case this exists for is Kubernetes: kubelet applies the pod's
+// securityContext.fsGroup to the volume on each mount, adding g+rw to every
+// file. That group is the pod's own, so the token has not been exposed, and
+// rotating it would break every client holding a copy (such as the farm
+// website's copy of the MLWH admin token). A file with any "other" permission
+// bits set may have been read by anyone, so it is left alone and the caller
+// replaces it.
+//
+// It returns an error wrapping os.ErrNotExist when the file is absent, and an
+// error when the path is not a regular file or its mode cannot be changed.
+func repairResultsServeServerTokenPerms(tokenPath string, warn io.Writer) error {
+	info, err := os.Stat(tokenPath)
+	if err != nil {
+		return err
+	}
+
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("server token %s is not a regular file", tokenPath)
+	}
+
+	mode := info.Mode()
+	if mode == 0o600 || mode.Perm()&0o007 != 0 {
+		return nil
+	}
+
+	if err := os.Chmod(tokenPath, 0o600); err != nil {
+		return fmt.Errorf("restore server token permissions: %w", err)
+	}
+
+	if warn != nil {
+		_, _ = fmt.Fprintf(warn, "warning: server token %s had mode %04o; restored 0600\n", tokenPath, mode.Perm())
+	}
+
+	return nil
 }
 
 // writeResultsServeServerToken writes token to tokenPath at mode 0600. Missing
@@ -1883,7 +1943,7 @@ func newResultsServeCommand() *cobra.Command {
 			authServer := resultsServeNewAuthServer(cmd.ErrOrStderr())
 			ownerStore := results.NewOwnerSessionStore()
 
-			ownerConfig, err := resultsServeOwnerSessionConfig(securityConfig.serverToken, ownerStore)
+			ownerConfig, err := resultsServeOwnerSessionConfig(securityConfig.serverToken, ownerStore, cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
