@@ -21,6 +21,7 @@ import {
     studySchema,
 } from "@/lib/contracts";
 
+import usageSummaryAnonFixture from "./fixtures/usage-summary-30d-anon.json";
 import usageSummaryA3Fixture from "./fixtures/usage-summary-a3-24h.json";
 
 type ContractsModule = typeof import("@/lib/contracts");
@@ -1052,6 +1053,62 @@ describe("E2 usage contracts", () => {
         expect(contracts.usageSummarySchema.parse(usageSummaryA3)).toEqual(
             usageSummaryA3,
         );
+    });
+
+    it("parses a summary with the dashboard fields unchanged", () => {
+        const summary: Record<string, unknown> = {
+            ...usageSummaryAnonFixture,
+            filter: { category: "cli", user: "user01" },
+            bucket_unit: "hour",
+        };
+
+        expect(contracts.usageSummarySchema.parse(summary)).toEqual(summary);
+        expect(
+            contracts.usageSummarySchema.parse({
+                ...summary,
+                previous_totals: null,
+            }).previous_totals,
+        ).toBeNull();
+        expect(
+            contracts.usageSummarySchema.safeParse({
+                ...summary,
+                bucket_unit: "month",
+            }).success,
+        ).toBe(false);
+    });
+
+    it("accepts only filters wa can apply", () => {
+        const valid = [
+            {},
+            { category: "web" },
+            { user: "u".repeat(128), agent: "a".repeat(256), tool: "t" },
+            { method: "GET", route: "/studies" },
+        ];
+        const invalid = [
+            { category: "bogus" },
+            { user: "" },
+            { user: "u".repeat(129) },
+            // 65 characters but 130 UTF-8 bytes, over wa's 128-byte cap.
+            { user: "é".repeat(65) },
+            { method: "GET" },
+            { route: "/studies" },
+            { method: "GET", route: "studies" },
+            { other: "x" },
+        ];
+
+        for (const filter of valid) {
+            expect(
+                contracts.usageFilterInputSchema.safeParse(filter).success,
+                JSON.stringify(filter),
+            ).toBe(true);
+        }
+
+        for (const filter of invalid) {
+            expect(
+                contracts.usageFilterInputSchema.safeParse(filter).success,
+                JSON.stringify(filter),
+            ).toBe(false);
+        }
     });
 
     it("rejects a usage summary with a bad window, bad category or no series", () => {

@@ -3,7 +3,13 @@
  */
 
 import { createElement } from "react";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+    cleanup,
+    fireEvent,
+    render,
+    screen,
+    within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -12,10 +18,13 @@ import type {
 } from "@/app/(results)/usage/actions";
 import {
     usageSummarySchema,
+    type UsageErrorBreakdown,
+    type UsageFilter,
     type UsageSummary,
     type UsageWindow,
 } from "@/lib/contracts";
 
+import usageSummaryAnonFixture from "./fixtures/usage-summary-30d-anon.json";
 import usageSummaryA3Fixture from "./fixtures/usage-summary-a3-24h.json";
 
 const actionMocks = vi.hoisted(() => ({
@@ -41,40 +50,56 @@ async function renderPage(searchParams: Record<string, string | string[]>) {
     return render(element);
 }
 
-async function renderView(summary: UsageSummary, window: UsageWindow) {
+// anonSummary is the real 30-day production shape, anonymised, with the
+// severity fields a current server adds.
+function anonSummary(overrides: Partial<UsageSummary> = {}): UsageSummary {
+    return {
+        ...usageSummarySchema.parse(usageSummaryAnonFixture),
+        ...overrides,
+    };
+}
+
+async function renderView(
+    summary: UsageSummary,
+    window: UsageWindow,
+    filter: UsageFilter = {},
+) {
     const { UsageAdminView } = await import("@/components/usage-admin-view");
 
-    return render(createElement(UsageAdminView, { summary, window }));
+    return render(createElement(UsageAdminView, { filter, summary, window }));
 }
 
 function section(name: string): HTMLElement {
     return screen.getByRole("region", { name });
 }
 
-// rowCells returns the text of each cell in the row of table whose first
-// cell is exactly label.
-function rowCells(table: HTMLElement, label: string): string[] {
-    const row = within(table)
-        .getAllByRole("row")
-        .find((candidate) => {
-            const first = candidate.querySelector("th, td");
+// kpi returns the value and change text of the KPI tile label.
+function kpi(label: string): { change: string; detail: string; value: string } {
+    const tile = screen.getByTestId(`kpi-${label}`);
+    const details = tile.querySelectorAll("dd");
 
-            return first?.textContent === label;
-        });
-
-    if (!row) {
-        throw new Error(`no row ${label}`);
-    }
-
-    return Array.from(row.querySelectorAll("th, td")).map(
-        (cell) => cell.textContent ?? "",
-    );
+    return {
+        change: within(tile).queryByTestId("kpi-change")?.textContent ?? "",
+        detail: details[details.length - 1]?.textContent ?? "",
+        value: within(tile).getByTestId("kpi-value").textContent ?? "",
+    };
 }
 
-function statValue(label: string): string {
-    const term = screen.getByText(label, { selector: "dt" });
+// attentionItems returns the Needs attention rows' summary text.
+function attentionItems(): string[] {
+    return within(section("Needs attention"))
+        .queryAllByRole("listitem")
+        .filter((item) => item.id.startsWith("err-"))
+        .map((item) => item.querySelector("summary")?.textContent ?? "");
+}
 
-    return term.nextElementSibling?.textContent ?? "";
+// panelLinks returns the hrefs of the links in region name, by link text.
+function panelLinks(name: string): Record<string, string> {
+    return Object.fromEntries(
+        within(section(name))
+            .getAllByRole("link")
+            .map((link) => [link.textContent, link.getAttribute("href") ?? ""]),
+    );
 }
 
 const noteText =
@@ -114,7 +139,7 @@ describe("E4 usage page", () => {
             expect(
                 actionMocks.getUsageSummaryAction,
                 JSON.stringify(params),
-            ).toHaveBeenCalledExactlyOnceWith(expected);
+            ).toHaveBeenCalledExactlyOnceWith(expected, {});
         }
     });
 
@@ -124,7 +149,52 @@ describe("E4 usage page", () => {
 
         render(await UsageAdminPage({}));
 
-        expect(actionMocks.getUsageSummaryAction).toHaveBeenCalledWith("7d");
+        expect(actionMocks.getUsageSummaryAction).toHaveBeenCalledWith(
+            "7d",
+            {},
+        );
+    });
+
+    it("passes a valid filter to the action and drops an invalid one", async () => {
+        const cases: Array<{
+            expected: UsageFilter;
+            params: Record<string, string | string[]>;
+        }> = [
+            {
+                params: { category: "mcp", user: "user01", ignored: "x" },
+                expected: { category: "mcp", user: "user01" },
+            },
+            {
+                params: {
+                    method: "GET",
+                    route: "/studies",
+                    tool: "t",
+                    agent: "a",
+                },
+                expected: {
+                    method: "GET",
+                    route: "/studies",
+                    tool: "t",
+                    agent: "a",
+                },
+            },
+            { params: { user: ["a", "b"], tool: "" }, expected: {} },
+            { params: { category: "bogus", user: "user01" }, expected: {} },
+            { params: { method: "GET" }, expected: {} },
+            { params: { method: "GET", route: "studies" }, expected: {} },
+            { params: { user: "u".repeat(129) }, expected: {} },
+        ];
+
+        for (const { params, expected } of cases) {
+            actionMocks.getUsageSummaryAction.mockClear();
+            await renderPage(params);
+            cleanup();
+
+            expect(
+                actionMocks.getUsageSummaryAction,
+                JSON.stringify(params),
+            ).toHaveBeenCalledExactlyOnceWith("7d", expected);
+        }
     });
 
     it("renders the view for an ok state with the requested window", async () => {
@@ -200,698 +270,6 @@ describe("E4 usage page", () => {
     }
 });
 
-describe("E4 usage admin view", () => {
-    it("links each window preset and marks the current one", async () => {
-        await renderView(a3Summary(), "24h");
-
-        const nav = screen.getByRole("navigation", { name: "Window" });
-        const links = within(nav).getAllByRole("link");
-
-        expect(
-            links.map((link) => [
-                link.textContent,
-                link.getAttribute("href"),
-                link.getAttribute("aria-current"),
-            ]),
-        ).toEqual([
-            ["Last 24 hours", "/usage?window=24h", "page"],
-            ["Last 7 days", "/usage", null],
-            ["Last 30 days", "/usage?window=30d", null],
-            ["All time", "/usage?window=all", null],
-        ]);
-    });
-
-    it("marks Last 7 days current for the 7d window", async () => {
-        await renderView(a3Summary({ window: "7d" }), "7d");
-
-        expect(
-            screen
-                .getByRole("link", { name: "Last 7 days" })
-                .getAttribute("aria-current"),
-        ).toBe("page");
-        expect(
-            screen
-                .getByRole("link", { name: "Last 24 hours" })
-                .getAttribute("aria-current"),
-        ).toBeNull();
-    });
-
-    it("renders the A3 fixture's stats, categories, and endpoints", async () => {
-        await renderView(a3Summary(), "24h");
-
-        expect(
-            screen.getByRole("heading", { level: 1, name: "MLWH usage" }),
-        ).toBeTruthy();
-        expect(statValue("Requests")).toBe("6");
-        expect(statValue("Errors")).toBe("3 (50.0%)");
-        expect(statValue("Sessions")).toBe("3");
-        expect(statValue("Clients by IP")).toBe("1");
-        expect(statValue("Users (self-declared)")).toBe("2");
-
-        const byCategory = section("By category");
-        expect(
-            within(byCategory)
-                .getAllByRole("columnheader")
-                .map((cell) => cell.textContent),
-        ).toEqual([
-            "Category",
-            "Requests",
-            "Errors",
-            "Error rate",
-            "Sessions",
-            "Clients by IP",
-            "Users",
-            "Requests/session (median)",
-            "Requests/session (max)",
-        ]);
-        expect(within(byCategory).getAllByRole("row")).toHaveLength(7);
-        expect(rowCells(byCategory, "CLI")).toEqual([
-            "CLI",
-            "3",
-            "1",
-            "33.3%",
-            "2",
-            "0",
-            "2",
-            "1",
-            "2",
-        ]);
-        expect(rowCells(byCategory, "Results server")[1]).toBe("0");
-        expect(rowCells(byCategory, "mlwhdiff server")[1]).toBe("0");
-        expect(rowCells(byCategory, "Web")[1]).toBe("0");
-        expect(rowCells(byCategory, "Other API")).toEqual([
-            "Other API",
-            "2",
-            "2",
-            "100.0%",
-            "0",
-            "1",
-            "0",
-            "0",
-            "0",
-        ]);
-
-        const endpoints = section("Endpoints");
-        expect(
-            within(endpoints)
-                .getAllByRole("columnheader")
-                .map((cell) => cell.textContent),
-        ).toEqual([
-            "Endpoint",
-            "Requests",
-            "Errors",
-            "Error rate",
-            "Median latency (ms)",
-            "p95 latency (ms)",
-            "Categories",
-        ]);
-        expect(rowCells(endpoints, "GET /studies")).toEqual([
-            "GET /studies",
-            "4",
-            "1",
-            "25.0%",
-            "20.0",
-            "40.0",
-            "CLI 2, MCP 1, Other API 1",
-        ]);
-        const studiesErrors = within(endpoints).getByRole("link", {
-            name: "1 error on GET /studies, see details",
-        });
-        expect(studiesErrors.getAttribute("href")).toBe(
-            "#usage-errors-GET-studies",
-        );
-        expect(studiesErrors.textContent).toBe("1");
-        expect(rowCells(endpoints, "GET /classify/:id")).toEqual([
-            "GET /classify/:id",
-            "1",
-            "1",
-            "100.0%",
-            "5.0",
-            "5.0",
-            "CLI 1",
-        ]);
-
-        expect(
-            screen.getByRole("heading", {
-                level: 2,
-                name: "Trend (24-hour periods)",
-            }),
-        ).toBeTruthy();
-    });
-
-    it("renders the Trend rows with latest, previous, and one bar per period", async () => {
-        await renderView(a3Summary(), "24h");
-
-        const trend = section("Trend (24-hour periods)");
-        const labels = within(trend)
-            .getAllByRole("row")
-            .slice(1)
-            .map((row) => row.querySelector("th, td")?.textContent);
-
-        expect(labels).toEqual([
-            "All requests",
-            "CLI",
-            "MCP",
-            "Web",
-            "Results server",
-            "mlwhdiff server",
-            "Other API",
-            "GET /studies",
-            "GET /classify/:id",
-        ]);
-        expect(rowCells(trend, "All requests").slice(0, 3)).toEqual([
-            "All requests",
-            "6",
-            "1",
-        ]);
-        expect(rowCells(trend, "Web").slice(0, 3)).toEqual(["Web", "0", "0"]);
-
-        expect(
-            within(trend).getByRole("columnheader", {
-                name: "10 periods, oldest first",
-            }),
-        ).toBeTruthy();
-
-        const strip = within(trend).getByRole("img", {
-            name: "All requests: latest 6, previous 1, 10 periods",
-        });
-        const bars = Array.from(strip.querySelectorAll("[title]"));
-
-        expect(bars).toHaveLength(10);
-        expect(bars[9].getAttribute("title")).toBe(
-            "2026-10-09T12:00:00Z to 2026-10-10T12:00:00Z: 6",
-        );
-        expect(bars[0].getAttribute("title")).toBe(
-            "2026-09-30T12:00:00Z to 2026-10-01T12:00:00Z: 1",
-        );
-
-        // Each bar's height is proportional to the row's maximum (6).
-        const heights = bars.map(
-            (bar) => (bar.firstElementChild as HTMLElement).style.height,
-        );
-        expect(heights[9]).toBe("100%");
-        expect(parseFloat(heights[8])).toBeCloseTo(100 / 6, 5);
-        expect(parseFloat(heights[1])).toBe(0);
-
-        // A row with a smaller maximum is scaled to its own maximum (1), not
-        // to the All requests maximum.
-        const classifyBars = Array.from(
-            within(trend)
-                .getByRole("img", {
-                    name: "GET /classify/:id: latest 1, previous 0, 10 periods",
-                })
-                .querySelectorAll("[title]"),
-        );
-        expect(
-            (classifyBars[9].firstElementChild as HTMLElement).style.height,
-        ).toBe("100%");
-        expect(
-            parseFloat(
-                (classifyBars[8].firstElementChild as HTMLElement).style.height,
-            ),
-        ).toBe(0);
-
-        // Category rows read each period's by_category count.
-        expect(rowCells(trend, "CLI").slice(0, 3)).toEqual(["CLI", "3", "1"]);
-        const cliHeights = Array.from(
-            within(trend)
-                .getByRole("img", {
-                    name: "CLI: latest 3, previous 1, 10 periods",
-                })
-                .querySelectorAll("[title]"),
-        ).map((bar) => (bar.firstElementChild as HTMLElement).style.height);
-        expect(cliHeights[9]).toBe("100%");
-        expect(parseFloat(cliHeights[8])).toBeCloseTo(100 / 3, 5);
-        expect(parseFloat(cliHeights[1])).toBe(0);
-    });
-
-    it("formats Trend bar title counts like the table cells", async () => {
-        const base = a3Summary();
-
-        await renderView(
-            a3Summary({ series: [{ ...base.series[9], requests: 1234 }] }),
-            "24h",
-        );
-
-        const trend = section("Trend (24-hour periods)");
-        expect(rowCells(trend, "All requests")[1]).toBe("1,234");
-
-        const bar = within(trend)
-            .getByRole("img", {
-                name: "All requests: latest 1,234, previous -, 1 period",
-            })
-            .querySelector("[title]");
-        expect(bar?.getAttribute("title")).toBe(
-            "2026-10-09T12:00:00Z to 2026-10-10T12:00:00Z: 1,234",
-        );
-    });
-
-    it("orders Trend endpoint rows by series total, then key", async () => {
-        const base = a3Summary();
-
-        await renderView(
-            a3Summary({
-                series: [
-                    {
-                        ...base.series[0],
-                        by_endpoint: { "GET /b": 2, "GET /a": 2, "GET /z": 1 },
-                    },
-                    { ...base.series[1], by_endpoint: { "GET /z": 2 } },
-                ],
-            }),
-            "24h",
-        );
-
-        const labels = within(section("Trend (24-hour periods)"))
-            .getAllByRole("row")
-            .slice(8)
-            .map((row) => row.querySelector("th, td")?.textContent);
-
-        expect(labels).toEqual(["GET /z", "GET /a", "GET /b"]);
-    });
-
-    it("shows - for Previous with a single period", async () => {
-        const base = a3Summary();
-
-        await renderView(
-            a3Summary({ window: "30d", series: [base.series[9]] }),
-            "30d",
-        );
-
-        const trend = section("Trend (30-day periods)");
-        expect(rowCells(trend, "All requests").slice(0, 3)).toEqual([
-            "All requests",
-            "6",
-            "-",
-        ]);
-        expect(
-            within(trend).getByRole("img", {
-                name: "All requests: latest 6, previous -, 1 period",
-            }),
-        ).toBeTruthy();
-        expect(
-            within(trend).getByRole("columnheader", {
-                name: "1 period, oldest first",
-            }),
-        ).toBeTruthy();
-    });
-
-    it("names the Trend period length after the window", async () => {
-        await renderView(a3Summary({ window: "7d" }), "7d");
-
-        expect(
-            screen.getByRole("heading", { name: "Trend (7-day periods)" }),
-        ).toBeTruthy();
-    });
-
-    it("renders top clients, unmatched paths, users, and days", async () => {
-        await renderView(a3Summary(), "24h");
-
-        const clients = section("Top clients");
-        expect(rowCells(clients, "10.0.0.9 (by IP)")).toEqual([
-            "10.0.0.9 (by IP)",
-            "2",
-            "Other API 2",
-        ]);
-        expect(rowCells(clients, "run-a")).toEqual(["run-a", "2", "CLI 2"]);
-
-        const unmatched = section("Unmatched paths");
-        expect(rowCells(unmatched, "GET")).toEqual([
-            "GET",
-            "/bogus",
-            "1",
-            "Other API 1",
-            "",
-            "",
-        ]);
-
-        expect(rowCells(section("Top users (self-declared)"), "alice")).toEqual(
-            ["alice", "2", "CLI 2"],
-        );
-        expect(rowCells(section("MCP tools"), "mlwh_list_studies")).toEqual([
-            "mlwh_list_studies",
-            "1",
-            "0",
-        ]);
-        expect(rowCells(section("MCP agents"), "claude-code/2.1.0")).toEqual([
-            "claude-code/2.1.0",
-            "1",
-            "0",
-        ]);
-        expect(
-            rowCells(section("Other API user agents"), "curl/8.5.0"),
-        ).toEqual(["curl/8.5.0", "2", "2"]);
-
-        const days = section("Requests per day (UTC)");
-        expect(rowCells(days, "2026-10-09")).toEqual(["2026-10-09", "0", ""]);
-        expect(rowCells(days, "2026-10-10")).toEqual([
-            "2026-10-10",
-            "6",
-            "CLI 3, MCP 1, Other API 2",
-        ]);
-    });
-
-    it("names each unmatched path row by its path, not its method", async () => {
-        await renderView(a3Summary(), "24h");
-
-        const unmatched = section("Unmatched paths");
-        expect(
-            within(unmatched)
-                .getAllByRole("rowheader")
-                .map((cell) => cell.textContent),
-        ).toEqual(["/bogus"]);
-    });
-
-    it("renders map cells for unmatched tools and agents", async () => {
-        await renderView(
-            a3Summary({
-                unmatched: [
-                    {
-                        method: "GET",
-                        path: "/bogus",
-                        requests: 2,
-                        by_category: { other: 1, mcp: 1 },
-                        by_tool: { mlwh_bogus: 1 },
-                        by_agent: { "claude-code/2.1.0": 1 },
-                    },
-                ],
-            }),
-            "24h",
-        );
-
-        expect(rowCells(section("Unmatched paths"), "GET")).toEqual([
-            "GET",
-            "/bogus",
-            "2",
-            "MCP 1, Other API 1",
-            "mlwh_bogus 1",
-            "claude-code/2.1.0 1",
-        ]);
-    });
-
-    it("writes counts in joined map cells without thousands separators", async () => {
-        await renderView(
-            a3Summary({
-                unmatched: [
-                    {
-                        method: "GET",
-                        path: "/bogus",
-                        requests: 1239,
-                        by_category: { web: 1234, cli: 5 },
-                        by_tool: { mlwh_bogus: 1234, mlwh_other: 5 },
-                        by_agent: { "claude-code/2.1.0": 1234, curl: 5 },
-                    },
-                ],
-                users: [
-                    {
-                        name: "carol",
-                        by_ip: false,
-                        requests: 1239,
-                        by_category: { web: 1234, cli: 5 },
-                    },
-                ],
-            }),
-            "24h",
-        );
-
-        expect(rowCells(section("Unmatched paths"), "GET")).toEqual([
-            "GET",
-            "/bogus",
-            "1,239",
-            "CLI 5, Web 1234",
-            "mlwh_bogus 1234, mlwh_other 5",
-            "claude-code/2.1.0 1234, curl 5",
-        ]);
-        expect(rowCells(section("Top users (self-declared)"), "carol")).toEqual(
-            ["carol", "1,239", "CLI 5, Web 1234"],
-        );
-    });
-
-    it("lists categories cells in category order, not label order", async () => {
-        await renderView(
-            a3Summary({
-                users: [
-                    {
-                        name: "carol",
-                        by_ip: false,
-                        requests: 6,
-                        by_category: {
-                            other: 1,
-                            web: 1,
-                            mlwhdiff_server: 1,
-                            results_server: 1,
-                            mcp: 1,
-                            cli: 1,
-                        },
-                    },
-                ],
-            }),
-            "24h",
-        );
-
-        expect(rowCells(section("Top users (self-declared)"), "carol")).toEqual(
-            [
-                "carol",
-                "6",
-                "CLI 1, MCP 1, Web 1, Results server 1, mlwhdiff server 1, Other API 1",
-            ],
-        );
-    });
-
-    it('renders an empty user agent as "(none)"', async () => {
-        await renderView(
-            a3Summary({ other_user_agents: [{ value: "", requests: 4 }] }),
-            "24h",
-        );
-
-        expect(rowCells(section("Other API user agents"), "(none)")).toEqual([
-            "(none)",
-            "4",
-            "-",
-        ]);
-    });
-
-    it("omits Trend for all and explains an empty series otherwise", async () => {
-        await renderView(a3Summary({ window: "all", series: [] }), "all");
-
-        expect(screen.queryByRole("heading", { name: /^Trend/ })).toBeNull();
-        expect(screen.queryByText("No usage recorded yet.")).toBeNull();
-
-        cleanup();
-        await renderView(a3Summary({ window: "7d", series: [] }), "7d");
-
-        expect(
-            within(section("Trend (7-day periods)")).getByText(
-                "No usage recorded yet.",
-            ),
-        ).toBeTruthy();
-    });
-
-    it("reports dropped events only when there are some", async () => {
-        const dropped =
-            "3 requests were not recorded because the usage queue was full.";
-
-        await renderView(a3Summary({ dropped_events: 3 }), "24h");
-        expect(screen.getByText(dropped, { exact: false })).toBeTruthy();
-
-        cleanup();
-        await renderView(a3Summary({ dropped_events: 0 }), "24h");
-        expect(
-            screen.queryByText(/were not recorded because the usage queue/),
-        ).toBeNull();
-    });
-
-    it('shows "None." for each empty list section', async () => {
-        await renderView(
-            a3Summary({
-                endpoints: [],
-                mcp_tools: [],
-                mcp_agents: [],
-                other_user_agents: [],
-                unmatched: [],
-                users: [],
-                clients: [],
-                days: [],
-            }),
-            "24h",
-        );
-
-        for (const name of [
-            "Endpoints",
-            "MCP tools",
-            "MCP agents",
-            "Other API user agents",
-            "Unmatched paths",
-            "Top users (self-declared)",
-            "Top clients",
-            "Requests per day (UTC)",
-        ]) {
-            const region = section(name);
-
-            expect(within(region).getByText("None."), name).toBeTruthy();
-            expect(within(region).queryByRole("table"), name).toBeNull();
-        }
-
-        expect(within(section("By category")).getAllByRole("row")).toHaveLength(
-            7,
-        );
-    });
-
-    it("lets long caller-supplied values break anywhere, but not routes", async () => {
-        const long = (prefix: string, n: number) =>
-            prefix + "x".repeat(n - prefix.length);
-        const path = long("/", 256);
-        const userAgent = long("other/", 512);
-        const tool = long("tool_", 128);
-        const agent = long("agent/", 256);
-        const user = long("user", 128);
-        const client = long("run-", 128);
-
-        await renderView(
-            a3Summary({
-                mcp_tools: [{ value: tool, requests: 1 }],
-                mcp_agents: [{ value: agent, requests: 1 }],
-                other_user_agents: [{ value: userAgent, requests: 1 }],
-                unmatched: [
-                    {
-                        method: "GET",
-                        path,
-                        requests: 1,
-                        by_category: { mcp: 1 },
-                        by_tool: { [tool]: 1 },
-                        by_agent: { [agent]: 1 },
-                    },
-                ],
-                users: [
-                    {
-                        name: user,
-                        by_ip: false,
-                        requests: 1,
-                        by_category: { cli: 1 },
-                    },
-                ],
-                clients: [
-                    {
-                        name: client,
-                        by_ip: false,
-                        requests: 1,
-                        by_category: { cli: 1 },
-                    },
-                ],
-            }),
-            "24h",
-        );
-
-        // jsdom has no layout, so this checks the overflow-wrap contract
-        // that lets a cell's min-content width shrink below a long unbroken
-        // value: the text's nearest wrap class must be wrap-anywhere.
-        const wrapOf = (region: string, text: string) => {
-            let element: HTMLElement | null = within(section(region)).getByText(
-                text,
-            );
-
-            while (element) {
-                const wrap = Array.from(element.classList).find((name) =>
-                    /^(wrap-|break-words$|break-all$)/.test(name),
-                );
-
-                if (wrap) {
-                    return wrap;
-                }
-
-                element = element.parentElement;
-            }
-
-            return undefined;
-        };
-
-        for (const [region, text] of [
-            ["MCP tools", tool],
-            ["MCP agents", agent],
-            ["Other API user agents", userAgent],
-            ["Unmatched paths", path],
-            ["Unmatched paths", `${tool} 1`],
-            ["Unmatched paths", `${agent} 1`],
-            ["Top users (self-declared)", user],
-            ["Top clients", client],
-        ]) {
-            expect(wrapOf(region, text), `${region}: ${text}`).toBe(
-                "wrap-anywhere",
-            );
-        }
-
-        expect(wrapOf("Endpoints", "GET /studies")).toBe("break-words");
-    });
-
-    it("renders rows whose values collide after U+FFFD replacement", async () => {
-        // Go's JSON encoder writes invalid UTF-8 as U+FFFD, so distinct
-        // stored values such as /a%FF and /a%FE arrive identical.
-        const consoleError = vi
-            .spyOn(console, "error")
-            .mockImplementation(() => undefined);
-        const replaced = "/a\uFFFD";
-        const unmatchedRow = {
-            method: "GET",
-            path: replaced,
-            requests: 1,
-            by_category: { cli: 1 },
-            by_tool: {},
-            by_agent: {},
-        };
-        const nameRow = {
-            name: "\uFFFD",
-            by_ip: false,
-            requests: 1,
-            by_category: { cli: 1 },
-        };
-        const valueRow = { value: "\uFFFD", requests: 1 };
-
-        try {
-            await renderView(
-                a3Summary({
-                    mcp_tools: [valueRow, valueRow],
-                    mcp_agents: [valueRow, valueRow],
-                    other_user_agents: [valueRow, valueRow],
-                    unmatched: [unmatchedRow, unmatchedRow],
-                    users: [nameRow, nameRow],
-                    clients: [nameRow, nameRow],
-                }),
-                "24h",
-            );
-
-            for (const [region, text] of [
-                ["MCP tools", "\uFFFD"],
-                ["MCP agents", "\uFFFD"],
-                ["Other API user agents", "\uFFFD"],
-                ["Unmatched paths", replaced],
-                ["Top users (self-declared)", "\uFFFD"],
-                ["Top clients", "\uFFFD"],
-            ]) {
-                expect(
-                    within(section(region)).getAllByText(text),
-                    region,
-                ).toHaveLength(2);
-            }
-
-            const keyErrors = consoleError.mock.calls.filter((args) =>
-                String(args[0]).includes("two children with the same key"),
-            );
-            expect(keyErrors).toEqual([]);
-        } finally {
-            consoleError.mockRestore();
-        }
-    });
-
-    it("shows the note on every ok render", async () => {
-        for (const window of ["24h", "7d", "30d", "all"] as const) {
-            await renderView(a3Summary({ window }), window);
-
-            expect(screen.getByText(noteText), window).toBeTruthy();
-            cleanup();
-        }
-    });
-});
-
 type UsageErrorGroup = NonNullable<UsageSummary["errors"]>[number];
 
 function errorGroup(overrides: Partial<UsageErrorGroup>): UsageErrorGroup {
@@ -900,6 +278,8 @@ function errorGroup(overrides: Partial<UsageErrorGroup>): UsageErrorGroup {
         route: "/classify/:id",
         status: 404,
         error_code: "not_found",
+        severity: "expected",
+        probe: false,
         count: 1,
         first_seen: "2026-10-10T09:00:00Z",
         last_seen: "2026-10-10T09:00:00Z",
@@ -913,538 +293,739 @@ function errorGroup(overrides: Partial<UsageErrorGroup>): UsageErrorGroup {
     };
 }
 
-// errorGuide returns the Errors section's per-code "What to do" block.
-function errorGuide(): HTMLElement {
-    return within(section("Errors")).getByRole("group", { name: "What to do" });
+function breakdown(
+    overrides: Partial<UsageErrorBreakdown> = {},
+): UsageErrorBreakdown {
+    return {
+        fault: 0,
+        caller: 0,
+        expected: 0,
+        probe: 0,
+        legacy: { fault: 0, caller: 0, expected: 0 },
+        ...overrides,
+    };
 }
 
-// guideAction returns the guide's action text for the code label.
-function guideAction(label: string): string {
-    const term = within(errorGuide())
-        .getAllByRole("term")
-        .find((candidate) => candidate.textContent === label);
-    const definition = term?.nextElementSibling;
+// oldServer strips every field a server older than the dashboard API lacks.
+function oldServer(summary: UsageSummary): UsageSummary {
+    const strip = <T extends object>(row: T) => {
+        const { error_severity: _severity, ...rest } = row as T & {
+            error_severity?: unknown;
+        };
 
-    if (!definition) {
-        throw new Error(`no action for ${label}`);
-    }
+        return rest as T;
+    };
 
-    return definition.textContent ?? "";
+    return {
+        ...summary,
+        filter: undefined,
+        previous_totals: undefined,
+        buckets: undefined,
+        bucket_unit: undefined,
+        totals: strip(summary.totals),
+        categories: summary.categories.map(strip),
+        endpoints: summary.endpoints.map(strip),
+        mcp_tools: summary.mcp_tools.map(strip),
+        mcp_agents: summary.mcp_agents.map(strip),
+        other_user_agents: summary.other_user_agents.map(strip),
+        days: summary.days.map(strip),
+        series: summary.series.map(
+            ({ by_tool: _tool, by_user: _user, ...rest }) => rest,
+        ),
+        errors: summary.errors?.map(
+            ({ severity: _severity, probe: _probe, ...rest }) => rest,
+        ),
+    };
 }
 
-// errorEntry returns the Errors section's entry for the endpoint label and
-// the status-and-code label.
-function errorEntry(endpoint: string, code: string): HTMLElement {
-    const group = within(section("Errors")).getByRole("group", {
-        name: endpoint,
-    });
-
-    return within(group).getByRole("article", { name: code });
-}
-
-describe("usage errors section", () => {
-    it("groups the A3 fixture's errors by endpoint, then status and code", async () => {
+describe("usage dashboard header", () => {
+    it("links each window preset and marks the current one", async () => {
         await renderView(a3Summary(), "24h");
 
-        const errors = section("Errors");
-        expect(
-            within(errors)
-                .getAllByRole("heading", { level: 3 })
-                .map((heading) => heading.textContent),
-        ).toEqual([
-            "What to do",
-            "GET /classify/:id",
-            "GET /studies",
-            "GET (no matching route)",
-        ]);
+        const nav = screen.getByRole("navigation", { name: "Window" });
 
         expect(
-            within(errorGuide())
-                .getAllByRole("term")
-                .map((term) => term.textContent),
+            within(nav)
+                .getAllByRole("link")
+                .map((link) => [
+                    link.textContent,
+                    link.getAttribute("href"),
+                    link.getAttribute("aria-current"),
+                ]),
         ).toEqual([
-            "not_found",
-            "unknown (recorded before error details were captured)",
-            "no_route",
+            ["Last 24 hours", "/usage?window=24h", "page"],
+            ["Last 7 days", "/usage", null],
+            ["Last 30 days", "/usage?window=30d", null],
+            ["All time", "/usage?window=all", null],
         ]);
-        expect(guideAction("not_found")).toContain("guessing");
-        expect(within(errors).getAllByText(/guessing/)).toHaveLength(1);
+    });
 
-        const notFound = errorEntry("GET /classify/:id", "404 not_found");
-        expect(notFound.textContent).toContain(
-            "The identifier is not known to the MLWH.",
-        );
-        expect(notFound.textContent).not.toContain("guessing");
+    it("keeps the filter in window links only when the server filters", async () => {
+        const filter = { user: "user01" };
+
+        await renderView(anonSummary({ filter }), "30d", filter);
         expect(
-            within(notFound)
-                .getByRole("link", { name: "What to do about not_found" })
+            screen
+                .getByRole("link", { name: "Last 24 hours" })
                 .getAttribute("href"),
-        ).toBe("#usage-error-help-not_found");
+        ).toBe("/usage?window=24h&user=user01");
+
+        cleanup();
+        await renderView(oldServer(anonSummary()), "30d", filter);
         expect(
-            within(
-                within(notFound).getByRole("list", { name: "Top messages" }),
-            ).getByText("mlwh: not found: XYZ"),
+            screen
+                .getByRole("link", { name: "Last 24 hours" })
+                .getAttribute("href"),
+        ).toBe("/usage?window=24h");
+        expect(screen.getByRole("status").textContent).toContain(
+            "This MLWH server cannot filter usage, so all traffic is shown.",
+        );
+    });
+
+    it("shows removable filter chips", async () => {
+        const filter: UsageFilter = {
+            category: "mcp",
+            method: "GET",
+            route: "/studies",
+        };
+
+        await renderView(anonSummary({ filter }), "7d", filter);
+
+        const chips = screen.getByRole("group", { name: "Filters" });
+
+        expect(
+            within(chips)
+                .getAllByRole("link")
+                .map((link) => [
+                    link.getAttribute("aria-label") ?? link.textContent,
+                    link.getAttribute("href"),
+                ]),
+        ).toEqual([
+            [
+                "Remove filter Client type MCP",
+                "/usage?method=GET&route=%2Fstudies",
+            ],
+            ["Remove filter Endpoint GET /studies", "/usage?category=mcp"],
+            ["Clear all", "/usage"],
+        ]);
+    });
+
+    it("shows the note on every ok render", async () => {
+        for (const window of ["24h", "7d", "30d", "all"] as const) {
+            await renderView(a3Summary({ window }), window);
+
+            expect(screen.getByText(noteText), window).toBeTruthy();
+            cleanup();
+        }
+    });
+});
+
+describe("usage KPI strip", () => {
+    it("headlines the real 30 days: 15 faults at 0.95%, not 483 errors", async () => {
+        await renderView(anonSummary(), "30d");
+
+        expect(kpi("Requests").value).toBe("1,578");
+        expect(kpi("Requests").detail).toBe("CLI 95.9% · MCP 3.0%");
+        expect(kpi("People").value).toBe("12");
+        expect(kpi("Sessions").value).toBe("292");
+        expect(kpi("MCP requests").value).toBe("47");
+        expect(kpi("Faults").value).toBe("15");
+        expect(kpi("Faults").detail).toBe(
+            "0.95% of requests · 3 caller errors",
+        );
+        expect(
+            within(screen.getByTestId("kpi-Faults"))
+                .getByRole("link")
+                .getAttribute("href"),
+        ).toBe("#attention");
+        // Records start inside the window, so there is nothing to compare.
+        expect(kpi("Requests").change).toBe("no earlier records");
+    });
+
+    it("compares with the previous window when records cover it", async () => {
+        await renderView(
+            anonSummary({
+                window: "24h",
+                window_start: "2026-10-20T15:49:43Z",
+                earliest_record: "2026-10-01T00:00:00Z",
+                previous_totals: {
+                    requests: 1000,
+                    errors: 30,
+                    error_rate: 0.03,
+                    error_severity: breakdown({ fault: 20 }),
+                    sessions: 300,
+                    ip_clients: 1,
+                    users: 10,
+                },
+            }),
+            "24h",
+        );
+
+        expect(kpi("Requests").change).toBe("+58% vs previous");
+        expect(kpi("People").change).toBe("+2 vs previous");
+        expect(kpi("Sessions").change).toBe("−8 vs previous");
+        expect(kpi("Faults").change).toBe("−5 vs previous");
+    });
+
+    it("shows Errors for a server without severities", async () => {
+        await renderView(oldServer(anonSummary()), "30d");
+
+        expect(kpi("Errors").value).toBe("483");
+        expect(screen.queryByTestId("kpi-Faults")).toBeNull();
+        expect(kpi("Requests").change).toBe("");
+    });
+});
+
+describe("usage Needs attention", () => {
+    it("lists merged faults, then caller errors, with what to do", async () => {
+        await renderView(anonSummary(), "30d");
+
+        const items = attentionItems();
+
+        expect(items).toHaveLength(4);
+        expect(items[0]).toContain(
+            "502 upstream_impaired (inferred, recorded before error details) on 6 routes14",
+        );
+        expect(items[0]).toContain(
+            "Check the wa mlwh serve logs at the times shown, and the cache database's health.",
+        );
+        expect(items[0]).toMatch(/^Fault:/);
+        expect(items[1]).toContain(
+            "400 bad_request (inferred, recorded before error details) on GET /study/:id/latest-data1",
+        );
+        expect(items[2]).toMatch(/^Caller error:404 no_route \(inferred/);
+        expect(items[3]).toMatch(
+            /^Caller error:404 no_route on GET \(no matching route\)1/,
+        );
+
+        const region = section("Needs attention");
+
+        expect(region.textContent).toContain("15 faults · 3 caller errors");
+        expect(region.textContent).toContain(
+            "Expected lookup misses are not problems: 21 under Expected outcomes and 444 under Older errors.",
+        );
+    });
+
+    it("expands a row into its routes and lists unmatched paths for no_route", async () => {
+        await renderView(anonSummary(), "30d");
+
+        const row = document.getElementById("err-caller-404-no_route")!;
+
+        expect(row.querySelector("details")?.open).toBe(false);
+        expect(within(row).getByText("GET /version")).toBeTruthy();
+        expect(
+            within(row).getByRole("group", { name: "GET (no matching route)" }),
         ).toBeTruthy();
-        expect(within(notFound).getByText("/classify/XYZ")).toBeTruthy();
-        expect(notFound.textContent).toContain("bob");
 
-        const noRoute = errorEntry("GET (no matching route)", "404 no_route");
-        expect(noRoute.textContent).toContain("No endpoint matches");
-        expect(within(noRoute).getByText("/bogus")).toBeTruthy();
-    });
-
-    it("labels rows recorded before error details as unknown", async () => {
-        await renderView(a3Summary(), "24h");
-
-        const legacy = errorEntry(
-            "GET /studies",
-            "500 unknown (recorded before error details were captured)",
-        );
-        expect(legacy.textContent).toContain(
-            "recorded before the server stored error codes and messages",
-        );
-    });
-
-    it("explains every known code once, with its meaning in each entry and its action in the guide", async () => {
-        const codes = [
-            "not_found",
-            "ambiguous",
-            "unsupported_identifier",
-            "bad_request",
-            "cache_never_synced",
-            "upstream_impaired",
-            "no_route",
-            "payload_too_large",
-            "internal_error",
-            "uncoded",
-        ];
-
-        await renderView(
-            a3Summary({
-                errors: codes.map((code, index) =>
-                    errorGroup({ status: 400 + index, error_code: code }),
-                ),
-            }),
-            "24h",
-        );
-
-        for (const [index, code] of codes.entries()) {
-            const entry = errorEntry(
-                "GET /classify/:id",
-                `${400 + index} ${code}`,
-            );
-
-            expect(entry.textContent, code).not.toContain(
-                "No explanation for this code",
-            );
-            expect(guideAction(code), code).not.toBe("");
-            expect(guideAction(code), code).not.toContain(
-                "See that entry's messages and examples",
-            );
-        }
-    });
-
-    it("points an unknown code's guide entry back at its messages and examples", async () => {
-        await renderView(
-            a3Summary({
-                errors: [errorGroup({ status: 418, error_code: "teapot" })],
-            }),
-            "24h",
-        );
+        const faults = document.getElementById("err-fault-502-legacy")!;
 
         expect(
-            errorEntry("GET /classify/:id", "418 teapot").textContent,
-        ).toContain("No explanation for this code.");
-        expect(guideAction("teapot")).toBe(
-            "See that entry's messages and examples.",
+            within(faults)
+                .getAllByRole("group")
+                .map((group) => group.id),
+        ).toContain(
+            "err-fault-502-legacy-GET-export-_children-_parent_kind-_parent_id",
         );
     });
 
-    it("shows timeout and canceled kinds with their specific advice", async () => {
-        await renderView(
-            a3Summary({
-                errors: [
-                    errorGroup({
-                        status: 502,
-                        error_code: "upstream_impaired",
-                        count: 3,
-                        error_kinds: { timeout: 2, canceled: 1 },
-                    }),
-                ],
-            }),
-            "24h",
+    it("shows notices for dropped events and slow endpoints", async () => {
+        const summary = anonSummary({ dropped_events: 3 });
+
+        summary.endpoints[0] = { ...summary.endpoints[0], p95_ms: 2500 };
+        await renderView(summary, "30d");
+
+        const text = section("Needs attention").textContent ?? "";
+
+        expect(text).toContain(
+            "3 requests were not recorded because the usage queue was full.",
         );
-
-        const entry = errorEntry("GET /classify/:id", "502 upstream_impaired");
-        expect(entry.textContent).toContain("timeout 2");
-        expect(entry.textContent).toContain("canceled 1");
-        expect(guideAction("timeout")).toContain("slow query");
-        expect(guideAction("canceled")).toContain("client went away");
-
-        for (const [kind, count] of [
-            ["canceled", 1],
-            ["timeout", 2],
-        ] as const) {
-            const link = within(entry).getByRole("link", {
-                name: `What to do about ${kind} (${count})`,
-            });
-            const target = document.getElementById(
-                link.getAttribute("href")?.slice(1) ?? "",
-            );
-
-            expect(link.textContent).toBe(`${kind} ${count}`);
-            expect(target?.querySelector("dt")?.textContent).toBe(kind);
-            expect(errorGuide().contains(target)).toBe(true);
-        }
+        expect(text).toContain(
+            `GET ${summary.endpoints[0].route} is slow: p95 2.5 s.`,
+        );
     });
 
-    it("leaves causes without guide entries unlinked", async () => {
+    it("says when nothing needs fixing, and when the server reports no errors", async () => {
         await renderView(
-            a3Summary({
-                errors: [
-                    errorGroup({
-                        status: 502,
-                        error_code: "upstream_impaired",
-                        error_kinds: { constructor: 1 },
-                    }),
-                ],
+            anonSummary({
+                errors: [errorGroup({ count: 5 })],
+                totals: { ...anonSummary().totals, errors: 5 },
             }),
-            "24h",
+            "30d",
+        );
+        expect(section("Needs attention").textContent).toContain(
+            "No faults or caller errors in this window.",
         );
 
-        const entry = errorEntry("GET /classify/:id", "502 upstream_impaired");
-        expect(entry.textContent).toContain("Causes: constructor 1");
-        expect(
-            within(entry).queryByRole("link", { name: /constructor/ }),
-        ).toBeNull();
+        cleanup();
+        await renderView(anonSummary({ errors: undefined }), "30d");
+        expect(section("Needs attention").textContent).toContain(
+            "This MLWH server does not report error details.",
+        );
     });
 
     it("says how many errors the shown groups cover when the server capped them", async () => {
-        const errors = [
-            errorGroup({ count: 50 }),
-            errorGroup({ status: 400, error_code: "bad_request", count: 3 }),
-        ];
-
         await renderView(
-            a3Summary({
-                totals: { ...a3Summary().totals, errors: 56 },
-                errors,
-            }),
-            "24h",
-        );
-        expect(
-            within(section("Errors")).getByText(
-                "Showing the 2 largest groups (53 of 56 errors).",
-            ),
-        ).toBeTruthy();
-
-        cleanup();
-        await renderView(
-            a3Summary({
-                totals: { ...a3Summary().totals, errors: 53 },
-                errors,
-            }),
-            "24h",
-        );
-        expect(
-            within(section("Errors")).queryByText(/largest groups/),
-        ).toBeNull();
-    });
-
-    it("states shared advice once when several entries share a code or cause", async () => {
-        await renderView(
-            a3Summary({
+            anonSummary({
                 errors: [
                     errorGroup({
                         status: 502,
                         error_code: "upstream_impaired",
-                        error_kinds: { timeout: 1 },
-                    }),
-                    errorGroup({
-                        route: "/studies",
-                        status: 502,
-                        error_code: "upstream_impaired",
-                        error_kinds: { timeout: 1 },
+                        severity: "fault",
+                        count: 2,
                     }),
                 ],
             }),
-            "24h",
+            "30d",
         );
 
-        const errors = section("Errors");
-        expect(
-            within(errors).getAllByText(/cache database's health/),
-        ).toHaveLength(1);
-        expect(within(errors).getAllByText(/slow query/)).toHaveLength(1);
-        expect(
-            within(errors).getAllByText(
-                "The server could not read the MLWH cache database or another upstream service.",
-            ),
-        ).toHaveLength(2);
-        expect(
-            within(errorGuide())
-                .getAllByRole("term")
-                .map((term) => term.textContent),
-        ).toEqual(["upstream_impaired", "timeout"]);
+        expect(section("Needs attention").textContent).toContain(
+            "Showing the 1 largest error groups (2 of 483 errors).",
+        );
     });
 
-    it("lists top messages, MCP callers, and examples with their query", async () => {
+    it("classifies groups from a server without severities", async () => {
+        await renderView(oldServer(anonSummary()), "30d");
+
+        expect(attentionItems()).toHaveLength(4);
+    });
+
+    it("shows a group's causes, messages, and examples", async () => {
         await renderView(
-            a3Summary({
+            anonSummary({
                 errors: [
                     errorGroup({
-                        count: 3,
-                        messages: [
-                            { message: "no A", count: 2 },
-                            { message: "no B", count: 1 },
-                        ],
-                        by_tool: { mlwh_classify_identifier: 2 },
-                        by_agent: { "claude-code/2.1.0": 2 },
+                        status: 502,
+                        error_code: "upstream_impaired",
+                        severity: "fault",
+                        count: 2,
+                        error_kinds: { timeout: 1, other: 1 },
+                        messages: [{ message: "mlwh: deadline", count: 2 }],
                         examples: [
                             {
-                                ts: "2026-10-10T11:00:00Z",
-                                path: "/classify/A",
-                                query: "x=1",
+                                ts: "2026-10-10T09:00:00Z",
+                                path: "/classify/ID1",
+                                query: "token=[redacted]",
                                 category: "mcp",
                                 mcp_tool: "mlwh_classify_identifier",
                                 mcp_agent: "claude-code/2.1.0",
                                 client_id: "sess-1",
                                 username: "",
-                                message: "no A",
-                                error_kind: "",
+                                message: "mlwh: deadline",
+                                error_kind: "timeout",
                             },
                         ],
+                        by_category: { mcp: 2 },
+                        by_tool: { mlwh_classify_identifier: 2 },
                     }),
                 ],
             }),
-            "24h",
+            "30d",
         );
 
-        const entry = errorEntry("GET /classify/:id", "404 not_found");
-        const messages = within(entry).getByRole("list", {
-            name: "Top messages",
+        const entry = screen.getByRole("article", {
+            name: "502 upstream_impaired",
         });
+
+        expect(entry.textContent).toContain("Causes: other 1, timeout 1");
+        expect(entry.textContent).toContain("Timeouts mean a slow query");
         expect(
-            within(messages)
-                .getAllByRole("listitem")
-                .map((item) => item.textContent),
-        ).toEqual(["no A2", "no B1"]);
-        expect(entry.textContent).toContain("mlwh_classify_identifier 2");
-        expect(entry.textContent).toContain("claude-code/2.1.0 2");
-        expect(within(entry).getByText("/classify/A?x=1")).toBeTruthy();
-        expect(
-            within(entry).getByText("Messages and examples (1 example)"),
+            within(entry).getByText("mlwh: deadline", { selector: "li span" }),
         ).toBeTruthy();
+        expect(entry.textContent).toContain("/classify/ID1?token=[redacted]");
+        expect(entry.textContent).toContain(
+            "MCP · mlwh_classify_identifier · claude-code/2.1.0 · sess-1",
+        );
+    });
+});
+
+describe("usage activity and changes", () => {
+    it("clips the chart to the records and marks faults", async () => {
+        await renderView(anonSummary(), "30d");
+
+        const region = section("Activity");
+
+        expect(region.textContent).toContain(
+            "Requests per day · no records before 20 Oct",
+        );
+        expect(screen.getAllByTestId("activity-column")).toHaveLength(2);
+        expect(screen.getAllByTestId("fault-marker")).toHaveLength(2);
+        expect(within(region).getByRole("img").getAttribute("aria-label")).toBe(
+            "Requests per day from 20 Oct to 21 Oct: 1,578 requests, peak 859 at 21 Oct. 15 faults, 3 caller errors.",
+        );
+
+        const table = within(region).getByRole("table");
+
+        expect(
+            within(table)
+                .getAllByRole("row")
+                .map((row) => row.textContent),
+        ).toEqual(
+            [
+                "DayRequestsCLIMCPOther APIFaultsCaller errorsExpected",
+                "20 Oct7196792515",
+                "21 Oct8598352221",
+            ].map((text, index) =>
+                index === 0 ? text : expect.stringContaining(text.slice(0, 10)),
+            ),
+        );
     });
 
-    it("shows an empty state and a note for servers without error details", async () => {
-        await renderView(a3Summary({ errors: [] }), "24h");
-        expect(
-            within(section("Errors")).getByText("No errors in this window."),
-        ).toBeTruthy();
+    it("hides a category with its legend button and shows expected misses on demand", async () => {
+        await renderView(anonSummary(), "30d");
 
-        cleanup();
-        const { errors: _errors, ...withoutErrors } = a3Summary();
-        await renderView(withoutErrors, "24h");
+        const legend = screen.getByRole("group", { name: "Chart legend" });
+
         expect(
-            within(section("Errors")).getByText(
-                /does not report error details/,
+            within(legend)
+                .getAllByRole("button")
+                .map((button) => button.textContent),
+        ).toEqual(["CLI", "MCP", "Other API", "Expected misses"]);
+
+        const cli = within(legend).getByRole("button", { name: "CLI" });
+        const segments = () =>
+            document.querySelectorAll(
+                '[data-testid="activity-column"] rect[data-category="cli"]',
+            ).length;
+
+        expect(segments()).toBe(2);
+        fireEvent.click(cli);
+        expect(cli.getAttribute("aria-pressed")).toBe("false");
+        expect(segments()).toBe(0);
+
+        expect(screen.queryAllByTestId("expected-marker")).toHaveLength(0);
+        fireEvent.click(
+            within(legend).getByRole("button", { name: "Expected misses" }),
+        );
+        // The fixture's expected misses all fall on its last day.
+        expect(screen.getAllByTestId("expected-marker")).toHaveLength(1);
+    });
+
+    it("hides all-zero categories and names them", async () => {
+        await renderView(anonSummary(), "30d");
+
+        expect(
+            screen.getByText(
+                "No requests from Web, Results server, mlwhdiff server.",
             ),
         ).toBeTruthy();
     });
 
-    it("adds error counts to the MCP tool and agent tables", async () => {
+    it("says there is not enough history with one period", async () => {
+        await renderView(anonSummary(), "30d");
+
+        expect(section("What changed").textContent).toContain(
+            "Not enough history yet (records start 20 Oct).",
+        );
+    });
+
+    it("lists changes with links that filter to them", async () => {
+        const latest = anonSummary().series[0];
+
         await renderView(
-            a3Summary({
-                mcp_tools: [
+            anonSummary({
+                earliest_record: "2026-08-01T00:00:00Z",
+                series: [
                     {
-                        value: "mlwh_classify_identifier",
-                        requests: 5,
-                        errors: 2,
+                        ...latest,
+                        start: "2026-08-22T15:49:43Z",
+                        end: "2026-09-21T15:49:43Z",
+                        by_category: { cli: 100, web: 7 },
+                        by_tool: {},
+                        by_user: { user01: 900 },
                     },
+                    latest,
                 ],
             }),
-            "24h",
+            "30d",
         );
 
+        const links = panelLinks("What changed");
+        const keys = Object.keys(links);
+        const mcp = keys.find((key) => key.startsWith("new MCP client type"));
+
+        expect(keys[0]).toMatch(/^new user02 person/);
+        expect(mcp && links[mcp]).toBe("/usage?window=30d&category=mcp");
+        expect(keys.some((key) => key.startsWith("went quiet Web"))).toBe(true);
         expect(
-            rowCells(section("MCP tools"), "mlwh_classify_identifier"),
-        ).toEqual(["mlwh_classify_identifier", "5", "2"]);
+            section("What changed").querySelector("ul")?.children,
+        ).toHaveLength(8);
+        expect(section("What changed").textContent).toMatch(/Show all \d+/);
+    });
+
+    it("renders an empty store", async () => {
+        await renderView(
+            anonSummary({
+                earliest_record: "",
+                days: [],
+                buckets: [],
+                series: [],
+                errors: [],
+                users: [],
+                clients: [],
+                endpoints: [],
+                mcp_tools: [],
+                mcp_agents: [],
+                other_user_agents: [],
+                unmatched: [],
+                categories: anonSummary().categories.map((row) => ({
+                    ...row,
+                    requests: 0,
+                })),
+            }),
+            "all",
+        );
+
+        expect(section("Activity").textContent).toContain(
+            "No usage recorded yet.",
+        );
+        expect(section("What changed").textContent).toContain(
+            "Pick a window to compare it with the one before.",
+        );
+        expect(section("People").textContent).toContain(
+            "No usernames declared.",
+        );
+        expect(section("Endpoints").textContent).toContain(
+            "No requests to known routes.",
+        );
     });
 });
 
-// severitySummary is the A3 fixture as a server that classifies errors sends
-// it: faults (one recorded before error details), a caller error, and
-// expected outcomes from probes, a final lookup, and before error details.
-function severitySummary(): UsageSummary {
-    const base = a3Summary();
+describe("usage ranked panels", () => {
+    it("shows the top five people and the rest behind Show all, each a filter link", async () => {
+        await renderView(anonSummary({ filter: {} }), "30d");
 
-    return {
-        ...base,
-        totals: {
-            ...base.totals,
-            requests: 400,
-            errors: 259,
-            error_severity: {
-                fault: 2,
-                caller: 1,
-                expected: 35,
-                probe: 221,
-                legacy: { fault: 1, caller: 0, expected: 32 },
-            },
-        },
-        errors: [
-            errorGroup({
-                route: "/studies",
-                status: 502,
-                error_code: "upstream_impaired",
-                severity: "fault",
-                probe: false,
-            }),
-            errorGroup({
-                route: "/studies",
-                status: 502,
-                error_code: null,
-                severity: "fault",
-                probe: false,
-            }),
-            errorGroup({
-                route: "/runs",
-                status: 400,
-                error_code: "bad_request",
-                severity: "caller",
-                probe: false,
-                by_category: { other: 1 },
-            }),
-            errorGroup({
-                route: "/resolve/study/:id",
-                severity: "expected",
-                probe: true,
-                count: 221,
-            }),
-            errorGroup({ severity: "expected", probe: false, count: 3 }),
-            errorGroup({
-                status: 409,
-                error_code: null,
-                severity: "expected",
-                probe: false,
-                count: 32,
-            }),
-        ],
-    };
-}
+        const people = section("People");
+        const rows = within(people).getAllByTestId("ranked-row");
 
-// bucket returns the Errors subsection headed by a title starting with name.
-function bucket(name: string): HTMLElement {
-    return within(section("Errors")).getByRole("region", {
-        name: new RegExp(`^${name} \\(`),
-    });
-}
-
-describe("usage errors by severity", () => {
-    it("headlines faults and says how all errors split", async () => {
-        await renderView(severitySummary(), "24h");
-
-        expect(statValue("Faults")).toBe("2 (0.5%)");
-        expect(screen.queryByText("Errors", { selector: "dt" })).toBeNull();
-        expect(screen.getByTestId("usage-error-breakdown").textContent).toBe(
-            "Of 259 errors: 2 faults, 1 caller error, 35 expected outcomes, 221 lookup probe misses. 33 (1 of the faults) were recorded before error details and are judged by status.",
-        );
+        expect(rows).toHaveLength(12);
+        expect(
+            within(people).getByText("Show all 12").closest("details")?.open,
+        ).toBe(false);
+        expect(
+            within(rows[0])
+                .getByRole("link", { name: "Filter to user01" })
+                .getAttribute("href"),
+        ).toBe("/usage?window=30d&user=user01");
+        expect(people.textContent).toContain("12 self-declared");
     });
 
-    it("keeps the Errors tile for servers without a severity breakdown", async () => {
-        await renderView(a3Summary(), "24h");
+    it("merges agents by product with their versions", async () => {
+        await renderView(anonSummary({ filter: {} }), "30d");
 
-        expect(statValue("Errors")).toBe("3 (50.0%)");
-        expect(screen.queryByText("Faults", { selector: "dt" })).toBeNull();
-        expect(screen.queryByTestId("usage-error-breakdown")).toBeNull();
-    });
-
-    it("lists faults and caller errors openly and collapses expected outcomes", async () => {
-        await renderView(severitySummary(), "24h");
-
-        expect(
-            within(section("Errors"))
-                .getAllByRole("heading", { level: 3 })
-                .map((heading) => heading.textContent),
-        ).toEqual([
-            "What to do",
-            "Faults (2)",
-            "Caller errors (1)",
-            "Expected outcomes (256)",
-        ]);
-
-        expect(
-            bucket("Faults").querySelector("details > summary h3"),
-        ).toBeNull();
-        expect(bucket("Caller errors").textContent).toContain("GET /runs");
-
-        const expected = bucket("Expected outcomes");
-        const details = expected.querySelector("details");
-        expect(details?.open).toBe(false);
-        expect(details?.querySelector("summary h3")?.textContent).toBe(
-            "Expected outcomes (256)",
-        );
-        expect(
-            within(expected).getAllByRole("article", { name: "404 not_found" }),
-        ).toHaveLength(2);
-    });
-
-    it("guides only the codes of faults and caller errors", async () => {
-        await renderView(severitySummary(), "24h");
-
-        expect(
-            within(errorGuide())
-                .getAllByRole("term")
-                .map((term) => term.textContent),
-        ).toEqual(["upstream_impaired", "bad_request"]);
-
-        const expected = bucket("Expected outcomes");
-        expect(within(expected).queryAllByRole("link")).toEqual([]);
-        expect(
-            within(bucket("Faults")).getByRole("link", {
-                name: "What to do about upstream_impaired",
-            }),
-        ).toBeTruthy();
-    });
-
-    it("marks probe groups and tucks legacy groups into their own collapsed list", async () => {
-        await renderView(severitySummary(), "24h");
-
-        const probes = within(bucket("Expected outcomes")).getByRole("group", {
-            name: "GET /resolve/study/:id",
+        const via = section("Via what");
+        const claude = within(via).getByRole("link", {
+            name: "Filter to agent claude-code",
         });
-        expect(probes.textContent).toContain("221 errors");
-        expect(probes.textContent).toContain("from lookup probes");
 
-        const faults = bucket("Faults");
-        const legacy = within(faults).getByText(
-            "Recorded before error details (1 error)",
+        expect(claude.getAttribute("href")).toBe(
+            "/usage?window=30d&agent=claude-code",
         );
-        const legacyList = legacy.closest("details");
-        expect(legacyList?.open).toBe(false);
+        expect(via.textContent).toContain("5 versions");
         expect(
-            within(legacyList as HTMLElement).getByRole("article", {
-                name: "502 unknown (recorded before error details were captured)",
-            }),
-        ).toBeTruthy();
+            within(via)
+                .getByRole("link", { name: "claude-code/2.1.292 (cli)" })
+                .getAttribute("href"),
+        ).toBe("/usage?window=30d&agent=claude-code%2F2.1.292+%28cli%29");
         expect(
-            within(faults)
-                .getAllByRole("article")
-                .filter((article) => !legacyList?.contains(article))
-                .map((article) => article.getAttribute("aria-labelledby"))
-                .map((id) => document.getElementById(id ?? "")?.textContent),
-        ).toEqual(["502 upstream_impaired"]);
+            within(via)
+                .getByRole("link", { name: "Filter to CLI" })
+                .getAttribute("href"),
+        ).toBe("/usage?window=30d&category=cli");
     });
 
-    it("links an endpoint's error count to its first listing by severity", async () => {
-        await renderView(severitySummary(), "24h");
+    it("groups endpoints by first segment with fault-aware badges", async () => {
+        await renderView(anonSummary({ filter: {} }), "30d");
 
-        const link = within(section("Endpoints")).getByRole("link", {
-            name: /on GET \/studies, see details/,
+        const endpoints = section("Endpoints");
+
+        expect(endpoints.textContent).toContain("40 routes in 16 groups");
+
+        const resolveRow = within(endpoints)
+            .getAllByTestId("ranked-row")
+            .find((row) => row.textContent?.startsWith("/resolve/…"))!;
+
+        // /resolve is all expected misses: no fault rate, just a count.
+        expect(resolveRow.textContent).toMatch(/\d+ expected/);
+        expect(resolveRow.textContent).not.toContain("faults");
+        expect(within(resolveRow).getByText("3 routes")).toBeTruthy();
+        expect(
+            within(resolveRow)
+                .getByRole("link", { name: "Filter to GET /resolve/study/:id" })
+                .getAttribute("href"),
+        ).toBe("/usage?window=30d&method=GET&route=%2Fresolve%2Fstudy%2F%3Aid");
+
+        const exportRow = within(endpoints)
+            .getAllByTestId("ranked-row")
+            .find((row) => row.textContent?.startsWith("GET /export"))!;
+        const badge = within(exportRow).getByRole("link", {
+            name: /faults \(fault\), see errors/,
         });
-        const target = link.getAttribute("href")?.slice(1) ?? "";
-        expect(target).toBe("usage-errors-faults-GET-studies");
-        expect(bucket("Faults").querySelector(`#${target}`)).not.toBeNull();
+
+        expect(badge.getAttribute("href")).toBe(
+            "#err-fault-502-legacy-GET-export-_children-_parent_kind-_parent_id",
+        );
+    });
+
+    it("marks MCP tools with caller errors", async () => {
+        const summary = anonSummary({ filter: {} });
+
+        summary.mcp_tools[0] = {
+            ...summary.mcp_tools[0],
+            error_severity: breakdown({ caller: 2 }),
+        };
+        await renderView(summary, "30d");
+
+        expect(within(section("MCP tools")).getByText("2 caller")).toBeTruthy();
+    });
+
+    it("renders bars without filter links for a server that cannot filter", async () => {
+        await renderView(oldServer(anonSummary()), "30d");
+
+        expect(within(section("People")).queryAllByRole("link")).toHaveLength(
+            0,
+        );
+        expect(
+            within(section("MCP tools")).queryAllByRole("link"),
+        ).toHaveLength(0);
+    });
+
+    it("lets long caller-supplied values break anywhere", async () => {
+        const long = "x".repeat(256);
+
+        await renderView(
+            anonSummary({
+                users: [
+                    {
+                        name: long,
+                        by_ip: false,
+                        requests: 1,
+                        by_category: { cli: 1 },
+                    },
+                ],
+                mcp_tools: [{ value: long, requests: 1 }],
+            }),
+            "30d",
+        );
+
+        for (const name of ["People", "MCP tools"]) {
+            expect(
+                within(section(name)).getByText(long).closest(".wrap-anywhere"),
+                name,
+            ).not.toBeNull();
+        }
+    });
+
+    it("renders rows whose values collide after U+FFFD replacement", async () => {
+        const consoleError = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => undefined);
+        const nameRow = {
+            name: "�",
+            by_ip: false,
+            requests: 1,
+            by_category: { cli: 1 },
+        };
+        const valueRow = { value: "�", requests: 1 };
+
+        try {
+            await renderView(
+                anonSummary({
+                    other_user_agents: [valueRow, valueRow],
+                    users: [nameRow, nameRow],
+                    clients: [nameRow, nameRow],
+                    unmatched: [
+                        {
+                            method: "GET",
+                            path: "/a�",
+                            requests: 1,
+                            by_category: { other: 1 },
+                            by_tool: {},
+                            by_agent: {},
+                        },
+                        {
+                            method: "GET",
+                            path: "/a�",
+                            requests: 1,
+                            by_category: { other: 1 },
+                            by_tool: {},
+                            by_agent: {},
+                        },
+                    ],
+                }),
+                "30d",
+            );
+
+            expect(
+                consoleError.mock.calls.filter((args) =>
+                    String(args[0]).includes("two children with the same key"),
+                ),
+            ).toEqual([]);
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+});
+
+describe("usage collapsed details and deep links", () => {
+    it("collapses expected outcomes, older errors, and sessions", async () => {
+        await renderView(anonSummary(), "30d");
+
+        for (const [name, title] of [
+            ["Expected outcomes (21 lookup misses)", "Expected outcomes"],
+            ["Older errors without details (444)", "Older errors"],
+            [
+                "Sessions and clients (292 sessions, 2 clients by IP)",
+                "Sessions",
+            ],
+        ]) {
+            const region = section(name);
+
+            expect(region.querySelector("details")?.open, title).toBe(false);
+        }
+
+        expect(
+            section("Expected outcomes (21 lookup misses)").textContent,
+        ).toContain("wa mlwh info tries each kind of identifier in turn");
+        expect(
+            section("Sessions and clients (292 sessions, 2 clients by IP)")
+                .textContent,
+        ).toContain("Largest clients (top 25 of 294)");
+    });
+
+    it("ignores a malformed hash", async () => {
+        window.location.hash = "#%E0%A4%A";
+
+        try {
+            await renderView(anonSummary(), "30d");
+            window.dispatchEvent(new HashChangeEvent("hashchange"));
+            expect(section("Needs attention")).toBeTruthy();
+        } finally {
+            window.location.hash = "";
+        }
+    });
+
+    it("opens the disclosures holding an #err- target", async () => {
+        window.location.hash = "#err-fault-502-legacy-GET-runs-count";
+
+        try {
+            await renderView(anonSummary(), "30d");
+
+            const target = document.getElementById(
+                "err-fault-502-legacy-GET-runs-count",
+            )!;
+
+            expect(target.closest("details")?.open).toBe(true);
+
+            window.location.hash = "#err-older-GET-resolve-study-_id";
+            window.dispatchEvent(new HashChangeEvent("hashchange"));
+
+            expect(
+                document
+                    .getElementById("err-older-GET-resolve-study-_id")!
+                    .closest("details")?.open,
+            ).toBe(true);
+        } finally {
+            window.location.hash = "";
+        }
     });
 });

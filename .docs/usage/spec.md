@@ -31,6 +31,7 @@ mlwh/usage.go                  categories, windows, caps, User-Agent parsing
 mlwh/usage_store.go            SQLite store, async writer, retention
 mlwh/usage_summary.go          UsageSummary types and Summary queries
 mlwh/usage_error_summary.go    UsageSummary errors groups
+mlwh/usage_filter.go           UsageFilter: GET /usage filter parameters
 mlwh/usage_server.go           counting middleware, GET /usage
 mlwh/client_identity.go        identity headers, ClientIdentity, context
 mlwh/remote.go                 RemoteConfig fields; headers in do()
@@ -51,7 +52,9 @@ frontend/app/(results)/feedback/actions.ts  send identity headers
 frontend/lib/contracts.ts                   Zod usage schemas
 frontend/app/(results)/usage/actions.ts     Server Action
 frontend/app/(results)/usage/page.tsx       admin page
-frontend/components/usage-admin-view.tsx    view
+frontend/components/usage-admin-view.tsx    dashboard layout
+frontend/components/usage/                  dashboard panels and charts
+frontend/lib/usage-derive.ts                pure dashboard derivations
 frontend/lib/usage-messages.ts              reason messages
 frontend/lib/usage-error-help.ts            error code explanations
 frontend/components/auth-menu.tsx           Usage link
@@ -134,15 +137,19 @@ document and `APIVersion` is unchanged.
 | GET    | `/usage` | plain router | admin Bearer | 200 `UsageSummary` |
 
 Query: `window` = `24h`, `7d`, `30d`, or `all`; absent or empty means `7d`.
+The optional filter parameters narrow every aggregate (see A4): `category`,
+`user`, `tool`, `agent`, and `method` with `route`. Other parameters are
+ignored.
 
 | Status | Code             | Message                                     |
 | ------ | ---------------- | ------------------------------------------- |
 | 503    | `usage_disabled` | `usage tracking is disabled on this server` |
 | 401    | `unauthorized`   | `admin token required`                      |
 | 400    | `bad_request`    | `invalid window "<value>"`                  |
+| 400    | `bad_request`    | `invalid usage filter: <reason>`            |
 | 500    | `internal_error` | `could not summarise usage`                 |
 
-Check order: disabled, admin auth, window, store. The route is always
+Check order: disabled, admin auth, window, filter, store. The route is always
 registered and is not in OpenAPI or `Registry`. Add
 `httpErrorCodeUsageDisabled = "usage_disabled"` to `mlwh/errors_http.go`; no
 sentinel (no Go client calls this route).
@@ -363,10 +370,11 @@ newer frontend still reads an older server.
   route handler or `NoRoute` runs, so the redirect itself records no row,
   neither under the target route nor as unmatched. Only a client that
   follows it is counted, under the target route.
-- The Trend section's size grows with stored history, because `series`
-  reaches back to the earliest row on every category and endpoint row. At
-  the default 365-day retention, `24h` gives about 366 periods, several MB
-  of page HTML that loads slowly. Lowering `--usage-retention-days` bounds it.
+- The response size grows with stored history, because `series` reaches
+  back to the earliest row with per-period endpoint, tool, and user maps. At
+  the default 365-day retention, `24h` gives about 366 periods. The page
+  reads only the last two, but the server still builds and sends them all.
+  Lowering `--usage-retention-days` bounds it.
 
 ## A. Usage Model and Store
 
@@ -764,6 +772,124 @@ Row 7 is 2026-10-09T06:00:00Z, before the 24h `window_start`. Row 9 is
 15. Given F and `24h`, when JSON-marshalled, then every `by_*` value is an
     object (never `null`) and every list is an array.
 
+### A4: Dashboard additions
+
+As the server admin, I want the summary to compare windows, chart time
+finely, classify errors per list, and narrow to one slice of traffic, so
+that the dashboard can show change, faults, and drill-downs.
+
+**Package:** `mlwh/`
+**File:** `mlwh/usage_summary.go`, `mlwh/usage_filter.go`,
+`mlwh/usage_error_summary.go`
+**Test file:** `mlwh/usage_dashboard_test.go`
+
+```go
+// Summary aggregates the rows of window w that match filter.
+func (s *UsageStore) Summary(ctx context.Context, w UsageWindow, filter UsageFilter) (UsageSummary, error)
+
+var ErrUsageFilterInvalid = errors.New("mlwh: invalid usage filter")
+
+// UsageFilter narrows a UsageSummary to the rows matching every non-empty
+// field. Agent matches an MCP agent exactly or by its product, the text
+// before its first "/". Method and Route are set together.
+type UsageFilter struct {
+    Category UsageCategory `json:"category,omitempty"`
+    User     string        `json:"user,omitempty"`
+    Tool     string        `json:"tool,omitempty"`
+    Agent    string        `json:"agent,omitempty"`
+    Method   string        `json:"method,omitempty"`
+    Route    string        `json:"route,omitempty"`
+}
+
+func (f UsageFilter) Validate() error
+
+const (
+    UsageBucketHour = "hour"
+    UsageBucketDay  = "day"
+    UsageBucketWeek = "week"
+)
+
+type UsageBucket struct {
+    Start         string              `json:"start"` // inclusive, RFC3339 UTC
+    Requests      int64               `json:"requests"`
+    ByCategory    map[string]int64    `json:"by_category"`
+    ErrorSeverity UsageErrorBreakdown `json:"error_severity"`
+}
+```
+
+`UsageSummary` gains `filter` (the filter applied, `{}` for none),
+`previous_totals` (a `UsageTotals`, with `error_severity`, for the window
+of the same length ending at `window_start`; `null` for `all`),
+`bucket_unit`, and `buckets`. `UsageCategoryStats`, `UsageEndpointStats`,
+and `UsageCount` (MCP tools, MCP agents, other User-Agents) gain
+`error_severity`, a `UsageErrorBreakdown` of their rows. `UsagePeriod`
+gains `by_tool` and `by_user`, keyed like `mcp_tools` and `users`. All
+additions are optional to readers; `/usage` is outside OpenAPI, so
+`APIVersion` is unchanged.
+
+- Filters: each field maps to one fixed column term (`category = ?`,
+  `username = ?`, `mcp_tool = ?`, `mcp_agent = ? OR` its product prefix,
+  `method = ? AND route = ?`) with the value as a bound parameter, so a
+  value is never SQL. `Validate` rejects an unknown category, `method`
+  without `route` or the reverse, a route not starting with `/`, and a
+  value longer than its column's cap. The filter applies to every window
+  aggregate, the latency ranks, the error groups, the buckets, the series,
+  and `previous_totals`; `earliest_record` stays the store's first row.
+- `previous_totals` counts rows in `(window_start - length, window_start]`,
+  so each row is in exactly one of the two windows.
+- `bucket_unit` is `hour` for `24h`, `day` for `7d` and `30d`, and for `all`
+  `day`, or `week` when the store's history is longer than 120 days. Weeks
+  start on Monday 00:00 UTC. `buckets` run from the bucket holding the
+  window start (the earliest row for `all`) to the bucket holding now,
+  oldest first; `[]` for an empty `all` store.
+- Severity per list uses the same rule as the totals, so an endpoint
+  answered only by lookup misses has `fault` 0, and the page's fault rate
+  is `error_severity.fault / requests`. `errors` and `error_rate` are
+  unchanged and still count every error.
+- The clients list is ranked by client ID, or by IP for rows without one,
+  so its uncapped length is `totals.sessions + totals.ip_clients`, and the
+  users list's is `totals.users`; no separate totals are sent.
+
+**Acceptance tests:**
+
+1. Given filters with an unknown category, method without route, route
+   without method, a route without `/`, or a value over its cap, then
+   `Validate` and `Summary` return errors wrapping `ErrUsageFilterInvalid`.
+2. Given F and `24h` filtered to `cli`, then `filter` echoes it, totals
+   requests 3 with one expected error, endpoints count only CLI rows,
+   `mcp_tools`, `other_user_agents`, and `unmatched` are `[]`, one error
+   group remains, the last series period has `by_user` {alice:2, bob:1},
+   and `earliest_record` is still `2026-10-01T00:00:00Z`.
+3. Given F and `24h`, then user alice selects 2 requests, carol 0, tool
+   `mlwh_list_studies` 1, agent `claude-code/2.1.0` and `claude-code` 1
+   each, agents `claude`, `claude-code/2`, `claude%`, and `_laude-code` 0,
+   `GET /studies` 4, `POST /studies` 0, `other` with `GET /studies` 1, and
+   `cli` with bob 1; buckets sum to the same counts.
+4. Given rows ranked by latency 1, 2, 3 ms where the 3 ms row is `other`,
+   filtered to `cli`, then p95 is 2.
+5. Given usernames `' OR '1'='1`, `alice' --`, `alice" OR 1=1 --`, and `%`,
+   then each matches 0 rows; a stored `o'brien` matches 1.
+6. Given F and `24h`, then `previous_totals` is {requests 1, sessions 1,
+   users 1}. Given `all`, then it is JSON `null`.
+7. Given rows at now-24h (a 502), now-24h+1ms, now-48h, and now-48h+1ms,
+   when `24h` is summarised, then totals requests 1 and `previous_totals`
+   requests 2 with one fault.
+8. Given F and `7d` filtered to carol, then totals 0 and previous 1; to
+   alice, previous 0.
+9. Given F and `24h`, then `bucket_unit` `hour`, 25 buckets from
+   `2026-10-09T12:00:00Z` to `2026-10-10T12:00:00Z`, the 11:00 bucket
+   {1, cli:1}, and the 07:00 bucket holding the legacy 500 as a fault.
+10. Given F and `7d`, `30d`, or `all`, then `bucket_unit` `day` and buckets
+    match `days` one for one.
+11. Given F plus a row 130 days ago and `all`, then `bucket_unit` `week`,
+    every start a Monday 00:00 UTC 7 days apart, the first holding the
+    earliest row and the last holding now.
+12. Given an empty store, then `all` has buckets `[]` and `7d` 8 empty days.
+13. Given one MCP route's two probe misses, one final miss, one failed
+    probe (502), and one MCP 400, then the endpoint, its category, tool, and
+    agent each have `error_severity` {fault 1, caller 1, expected 1,
+    probe 2}.
+
 ## B. HTTP Middleware and Admin Endpoint
 
 ### B1: Counting middleware
@@ -844,12 +970,14 @@ so that the web page can show it.
 
 **Package:** `mlwh/`
 **File:** `mlwh/usage_server.go`
-**Test file:** `mlwh/usage_server_test.go`
+**Test file:** `mlwh/usage_server_test.go` (tests 8-9 in
+`mlwh/usage_dashboard_test.go`)
 
 `registerUsageAdminRoute(router)` registers `GET /usage` with
 `requireUsageAdmin` (503 when store nil, else 401 unless
-`feedbackAdminTokenMatches`) then the handler. The handler maps
-`ErrUsageWindowInvalid` to 400 and any other `Summary` error to 500.
+`feedbackAdminTokenMatches`) then the handler. The handler reads the filter
+parameters into a `UsageFilter` and maps `ErrUsageWindowInvalid` and
+`ErrUsageFilterInvalid` to 400 and any other `Summary` error to 500.
 
 **Acceptance tests:**
 
@@ -869,6 +997,15 @@ so that the web page can show it.
 7. Given usage enabled with no feedback (`WithFeedback(nil, nil)`), then
    `GET /usage` with `T` is 200 and `GET /feedback` is 503
    `feedback_disabled`.
+8. Given CLI requests from alice, alice, and bob, when
+   `GET /usage?window=24h&user=alice&category=cli&ignored=1`, then 200
+   with `filter` {category cli, user alice} and totals requests 2;
+   `?method=GET&route=%2Fstudies` counts 3; no filter sends `"filter":{}`.
+9. Given `?category=bogus`, `?method=GET`, `?route=/studies`, or
+   `?method=GET&route=x`, then 400 `bad_request` with message
+   `invalid usage filter: unknown category "bogus"`,
+   `invalid usage filter: method and route must be given together`, or
+   `invalid usage filter: route must start with /`.
 
 ### B3: Route placement
 
@@ -1429,6 +1566,16 @@ export type UsageSummary = z.infer<typeof usageSummarySchema>;
    `series` missing, then `safeParse` fails.
 3. Given `usageWindowSchema`, then the four values parse and `"1h"`, `""`,
    and `null` fail.
+4. Given a summary with the A4 fields (`filter`, `previous_totals`,
+   `bucket_unit`, `buckets`, per-list `error_severity`, and `by_tool` and
+   `by_user` per period), then it parses unchanged; `previous_totals: null`
+   parses and `bucket_unit: "month"` fails. Every A4 field is optional, so
+   an older server's summary still parses.
+5. Given `usageFilterInputSchema`, the filter the page may send, then `{}`,
+   a known category, values at their caps (user and tool 128, agent 256),
+   and `method` with a `/` route parse; an unknown category, `""`, an
+   over-long value, method or route alone, a route without `/`, and an
+   unknown key fail.
 
 ### E3: Server Action
 
@@ -1451,16 +1598,17 @@ export type UsageSummaryState =
     | { status: "unavailable"; reason: UsageUnavailableReason };
 export async function getUsageSummaryAction(
     window: UsageWindow,
+    filter: UsageFilter = {},
 ): Promise<UsageSummaryState>;
 ```
 
 Checks in order, as in feedback E3: no session -> `unauthenticated`;
-`!isFeedbackAdmin(username)` -> `forbidden`; `usageWindowSchema.safeParse`
-fails -> `invalid_input`; `readMLWHServerToken()` null ->
+`!isFeedbackAdmin(username)` -> `forbidden`; `usageWindowSchema` or
+`usageFilterInputSchema` rejects its argument -> `invalid_input`; `readMLWHServerToken()` null ->
 `unavailable/no_token`. Extracting feedback's `authorizeFeedback` into a
 shared module is allowed if feedback tests pass unchanged; its result
 carries `username` (E1). Then
-`mlwhJson("/usage?window=<w>", usageSummarySchema, {cache: "no-store", headers: {authorization: "Bearer <token>", ...identity}})`,
+`mlwhJson("/usage?window=<w>&<filter fields>", usageSummarySchema, {cache: "no-store", headers: {authorization: "Bearer <token>", ...identity}})`,
 with identity from `mlwhIdentityHeaders(username)` using the gate's
 session, so `currentSession` is called once.
 
@@ -1483,20 +1631,30 @@ anything else, including `BackendUnavailableError` and contract failures,
    `unsupported`, `backend_error`, `backend_error`.
 7. Given token contents `tok-7f3a9c`, then no returned state's
    `JSON.stringify` contains `tok-7f3a9c`.
+8. Given a filter with every field, then each is a URL-encoded query
+   parameter after `window`. Given an invalid filter, then `invalid_input`
+   and no fetch.
 
 ### E4: Usage page and view
 
-As an allowlisted admin, I want a `/usage` page with window presets, so that
-I can see at a glance whether and how the server is used.
+As an allowlisted admin, I want a dashboard that answers at a glance whether
+the server is used, by whom and through what, how that is changing, what
+matters, and what is broken, so that I can act without reading tables.
 
 **File:** `frontend/app/(results)/usage/page.tsx`,
-`frontend/components/usage-admin-view.tsx`, `frontend/lib/usage-messages.ts`
-**Test file:** `frontend/tests/usage-page.test.ts`
+`frontend/components/usage-admin-view.tsx`, `frontend/components/usage/`,
+`frontend/lib/usage-derive.ts`, `frontend/lib/usage-messages.ts`,
+`frontend/lib/usage-error-help.ts`, `frontend/app/globals.css`
+**Test file:** `frontend/tests/usage-page.test.ts`,
+`frontend/tests/usage-derive.test.ts`
 
 - Page (Server Component, `dynamic = "force-dynamic"`, in `(results)`):
   reads `window` from `(await searchParams) ?? {}`; a valid
-  `usageWindowSchema` value is used, anything else is `7d`. It calls
-  `getUsageSummaryAction` and renders non-`ok` states in one
+  `usageWindowSchema` value is used, anything else is `7d`. It reads the
+  filter parameters `category`, `user`, `tool`, `agent`, `method`, and
+  `route`, ignoring repeated or empty ones; a filter
+  `usageFilterInputSchema` rejects is dropped whole. It calls
+  `getUsageSummaryAction(window, filter)` and renders non-`ok` states in one
   `role="status"` panel under heading "MLWH usage":
     - `unauthenticated`: "Log in to view usage."
     - `forbidden`: "You do not have access to usage."
@@ -1508,123 +1666,146 @@ I can see at a glance whether and how the server is used.
       rejected the admin token." `unsupported` "wa mlwh serve is too old for
       usage metrics (needs MLWH API 1.10.0)." `backend_error` "The MLWH
       server could not be reached."
-- `UsageAdminView` (`summary`, `window` props; Server Component or client,
-  implementor's choice):
-    - Heading "MLWH usage". A `nav` labelled "Window" with links "Last 24
-      hours" `/usage?window=24h`, "Last 7 days" `/usage`, "Last 30 days"
-      `/usage?window=30d`, "All time" `/usage?window=all`; the current one
-      has `aria-current="page"`.
-    - Note: "Usernames are self-declared by callers. Web counts are requests
-      that reached the MLWH server; lookups served from browser or Next.js
-      caches are not counted." When `dropped_events > 0`, also
-      "<n> requests were not recorded because the usage queue was full."
-    - Stat tiles: "Requests", "Faults" (`<fault> (<fault/requests>)`), or
-      "Errors" (`<n> (<rate>)`) from a server without
-      `totals.error_severity`, "Sessions", "Clients by IP", "Users
-      (self-declared)". With a breakdown, the notes add "Of <n> errors:
-      <f> faults, <c> caller errors, <e> expected outcomes, <p> lookup probe
-      misses." and, when some were recorded before error details, "<l> (<lf>
-      of the faults) were recorded before error details and are judged by
-      status."
-    - Category labels: `cli` "CLI", `mcp` "MCP", `web` "Web",
-      `results_server` "Results server", `mlwhdiff_server` "mlwhdiff
-      server", `other` "Other API". A categories cell lists non-zero
-      `by_category` entries in category order as `"<label> <n>"` joined by
-      ", ".
-    - Rates render as percent with one decimal (`0.25` -> `25.0%`);
-      latencies as ms with one decimal (`20` -> `20.0`).
-    - Sections, each an `h2` then a table, or "None." when empty:
-        - "By category": Category, Requests, Errors, Error rate, Sessions,
-          Clients by IP, Users, Requests/session (median), Requests/session
-          (max). All six rows always.
-        - "Trend" (omitted for `all`): heading text
-          "Trend (24-hour periods)", "(7-day periods)", or "(30-day
-          periods)". Rows: "All requests", the six categories, then every
-          endpoint key present in any period's `by_endpoint`, ordered by
-          series total descending then key. Columns: label, "Latest"
-          (period 0), "Previous" (period 1, `-` with one period), and a bar
-          strip `role="img"` with `aria-label`
-          `"<label>: latest <x>, previous <y>, <n> periods"` (`1 period`
-          when `<n>` is 1) holding one bar per period, height proportional
-          to the row's max, each with `title="<start> to <end>: <count>"`.
-          An empty `series` shows "No usage recorded yet."
-        - "Endpoints": Endpoint (`<METHOD> <route>`), Requests, Errors,
-          Error rate, Median latency (ms), p95 latency (ms), Categories.
-          An Errors cell links to that endpoint's group in "Errors" when it
-          has one; the link is named "<n> errors on <endpoint>, see
-          details".
-        - "Errors": first a "What to do" `role="group"` (`h3`) listing,
-          once per code present in the order codes first appear, the code
-          (`dt`) and its action (`dd`) from `lib/usage-error-help.ts`, then
-          the advice for each of `timeout` and `canceled` any entry
-          recorded. Then one `role="group"` per endpoint, headed (`h3`)
-          `<METHOD> <route>`, or `<METHOD> (no matching route)` for
-          unmatched requests, ordered by error count, matched before
-          unmatched, then label. Each holds one `article` per status and
-          code, headed (`h4`) `<status> <code>`, with the count, first and
-          latest times, the code's one-line meaning with a "What to do"
-          link (named "What to do about <code>") to its guide entry, and
-          the kind counts as "Causes". A `null` code reads "unknown
-          (recorded before error details were captured)". A `details`
-          element, "Messages and examples (<n> examples)", holds caller,
-          tool, and agent counts, a "Top messages" list, and a "Latest
-          examples" table: Time, Request (`<path>?<query>`), Caller, and
-          Message. Empty: "No errors in this window." Absent (older
-          server): "This MLWH server does not report error details.
-          Upgrade wa mlwh serve to see them."
-          When every group has a known `severity`, the Errors region
-          instead holds the "What to do" guide for the codes of fault and
-          caller groups with error details only, then three `region`s
-          headed (`h3`) "Faults (<n>)", "Caller errors (<n>)", and
-          "Expected outcomes (<n>)", each with a one-line intro. Faults and
-          caller errors are open; expected outcomes sit in a closed
-          `details` whose `summary` holds the heading. Each lists its
-          groups with error details by endpoint (`h4`, entries `h5`), then
-          a closed `details` "Recorded before error details (<n> errors)"
-          listing its legacy groups. Expected and legacy entries have no
-          "What to do" link; probe groups say "from lookup probes". An
-          endpoint's Errors cell links to its first listing (faults, caller,
-          expected; detailed before legacy), e.g.
-          `#usage-errors-faults-GET-studies`. The page is due a redesign
-          that will chart `days[].error_severity`.
-        - "MCP tools", "MCP agents", "Other API user agents": Value,
-          Requests, Errors (`""` renders as "(none)"; Errors `-` when the
-          server sends none).
-        - "Unmatched paths": Method, Path, Requests, Categories, MCP tools,
-          MCP agents (maps rendered as `"<key> <n>"` joined by ", ").
-        - "Top users (self-declared)": User, Requests, Categories.
-        - "Top clients": Client (`<ip> (by IP)` when `by_ip`), Requests,
-          Categories.
-        - "Requests per day (UTC)": Date, Requests, Categories.
-    - Semantic tokens, mobile-first, tables scroll horizontally on narrow
-      screens.
+- `UsageAdminView` (`summary`, `window`, `filter` props) lays out, top to
+  bottom. Charts are hand-written SVG with no chart library; category
+  colours are CSS variables (`--usage-cli` ... `--usage-other`,
+  `--usage-fault`, `--usage-caller`) defined for light and dark in
+  `globals.css`, in a fixed order validated for colour-vision deficiency.
+    - Header: "MLWH usage", "Generated <time> · records start <date>", and a
+      `nav` "Window" with "Last 24 hours", "Last 7 days", "Last 30 days",
+      and "All time" (current one `aria-current="page"`). Window links keep
+      the filter when the server applies filters; 7d is the default and
+      left out of the URL.
+    - Filter bar: removable chips (`role="group"` "Filters", each remove
+      link named "Remove filter <name> <value>", plus "Clear all" for two or
+      more), or "Showing all traffic. Select a person, client type, agent,
+      endpoint, or tool to filter." A server that does not echo `filter`
+      ignores filters: the page says "This MLWH server cannot filter usage"
+      and renders no filter links.
+    - KPI strip (`dl`): "Requests" (share of the top two categories and a
+      sparkline over the buckets), "People" (self-declared usernames),
+      "Sessions" (the busiest category's median and max requests per
+      session), "MCP requests" (sessions and agent products, sparkline),
+      and "Faults" (fault rate of requests and caller errors, fault
+      sparkline, destructive colour above zero, linking to `#attention`),
+      or "Errors" from a server without `totals.error_severity`. Each shows
+      its change from `previous_totals` ("+12% vs previous", "+2 vs
+      previous") only when `earliest_record` is at or before the previous
+      window's start, else "no earlier records". The MCP change compares
+      the last two series periods, since `previous_totals` has no
+      categories. Sparklines are
+      `aria-hidden`; the values are text.
+    - "Needs attention" (`#attention`): fault and caller groups merged by
+      severity, status, and code across routes, faults first, then by
+      count. Each row is a closed `details`, `id`
+      `err-<severity>-<status>-<code or legacy>`, whose summary names the
+      severity (icon plus screen-reader text), "<status> <code> on <route>"
+      or "on <n> routes", the count, callers (categories, tools, agents),
+      when last seen, and the action from `usage-error-help.ts`. A legacy
+      row (no code) takes the help of the code its status implies, labelled
+      "(inferred, recorded before error details)". Opened, it lists each
+      route (`id` `<row id>-<route slug>`, where a route parameter's `:`
+      becomes `_`) with today's error entries (meaning, causes with kind
+      advice, messages, examples), and for `no_route` the unmatched paths
+      from that row's callers. Notices follow: dropped events, any
+      endpoint with p95 over 2 s, and a capped error list. With no rows it
+      says "No faults or caller errors in this window."; without `errors`,
+      "This MLWH server does not report error details." A line links the
+      expected misses to "Expected outcomes" and "Older errors".
+    - "Activity": columns per bucket (hour, day, or week) stacked by active
+      category, clipped to buckets that end after `earliest_record` ("no
+      records before <date>"), with a fault cross and caller circle above
+      each column that has them. Legend buttons (`aria-pressed`) hide or
+      show a category; "Expected misses" adds expected markers. The SVG is
+      `role="img"` with a summary `aria-label`; "View as table" holds the
+      same numbers. Servers without `buckets` use `days`, summed into
+      Monday weeks for an `all` window over 120 days.
+    - "What changed": the latest series period against the previous one per
+      category, endpoint, MCP tool, and user: new, went quiet, up or down
+      by more than 25% (when either period has at least 5). Eight show, the
+      rest behind "Show all <n>"; each links to its filter. With one period,
+      or records starting after the previous period starts: "Not enough
+      history yet (records start <date>)." For `all`: "Pick a window to
+      compare it with the one before."
+    - Ranked bars (top five, the rest behind "Show all <n>"): "People"
+      (bars split by category), "Via what" (client types, MCP agents merged
+      by product with their versions in a disclosure, other API user
+      agents), "Endpoints" (grouped by first path segment; a group of
+      several routes lists them with p50/p95, a sparkline over the series
+      when it has two or more periods, and a severity badge), and "MCP
+      tools". Labels link to their filter (`user`, `category`, `agent`,
+      `method`+`route`, `tool`). Severity badges show the fault rate
+      ("4.0% faults", linking to the route's first error listing), else the
+      caller count, else the expected count.
+    - "No requests from <categories>." names the categories with none.
+    - Closed panels: "Expected outcomes (<n> lookup misses)" (detailed
+      expected groups by route, ids `err-expected-<route slug>`, with a note
+      that `wa mlwh info` probes each identifier kind); "Older errors without
+      details (<n>)" (legacy expected groups, ids `err-older-<route slug>`,
+      shown only when there are some); "Sessions and clients (<n> sessions,
+      <m> clients by IP)" (a per-category sessions table and the largest
+      clients, "top 25 of <sessions + ip_clients>" when capped).
+    - The self-declared note: "Usernames are self-declared by callers. Web
+      counts are requests that reached the MLWH server; lookups served from
+      browser or Next.js caches are not counted."
+    - A client effect opens every `details` holding the element the URL hash
+      names, on load and on `hashchange`, so `#err-<id>` links work. A
+      malformed hash is ignored.
+    - Narrow screens do not scroll sideways; long caller-supplied values
+      break anywhere.
+- `lib/usage-derive.ts` holds the pure logic: `fallbackSeverity` (the
+  server's rule, for groups without `severity`), `attentionRows`,
+  `expectedGroups`, `errorAnchors`, `periodChanges`, `agentProducts`,
+  `endpointGroups`, `timeBuckets`, `weekBuckets`, `clipBuckets`,
+  `activeCategories`, `previousComparable`, `usageHref`, and `withFilter`.
 
-**Acceptance tests:**
+**Acceptance tests** (`usage-page.test.ts` uses
+`fixtures/usage-summary-30d-anon.json`, an anonymised copy of a real 30-day
+production response with the severity fields added):
 
-1. Given `searchParams` `Promise.resolve({})` and an admin, then
-   `getUsageSummaryAction` is called with `"7d"`. Given `{window: "30d"}`,
-   then `"30d"`. Given `{window: "bogus"}` or `{window: ["24h", "7d"]}`,
-   then `"7d"`.
-2. Given each non-`ok` state and each `UsageUnavailableReason`, then the
+1. Given `searchParams` `{}`, then `getUsageSummaryAction("7d", {})`.
+   Given `{window: "30d"}`, then `"30d"`. Given `{window: "bogus"}` or
+   `{window: ["24h", "7d"]}`, then `"7d"`.
+2. Given `{category: "mcp", user: "user01", ignored: "x"}`, then that
+   filter without `ignored`; method and route with tool and agent pass;
+   repeated or empty values are dropped; an unknown category, method
+   alone, a route without `/`, or a 129-byte user drops the whole filter.
+3. Given each non-`ok` state and each `UsageUnavailableReason`, then the
    markup contains the exact message(s) above.
-3. Given the E2 fixture (A3 test 1, window `24h`), then the markup contains
-   "Last 24 hours" with `aria-current="page"`, stat "Requests" 6, the "By
-   category" row "CLI" with 3 and "33.3%", the "Endpoints" row
-   `GET /studies` with "25.0%", "20.0", "40.0", and "CLI 2, MCP 1, Other
-   API 1", and "Trend (24-hour periods)".
-4. Given that fixture, then the Trend row "All requests" has Latest 6,
-   Previous 1, and 10 bars; its `aria-label` is
-   `"All requests: latest 6, previous 1, 10 periods"`.
-5. Given that fixture, then "Top clients" shows `10.0.0.9 (by IP)` and
-   "Unmatched paths" shows `/bogus` with "Other API 1".
-6. Given a fixture with window `all` and `series: []`, then no "Trend"
-   heading. Given window `7d` and `series: []`, then "No usage recorded
-   yet.".
-7. Given `dropped_events: 3`, then "3 requests were not recorded because
-   the usage queue was full." Given 0, then no such text.
-8. Given `mcp_tools: []`, then the "MCP tools" section shows "None.".
-9. Given the note text, then "Usernames are self-declared by callers."
-   appears on every `ok` render.
+4. Given the 30-day fixture, then the KPIs read Requests 1,578 ("CLI 95.9%
+   · MCP 3.0%", "no earlier records"), People 12, Sessions 292, MCP
+   requests 47, and Faults 15 with "0.95% of requests · 3 caller errors"
+   linking to `#attention`.
+5. Given `previous_totals` that records cover, then changes read "+58% vs
+   previous", "+2 vs previous", "−8 vs previous", and "−5 vs previous".
+   Given an older server, then the Errors tile reads 483.
+6. Given the fixture, then Needs attention lists, in order, the 502 row on
+   6 routes (14, with the upstream_impaired action), the CLI 400 on
+   `GET /study/:id/latest-data` (1), and two caller `no_route` rows; the
+   header reads "15 faults · 3 caller errors" and the footer "21 under
+   Expected outcomes and 444 under Older errors".
+7. Given dropped events 3 and an endpoint with p95 2500 ms, then both
+   notices show. Given only expected errors, then "No faults or caller
+   errors in this window."; without `errors`, the upgrade note. Given one
+   shown group of 2 among 483 errors, then the cap note.
+8. Given the fixture, then the activity chart has 2 columns, "no records
+   before 20 Oct", 2 fault markers, the summary `aria-label`, and a table;
+   the CLI legend button hides CLI segments; "Expected misses" adds
+   markers; Web, Results server, and mlwhdiff server are named as idle.
+9. Given one period, then "Not enough history yet (records start 20 Oct).";
+   given two, then eight change links (new first, MCP linking to
+   `?window=30d&category=mcp`) and "Show all".
+10. Given the fixture, then People shows 12 rows with 7 behind a closed
+    "Show all 12" and links such as `/usage?window=30d&user=user01`; Via
+    what merges claude-code's 5 versions; Endpoints reads "40 routes in 16
+    groups", `/resolve/…` shows expected misses and no fault rate, and the
+    export route's badge links to its `#err-` listing; an older server's
+    panels have no links.
+11. Given the fixture, then Expected outcomes, Older errors, and Sessions
+    and clients are closed; given `#err-fault-502-legacy-GET-runs-count`,
+    then its `details` opens, and a later `hashchange` opens another.
+12. Given values that collide after U+FFFD replacement, then no duplicate
+    React keys.
 
 ### E5: Auth menu link
 

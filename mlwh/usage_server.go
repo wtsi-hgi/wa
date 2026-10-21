@@ -270,19 +270,35 @@ func (s *Server) requireUsageAdmin(c *gin.Context) {
 	}
 }
 
+// usageFilterFromQuery returns the UsageFilter of c's filter query
+// parameters; absent or empty ones leave their field unset.
+func usageFilterFromQuery(c *gin.Context) UsageFilter {
+	return UsageFilter{
+		Category: UsageCategory(c.Query("category")),
+		User:     c.Query("user"),
+		Tool:     c.Query("tool"),
+		Agent:    c.Query("agent"),
+		Method:   c.Query("method"),
+		Route:    c.Query("route"),
+	}
+}
+
 // handleUsageSummary returns the usage summary for the window query parameter,
-// which defaults to 7d when absent or empty.
+// which defaults to 7d when absent or empty, narrowed by the filter
+// parameters.
 func (s *Server) handleUsageSummary(c *gin.Context) {
 	window := UsageWindow(c.Query(usageWindowParam))
 	if window == "" {
 		window = UsageWindow7d
 	}
 
-	summary, err := s.usage.Summary(c.Request.Context(), window)
+	summary, err := s.usage.Summary(c.Request.Context(), window, usageFilterFromQuery(c))
 
 	switch {
 	case errors.Is(err, ErrUsageWindowInvalid):
 		writeMLWHBadRequest(c, fmt.Sprintf("invalid %s %q", usageWindowParam, window))
+	case errors.Is(err, ErrUsageFilterInvalid):
+		writeMLWHBadRequest(c, strings.TrimPrefix(err.Error(), "mlwh: "))
 	case err != nil:
 		writeErrorEnvelope(c, http.StatusInternalServerError, httpErrorCodeInternal, usageSummaryFailedMessage)
 	default:
