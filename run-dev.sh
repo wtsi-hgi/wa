@@ -1824,28 +1824,34 @@ else
   wait_for_http "frontend health" "$FRONTEND_HEALTH_URL" "strict" "$FRONTEND_HEALTH_MAX_ATTEMPTS" "$FRONTEND_PID" "$FRONTEND_LOG" "$DEV_TLS_CERT"
 fi
 
-printf 'Development environment is ready.\n'
-printf 'Results: %s\n' "$WA_RESULTS_BACKEND_URL"
-printf 'Results bind: %s (%s)\n' "$RESULTS_BIND_ADDR" "$RESULTS_BIND_SCOPE"
-printf 'Dev TLS cert: %s (valid for %s)\n' "$DEV_TLS_CERT" "$(dev_tls_san_display)"
-if [[ -n "${WA_RESULTS_SERVER_URL:-}" ]]; then
-  printf 'Results public: %s\n' "$WA_RESULTS_SERVER_URL"
-elif [[ "$RESULTS_BIND_SCOPE" == "listening beyond loopback" ]]; then
-  printf 'Results public: not configured (set WA_RESULTS_SERVER_URL to the reachable HTTPS URL for remote CLI users)\n'
-fi
-if [[ -n "${WA_MLWH_BACKEND_URL:-}" ]]; then
-  printf 'MLWH: %s\n' "$WA_MLWH_BACKEND_URL"
-fi
-if (( LOCAL_MLWH_SERVER_CONFIGURED )); then
-  printf 'MLWH bind: %s (%s)\n' "$SEQMETA_BIND_ADDR" "$SEQMETA_BIND_SCOPE"
-  if [[ -n "${WA_MLWH_SERVER_URL:-}" ]]; then
-    printf 'MLWH public: %s\n' "$WA_MLWH_SERVER_URL"
-  elif [[ "$SEQMETA_BIND_SCOPE" == "listening beyond loopback" ]]; then
-    printf 'MLWH public: not configured (set WA_MLWH_SERVER_URL to the reachable URL for remote CLI users)\n'
+# Build the banner first and print it in one write, so a reader that sees the
+# ready line also sees every line after it. Bash line-buffers its own stdout,
+# so cat writes it.
+ready_banner="$(
+  printf 'Development environment is ready.\n'
+  printf 'Results: %s\n' "$WA_RESULTS_BACKEND_URL"
+  printf 'Results bind: %s (%s)\n' "$RESULTS_BIND_ADDR" "$RESULTS_BIND_SCOPE"
+  printf 'Dev TLS cert: %s (valid for %s)\n' "$DEV_TLS_CERT" "$(dev_tls_san_display)"
+  if [[ -n "${WA_RESULTS_SERVER_URL:-}" ]]; then
+    printf 'Results public: %s\n' "$WA_RESULTS_SERVER_URL"
+  elif [[ "$RESULTS_BIND_SCOPE" == "listening beyond loopback" ]]; then
+    printf 'Results public: not configured (set WA_RESULTS_SERVER_URL to the reachable HTTPS URL for remote CLI users)\n'
   fi
-fi
-printf 'Frontend: https://127.0.0.1:%s\n' "$frontend_port"
-printf 'Logs: %s\n' "$LOG_DIR"
+  if [[ -n "${WA_MLWH_BACKEND_URL:-}" ]]; then
+    printf 'MLWH: %s\n' "$WA_MLWH_BACKEND_URL"
+  fi
+  if (( LOCAL_MLWH_SERVER_CONFIGURED )); then
+    printf 'MLWH bind: %s (%s)\n' "$SEQMETA_BIND_ADDR" "$SEQMETA_BIND_SCOPE"
+    if [[ -n "${WA_MLWH_SERVER_URL:-}" ]]; then
+      printf 'MLWH public: %s\n' "$WA_MLWH_SERVER_URL"
+    elif [[ "$SEQMETA_BIND_SCOPE" == "listening beyond loopback" ]]; then
+      printf 'MLWH public: not configured (set WA_MLWH_SERVER_URL to the reachable URL for remote CLI users)\n'
+    fi
+  fi
+  printf 'Frontend: https://127.0.0.1:%s\n' "$frontend_port"
+  printf 'Logs: %s\n' "$LOG_DIR"
+)"
+cat <<<"$ready_banner"
 
 if (( ${#PIDS[@]} > 0 )); then
   wait "${PIDS[@]}"
