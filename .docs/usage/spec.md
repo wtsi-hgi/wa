@@ -317,7 +317,8 @@ the errors, where `probe` counts expected answers to probe requests and
 `expected` the rest. A failed probe (5xx) is still a `fault`. `legacy`
 holds `{fault, caller, expected}`: of those counts, the rows recorded before
 error details. Legacy rows are never probes. The other `errors` and
-`error_rate` fields are unchanged.
+`error_rate` fields are unchanged. The page leaves legacy rows out (E4), so
+the API still reports them for older pages.
 
 #### Groups
 
@@ -1666,11 +1667,18 @@ matters, and what is broken, so that I can act without reading tables.
       rejected the admin token." `unsupported` "wa mlwh serve is too old for
       usage metrics (needs MLWH API 1.10.0)." `backend_error` "The MLWH
       server could not be reached."
-- `UsageAdminView` (`summary`, `window`, `filter` props) lays out, top to
-  bottom. Charts are hand-written SVG with no chart library; category
-  colours are CSS variables (`--usage-cli` ... `--usage-other`,
-  `--usage-fault`, `--usage-caller`) defined for light and dark in
-  `globals.css`, in a fixed order validated for colour-vision deficiency.
+- `UsageAdminView` (`summary`, `window`, `filter` props) first drops the
+  errors recorded before error details, which nobody can act on: when the
+  server sends `totals.error_severity`, `withoutLegacyErrors` removes the
+  groups whose `error_code` is null and subtracts each breakdown's `legacy`
+  counts from its parts, `errors`, and `error_rate`. Legacy errors then
+  count in no KPI, attention row, chart marker, or severity badge; request
+  counts are unchanged. A summary without severities is shown as sent. It
+  then lays out, top to bottom. Charts are hand-written SVG with no chart
+  library; category colours are CSS variables (`--usage-cli` ...
+  `--usage-other`, `--usage-fault`, `--usage-caller`) defined for light and
+  dark in `globals.css`, in a fixed order validated for colour-vision
+  deficiency.
     - Header: "MLWH usage", "Generated <time> · records start <date>", and a
       `nav` "Window" with "Last 24 hours", "Last 7 days", "Last 30 days",
       and "All time" (current one `aria-current="page"`). Window links keep
@@ -1701,9 +1709,10 @@ matters, and what is broken, so that I can act without reading tables.
       `err-<severity>-<status>-<code or legacy>`, whose summary names the
       severity (icon plus screen-reader text), "<status> <code> on <route>"
       or "on <n> routes", the count, callers (categories, tools, agents),
-      when last seen, and the action from `usage-error-help.ts`. A legacy
-      row (no code) takes the help of the code its status implies, labelled
-      "(inferred, recorded before error details)". Opened, it lists each
+      when last seen, and the action from `usage-error-help.ts`. A row
+      without a code, which only a server without severities sends, takes
+      the help of the code its status implies, labelled "(inferred, recorded
+      before error details)". Opened, it lists each
       route (`id` `<row id>-<route slug>`, where a route parameter's `:`
       becomes `_`) with today's error entries (meaning, causes with kind
       advice, messages, examples), and for `no_route` the unmatched paths
@@ -1711,7 +1720,7 @@ matters, and what is broken, so that I can act without reading tables.
       endpoint with p95 over 2 s, and a capped error list. With no rows it
       says "No faults or caller errors in this window."; without `errors`,
       "This MLWH server does not report error details." A line links the
-      expected misses to "Expected outcomes" and "Older errors".
+      expected misses to "Expected outcomes".
     - "Activity": columns per bucket (hour, day, or week) stacked by active
       category, clipped to buckets that end after `earliest_record` ("no
       records before <date>"), with a fault cross and caller circle above
@@ -1740,11 +1749,12 @@ matters, and what is broken, so that I can act without reading tables.
     - "No requests from <categories>." names the categories with none.
     - Closed panels: "Expected outcomes (<n> lookup misses)" (detailed
       expected groups by route, ids `err-expected-<route slug>`, with a note
-      that `wa mlwh info` probes each identifier kind); "Older errors without
-      details (<n>)" (legacy expected groups, ids `err-older-<route slug>`,
-      shown only when there are some); "Sessions and clients (<n> sessions,
+      that `wa mlwh info` probes each identifier kind); "Sessions and clients
+      (<n> sessions,
       <m> clients by IP)" (a per-category sessions table and the largest
       clients, "top 25 of <sessions + ip_clients>" when capped).
+    - "<n> errors recorded before error details are not shown.", only when
+      `withoutLegacyErrors` dropped some.
     - The self-declared note: "Usernames are self-declared by callers. Web
       counts are requests that reached the MLWH server; lookups served from
       browser or Next.js caches are not counted."
@@ -1753,15 +1763,18 @@ matters, and what is broken, so that I can act without reading tables.
       malformed hash is ignored.
     - Narrow screens do not scroll sideways; long caller-supplied values
       break anywhere.
-- `lib/usage-derive.ts` holds the pure logic: `fallbackSeverity` (the
-  server's rule, for groups without `severity`), `attentionRows`,
+- `lib/usage-derive.ts` holds the pure logic: `withoutLegacyErrors`,
+  `fallbackSeverity` (the server's rule, for groups without `severity`),
+  `attentionRows`,
   `expectedGroups`, `errorAnchors`, `periodChanges`, `agentProducts`,
   `endpointGroups`, `timeBuckets`, `weekBuckets`, `clipBuckets`,
   `activeCategories`, `previousComparable`, `usageHref`, and `withFilter`.
 
 **Acceptance tests** (`usage-page.test.ts` uses
 `fixtures/usage-summary-30d-anon.json`, an anonymised copy of a real 30-day
-production response with the severity fields added):
+production response with the severity fields added. Its faults and two of
+its caller errors are legacy. The detailed fixture gives its legacy faults
+the code their status implies and counts none of them as legacy):
 
 1. Given `searchParams` `{}`, then `getUsageSummaryAction("7d", {})`.
    Given `{window: "30d"}`, then `"30d"`. Given `{window: "bogus"}` or
@@ -1772,25 +1785,32 @@ production response with the severity fields added):
    alone, a route without `/`, or a 129-byte user drops the whole filter.
 3. Given each non-`ok` state and each `UsageUnavailableReason`, then the
    markup contains the exact message(s) above.
-4. Given the 30-day fixture, then the KPIs read Requests 1,578 ("CLI 95.9%
-   · MCP 3.0%", "no earlier records"), People 12, Sessions 292, MCP
-   requests 47, and Faults 15 with "0.95% of requests · 3 caller errors"
+4. Given the detailed fixture, then the KPIs read Requests 1,578 ("CLI
+   95.9% · MCP 3.0%", "no earlier records"), People 12, Sessions 292, MCP
+   requests 47, and Faults 15 with "0.95% of requests · 1 caller error"
    linking to `#attention`.
 5. Given `previous_totals` that records cover, then changes read "+58% vs
    previous", "+2 vs previous", "−8 vs previous", and "−5 vs previous".
    Given an older server, then the Errors tile reads 483.
-6. Given the fixture, then Needs attention lists, in order, the 502 row on
-   6 routes (14, with the upstream_impaired action), the CLI 400 on
-   `GET /study/:id/latest-data` (1), and two caller `no_route` rows; the
-   header reads "15 faults · 3 caller errors" and the footer "21 under
-   Expected outcomes and 444 under Older errors".
+6. Given the detailed fixture, then Needs attention lists, in order, the
+   502 row on 6 routes (14, with the upstream_impaired action), the CLI 400
+   on `GET /study/:id/latest-data` (1), and the caller `no_route` row (1);
+   the header reads "15 faults · 1 caller error" and the footer "21 under
+   Expected outcomes". Given the fixture as sent, then Faults reads 0
+   ("0.0% of requests · 1 caller error"), Needs attention lists only the
+   caller `no_route` row ("0 faults · 1 caller error"), the chart has no
+   fault markers, no endpoint badge shows faults, nothing is labelled
+   inferred, there is no Older errors panel, and the page says "461 errors
+   recorded before error details are not shown." `withoutLegacyErrors`
+   gives totals of 22 errors (1 caller, 21 expected) and leaves a summary
+   without severities as it is.
 7. Given dropped events 3 and an endpoint with p95 2500 ms, then both
    notices show. Given only expected errors, then "No faults or caller
-   errors in this window."; without `errors`, the upgrade note. Given one
-   shown group of 2 among 483 errors, then the cap note.
-8. Given the fixture, then the activity chart has 2 columns, "no records
-   before 20 Oct", 2 fault markers, the summary `aria-label`, and a table;
-   the CLI legend button hides CLI segments; "Expected misses" adds
+   errors in this window."; without `errors`, the upgrade note. Given the
+   fixture with one shown group of 2, then the cap note counts 22 errors.
+8. Given the detailed fixture, then the activity chart has 2 columns, "no
+   records before 20 Oct", 2 fault markers, the summary `aria-label`, and a
+   table; the CLI legend button hides CLI segments; "Expected misses" adds
    markers; Web, Results server, and mlwhdiff server are named as idle.
 9. Given one period, then "Not enough history yet (records start 20 Oct).";
    given two, then eight change links (new first, MCP linking to
@@ -1798,12 +1818,13 @@ production response with the severity fields added):
 10. Given the fixture, then People shows 12 rows with 7 behind a closed
     "Show all 12" and links such as `/usage?window=30d&user=user01`; Via
     what merges claude-code's 5 versions; Endpoints reads "40 routes in 16
-    groups", `/resolve/…` shows expected misses and no fault rate, and the
-    export route's badge links to its `#err-` listing; an older server's
-    panels have no links.
-11. Given the fixture, then Expected outcomes, Older errors, and Sessions
-    and clients are closed; given `#err-fault-502-legacy-GET-runs-count`,
-    then its `details` opens, and a later `hashchange` opens another.
+    groups", `/resolve/…` shows expected misses and no fault rate, and (in
+    the detailed fixture) the export route's badge links to its `#err-`
+    listing; an older server's panels have no links.
+11. Given the fixture, then Expected outcomes and Sessions and clients are
+    closed; given the detailed fixture and
+    `#err-fault-502-upstream_impaired-GET-runs-count`, then its `details`
+    opens, and a later `hashchange` opens another.
 12. Given values that collide after U+FFFD replacement, then no duplicate
     React keys.
 

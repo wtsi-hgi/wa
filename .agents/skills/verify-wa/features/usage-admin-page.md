@@ -10,8 +10,11 @@ across routes by status and code, each a closed `details` with id
 `err-<severity>-<status>-<code>`), `Activity` (an SVG chart stacked by
 category with legend buttons and a "View as table" disclosure), `What
 changed`, ranked bars for `People`, `Via what`, `Endpoints`, and `MCP
-tools`, then closed panels `Expected outcomes`, `Older errors without
-details` (only when there are some), and `Sessions and clients`.
+tools`, then closed panels `Expected outcomes` and `Sessions and clients`.
+Errors recorded before error details (`error_code` `null`, counted in each
+`error_severity.legacy`) are left out of every count, row, marker, and badge;
+a line at the bottom says "<n> errors recorded before error details are not
+shown." when there are some.
 Next.js reads the MLWH admin token from disk on the server side and calls
 `${WA_MLWH_BACKEND_URL}/usage?window=<w>` plus any filter parameters
 (`category`, `user`, `tool`, `agent`, `method`+`route`). The browser never
@@ -108,7 +111,7 @@ moment login finishes; see [Feedback admin page](feedback-admin-page.md).
    tools, and agents, where `fault`, `caller`, `expected`, and `probe` sum
    to the errors. Its `errors[]` groups match Needs attention and Expected
    outcomes, with `error_code` `null` only for rows recorded by a server
-   older than the error details. In the raw rows, the CLI's probes have
+   older than the error details; the page leaves those groups out. In the raw rows, the CLI's probes have
    `lookup` `probe` and every other row NULL. To read raw rows, find the
    `--usage-db` path in the `mlwh serve` arguments
    (`.tmp/mlwh-usage-test.*.sqlite`) and open it read-only

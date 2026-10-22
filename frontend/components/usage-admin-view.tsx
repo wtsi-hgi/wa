@@ -3,15 +3,12 @@ import Link from "next/link";
 import { LocalTimestamp } from "@/components/local-timestamp";
 import { ActivityPanel, ChangesPanel } from "@/components/usage/activity-panel";
 import { AttentionPanel } from "@/components/usage/attention-panel";
-import {
-    ExpectedPanel,
-    OlderErrorsPanel,
-    SessionsPanel,
-} from "@/components/usage/detail-panels";
+import { ExpectedPanel, SessionsPanel } from "@/components/usage/detail-panels";
 import { FilterBar } from "@/components/usage/filter-bar";
 import {
     categoryLabels,
     formatDay,
+    pluralise,
     windowLabels,
 } from "@/components/usage/format";
 import { HashOpener } from "@/components/usage/hash-opener";
@@ -35,6 +32,7 @@ import {
     isFiltered,
     timeBuckets,
     usageHref,
+    withoutLegacyErrors,
 } from "@/lib/usage-derive";
 
 export type UsageAdminViewProps = {
@@ -45,12 +43,14 @@ export type UsageAdminViewProps = {
 
 // UsageAdminView is the admin usage dashboard: KPIs, what needs fixing,
 // activity and changes, ranked breakdowns, then collapsed detail. Window and
-// filters are URL state, so every view can be linked.
+// filters are URL state, so every view can be linked. Errors recorded before
+// error details cannot be acted on, so they are left out everywhere.
 export function UsageAdminView({
     filter = {},
-    summary,
+    summary: serverSummary,
     window,
 }: UsageAdminViewProps) {
+    const { legacy, summary } = withoutLegacyErrors(serverSummary);
     // Servers that predate filters do not echo one and ignore the params.
     const filterable = summary.filter !== undefined;
     const { buckets: allBuckets, unit } = timeBuckets(summary);
@@ -150,9 +150,15 @@ export function UsageAdminView({
 
             <div className="flex flex-col gap-2">
                 <ExpectedPanel summary={summary} />
-                <OlderErrorsPanel summary={summary} />
                 <SessionsPanel summary={summary} />
             </div>
+
+            {legacy > 0 ? (
+                <p className="text-sm text-muted-foreground">
+                    {pluralise(legacy, "error")} recorded before error details{" "}
+                    {legacy === 1 ? "is" : "are"} not shown.
+                </p>
+            ) : null}
 
             <p className="max-w-3xl text-sm text-muted-foreground">
                 Usernames are self-declared by callers. Web counts are requests

@@ -168,17 +168,10 @@ export function AttentionPanel({ summary }: { summary: UsageSummary }) {
     const callers = rows
         .filter((row) => row.severity === "caller")
         .reduce((sum, row) => sum + row.count, 0);
-    const expected = expectedGroups(errors ?? []);
-    const count = (groups: typeof expected.detailed) =>
-        groups.reduce((sum, group) => sum + group.count, 0);
-    const hidden = [
-        {
-            count: count(expected.detailed),
-            href: "#expected",
-            name: "Expected outcomes",
-        },
-        { count: count(expected.legacy), href: "#older", name: "Older errors" },
-    ].filter((part) => part.count > 0);
+    const expected = expectedGroups(errors ?? []).reduce(
+        (sum, group) => sum + group.count,
+        0,
+    );
     const shown = (errors ?? []).reduce((sum, group) => sum + group.count, 0);
     const slow = summary.endpoints.filter(
         (endpoint) => endpoint.p95_ms > slowP95Ms,
@@ -260,21 +253,16 @@ export function AttentionPanel({ summary }: { summary: UsageSummary }) {
                     ))}
                 </ul>
             ) : null}
-            {hidden.length > 0 ? (
+            {expected > 0 ? (
                 <p className="text-sm text-muted-foreground">
                     Expected lookup misses are not problems:{" "}
-                    {hidden.map((part, index) => (
-                        <span key={part.href}>
-                            {index > 0 ? " and " : null}
-                            {formatCount(part.count)} under{" "}
-                            <a
-                                className="underline decoration-border underline-offset-4 hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                                href={part.href}
-                            >
-                                {part.name}
-                            </a>
-                        </span>
-                    ))}
+                    {formatCount(expected)} under{" "}
+                    <a
+                        className="underline decoration-border underline-offset-4 hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                        href="#expected"
+                    >
+                        Expected outcomes
+                    </a>
                     .
                 </p>
             ) : null}
