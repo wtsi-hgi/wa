@@ -33,8 +33,9 @@ const ownClientCategories: UsageCategory[] = [
 ];
 
 // fallbackSeverity judges a group from a server that predates severities with
-// the server's rule (usageErrorSeveritySQL): 5xx is a fault; not_found and
-// ambiguous, or a code-less 404 or 409 on a matched route, are expected; other
+// the server's rule (usageErrorSeveritySQL): 5xx is a fault; not_found,
+// ambiguous, and unsupported_identifier, or a code-less 404, 409, or 422 on a
+// matched route, are expected; other
 // 4xx are faults when any caller is one of wa's own clients, else caller
 // errors. The server judges each row, but an old server's group can mix
 // callers, so a 4xx group with any of wa's own clients counts wholly as a
@@ -54,9 +55,12 @@ export function fallbackSeverity(
     if (
         code === "not_found" ||
         code === "ambiguous" ||
+        code === "unsupported_identifier" ||
         (code === null &&
             group.route !== "" &&
-            (group.status === 404 || group.status === 409))
+            (group.status === 404 ||
+                group.status === 409 ||
+                group.status === 422))
     ) {
         return "expected";
     }

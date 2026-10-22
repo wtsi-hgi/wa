@@ -125,8 +125,54 @@ describe("fallbackSeverity", () => {
             "fault",
         ],
         [
+            "results_server unsupported_identifier",
+            {
+                status: 422,
+                error_code: "unsupported_identifier",
+                by_category: { results_server: 1 },
+            },
+            "expected",
+        ],
+        [
+            "MCP unsupported_identifier",
+            {
+                status: 422,
+                error_code: "unsupported_identifier",
+                by_category: { mcp: 1 },
+            },
+            "expected",
+        ],
+        [
+            "legacy 422 on a route",
+            {
+                status: 422,
+                error_code: null,
+                by_category: { results_server: 1 },
+            },
+            "expected",
+        ],
+        [
+            "legacy unmatched 422",
+            {
+                route: "",
+                status: 422,
+                error_code: null,
+                by_category: { results_server: 1 },
+            },
+            "fault",
+        ],
+        [
             "CLI bad_request",
             { status: 400, error_code: "bad_request" },
+            "fault",
+        ],
+        [
+            "results_server bad_request",
+            {
+                status: 400,
+                error_code: "bad_request",
+                by_category: { results_server: 1 },
+            },
             "fault",
         ],
         [

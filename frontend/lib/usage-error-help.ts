@@ -26,7 +26,7 @@ const codeHelp: Record<string, Omit<UsageErrorHelp, "label">> = {
     },
     unsupported_identifier: {
         meaning: "The identifier or argument is not one this endpoint accepts.",
-        action: "Check the messages and examples: the caller may be sending a name where an ID is needed, an identifier for a different kind of record, an unsupported kind or role value, or an empty required name.",
+        action: "Usually routine: the results page's search box classifies each typed term to offer suggestions, and text that is no known kind of identifier gets this answer. If one caller repeats it on another endpoint, check the messages and examples: it may be sending a name where an ID is needed, an identifier for a different kind of record, an unsupported kind or role value, or an empty required name.",
     },
     bad_request: {
         meaning: "The request's parameters were invalid.",

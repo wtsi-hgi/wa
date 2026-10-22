@@ -44,7 +44,9 @@ const (
 	// client got wrong.
 	UsageErrorSeverityCaller UsageErrorSeverity = "caller"
 	// UsageErrorSeverityExpected is a lookup's answer: the identifier is not
-	// known (not_found) or names several records (ambiguous).
+	// known (not_found), names several records (ambiguous), or is not a kind
+	// the endpoint supports (unsupported_identifier), as when the results
+	// server classifies each search term to offer suggestions.
 	UsageErrorSeverityExpected UsageErrorSeverity = "expected"
 )
 
@@ -57,13 +59,16 @@ var usageOwnClientCategories = []UsageCategory{
 
 // usageErrorSeveritySQL is the UsageErrorSeverity of an error row. Rows
 // recorded before error details (NULL code) are judged by status alone: on a
-// matched route only not_found answers 404 and only ambiguous answers 409.
+// matched route only not_found answers 404, only ambiguous answers 409, and
+// only unsupported_identifier answers 422.
 var usageErrorSeveritySQL = fmt.Sprintf(`CASE
     WHEN status >= 500 THEN '%s'
-    WHEN error_code IN ('%s', '%s') OR (error_code IS NULL AND route <> '' AND status IN (404, 409)) THEN '%s'
+    WHEN error_code IN ('%s', '%s', '%s')
+        OR (error_code IS NULL AND route <> '' AND status IN (404, 409, 422)) THEN '%s'
     WHEN category IN ('%s') THEN '%s'
     ELSE '%s' END`,
-	UsageErrorSeverityFault, httpErrorCodeNotFound, httpErrorCodeAmbiguous, UsageErrorSeverityExpected,
+	UsageErrorSeverityFault, httpErrorCodeNotFound, httpErrorCodeAmbiguous, httpErrorCodeUnsupportedIdentifier,
+	UsageErrorSeverityExpected,
 	strings.Join(usageCategoryStrings(usageOwnClientCategories), "', '"), UsageErrorSeverityFault,
 	UsageErrorSeverityCaller)
 
