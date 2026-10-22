@@ -133,3 +133,11 @@ body {
     :where(div, section, img, iframe, article, pre, button) {
     border-bottom-right-radius: 0;
 }
+
+/* The result detail page widens on very wide screens; keep the header bar
+   (back link and account menu) aligned with it. */
+@media (min-width: 96rem) {
+    body:has(main[data-wide-page]) header[data-results-auth-bar] {
+        max-width: min(100%, 128rem);
+    }
+}

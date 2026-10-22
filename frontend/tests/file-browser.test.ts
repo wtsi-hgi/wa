@@ -1121,8 +1121,9 @@ describe("N1 file browser", () => {
         expect(directoryFiles?.contains(preview ?? null)).toBe(true);
         expect(singleLayout).toBeTruthy();
         expect(singleLayout?.contains(preview ?? null)).toBe(true);
+        // One row per file plus a filler row that absorbs a tall preview.
         expect((preview as HTMLElement | null)?.style.gridRow).toBe(
-            "1 / span 3",
+            "1 / span 4",
         );
     });
 
@@ -1178,11 +1179,21 @@ describe("N1 file browser", () => {
         // Verify preview is a direct child of the grid
         expect(preview.parentElement).toBe(singleLayout);
 
-        // Verify preview row-spans all file rows
-        expect(preview.style.gridRow).toBe("1 / span 3");
+        // Verify preview row-spans all file rows plus the filler row that
+        // keeps file rows short when the preview is taller than the list
+        expect(preview.style.gridRow).toBe("1 / span 4");
+        expect(singleLayout.style.gridTemplateRows).toBe("repeat(3, auto) 1fr");
 
-        // Verify preview starts at column 2 (no xl: prefix, applies at all widths)
-        expect(preview.className).toContain("col-start-2");
+        // The resizable splitter sits in column 2 and the preview in column 3
+        // (no xl: prefix, applies at all widths)
+        const splitter = singleLayout.querySelector(
+            '[data-file-list-splitter="true"]',
+        ) as HTMLElement;
+
+        expect(splitter.parentElement).toBe(singleLayout);
+        expect(splitter.className).toContain("col-start-2");
+        expect(splitter.style.gridRow).toBe("1 / span 4");
+        expect(preview.className).toContain("col-start-3");
         expect(preview.className).not.toMatch(/xl:col-start-/);
     });
 
@@ -2372,7 +2383,7 @@ describe("N1 file browser", () => {
 
         // Preview should row-span all file rows
         const previewElement = preview as HTMLElement;
-        expect(previewElement.style.gridRow).toBe("1 / span 3");
+        expect(previewElement.style.gridRow).toBe("1 / span 4");
 
         // Verify DOM structure: file buttons and preview are siblings
         const gridChildren = Array.from(gridContainer?.children ?? []);
@@ -4756,5 +4767,388 @@ describe("N1 file browser", () => {
         expect(tableShell).toBeTruthy();
         expect(tableShell?.className).toContain("border");
         expect(tableShell?.className).toContain("rounded-[1.75rem]");
+    });
+
+    it("toggles a persisted compact file list that hides size, date and kind", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/run/alpha.tsv", "output", 2048),
+            buildFile("/results/run/beta.tsv", "output", 4096),
+        ];
+        const renderBrowser = async () => {
+            await act(async () => {
+                root.render(
+                    createElement(FileBrowser, {
+                        files,
+                        onSelectDirectory: vi.fn(),
+                        onSelectFile: vi.fn(),
+                    }),
+                );
+            });
+        };
+
+        await renderBrowser();
+
+        const section = () =>
+            container.querySelector<HTMLElement>("[data-file-browser]");
+        const toggle = () =>
+            container.querySelector<HTMLElement>(
+                'button[aria-label="Compact file list"]',
+            );
+
+        expect(section()?.dataset.fileBrowserDensity).toBe("comfortable");
+        expect(toggle()?.getAttribute("aria-pressed")).toBe("false");
+        expect(container.querySelector("[data-file-kind]")).toBeTruthy();
+        expect(container.textContent).toContain("2.0 KB");
+
+        await click(toggle());
+
+        expect(section()?.dataset.fileBrowserDensity).toBe("compact");
+        expect(toggle()?.getAttribute("aria-pressed")).toBe("true");
+        expect(container.querySelector("[data-file-kind]")).toBeNull();
+        expect(container.textContent).not.toContain("2.0 KB");
+        expect(
+            container.querySelectorAll('[data-file-browser-file-layout="row"]'),
+        ).toHaveLength(2);
+        expect(
+            container.querySelector('[data-file-browser-file-layout="card"]'),
+        ).toBeNull();
+        expect(
+            container
+                .querySelector('[data-file-path="/results/run/alpha.tsv"]')
+                ?.getAttribute("title"),
+        ).toContain("/results/run/alpha.tsv");
+        expect(window.localStorage.getItem("wa:file-browser:compact")).toBe(
+            "1",
+        );
+
+        await act(async () => {
+            root.unmount();
+        });
+        root = createRoot(container);
+        await renderBrowser();
+
+        expect(section()?.dataset.fileBrowserDensity).toBe("compact");
+
+        await click(toggle());
+
+        expect(section()?.dataset.fileBrowserDensity).toBe("comfortable");
+        expect(window.localStorage.getItem("wa:file-browser:compact")).toBe(
+            "0",
+        );
+    });
+
+    it("defaults the file list to a quarter of the split and resizes it from the keyboard and pointer", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/plot-001.png", "output"),
+            buildFile("/results/plot-002.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement("div", null, file?.path ?? "none"),
+                }),
+            );
+        });
+
+        const section = container.querySelector<HTMLElement>(
+            "[data-file-browser]",
+        );
+        const splitter = () =>
+            container.querySelector<HTMLElement>(
+                '[data-file-list-splitter="true"]',
+            );
+        const width = () =>
+            section?.style.getPropertyValue("--file-list-width");
+        const press = async (key: string) => {
+            await act(async () => {
+                fireEvent.keyDown(splitter() as HTMLElement, { key });
+            });
+        };
+
+        expect(splitter()?.getAttribute("role")).toBe("separator");
+        expect(splitter()?.getAttribute("aria-orientation")).toBe("vertical");
+        expect(splitter()?.tabIndex).toBe(0);
+        expect(splitter()?.getAttribute("aria-valuenow")).toBe("25");
+        expect(width()).toBe("25%");
+
+        await press("ArrowRight");
+        expect(splitter()?.getAttribute("aria-valuenow")).toBe("27");
+        expect(width()).toBe("27%");
+
+        await press("End");
+        expect(width()).toBe("70%");
+
+        await press("ArrowRight");
+        expect(width()).toBe("70%");
+
+        await press("Home");
+        expect(width()).toBe("12%");
+        expect(window.localStorage.getItem("wa:file-browser:list-width")).toBe(
+            "12",
+        );
+
+        const grid = splitter()?.parentElement as HTMLElement;
+
+        grid.getBoundingClientRect = () =>
+            ({ left: 100, width: 1000 }) as DOMRect;
+
+        await act(async () => {
+            fireEvent.pointerDown(splitter() as HTMLElement, {
+                button: 0,
+                clientX: 220,
+            });
+            fireEvent.pointerMove(document, { clientX: 500 });
+            fireEvent.pointerUp(document, { clientX: 500 });
+        });
+
+        expect(width()).toBe("40%");
+
+        await act(async () => {
+            fireEvent.pointerMove(document, { clientX: 900 });
+        });
+
+        expect(width()).toBe("40%");
+
+        await act(async () => {
+            fireEvent.doubleClick(splitter() as HTMLElement);
+        });
+
+        expect(width()).toBe("25%");
+    });
+
+    it("lets previews grow to most of the viewport height", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [buildFile("/results/plot-001.png", "output")];
+
+        vi.stubGlobal("innerHeight", 1200);
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement("div", null, file?.path ?? "none"),
+                }),
+            );
+        });
+
+        const handle = container.querySelector<HTMLElement>(
+            "[data-preview-resize-handle]",
+        );
+
+        expect(handle?.getAttribute("aria-valuemax")).toBe("1104");
+
+        await act(async () => {
+            fireEvent.keyDown(handle as HTMLElement, { key: "End" });
+        });
+
+        expect(
+            container
+                .querySelector<HTMLElement>("[data-file-browser]")
+                ?.getAttribute("data-preview-height"),
+        ).toBe("1104");
+    });
+
+    it("steps through every matching subfolder preview in the gallery lightbox", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const { FileImageThumbnail } =
+            await import("@/components/file-preview");
+        const files = [
+            buildFile("/results/run-a/kmeans_k3.png", "output"),
+            buildFile("/results/run-a/summary.txt", "output"),
+            buildFile("/results/run-b/kmeans_k3.png", "output"),
+            buildFile("/results/run-b/notes.png", "output"),
+            buildFile("/results/run-c/kmeans_k3.png", "output"),
+        ];
+        const renderExpandedPreview = vi.fn(
+            (file: FileEntry): ReactNode =>
+                createElement(
+                    "div",
+                    { "data-testid": "expanded-preview" },
+                    `expanded:${file.path}`,
+                ),
+        );
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderExpandedPreview,
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(FileImageThumbnail, {
+                            file,
+                            fullSizeUrl: `/full${file.path}`,
+                            thumbnailUrl: `/thumb${file.path}`,
+                        }),
+                    selectedDirectory: "/results",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        const filterInput = container.querySelector(
+            'input[aria-label="Filter files by glob"]',
+        ) as HTMLInputElement;
+
+        await act(async () => {
+            fireEvent.change(filterInput, { target: { value: "*_k*.png" } });
+        });
+        await click(
+            container.querySelector('input[aria-label="Subfolder previews"]'),
+        );
+
+        const enlargeButtons = container.querySelectorAll<HTMLElement>(
+            'button[aria-label="Open image lightbox"]',
+        );
+
+        expect(enlargeButtons).toHaveLength(3);
+
+        enlargeButtons[1]?.focus();
+        await click(enlargeButtons[1]);
+
+        const dialog = () =>
+            document.body.querySelector<HTMLElement>(
+                '[data-preview-gallery="true"]',
+            );
+        const position = () =>
+            dialog()?.querySelector("[data-preview-gallery-position]")
+                ?.textContent;
+        const shownPath = () =>
+            dialog()?.querySelector("[data-preview-gallery-path]")?.textContent;
+        const button = (label: string) =>
+            dialog()?.querySelector<HTMLButtonElement>(
+                `button[aria-label="${label}"]`,
+            );
+
+        expect(dialog()?.getAttribute("role")).toBe("dialog");
+        expect(
+            document.body.querySelector(
+                '[aria-label="Image preview lightbox"]',
+            ),
+        ).toBeNull();
+        expect(position()).toBe("2 of 3");
+        expect(shownPath()).toBe("run-b/kmeans_k3.png");
+        expect(dialog()?.textContent).toContain(
+            "expanded:/results/run-b/kmeans_k3.png",
+        );
+        expect(document.activeElement).toBe(button("Close preview gallery"));
+
+        await act(async () => {
+            fireEvent.keyDown(window, { key: "ArrowRight" });
+        });
+
+        expect(position()).toBe("3 of 3");
+        expect(shownPath()).toBe("run-c/kmeans_k3.png");
+        expect(button("Next file")?.disabled).toBe(true);
+
+        await act(async () => {
+            fireEvent.keyDown(window, { key: "ArrowRight" });
+        });
+
+        expect(position()).toBe("3 of 3");
+
+        await click(button("Previous file"));
+        await click(button("Previous file"));
+
+        expect(position()).toBe("1 of 3");
+        expect(shownPath()).toBe("run-a/kmeans_k3.png");
+        expect(button("Previous file")?.disabled).toBe(true);
+
+        await act(async () => {
+            fireEvent.keyDown(window, { key: "Escape" });
+        });
+
+        expect(dialog()).toBeNull();
+        expect(document.activeElement).toBe(enlargeButtons[1]);
+    });
+
+    it("includes the selected folder's own previews before subfolder previews and leaves non-gallery lightboxes local", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const { FileImageThumbnail } =
+            await import("@/components/file-preview");
+        const files = [
+            buildFile("/results/overview.png", "output"),
+            buildFile("/results/run-a/plot.png", "output"),
+            buildFile("/results/run-b/plot.png", "output"),
+        ];
+        const renderGridPreview = (file: FileEntry): ReactNode =>
+            createElement(FileImageThumbnail, {
+                file,
+                fullSizeUrl: `/full${file.path}`,
+                thumbnailUrl: `/thumb${file.path}`,
+            });
+        const renderBrowser = async (withGallery: boolean) => {
+            await act(async () => {
+                root.render(
+                    createElement(FileBrowser, {
+                        files,
+                        onSelectDirectory: vi.fn(),
+                        onSelectFile: vi.fn(),
+                        previewMode: "grid",
+                        renderExpandedPreview: withGallery
+                            ? (file: FileEntry): ReactNode =>
+                                  createElement("div", null, file.path)
+                            : undefined,
+                        renderGridPreview,
+                        selectedDirectory: "/results",
+                        visibleFiles: [files[0] as FileEntry],
+                    }),
+                );
+            });
+        };
+
+        await renderBrowser(true);
+        await click(
+            container.querySelector('input[aria-label="Subfolder previews"]'),
+        );
+        await click(
+            container.querySelector<HTMLElement>(
+                '[data-grid-preview-path="/results/overview.png"] button[aria-label="Open image lightbox"]',
+            ),
+        );
+
+        const gallery = document.body.querySelector(
+            '[data-preview-gallery="true"]',
+        );
+
+        expect(
+            gallery?.querySelector("[data-preview-gallery-position]")
+                ?.textContent,
+        ).toBe("1 of 3");
+        expect(
+            gallery?.querySelector("[data-preview-gallery-path]")?.textContent,
+        ).toBe("overview.png");
+
+        await act(async () => {
+            fireEvent.keyDown(window, { key: "Escape" });
+        });
+        await renderBrowser(false);
+        await click(
+            container.querySelector<HTMLElement>(
+                '[data-grid-preview-path="/results/overview.png"] button[aria-label="Open image lightbox"]',
+            ),
+        );
+
+        expect(
+            document.body.querySelector('[data-preview-gallery="true"]'),
+        ).toBeNull();
+        expect(
+            document.body.querySelector(
+                '[aria-label="Image preview lightbox"]',
+            ),
+        ).toBeTruthy();
     });
 });

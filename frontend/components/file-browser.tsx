@@ -7,6 +7,7 @@ import {
     type KeyboardEvent as ReactKeyboardEvent,
     memo,
     type MouseEvent as ReactMouseEvent,
+    type PointerEvent as ReactPointerEvent,
     type ReactNode,
     type TouchEvent as ReactTouchEvent,
     useCallback,
@@ -14,6 +15,7 @@ import {
     useMemo,
     useRef,
     useState,
+    useSyncExternalStore,
 } from "react";
 import {
     ChevronDown,
@@ -22,6 +24,7 @@ import {
     Eye,
     FolderTree,
     ListFilter,
+    Rows3,
     Save,
     X,
 } from "lucide-react";
@@ -35,8 +38,22 @@ import {
     boxTitleTopAlignedRowClass,
 } from "@/components/box-title-section";
 import { LocalTimestamp } from "@/components/local-timestamp";
+import {
+    PreviewGalleryContext,
+    PreviewGalleryLightbox,
+    usePreviewGalleryContextValue,
+} from "@/components/preview-gallery";
 import { PreviewPagination } from "@/components/preview-pagination";
+import { copyText } from "@/lib/clipboard";
 import { type FileEntry } from "@/lib/contracts";
+import {
+    FILE_LIST_WIDTH_DEFAULT,
+    FILE_LIST_WIDTH_MAX,
+    FILE_LIST_WIDTH_MIN,
+    clampFileListWidth,
+    useFileBrowserCompact,
+    useFileBrowserListWidth,
+} from "@/lib/file-browser-view-prefs";
 import {
     applyFileBrowserGlobWildcards,
     fileBrowserGlobFilterStorageKey,
@@ -100,7 +117,11 @@ export type SubdirPreviewKind = PreviewFileTypeId;
 const SUBDIR_PREVIEW_PAGE_SIZE = 20;
 const DEFER_SUBDIR_PREVIEW_MOUNT_THRESHOLD = 80;
 const PREVIEW_HEIGHT_MIN = 120;
-const PREVIEW_HEIGHT_MAX = 420;
+// Before the viewport is known (server render, hydration) previews may grow
+// to this height; afterwards up to most of the viewport, within the limit.
+const PREVIEW_HEIGHT_BASE_MAX = 420;
+const PREVIEW_HEIGHT_LIMIT = 1600;
+const PREVIEW_HEIGHT_VIEWPORT_MARGIN = 96;
 const allSubdirPreviewKinds = new Set<SubdirPreviewKind>(allPreviewFileTypeIds);
 const defaultSubdirPreviewKinds = new Set<SubdirPreviewKind>(
     allSubdirPreviewKinds,
@@ -319,14 +340,36 @@ function fileMatchesPreviewKinds(
     return kind !== null && kinds.has(kind);
 }
 
-function clampPreviewHeight(value: number): number {
+function clampPreviewHeight(value: number, maxHeight: number): number {
     if (!Number.isFinite(value)) {
         return PREVIEW_HEIGHT_MIN;
     }
 
+    return Math.min(maxHeight, Math.max(PREVIEW_HEIGHT_MIN, Math.round(value)));
+}
+
+function subscribeToViewportResize(listener: () => void): () => void {
+    window.addEventListener("resize", listener);
+
+    return () => window.removeEventListener("resize", listener);
+}
+
+function viewportPreviewHeightMax(): number {
     return Math.min(
-        PREVIEW_HEIGHT_MAX,
-        Math.max(PREVIEW_HEIGHT_MIN, Math.round(value)),
+        PREVIEW_HEIGHT_LIMIT,
+        Math.max(
+            PREVIEW_HEIGHT_BASE_MAX,
+            window.innerHeight - PREVIEW_HEIGHT_VIEWPORT_MARGIN,
+        ),
+    );
+}
+
+/** The tallest a preview may be: most of the viewport height. */
+function usePreviewHeightMax(): number {
+    return useSyncExternalStore(
+        subscribeToViewportResize,
+        viewportPreviewHeightMax,
+        () => PREVIEW_HEIGHT_BASE_MAX,
     );
 }
 
@@ -365,6 +408,8 @@ type FileBrowserProps = {
     previewPageCount?: number;
     previewSummary?: string;
     renderDirectoryAction?: (node: DirectoryTreeNode) => ReactNode;
+    /** Enlarged view of one file; enables the click-through preview gallery. */
+    renderExpandedPreview?: (file: FileEntry) => ReactNode;
     renderGridPreview?: (file: FileEntry) => ReactNode;
     renderSinglePreview?: (file: FileEntry | null) => ReactNode;
     selectedDirectory?: string;
@@ -407,6 +452,8 @@ type FileBrowserDesign = {
     fileListSingleClass: string;
     fileListSinglePreviewClass: string;
     fileMetaClass: string;
+    density: "comfortable" | "compact";
+    rootContentClass: string;
     fileNameClass: string;
     folderControlsClass: string;
     gridFileCellClass: string;
@@ -470,17 +517,19 @@ const activeFileBrowserDesign: FileBrowserDesign = {
     fileListGridClass: "space-y-2 xl:col-span-2",
     fileListSingleClass: "space-y-2",
     fileListSinglePreviewClass:
-        "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
+        "grid gap-y-2 grid-cols-[minmax(min(8rem,40%),var(--file-list-width))_0.75rem_minmax(0,1fr)] items-start",
     fileMetaClass:
         "mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground",
+    density: "comfortable",
+    rootContentClass: "space-y-2 pt-0",
     fileNameClass: "block truncate text-sm font-semibold text-foreground",
     folderControlsClass:
         "file-browser-control-surface inline-nameplate-controls flex w-fit max-w-full min-w-0 flex-wrap items-center justify-start gap-1.5 rounded-md border border-border bg-[color-mix(in_oklab,var(--card)_72%,var(--foreground)_28%)] p-1.5 text-sm shadow-sm",
     gridFileCellClass: "min-w-0 border-r border-border/60 pr-2",
     gridPreviewCellClass: "min-w-0",
     gridRowClass:
-        "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
-    headerClass: "-mx-0.5 relative flex min-h-9 items-start pb-4",
+        "grid gap-2 grid-cols-[minmax(min(8rem,40%),var(--file-list-width))_minmax(0,1fr)] items-start",
+    headerClass: "-mx-0.5 relative flex min-h-9 items-start pb-3",
     headerIconClass: boxTitleIconClass,
     headerTitleClass: boxTitleTextClass,
     id: "inline",
@@ -490,7 +539,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
         "inline-flex items-center gap-1 rounded-md border border-border/70 bg-background p-1",
     sectionClass: `${boxPanelRadiusClass} border border-border/75 bg-card ${boxPanelInsetClass} shadow-[0_18px_60px_-48px_rgba(48,67,98,0.8)]`,
     singlePreviewClass:
-        "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
+        "sticky top-4 z-10 min-w-0 col-start-3 row-start-1 self-start",
     subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-1.5",
     subdirFilenameClass:
         "truncate text-[11px] font-semibold text-muted-foreground",
@@ -508,6 +557,40 @@ const activeFileBrowserDesign: FileBrowserDesign = {
         "mt-0 rounded-lg border border-border/70 bg-background/65 p-0.5",
 };
 
+// VSCode-explorer-like density: one short line per file and folder, no
+// size/date/kind metadata, and a thin indent guide instead of nested cards.
+const compactFileBrowserDesign: FileBrowserDesign = {
+    ...activeFileBrowserDesign,
+    density: "compact",
+    directoryButtonClass:
+        "group grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1 rounded-sm px-1 py-0.5 text-left transition hover:bg-muted/60",
+    directoryChevronClass:
+        "inline-flex size-4 items-center justify-center text-muted-foreground",
+    directoryContentClass:
+        "ml-2.5 space-y-px border-l border-border/60 pt-0 pb-0.5 pl-1",
+    directoryGroupClass: "space-y-px",
+    directoryRowBaseClass:
+        "grid w-full grid-cols-1 gap-px rounded-md border border-transparent transition",
+    directoryRowCollapsedClass: "p-0",
+    directoryRowIdleClass: "",
+    directoryRowSelectedClass: "bg-primary/[0.04]",
+    directoryRowWithContentClass: "p-0",
+    fileButtonBaseClass:
+        "group flex w-full min-w-0 items-center gap-1 rounded-sm border border-transparent px-1.5 py-px text-left text-sm transition hover:bg-muted/60",
+    fileButtonCompactClass: "min-w-0",
+    fileButtonSelectedClass: "border-primary/35 bg-primary/12",
+    fileListGridClass: "space-y-px xl:col-span-2",
+    fileListSingleClass: "space-y-px",
+    fileListSinglePreviewClass:
+        "grid gap-y-px grid-cols-[minmax(min(8rem,40%),var(--file-list-width))_0.75rem_minmax(0,1fr)] items-start",
+    gridRowClass:
+        "grid gap-1 grid-cols-[minmax(min(8rem,40%),var(--file-list-width))_minmax(0,1fr)] items-start",
+    rootContentClass: "space-y-px pt-0",
+    treeInnerClass: "space-y-px",
+    treeShellClass:
+        "mt-0 rounded-lg border border-border/70 bg-background/65 p-1",
+};
+
 const inlineControlPlacement: FileBrowserControlPlacement = "name-area";
 
 const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
@@ -515,6 +598,7 @@ const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
     className,
     height,
     kind,
+    maxHeight,
     onHeightChange,
     path,
     style,
@@ -524,6 +608,7 @@ const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
     className?: string;
     height: number;
     kind: "grid" | "single" | "subfolder";
+    maxHeight: number;
     onHeightChange: (value: number) => void;
     path?: string;
     style?: CSSProperties;
@@ -537,7 +622,7 @@ const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
 
     const commitHeight = useCallback(
         (value: number) => {
-            const nextHeight = clampPreviewHeight(value);
+            const nextHeight = clampPreviewHeight(value, maxHeight);
 
             if (nextHeight === committedHeightRef.current) {
                 return;
@@ -546,7 +631,7 @@ const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
             committedHeightRef.current = nextHeight;
             onHeightChange(nextHeight);
         },
-        [onHeightChange],
+        [maxHeight, onHeightChange],
     );
 
     useEffect(() => {
@@ -649,7 +734,7 @@ const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
 
         if (event.key === "End") {
             event.preventDefault();
-            commitHeight(PREVIEW_HEIGHT_MAX);
+            commitHeight(maxHeight);
             return;
         }
 
@@ -680,7 +765,7 @@ const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
                 ...style,
                 boxSizing: "border-box",
                 height: `${height}px`,
-                maxHeight: `${PREVIEW_HEIGHT_MAX}px`,
+                maxHeight: `${maxHeight}px`,
                 minHeight: `${PREVIEW_HEIGHT_MIN}px`,
             }}
         >
@@ -697,7 +782,7 @@ const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
                 <button
                     aria-label="Resize preview height"
                     aria-orientation="vertical"
-                    aria-valuemax={PREVIEW_HEIGHT_MAX}
+                    aria-valuemax={maxHeight}
                     aria-valuemin={PREVIEW_HEIGHT_MIN}
                     aria-valuenow={height}
                     className={cn(
@@ -727,6 +812,118 @@ const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
         </div>
     );
 });
+
+/**
+ * The draggable divider between the file list and the single preview. Its
+ * value is the list's share of the row as a percentage; arrow keys, Page
+ * Up/Down, Home and End adjust it, and a double click restores the default.
+ */
+function FileListSplitter({
+    gridRow,
+    onChange,
+    value,
+}: {
+    gridRow: string;
+    onChange: (value: number) => void;
+    value: number;
+}) {
+    const splitterRef = useRef<HTMLDivElement | null>(null);
+
+    const widthFromClientX = (clientX: number): number | null => {
+        const grid = splitterRef.current?.parentElement;
+        const rect = grid?.getBoundingClientRect();
+
+        if (!rect || rect.width <= 0) {
+            return null;
+        }
+
+        return ((clientX - rect.left) / rect.width) * 100;
+    };
+    const handlePointerDown = (
+        event: ReactPointerEvent<HTMLDivElement>,
+    ): void => {
+        if (event.button !== 0) {
+            return;
+        }
+
+        event.preventDefault();
+        splitterRef.current?.focus();
+
+        const handleMove = (moveEvent: PointerEvent) => {
+            const next = widthFromClientX(moveEvent.clientX);
+
+            if (next !== null) {
+                onChange(clampFileListWidth(next));
+            }
+        };
+        const handleEnd = () => {
+            document.removeEventListener("pointermove", handleMove);
+            document.removeEventListener("pointerup", handleEnd);
+            document.removeEventListener("pointercancel", handleEnd);
+            document.body.style.removeProperty("cursor");
+            document.body.style.removeProperty("user-select");
+        };
+
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+        document.addEventListener("pointermove", handleMove);
+        document.addEventListener("pointerup", handleEnd);
+        document.addEventListener("pointercancel", handleEnd);
+    };
+    const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+        const deltas: Record<string, number> = {
+            ArrowLeft: -2,
+            ArrowRight: 2,
+            PageDown: 10,
+            PageUp: -10,
+        };
+
+        if (event.key === "Home" || event.key === "End") {
+            event.preventDefault();
+            onChange(
+                event.key === "Home"
+                    ? FILE_LIST_WIDTH_MIN
+                    : FILE_LIST_WIDTH_MAX,
+            );
+            return;
+        }
+
+        const delta = deltas[event.key];
+
+        if (delta === undefined) {
+            return;
+        }
+
+        event.preventDefault();
+        onChange(clampFileListWidth(value + delta));
+    };
+
+    return (
+        <div
+            ref={splitterRef}
+            aria-label="Resize file list width"
+            aria-orientation="vertical"
+            aria-valuemax={FILE_LIST_WIDTH_MAX}
+            aria-valuemin={FILE_LIST_WIDTH_MIN}
+            aria-valuenow={value}
+            aria-valuetext={`File list ${value}% wide`}
+            className="group/splitter sticky top-4 col-start-2 row-start-1 flex h-full max-h-[calc(100vh-2rem)] min-h-16 cursor-col-resize touch-none justify-center self-stretch rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            data-file-list-splitter="true"
+            onDoubleClick={() => onChange(FILE_LIST_WIDTH_DEFAULT)}
+            onKeyDown={handleKeyDown}
+            onPointerDown={handlePointerDown}
+            role="separator"
+            style={{ gridRow }}
+            tabIndex={0}
+            title="Drag to resize the file list (double-click to reset)"
+        >
+            <span
+                aria-hidden="true"
+                className="h-full w-px bg-border transition group-hover/splitter:w-0.5 group-hover/splitter:bg-primary/60 group-focus-visible/splitter:w-0.5 group-focus-visible/splitter:bg-primary"
+            />
+        </div>
+    );
+}
 
 function parentDirectory(path: string): string {
     const normalized = path.trim();
@@ -758,50 +955,12 @@ function fileName(path: string): string {
     return path.split("/").pop() ?? path;
 }
 
-function fallbackCopyText(value: string): boolean {
-    if (
-        typeof document === "undefined" ||
-        typeof document.execCommand !== "function"
-    ) {
-        return false;
-    }
-
-    const textarea = document.createElement("textarea");
-
-    textarea.value = value;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    textarea.style.pointerEvents = "none";
-
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-
-    try {
-        return document.execCommand("copy");
-    } finally {
-        document.body.removeChild(textarea);
-    }
-}
-
-async function copyText(value: string): Promise<boolean> {
-    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        try {
-            await navigator.clipboard.writeText(value);
-            return true;
-        } catch {
-            return fallbackCopyText(value);
-        }
-    }
-
-    return fallbackCopyText(value);
-}
-
 function CopyPathControl({
+    compact = false,
     kind,
     path,
 }: {
+    compact?: boolean;
     kind: "directory" | "file";
     path: string;
 }) {
@@ -836,7 +995,11 @@ function CopyPathControl({
     return (
         <span
             aria-label={`Copy ${kind} full path ${path}`}
-            className="inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background/80 text-muted-foreground shadow-sm transition hover:border-primary/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+            className={
+                compact
+                    ? "inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 sm:opacity-0 sm:group-hover:opacity-100"
+                    : "inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background/80 text-muted-foreground shadow-sm transition hover:border-primary/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+            }
             data-copy-path-control={kind}
             onClick={handleClick}
             onKeyDown={handleKeyDown}
@@ -844,7 +1007,10 @@ function CopyPathControl({
             tabIndex={0}
             title="Copy full path"
         >
-            <Copy className="size-3.5" aria-hidden="true" />
+            <Copy
+                className={compact ? "size-3" : "size-3.5"}
+                aria-hidden="true"
+            />
         </span>
     );
 }
@@ -1154,6 +1320,7 @@ export function FileBrowser({
     previewPageCount = 1,
     previewSummary,
     renderDirectoryAction,
+    renderExpandedPreview,
     renderGridPreview,
     renderSinglePreview,
     selectedDirectory,
@@ -1161,7 +1328,12 @@ export function FileBrowser({
     unfilteredFileCount,
     visibleFiles,
 }: FileBrowserProps) {
-    const activeDesign = activeFileBrowserDesign;
+    const [compactList, setCompactList] = useFileBrowserCompact();
+    const [fileListWidth, setFileListWidth] = useFileBrowserListWidth();
+    const previewHeightMax = usePreviewHeightMax();
+    const activeDesign = compactList
+        ? compactFileBrowserDesign
+        : activeFileBrowserDesign;
     const resolvedFilterStorageKey = useMemo(
         () => fileBrowserGlobFilterStorageKey(filterStorageKey),
         [filterStorageKey],
@@ -1298,6 +1470,7 @@ export function FileBrowser({
     const effectiveSelectedDirectory = preferredDirectory;
     const [uncontrolledPreviewHeight, setUncontrolledPreviewHeight] =
         useState(previewHeight);
+    const [galleryPath, setGalleryPath] = useState<string | null>(null);
     const [subdirPreviewEnabledByPath, setSubdirPreviewEnabledByPath] =
         useState<Record<string, boolean>>({});
     const [subdirPreviewActivatingByPath, setSubdirPreviewActivatingByPath] =
@@ -1330,6 +1503,7 @@ export function FileBrowser({
     >({});
     const effectivePreviewHeight = clampPreviewHeight(
         onPreviewHeightChange ? previewHeight : uncontrolledPreviewHeight,
+        previewHeightMax,
     );
     const subdirPreviewEnabledFor = (directoryPath: string): boolean =>
         subdirPreviewEnabledByPath[directoryPath] ?? false;
@@ -1805,7 +1979,7 @@ export function FileBrowser({
 
     const handlePreviewHeightCommit = useCallback(
         (value: number) => {
-            const nextHeight = clampPreviewHeight(value);
+            const nextHeight = clampPreviewHeight(value, previewHeightMax);
 
             if (onPreviewHeightChange) {
                 onPreviewHeightChange(nextHeight);
@@ -1814,7 +1988,7 @@ export function FileBrowser({
 
             setUncontrolledPreviewHeight(nextHeight);
         },
-        [onPreviewHeightChange],
+        [onPreviewHeightChange, previewHeightMax],
     );
     const renderFileButton = (
         file: FileEntry,
@@ -1822,6 +1996,38 @@ export function FileBrowser({
         style?: CSSProperties,
     ) => {
         const name = fileName(file.path);
+
+        if (activeDesign.density === "compact") {
+            return (
+                <button
+                    type="button"
+                    aria-label={`Select file ${name}`}
+                    key={file.path}
+                    className={cn(
+                        activeDesign.fileButtonBaseClass,
+                        effectiveSelectedPath === file.path &&
+                            activeDesign.fileButtonSelectedClass,
+                        compact && activeDesign.fileButtonCompactClass,
+                    )}
+                    data-file-browser-file-layout="row"
+                    data-file-path={file.path}
+                    onClick={() => {
+                        if (selectedPath === undefined) {
+                            setUncontrolledPath(file.path);
+                        }
+
+                        onSelectFile(file);
+                    }}
+                    style={style}
+                    title={`${file.path}\n${formatBytes(file.size)} · ${file.kind}`}
+                >
+                    <span className="min-w-0 flex-1 truncate text-foreground">
+                        {name}
+                    </span>
+                    <CopyPathControl compact kind="file" path={file.path} />
+                </button>
+            );
+        }
 
         return (
             <button
@@ -2473,6 +2679,7 @@ export function FileBrowser({
                                         )}
                                         data-subdir-preview-frame={file.path}
                                         height={effectivePreviewHeight}
+                                        maxHeight={previewHeightMax}
                                         kind="subfolder"
                                         onHeightChange={
                                             handlePreviewHeightCommit
@@ -2498,6 +2705,45 @@ export function FileBrowser({
             </div>
         );
     };
+
+    const selectedTreeNode = effectiveSelectedDirectory
+        ? findTreeNodeByPath(directoryTree, effectiveSelectedDirectory)
+        : undefined;
+    // The gallery steps through what the selected folder shows: its own
+    // previewable files, then, with subfolder previews on, every matching
+    // file of every subfolder (all pages), in display order.
+    const galleryFiles: FileEntry[] = !renderExpandedPreview
+        ? []
+        : selectedTreeNode &&
+            effectiveSelectedDirectory &&
+            subdirPreviewEnabledFor(effectiveSelectedDirectory)
+          ? [
+                ...previewableDisplayedFiles,
+                ...filterSubdirPreviewEntriesForKinds(
+                    qualifyingSubdirPreviewsFor(
+                        selectedTreeNode,
+                        allSubdirPreviewKinds,
+                    ),
+                    subdirPreviewKindsFor(effectiveSelectedDirectory),
+                ).flatMap((entry) => entry.previewableFiles),
+            ]
+          : previewableDisplayedFiles;
+    const galleryContextValue = usePreviewGalleryContextValue(
+        galleryFiles,
+        setGalleryPath,
+    );
+    const galleryIndex =
+        galleryPath === null
+            ? -1
+            : galleryFiles.findIndex((file) => file.path === galleryPath);
+    const handleGalleryIndexChange = (index: number): void => {
+        const file = galleryFiles[index];
+
+        if (file) {
+            setGalleryPath(file.path);
+        }
+    };
+    const handleGalleryClose = (): void => setGalleryPath(null);
 
     function renderDirectoryRows(
         nodes: DirectoryTreeNode[],
@@ -2672,29 +2918,55 @@ export function FileBrowser({
                             <span className="size-4" />
                         )}
                     </span>
-                    <span className="min-w-0">
-                        <span
-                            className="block truncate text-base font-medium text-foreground"
-                            title={node.path}
-                        >
-                            {directoryDisplayLabel}
-                        </span>
-                        <span className="mt-1 flex min-w-0 items-start gap-1.5">
+                    {activeDesign.density === "compact" ? (
+                        <span className="flex min-w-0 items-center gap-1.5">
                             <span
-                                className={cn(
-                                    activeDesign.directoryMetaClass,
-                                    "mt-0 min-w-0 flex-1",
-                                )}
-                                data-directory-meta={node.path}
+                                className="min-w-0 truncate text-sm font-medium text-foreground"
+                                title={node.path}
                             >
-                                {renderDirectoryMetaItems(node, hasChildren)}
+                                {directoryDisplayLabel}
+                            </span>
+                            <span
+                                className="shrink-0 text-xs tabular-nums text-muted-foreground"
+                                data-directory-file-count={node.path}
+                                title={`${node.descendantFileCount} file${node.descendantFileCount === 1 ? "" : "s"}, ${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`}
+                            >
+                                {node.descendantFileCount}
                             </span>
                             <CopyPathControl
+                                compact
                                 kind="directory"
                                 path={node.path}
                             />
                         </span>
-                    </span>
+                    ) : (
+                        <span className="min-w-0">
+                            <span
+                                className="block truncate text-base font-medium text-foreground"
+                                title={node.path}
+                            >
+                                {directoryDisplayLabel}
+                            </span>
+                            <span className="mt-1 flex min-w-0 items-start gap-1.5">
+                                <span
+                                    className={cn(
+                                        activeDesign.directoryMetaClass,
+                                        "mt-0 min-w-0 flex-1",
+                                    )}
+                                    data-directory-meta={node.path}
+                                >
+                                    {renderDirectoryMetaItems(
+                                        node,
+                                        hasChildren,
+                                    )}
+                                </span>
+                                <CopyPathControl
+                                    kind="directory"
+                                    path={node.path}
+                                />
+                            </span>
+                        </span>
+                    )}
                 </button>
             );
             const renderDirectoryRow = (groupedContent: ReactNode) => {
@@ -2703,7 +2975,12 @@ export function FileBrowser({
                         key={`dir-${node.path}`}
                         className={cn(
                             isRootDirectoryRow
-                                ? "grid w-full grid-cols-1 gap-2 transition"
+                                ? cn(
+                                      "grid w-full grid-cols-1 transition",
+                                      activeDesign.density === "compact"
+                                          ? "gap-px"
+                                          : "gap-2",
+                                  )
                                 : activeDesign.directoryRowBaseClass,
                             isRootDirectoryRow
                                 ? null
@@ -2731,7 +3008,12 @@ export function FileBrowser({
                             >
                                 {renderDirectoryButton()}
                                 <div
-                                    className="min-w-0 self-center p-2 lg:pl-0"
+                                    className={cn(
+                                        "min-w-0 self-center lg:pl-0",
+                                        activeDesign.density === "compact"
+                                            ? "p-1"
+                                            : "p-2",
+                                    )}
                                     data-file-browser-name-area-controls={
                                         node.path
                                     }
@@ -2778,16 +3060,31 @@ export function FileBrowser({
                                 ? node.path
                                 : undefined
                         }
+                        style={
+                            previewMode === "single" && showFilePreviewWidgets
+                                ? {
+                                      gridTemplateRows: `repeat(${Math.max(directoryDisplayedFiles.length, 1)}, auto) 1fr`,
+                                  }
+                                : undefined
+                        }
                     >
                         {previewMode === "single"
                             ? showFilePreviewWidgets
                                 ? [
                                       ...directoryDisplayedFiles.map((file) =>
                                           cloneElement(
-                                              renderFileButton(file, true),
+                                              renderFileButton(file, true, {
+                                                  gridColumn: 1,
+                                              }),
                                               { key: file.path },
                                           ),
                                       ),
+                                      <FileListSplitter
+                                          key={`file-list-splitter-${node.path}`}
+                                          gridRow={`1 / span ${Math.max(directoryDisplayedFiles.length, 1) + 1}`}
+                                          onChange={setFileListWidth}
+                                          value={fileListWidth}
+                                      />,
                                       <ResizablePreviewFrame
                                           key={`single-preview-${node.path}`}
                                           className={
@@ -2795,13 +3092,14 @@ export function FileBrowser({
                                           }
                                           data-file-browser-preview="single"
                                           height={effectivePreviewHeight}
+                                          maxHeight={previewHeightMax}
                                           kind="single"
                                           onHeightChange={
                                               handlePreviewHeightCommit
                                           }
                                           path={activeFile?.path ?? node.path}
                                           style={{
-                                              gridRow: `1 / span ${Math.max(directoryDisplayedFiles.length, 1)}`,
+                                              gridRow: `1 / span ${Math.max(directoryDisplayedFiles.length, 1) + 1}`,
                                           }}
                                       >
                                           {renderSinglePreview?.(
@@ -2842,6 +3140,9 @@ export function FileBrowser({
                                                   <ResizablePreviewFrame
                                                       height={
                                                           effectivePreviewHeight
+                                                      }
+                                                      maxHeight={
+                                                          previewHeightMax
                                                       }
                                                       kind="grid"
                                                       onHeightChange={
@@ -2887,7 +3188,7 @@ export function FileBrowser({
                     <div
                         className={
                             isRootDirectoryRow
-                                ? "space-y-2 pt-0"
+                                ? activeDesign.rootContentClass
                                 : activeDesign.directoryContentClass
                         }
                         data-directory-group-content={node.path}
@@ -2910,115 +3211,153 @@ export function FileBrowser({
     }
 
     return (
-        <section
-            className={activeDesign.sectionClass}
-            data-file-browser="true"
-            data-file-browser-design={activeDesign.id}
-            data-preview-height={effectivePreviewHeight}
-        >
-            <div
-                className={activeDesign.headerClass}
-                data-file-browser-header="true"
+        <PreviewGalleryContext.Provider value={galleryContextValue}>
+            <section
+                className={activeDesign.sectionClass}
+                data-file-browser="true"
+                data-file-browser-density={activeDesign.density}
+                data-file-browser-design={activeDesign.id}
+                data-preview-height={effectivePreviewHeight}
+                style={
+                    {
+                        "--file-list-width": `${fileListWidth}%`,
+                    } as CSSProperties
+                }
             >
-                <div className={boxTitleTopAlignedRowClass}>
-                    <FolderTree
-                        className={activeDesign.headerIconClass}
-                        aria-hidden="true"
-                    />
-                    <p className={activeDesign.headerTitleClass}>
-                        File Browser
-                    </p>
-                    <div
-                        className="mt-3 flex w-full min-w-0 max-w-full items-center gap-1.5 sm:absolute sm:top-0 sm:right-0 sm:mt-0 sm:w-auto"
-                        data-file-browser-filter-controls="true"
-                    >
-                        <button
-                            aria-label="Include leading wildcard"
-                            aria-pressed={effectiveFileFilterWildcards.leading}
-                            className={fileFilterWildcardButtonClass(
-                                effectiveFileFilterWildcards.leading,
-                            )}
-                            data-file-browser-glob-leading-wildcard="true"
-                            onClick={updateLeadingFileFilterWildcard}
-                            title="Include leading wildcard"
-                            type="button"
-                        >
-                            *
-                        </button>
-                        <input
-                            aria-label="Filter files by glob"
-                            className="h-8 w-full max-w-[min(16rem,52vw)] rounded-md border border-border/80 bg-background px-2.5 font-mono text-sm text-foreground shadow-sm transition placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 sm:w-44"
-                            data-file-browser-glob-filter="true"
-                            onChange={(event) =>
-                                updateFileFilter(event.target.value)
-                            }
-                            placeholder="Glob filter"
-                            type="search"
-                            value={effectiveFileFilter}
+                <div
+                    className={activeDesign.headerClass}
+                    data-file-browser-header="true"
+                >
+                    <div className={boxTitleTopAlignedRowClass}>
+                        <FolderTree
+                            className={activeDesign.headerIconClass}
+                            aria-hidden="true"
                         />
-                        <button
-                            aria-label="Include trailing wildcard"
-                            aria-pressed={effectiveFileFilterWildcards.trailing}
-                            className={fileFilterWildcardButtonClass(
-                                effectiveFileFilterWildcards.trailing,
-                            )}
-                            data-file-browser-glob-trailing-wildcard="true"
-                            onClick={updateTrailingFileFilterWildcard}
-                            title="Include trailing wildcard"
-                            type="button"
+                        <p className={activeDesign.headerTitleClass}>
+                            File Browser
+                        </p>
+                        <div
+                            className="mt-3 flex w-full min-w-0 max-w-full items-center gap-1.5 sm:absolute sm:top-0 sm:right-0 sm:mt-0 sm:w-auto"
+                            data-file-browser-filter-controls="true"
                         >
-                            *
-                        </button>
-                        <button
-                            aria-label="Save file glob filter"
-                            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border/80 bg-background text-muted-foreground shadow-sm transition hover:border-primary/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 disabled:cursor-not-allowed disabled:opacity-45"
-                            data-file-browser-glob-filter-save="true"
-                            disabled={!resolvedFilterStorageKey}
-                            onClick={handleSaveFileFilter}
-                            title="Save glob filter"
-                            type="button"
-                        >
-                            <Save className="size-4" aria-hidden="true" />
-                        </button>
+                            <button
+                                aria-label="Include leading wildcard"
+                                aria-pressed={
+                                    effectiveFileFilterWildcards.leading
+                                }
+                                className={fileFilterWildcardButtonClass(
+                                    effectiveFileFilterWildcards.leading,
+                                )}
+                                data-file-browser-glob-leading-wildcard="true"
+                                onClick={updateLeadingFileFilterWildcard}
+                                title="Include leading wildcard"
+                                type="button"
+                            >
+                                *
+                            </button>
+                            <input
+                                aria-label="Filter files by glob"
+                                className="h-8 w-full max-w-[min(16rem,52vw)] rounded-md border border-border/80 bg-background px-2.5 font-mono text-sm text-foreground shadow-sm transition placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 sm:w-44"
+                                data-file-browser-glob-filter="true"
+                                onChange={(event) =>
+                                    updateFileFilter(event.target.value)
+                                }
+                                placeholder="Glob filter"
+                                type="search"
+                                value={effectiveFileFilter}
+                            />
+                            <button
+                                aria-label="Include trailing wildcard"
+                                aria-pressed={
+                                    effectiveFileFilterWildcards.trailing
+                                }
+                                className={fileFilterWildcardButtonClass(
+                                    effectiveFileFilterWildcards.trailing,
+                                )}
+                                data-file-browser-glob-trailing-wildcard="true"
+                                onClick={updateTrailingFileFilterWildcard}
+                                title="Include trailing wildcard"
+                                type="button"
+                            >
+                                *
+                            </button>
+                            <button
+                                aria-label="Save file glob filter"
+                                className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border/80 bg-background text-muted-foreground shadow-sm transition hover:border-primary/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 disabled:cursor-not-allowed disabled:opacity-45"
+                                data-file-browser-glob-filter-save="true"
+                                disabled={!resolvedFilterStorageKey}
+                                onClick={handleSaveFileFilter}
+                                title="Save glob filter"
+                                type="button"
+                            >
+                                <Save className="size-4" aria-hidden="true" />
+                            </button>
+                            <button
+                                aria-label="Compact file list"
+                                aria-pressed={compactList}
+                                className={cn(
+                                    "inline-flex size-8 shrink-0 items-center justify-center rounded-md border shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45",
+                                    compactList
+                                        ? "border-primary/55 bg-primary/10 text-primary hover:border-primary/75"
+                                        : "border-border/80 bg-background text-muted-foreground hover:border-primary/45 hover:text-foreground",
+                                )}
+                                data-file-browser-compact-toggle="true"
+                                onClick={() => setCompactList(!compactList)}
+                                title="Compact file list"
+                                type="button"
+                            >
+                                <Rows3 className="size-4" aria-hidden="true" />
+                            </button>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            {registeredFileCount === 0 ? (
-                <div className={activeDesign.emptyStateClass}>
-                    No registered files
-                </div>
-            ) : null}
-
-            {registeredFileCount > 0 && filteredFiles.length === 0 ? (
-                <div
-                    className={activeDesign.emptyStateClass}
-                    data-file-browser-empty-filter="true"
-                >
-                    No files match
-                </div>
-            ) : null}
-
-            {filteredFiles.length > 0 && previewMode === "single" ? (
-                <div
-                    className={activeDesign.treeShellClass}
-                    data-preview-mode="single"
-                >
-                    <div className={activeDesign.treeInnerClass}>
-                        {renderDirectoryRows(directoryTree)}
+                {registeredFileCount === 0 ? (
+                    <div className={activeDesign.emptyStateClass}>
+                        No registered files
                     </div>
-                </div>
-            ) : null}
-            {filteredFiles.length > 0 && previewMode !== "single" ? (
-                <div
-                    className={activeDesign.treeShellClass}
-                    data-preview-mode="grid"
-                >
-                    <div className={activeDesign.treeInnerClass}>
-                        {renderDirectoryRows(directoryTree)}
+                ) : null}
+
+                {registeredFileCount > 0 && filteredFiles.length === 0 ? (
+                    <div
+                        className={activeDesign.emptyStateClass}
+                        data-file-browser-empty-filter="true"
+                    >
+                        No files match
                     </div>
-                </div>
+                ) : null}
+
+                {filteredFiles.length > 0 && previewMode === "single" ? (
+                    <div
+                        className={activeDesign.treeShellClass}
+                        data-preview-mode="single"
+                    >
+                        <div className={activeDesign.treeInnerClass}>
+                            {renderDirectoryRows(directoryTree)}
+                        </div>
+                    </div>
+                ) : null}
+                {filteredFiles.length > 0 && previewMode !== "single" ? (
+                    <div
+                        className={activeDesign.treeShellClass}
+                        data-preview-mode="grid"
+                    >
+                        <div className={activeDesign.treeInnerClass}>
+                            {renderDirectoryRows(directoryTree)}
+                        </div>
+                    </div>
+                ) : null}
+            </section>
+            {renderExpandedPreview && galleryIndex >= 0 ? (
+                <PreviewGalleryLightbox
+                    basePath={effectiveSelectedDirectory}
+                    files={galleryFiles}
+                    index={galleryIndex}
+                    onClose={handleGalleryClose}
+                    onIndexChange={handleGalleryIndexChange}
+                    renderExpanded={renderExpandedPreview}
+                />
             ) : null}
-        </section>
+        </PreviewGalleryContext.Provider>
     );
 }

@@ -1188,8 +1188,10 @@ test.describe("File Browser single preview layout", () => {
             (element) => (element as HTMLElement).style.gridRow,
         );
 
-        // Preview should reserve the second column for every file row while rendering at its natural sticky height.
-        expect(previewGridRow).toBe(`1 / span ${fileCount}`);
+        // Preview should reserve its column for every file row, plus the filler
+        // row that absorbs a preview taller than the list, while rendering at
+        // its natural sticky height.
+        expect(previewGridRow).toBe(`1 / span ${fileCount + 1}`);
         expect(previewBBox.y).toBeLessThanOrEqual(firstFileBBox.y + 15);
 
         // Preview should still be to the right of all file buttons (not stacked below)

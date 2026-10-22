@@ -292,8 +292,9 @@ test("registered generated multichannel OME-TIFF renders in the file browser pre
         await preview
             .getByRole("button", { name: /open image lightbox/i })
             .click();
+        // The enlarged view opens in the preview gallery lightbox.
         const lightbox = page.getByRole("dialog", {
-            name: /image preview lightbox/i,
+            name: "Enlarged small-multichannel.ome.tiff preview",
         });
 
         await expect(lightbox).toBeVisible();
@@ -354,7 +355,7 @@ test("registered generated multichannel OME-TIFF shows channel controls when enl
         .click();
 
     const lightbox = page.getByRole("dialog", {
-        name: /image preview lightbox/i,
+        name: "Enlarged small-multichannel.ome.tiff preview",
     });
 
     await expect(lightbox).toBeVisible();
@@ -419,7 +420,7 @@ test("registered generated Z-stack OME-TIFF shows channel and Z controls when en
         .click();
 
     const lightbox = page.getByRole("dialog", {
-        name: /image preview lightbox/i,
+        name: "Enlarged small-multichannel-z-stack.ome.tiff preview",
     });
 
     await expect(lightbox).toBeVisible();
