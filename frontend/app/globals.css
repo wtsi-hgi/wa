@@ -116,8 +116,12 @@ body {
     font-family: var(--font-inter), sans-serif;
 }
 
-* {
-    border-color: var(--border);
+/* In the base layer so border colour utilities (layer utilities) win over it;
+   unlayered, it would override every border-* colour class. */
+@layer base {
+    * {
+        border-color: var(--border);
+    }
 }
 
 ::selection {
