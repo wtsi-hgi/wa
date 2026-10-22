@@ -1087,7 +1087,8 @@ func TestRemoteClientIRODSPathsByFileTypePageInvalidFileTypeErrorC2(t *testing.T
 
 				convey.So(page, convey.ShouldResemble, Page[IRODSPath]{})
 				convey.So(err, convey.ShouldNotBeNil)
-				convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+				convey.So(errors.Is(err, ErrBadRequest), convey.ShouldBeTrue)
+				convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeFalse)
 				convey.So(receiveRemoteClientTestValue(t, requestURIs, tc.name+" invalid request URI"), convey.ShouldEqual, tc.expectedURI)
 			})
 		}
@@ -1249,12 +1250,13 @@ func TestRemoteClientSamplesWithDataSincePagePreservesBadRequestC1(t *testing.T)
 		client := newRemoteClientForTest(t, server.URL, "")
 		defer closeRemoteClientForTest(t, client)
 
-		convey.Convey("when invalid timestamps or until without since are sent, then the empty Page and existing remote bad-request error are returned", func() {
+		convey.Convey("when invalid timestamps or until without since are sent, then the empty Page and a bad request error are returned", func() {
 			invalidPage, invalidErr := client.SamplesWithDataSincePage(context.Background(), "S1", "not-a-date", "", 1, 0)
 
 			convey.So(invalidPage, convey.ShouldResemble, Page[SampleWithData]{})
 			convey.So(invalidErr, convey.ShouldNotBeNil)
-			convey.So(errors.Is(invalidErr, ErrUpstreamImpaired), convey.ShouldBeTrue)
+			convey.So(errors.Is(invalidErr, ErrBadRequest), convey.ShouldBeTrue)
+			convey.So(errors.Is(invalidErr, ErrUpstreamImpaired), convey.ShouldBeFalse)
 
 			invalidURI, err := url.ParseRequestURI(receiveRemoteClientTestValue(t, requestURIs, "invalid timestamp request URI"))
 			convey.So(err, convey.ShouldBeNil)
@@ -1268,7 +1270,8 @@ func TestRemoteClientSamplesWithDataSincePagePreservesBadRequestC1(t *testing.T)
 
 			convey.So(untilOnlyPage, convey.ShouldResemble, Page[SampleWithData]{})
 			convey.So(untilOnlyErr, convey.ShouldNotBeNil)
-			convey.So(errors.Is(untilOnlyErr, ErrUpstreamImpaired), convey.ShouldBeTrue)
+			convey.So(errors.Is(untilOnlyErr, ErrBadRequest), convey.ShouldBeTrue)
+			convey.So(errors.Is(untilOnlyErr, ErrUpstreamImpaired), convey.ShouldBeFalse)
 
 			untilOnlyURI, err := url.ParseRequestURI(receiveRemoteClientTestValue(t, requestURIs, "until-only request URI"))
 			convey.So(err, convey.ShouldBeNil)
@@ -1677,18 +1680,20 @@ func TestRemoteClientSearchPageMethodsReturnBadRequestForTooLargeLimitB1(t *test
 		client := newRemoteClientForTest(t, server.URL, "")
 		defer closeRemoteClientForTest(t, client)
 
-		convey.Convey("when SearchStudiesPage and SearchSamplesPage exceed SearchMaxLimit, then each request returns the existing remote bad_request handling", func() {
+		convey.Convey("when SearchStudiesPage and SearchSamplesPage exceed SearchMaxLimit, then each request returns a bad request error", func() {
 			studyPage, studyErr := client.SearchStudiesPage(context.Background(), "malar", SearchMaxLimit+1, 0)
 			samplePage, sampleErr := client.SearchSamplesPage(context.Background(), "acme", SearchMaxLimit+1, 0)
 
 			convey.So(studyPage, convey.ShouldResemble, Page[Study]{})
 			convey.So(studyErr, convey.ShouldNotBeNil)
-			convey.So(errors.Is(studyErr, ErrUpstreamImpaired), convey.ShouldBeTrue)
+			convey.So(errors.Is(studyErr, ErrBadRequest), convey.ShouldBeTrue)
+			convey.So(errors.Is(studyErr, ErrUpstreamImpaired), convey.ShouldBeFalse)
 			convey.So(receiveRemoteClientTestValue(t, requestURIs, "study request URI"), convey.ShouldEqual, "/search/study/malar?limit=1001&offset=0")
 
 			convey.So(samplePage, convey.ShouldResemble, Page[Sample]{})
 			convey.So(sampleErr, convey.ShouldNotBeNil)
-			convey.So(errors.Is(sampleErr, ErrUpstreamImpaired), convey.ShouldBeTrue)
+			convey.So(errors.Is(sampleErr, ErrBadRequest), convey.ShouldBeTrue)
+			convey.So(errors.Is(sampleErr, ErrUpstreamImpaired), convey.ShouldBeFalse)
 			convey.So(receiveRemoteClientTestValue(t, requestURIs, "sample request URI"), convey.ShouldEqual, "/search/sample/acme?limit=1001&offset=0")
 		})
 	})
@@ -1810,7 +1815,8 @@ func TestRemoteClientPeoplePageMethodsPreserveSentinelsC3(t *testing.T) {
 			status: http.StatusBadRequest,
 			code:   "bad_request",
 			check: func(err error) {
-				convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+				convey.So(errors.Is(err, ErrBadRequest), convey.ShouldBeTrue)
+				convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeFalse)
 				convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeFalse)
 				convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeFalse)
 			},
@@ -1903,7 +1909,8 @@ func TestRemoteClientDetailWithOptionsErrorsD2(t *testing.T) {
 
 				convey.So(page, convey.ShouldResemble, tc.empty)
 				convey.So(err, convey.ShouldNotBeNil)
-				convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
+				convey.So(errors.Is(err, ErrBadRequest), convey.ShouldBeTrue)
+				convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeFalse)
 				convey.So(receiveRemoteClientTestValue(t, requestURIs, tc.name+" request URI"), convey.ShouldEqual, tc.expectedURI)
 			})
 		})

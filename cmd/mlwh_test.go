@@ -2125,3 +2125,24 @@ func mlwhServeFeedbackDBFlagForTest(t *testing.T, args []string) string {
 
 	return mlwhServeStringFlagForTest(t, "feedback-db", args)
 }
+
+func TestMLWHSearchServerBadRequestShowsServerMessage(t *testing.T) {
+	convey.Convey("Given a real MLWH server", t, func() {
+		serverURL := startMLWHNeverSyncedServerForTest(t)
+		configureMLWHNeverSyncedCommandEnvForTest(t, "")
+
+		convey.Convey("when wa mlwh search --server asks for more than the server's maximum limit, then the error "+
+			"reports the bad request with the server's message, not an impaired upstream", func() {
+			_, err := executeRootCommandForTest(t, []string{
+				"mlwh", "search", "malaria", "--type", "study",
+				"--limit", fmt.Sprint(mlwh.SearchMaxLimit + 1), "--server", serverURL,
+			})
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring,
+				fmt.Sprintf("mlwh: bad request: limit must not exceed %d", mlwh.SearchMaxLimit))
+			convey.So(err.Error(), convey.ShouldNotContainSubstring, mlwh.ErrUpstreamImpaired.Error())
+			convey.So(errors.Is(err, mlwh.ErrBadRequest), convey.ShouldBeTrue)
+		})
+	})
+}

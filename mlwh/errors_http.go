@@ -27,7 +27,9 @@ package mlwh
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 )
 
 const (
@@ -53,6 +55,59 @@ var (
 	ErrFeedbackUnsupported  = errors.New("mlwh: server does not support feedback")
 	ErrFeedbackUnauthorized = errors.New("mlwh: feedback request unauthorized")
 )
+
+// Client-error sentinels. RemoteClient wraps ErrRequestRejected for a 4xx
+// response that no more specific sentinel covers, and also ErrBadRequest when
+// the status is 400 or the code is bad_request.
+var (
+	ErrRequestRejected = errors.New("mlwh: request rejected")
+	ErrBadRequest      = errors.New("mlwh: bad request")
+)
+
+// RemoteRequestError is a 4xx response from an MLWH server whose envelope code
+// has no more specific sentinel, or whose body is not an envelope at all. It
+// keeps the server's status, code and message, and matches ErrRequestRejected,
+// plus ErrBadRequest for a bad request. It never matches ErrUpstreamImpaired:
+// the server rejected the request, it did not fail to serve it.
+type RemoteRequestError struct {
+	StatusCode int
+	// Code is the envelope code, or "" when the body was not an envelope.
+	Code    string
+	Message string
+}
+
+// Error is "mlwh: bad request: <message>" for a bad request, otherwise
+// "mlwh: request rejected (<status> <code>): <message>".
+func (e *RemoteRequestError) Error() string {
+	prefix := ErrBadRequest.Error()
+	if !e.isBadRequest() {
+		detail := strconv.Itoa(e.StatusCode)
+		if e.Code != "" {
+			detail += " " + e.Code
+		}
+
+		prefix = fmt.Sprintf("%s (%s)", ErrRequestRejected, detail)
+	}
+
+	if e.Message == "" {
+		return prefix
+	}
+
+	return prefix + ": " + e.Message
+}
+
+// Unwrap exposes ErrRequestRejected, and ErrBadRequest for a bad request.
+func (e *RemoteRequestError) Unwrap() []error {
+	if e.isBadRequest() {
+		return []error{ErrBadRequest, ErrRequestRejected}
+	}
+
+	return []error{ErrRequestRejected}
+}
+
+func (e *RemoteRequestError) isBadRequest() bool {
+	return e.StatusCode == http.StatusBadRequest || e.Code == httpErrorCodeBadRequest
+}
 
 func httpStatusAndErrorCode(err error) (int, string) {
 	switch {

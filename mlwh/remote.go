@@ -1468,8 +1468,32 @@ func decodeRemoteResult(response *http.Response, entry Endpoint) (any, error) {
 	return result, nil
 }
 
+// decodeRemoteError maps an error response from a Registry endpoint. Codes with
+// a sentinel keep it and the "<message>: <sentinel>" text. Any other 4xx,
+// including a body that is not an envelope, is a *RemoteRequestError: the
+// server rejected the request, so blaming the upstream would hide the user's
+// own mistake. Any other status still wraps ErrUpstreamImpaired, because the
+// server failed to serve a request it accepted, and retrying later is the
+// remedy callers matching ErrUpstreamImpaired already give.
 func decodeRemoteError(response *http.Response, entry Endpoint, proxyURL *url.URL) error {
-	return decodeRemoteErrorWithFallback(response, entry, proxyURL, ErrUpstreamImpaired)
+	if response.StatusCode < http.StatusBadRequest || response.StatusCode >= http.StatusInternalServerError {
+		return decodeRemoteErrorWithFallback(response, entry, proxyURL, ErrUpstreamImpaired)
+	}
+
+	var envelope httpErrorEnvelope
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		return &RemoteRequestError{
+			StatusCode: response.StatusCode,
+			Message:    invalidRemoteErrorEnvelopeError(response, entry, proxyURL, nil).Error(),
+		}
+	}
+
+	sentinel := sentinelForHTTPErrorCode(envelope.Code)
+	if sentinel == nil {
+		return &RemoteRequestError{StatusCode: response.StatusCode, Code: envelope.Code, Message: envelope.Message}
+	}
+
+	return remoteEnvelopeError(response, entry, envelope, sentinel)
 }
 
 func (rc *RemoteClient) requestURL(entry Endpoint, pathParams []string, query url.Values) (string, error) {
@@ -1598,9 +1622,10 @@ type RemoteConfig struct {
 	Identity ClientIdentity
 }
 
-// decodeRemoteErrorWithFallback is decodeRemoteError with fallback wrapped in
-// place of ErrUpstreamImpaired when the body is not an envelope or its code
-// has no sentinel. A nil fallback wraps no sentinel in those cases.
+// decodeRemoteErrorWithFallback wraps the sentinel for the envelope's code, or
+// fallback when the body is not an envelope or its code has no sentinel. A nil
+// fallback wraps no sentinel in those cases. Unlike decodeRemoteError it treats
+// every status alike.
 func decodeRemoteErrorWithFallback(response *http.Response, entry Endpoint, proxyURL *url.URL, fallback error) error {
 	var envelope httpErrorEnvelope
 	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
@@ -1612,6 +1637,12 @@ func decodeRemoteErrorWithFallback(response *http.Response, entry Endpoint, prox
 		sentinel = fallback
 	}
 
+	return remoteEnvelopeError(response, entry, envelope, sentinel)
+}
+
+// remoteEnvelopeError is "<message>: <sentinel>", or just the message for a
+// nil sentinel. A slice endpoint's cache_never_synced also matches ErrNotFound.
+func remoteEnvelopeError(response *http.Response, entry Endpoint, envelope httpErrorEnvelope, sentinel error) error {
 	if sentinel != nil && errors.Is(sentinel, ErrCacheNeverSynced) && endpointResultIsSlice(entry) {
 		sentinel = errors.Join(ErrCacheNeverSynced, ErrNotFound)
 	}
