@@ -281,7 +281,10 @@ export async function ResultDetailPageContent({
     const title = resultProjectName(result);
 
     return (
-        <main className="mx-auto flex min-h-screen w-full max-w-[84rem] flex-col gap-4 px-3 py-5 sm:px-6 lg:py-6 2xl:max-w-[min(100%,128rem)]">
+        <main
+            className="mx-auto flex min-h-screen w-full max-w-[84rem] flex-col gap-4 px-4 py-5 sm:px-8 lg:py-6 2xl:max-w-[min(100%,128rem)]"
+            data-wide-page="true"
+        >
             <ReturnLinkHeaderAction href={returnHref} label={returnLabel} />
             <section
                 className="overflow-hidden rounded-2xl border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_90%,white_10%),color-mix(in_oklab,var(--accent)_8%,var(--card)_92%))] shadow-[0_28px_80px_-64px_rgba(41,58,85,0.78)]"

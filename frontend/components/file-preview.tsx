@@ -822,7 +822,17 @@ function LightboxImage({
                         style={{
                             height: `${maxHeightPx}px`,
                             maxHeight: `${maxHeightPx}px`,
-                            maxWidth: `${thumbnailWidth}px`,
+                            // Previews taller than the thumbnail box may grow
+                            // wider in proportion, so large previews are not
+                            // pillarboxed into the default width.
+                            maxWidth: `min(100%, ${
+                                maxHeightPx > thumbnailHeight
+                                    ? Math.round(
+                                          (thumbnailWidth * maxHeightPx) /
+                                              thumbnailHeight,
+                                      )
+                                    : thumbnailWidth
+                            }px)`,
                             minWidth:
                                 minimumWidthPx !== undefined
                                     ? `${minimumWidthPx}px`

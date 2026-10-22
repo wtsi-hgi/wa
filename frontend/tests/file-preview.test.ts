@@ -307,7 +307,9 @@ describe("O1 file preview", () => {
         expect(image.className).toContain("object-contain");
         expect(image.getAttribute("style")).toContain("height: 220px");
         expect(image.getAttribute("style")).toContain("max-height: 220px");
-        expect(image.getAttribute("style")).toContain("max-width: 672px");
+        expect(image.getAttribute("style")).toContain(
+            "max-width: min(100%, 672px)",
+        );
     });
 
     it("shows OME-TIFF metadata-driven channel and Z controls only after enlarging", async () => {
@@ -1127,8 +1129,29 @@ describe("O1 file preview", () => {
         const image = screen.getByAltText("image.png preview");
 
         expect(image.getAttribute("src")).toContain("/api/file?");
-        expect(image.getAttribute("style")).toContain("max-width: 320px");
+        expect(image.getAttribute("style")).toContain(
+            "max-width: min(100%, 320px)",
+        );
         expect(image.getAttribute("style")).toContain("max-height: 240px");
+    });
+
+    it("widens image previews in proportion when they are made taller", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/image.png" }),
+            content: {
+                content: "",
+                contentType: "image/png",
+            },
+            maxHeight: 840,
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fimage.png",
+        });
+
+        const style = screen
+            .getByAltText("image.png preview")
+            .getAttribute("style");
+
+        expect(style).toContain("max-width: min(100%, 1120px)");
+        expect(style).toContain("height: 840px");
     });
 
     it("keeps the enlarge icon without rendering the enlarge text on image previews", () => {
