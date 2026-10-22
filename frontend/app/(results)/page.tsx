@@ -208,6 +208,19 @@ function buildSuggestionValues(
             );
         }
 
+        // Repeated --meta/--project values live only in metadata_values.
+        for (const [metaKey, metaValues] of Object.entries(
+            result.metadata_values ?? {},
+        )) {
+            for (const metaValue of metaValues) {
+                appendSuggestion(
+                    suggestions,
+                    toMetaSuggestionKey(metaKey),
+                    metaValue,
+                );
+            }
+        }
+
         for (const sampleId of searchResult?.matched_samples ?? []) {
             appendSuggestion(suggestions, "sample", sampleId);
         }

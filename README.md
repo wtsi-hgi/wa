@@ -74,6 +74,20 @@ metadata entries for search and validation. Normal CLI users do not need
 wa results search --pipeline-name my-pipeline --user jdoe
 ```
 
+Result sets registered with `--project X` or `--meta key=value` can be found by
+that tag. `--project X` is stored as `--meta project=X`:
+
+```bash
+wa results search --meta project=cancer-panel
+```
+
+On the website, choose **Add specific field to filter**, then **Metadata**.
+Pick a key (`project` is listed first) and a value; both lists come from the
+result sets you can see. The filter is kept in the URL as `meta_<key>=<value>`,
+like other filters. Values match ignoring case, and part of a value also
+matches, as in the CLI. Filters on different keys must all match; several
+values for one key match any of them.
+
 ### Get a result set (with files)
 
 ```bash
