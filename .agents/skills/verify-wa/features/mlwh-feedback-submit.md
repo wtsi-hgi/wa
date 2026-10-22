@@ -59,5 +59,7 @@ Both exit 0 only when every check passes. Evidence for step 2: `10-*`,
   at a scratch dir rather than touching that file.
 - Serve needs no MLWH credentials or sync to start. On an empty cache data
   routes answer 503 `cache_never_synced`, while feedback works normally.
-- `remote_addr` is the TCP peer. Forwarded headers are ignored by design.
+- `remote_addr` is the TCP peer. Forwarded headers are ignored unless the
+  peer is in `--trusted-proxies` / `WA_MLWH_TRUSTED_PROXIES` (empty by
+  default).
 - Test-mode feedback DB is deleted on shutdown. Capture rows before Cleanup.

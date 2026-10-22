@@ -33,6 +33,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -271,6 +272,7 @@ func newMLWHServeCommand() *cobra.Command {
 	var feedbackDB string
 	var usageDB string
 	var usageRetentionDays int
+	var trustedProxies string
 
 	command := &cobra.Command{
 		Use:   "serve",
@@ -309,6 +311,12 @@ func newMLWHServeCommand() *cobra.Command {
 			"default 365) sets how many days of rows are kept. GET /usage requires",
 			"the same admin Bearer token as the feedback admin routes.",
 			"",
+			"Feedback and usage store the client IP. Behind a reverse proxy, such as",
+			"a Kubernetes ingress controller, set --trusted-proxies (else",
+			"WA_MLWH_TRUSTED_PROXIES) to the proxies' IPs or CIDRs, comma separated,",
+			"so the client is read from their X-Forwarded-For or X-Real-IP header.",
+			"By default no proxy is trusted and the socket IP is stored.",
+			"",
 			"GET /freshness reports each table's sync status. A table whose last",
 			"successful sync is older than WA_MLWH_STALE_AFTER (a Go duration,",
 			"default 2h) is reported stale.",
@@ -343,6 +351,11 @@ func newMLWHServeCommand() *cobra.Command {
 				usageRetentionDays,
 				cmd.Flags().Changed("usage-retention-days"),
 			)
+			if err != nil {
+				return err
+			}
+
+			proxies, err := resolveMLWHServeTrustedProxies(trustedProxies, cmd.Flags().Changed("trusted-proxies"))
 			if err != nil {
 				return err
 			}
@@ -406,6 +419,7 @@ func newMLWHServeCommand() *cobra.Command {
 				client,
 				mlwh.WithFeedback(feedbackStore, feedbackToken),
 				mlwh.WithUsage(usageStore, adminToken),
+				mlwh.WithTrustedProxies(proxies),
 			)
 			if serveConfig.secured {
 				server.RegisterRoutes(authServer.Router(), authServer.AuthRouter())
@@ -425,6 +439,8 @@ func newMLWHServeCommand() *cobra.Command {
 	command.Flags().StringVar(&feedbackDB, "feedback-db", firstEnv("WA_MLWH_FEEDBACK_PATH"), "SQLite path for agent feedback; feedback is disabled when unset")
 	command.Flags().StringVar(&usageDB, "usage-db", firstEnv("WA_MLWH_USAGE_PATH"), "SQLite path for usage metrics; usage tracking is disabled when unset")
 	command.Flags().IntVar(&usageRetentionDays, "usage-retention-days", 365, "days of usage rows to keep; overrides WA_MLWH_USAGE_RETENTION_DAYS")
+	command.Flags().StringVar(&trustedProxies, "trusted-proxies", firstEnv("WA_MLWH_TRUSTED_PROXIES"),
+		"comma-separated IPs or CIDRs of reverse proxies whose X-Forwarded-For/X-Real-IP is trusted; none by default")
 	command.Flags().StringVar(&mlwhCache, "mlwh-cache", "", "MLWH cache backend path or MySQL DSN without a password; defaults to WA_MLWH_CACHE_PATH when unset")
 
 	return command
@@ -495,6 +511,22 @@ func resolveMLWHServeUsageRetentionDays(flagValue int, flagChanged bool) (int, e
 	}
 
 	return days, nil
+}
+
+// resolveMLWHServeTrustedProxies parses value, which comes from
+// --trusted-proxies when flagChanged and otherwise from its
+// WA_MLWH_TRUSTED_PROXIES default, naming that source in any error.
+func resolveMLWHServeTrustedProxies(value string, flagChanged bool) ([]netip.Prefix, error) {
+	proxies, err := mlwh.ParseTrustedProxies(value)
+	if err == nil {
+		return proxies, nil
+	}
+
+	if flagChanged {
+		return nil, fmt.Errorf("--trusted-proxies: %w", err)
+	}
+
+	return nil, fmt.Errorf("WA_MLWH_TRUSTED_PROXIES: %w", err)
 }
 
 func configureMLWHServeRouter(router *gin.Engine) {

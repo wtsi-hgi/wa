@@ -162,8 +162,7 @@ func decodeSingleJSONValue(body io.Reader, target any) error {
 }
 
 // remoteHost returns the host part of the connection's remote address, or the
-// raw value when it cannot be split. Forwarded headers are never consulted.
-// Feedback submission and usage recording both use it.
+// raw value when it cannot be split. clientHost falls back to it.
 func remoteHost(remoteAddr string) string {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
@@ -363,7 +362,7 @@ func (s *Server) handleFeedbackSubmit(c *gin.Context) {
 		return
 	}
 
-	addr := remoteHost(c.Request.RemoteAddr)
+	addr := clientHost(c)
 
 	report, err := s.feedback.Add(c.Request.Context(), submission, addr)
 	if err != nil {

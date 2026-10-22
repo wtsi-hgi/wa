@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -709,8 +710,15 @@ func newSecuredUsageRouterForTest(store *UsageStore, authMiddleware gin.HandlerF
 // usageRequestForTest serves one request from usageTestRemoteHost with the
 // given headers.
 func usageRequestForTest(router *gin.Engine, method, target string, headers map[string]string) *httptest.ResponseRecorder {
+	return usageRequestFromForTest(router, usageTestRemoteHost, method, target, headers)
+}
+
+// usageRequestFromForTest serves one request from socketIP with the given
+// headers.
+func usageRequestFromForTest(router *gin.Engine, socketIP, method, target string,
+	headers map[string]string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, target, nil)
-	request.RemoteAddr = usageTestRemoteHost + ":1234"
+	request.RemoteAddr = net.JoinHostPort(socketIP, "1234")
 
 	for name, value := range headers {
 		request.Header.Set(name, value)
