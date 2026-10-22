@@ -273,6 +273,10 @@ func addInfoCandidateSamplesForTest(t *testing.T, cachePath string) {
 	seedInfoCandidateSampleForTest(t, db, 701, "7000", infoStudyNamedSupplierForTest, "7000", "studynamed", "sup")
 	execMultiSampleSQLForTest(t, db, `UPDATE sample_mirror SET sanger_sample_id = '5534STDY0000701' WHERE id_sample_tmp = 701`)
 	seedInfoCandidateSampleForTest(t, db, 702, "5534STDY0000702", infoStudyNamedSupplierForTest, "5534stdy0000702", "studynamed", "sup")
+	for _, id := range []int64{801, 802} {
+		seedInfoCandidateSampleForTest(t, db, id, "5534STDY0000"+formatMultiSampleIntForTest(id), "supplier-"+formatMultiSampleIntForTest(id), "twin")
+		execMultiSampleSQLForTest(t, db, `UPDATE sample_mirror SET accession_number = 'TWIN-ACC' WHERE id_sample_tmp = ?`, id)
+	}
 }
 
 func seedInfoCandidateSampleForTest(t *testing.T, db *sql.DB, id int64, name, supplier string, tokens ...string) {

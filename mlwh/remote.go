@@ -985,28 +985,28 @@ func (rc *RemoteClient) CountResolvePerson(ctx context.Context, term string) (Co
 }
 
 // FindSamplesBySangerID finds samples by Sanger sample ID through the remote server.
-func (rc *RemoteClient) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]Sample, error) {
-	return remoteCall[[]Sample](rc, ctx, "FindSamplesBySangerID", []string{sangerID}, nil)
+func (rc *RemoteClient) FindSamplesBySangerID(ctx context.Context, sangerID string, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "FindSamplesBySangerID", []string{sangerID}, remotePagination(limit, offset))
 }
 
 // FindSamplesByIDSampleLims finds samples by LIMS sample ID through the remote server.
-func (rc *RemoteClient) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]Sample, error) {
-	return remoteCall[[]Sample](rc, ctx, "FindSamplesByIDSampleLims", []string{idSampleLims}, nil)
+func (rc *RemoteClient) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "FindSamplesByIDSampleLims", []string{idSampleLims}, remotePagination(limit, offset))
 }
 
 // FindSamplesByAccessionNumber finds samples by accession number through the remote server.
-func (rc *RemoteClient) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]Sample, error) {
-	return remoteCall[[]Sample](rc, ctx, "FindSamplesByAccessionNumber", []string{accessionNumber}, nil)
+func (rc *RemoteClient) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "FindSamplesByAccessionNumber", []string{accessionNumber}, remotePagination(limit, offset))
 }
 
 // FindSamplesBySupplierName finds samples by supplier name through the remote server.
-func (rc *RemoteClient) FindSamplesBySupplierName(ctx context.Context, supplierName string) ([]Sample, error) {
-	return remoteCall[[]Sample](rc, ctx, "FindSamplesBySupplierName", []string{supplierName}, nil)
+func (rc *RemoteClient) FindSamplesBySupplierName(ctx context.Context, supplierName string, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "FindSamplesBySupplierName", []string{supplierName}, remotePagination(limit, offset))
 }
 
 // FindSamplesByLibraryType finds samples by library type through the remote server.
-func (rc *RemoteClient) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]Sample, error) {
-	return remoteCall[[]Sample](rc, ctx, "FindSamplesByLibraryType", []string{libraryType}, nil)
+func (rc *RemoteClient) FindSamplesByLibraryType(ctx context.Context, libraryType string, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "FindSamplesByLibraryType", []string{libraryType}, remotePagination(limit, offset))
 }
 
 // ExpandIdentifier expands an identifier through the remote server.

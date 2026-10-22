@@ -786,7 +786,7 @@ func TestFindSamplesBySangerIDHydratesLibraryIdentifiers(t *testing.T) {
 		_, err = client.cache.DB().Exec(`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?)`, "Custom", 31, "7607", "71046409", "SQPP-47463-G:B1")
 		convey.So(err, convey.ShouldBeNil)
 
-		samples, err := client.FindSamplesBySangerID(context.Background(), "7607STDY14643771")
+		samples, err := client.FindSamplesBySangerID(context.Background(), "7607STDY14643771", 1000, 0)
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(samples, convey.ShouldHaveLength, 1)
@@ -1855,7 +1855,7 @@ func TestFindSamplesByLibraryTypeReturnsNeverSyncedWhenDependentSyncStateIsParti
 		defer cleanup()
 		seedSyncState(t, client.cache.DB(), syncTableSample, time.Date(2026, time.May, 11, 17, 0, 0, 0, time.UTC))
 
-		samples, err := client.FindSamplesByLibraryType(context.Background(), "Standard")
+		samples, err := client.FindSamplesByLibraryType(context.Background(), "Standard", 1000, 0)
 
 		convey.So(samples, convey.ShouldBeNil)
 		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
@@ -1894,7 +1894,7 @@ func TestStudiesForSampleExcludesNonSQSCPStudies(t *testing.T) {
 	})
 }
 
-func TestFindSamplesByAccessionNumberReturnsErrAmbiguousWithBothCandidatePKs(t *testing.T) {
+func TestFindSamplesByAccessionNumberListsEverySampleSharingIt(t *testing.T) {
 	convey.Convey("Given two cached samples sharing an accession number", t, func() {
 		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
@@ -1905,12 +1905,10 @@ func TestFindSamplesByAccessionNumberReturnsErrAmbiguousWithBothCandidatePKs(t *
 		_, err := client.cache.DB().Exec(`UPDATE sample_mirror SET accession_number = ? WHERE id_sample_tmp IN (?, ?)`, "DUP", 11, 22)
 		convey.So(err, convey.ShouldBeNil)
 
-		samples, err := client.FindSamplesByAccessionNumber(context.Background(), "DUP")
+		samples, err := client.FindSamplesByAccessionNumber(context.Background(), "DUP", 1000, 0)
 
-		convey.So(samples, convey.ShouldBeNil)
-		convey.So(errors.Is(err, ErrAmbiguous), convey.ShouldBeTrue)
-		convey.So(err.Error(), convey.ShouldContainSubstring, "11")
-		convey.So(err.Error(), convey.ShouldContainSubstring, "22")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(sampleNamesForTest(samples), convey.ShouldResemble, []string{"S1", "S2"})
 	})
 }
 
@@ -1924,7 +1922,7 @@ func TestFindSamplesBySangerIDQueriesOnlySangerSampleIDColumn(t *testing.T) {
 		_, err := client.cache.DB().Exec(`UPDATE sample_mirror SET accession_number = ?, sanger_sample_id = ? WHERE id_sample_tmp = ?`, "DUP", "different", 33)
 		convey.So(err, convey.ShouldBeNil)
 
-		samples, err := client.FindSamplesBySangerID(context.Background(), "DUP")
+		samples, err := client.FindSamplesBySangerID(context.Background(), "DUP", 1000, 0)
 
 		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
 		convey.So(samples, convey.ShouldBeNil)
@@ -1942,7 +1940,7 @@ func TestFindSamplesByLibraryTypeReturnsCanonicalSampleSlice(t *testing.T) {
 		seedHierarchySample(t, client.cache.DB(), 1, "6568", "S1")
 		seedLibrarySample(t, client.cache.DB(), "Standard", 1, "6568")
 
-		samples, err := client.FindSamplesByLibraryType(context.Background(), "Standard")
+		samples, err := client.FindSamplesByLibraryType(context.Background(), "Standard", 1000, 0)
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(samples, convey.ShouldHaveLength, 1)
@@ -1985,11 +1983,19 @@ func TestFindSamplesByMethodsColdCacheReturnErrCacheNeverSynced(t *testing.T) {
 			name string
 			find func(context.Context) ([]Sample, error)
 		}{
-			{name: "sanger id", find: func(ctx context.Context) ([]Sample, error) { return client.FindSamplesBySangerID(ctx, "S1") }},
-			{name: "sample lims id", find: func(ctx context.Context) ([]Sample, error) { return client.FindSamplesByIDSampleLims(ctx, "123") }},
-			{name: "accession", find: func(ctx context.Context) ([]Sample, error) { return client.FindSamplesByAccessionNumber(ctx, "ACC") }},
-			{name: "supplier", find: func(ctx context.Context) ([]Sample, error) { return client.FindSamplesBySupplierName(ctx, "SUP") }},
-			{name: "library type", find: func(ctx context.Context) ([]Sample, error) { return client.FindSamplesByLibraryType(ctx, "Standard") }},
+			{name: "sanger id", find: func(ctx context.Context) ([]Sample, error) { return client.FindSamplesBySangerID(ctx, "S1", 1000, 0) }},
+			{name: "sample lims id", find: func(ctx context.Context) ([]Sample, error) {
+				return client.FindSamplesByIDSampleLims(ctx, "123", 1000, 0)
+			}},
+			{name: "accession", find: func(ctx context.Context) ([]Sample, error) {
+				return client.FindSamplesByAccessionNumber(ctx, "ACC", 1000, 0)
+			}},
+			{name: "supplier", find: func(ctx context.Context) ([]Sample, error) {
+				return client.FindSamplesBySupplierName(ctx, "SUP", 1000, 0)
+			}},
+			{name: "library type", find: func(ctx context.Context) ([]Sample, error) {
+				return client.FindSamplesByLibraryType(ctx, "Standard", 1000, 0)
+			}},
 		}
 
 		for _, lookup := range lookups {
@@ -2125,7 +2131,7 @@ func TestSamplePaginationQueriesOrderByNameThenPrimaryKey(t *testing.T) {
 func TestFindSamplesByLibraryTypeQueryOrdersByNameThenPrimaryKey(t *testing.T) {
 	convey.Convey("Given the library-type finder query", t, func() {
 		convey.So(
-			strings.Contains(findSamplesByLibraryTypeSQL, "ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT 2"),
+			strings.Contains(findSamplesByLibraryTypeSQL, "ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?"),
 			convey.ShouldBeTrue,
 		)
 	})

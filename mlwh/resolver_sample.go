@@ -44,11 +44,11 @@ type sampleResolution struct {
 }
 
 var resolveSampleTextSteps = []sampleLookupStep{
-	{kind: KindSangerSampleName, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`},
-	{kind: KindSangerSampleID, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`},
-	{kind: KindSampleLimsID, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`},
-	{kind: KindSupplierName, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`},
-	{kind: KindSampleAccession, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`},
+	{kind: KindSangerSampleName, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp`},
+	{kind: KindSangerSampleID, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp`},
+	{kind: KindSampleLimsID, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp`},
+	{kind: KindSupplierName, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp`},
+	{kind: KindSampleAccession, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp`},
 }
 
 // ResolveSample resolves a sample from cache-backed indexed lookups.
@@ -71,7 +71,7 @@ func (c *Client) ResolveSample(ctx context.Context, raw string) (Match, error) {
 
 	sample, err := c.resolveAmbiguousSampleFromCache(
 		ctx,
-		`SELECT `+sampleMirrorSelectColumns+` FROM donor_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = donor_samples.id_sample_tmp WHERE donor_samples.donor_id = ? ORDER BY sample_mirror.id_sample_tmp LIMIT 2`,
+		`SELECT `+sampleMirrorSelectColumns+` FROM donor_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = donor_samples.id_sample_tmp WHERE donor_samples.donor_id = ? ORDER BY sample_mirror.id_sample_tmp`,
 		raw,
 	)
 	if err != nil {
@@ -176,7 +176,12 @@ func (c *Client) resolveSampleTextCascade(ctx context.Context, raw string) (Matc
 	case 1:
 		return Match{Kind: first.kind, Canonical: first.sample.Name, Sample: first.sample}, nil
 	default:
-		return Match{}, fmt.Errorf("%w: %q matches samples %d and %d", ErrAmbiguous, raw, orderedIDs[0], orderedIDs[1])
+		samples := make([]Sample, len(orderedIDs))
+		for index, id := range orderedIDs {
+			samples[index] = *resolutions[id].sample
+		}
+
+		return Match{}, ambiguousSamplesError(raw, samples, len(samples))
 	}
 }
 
@@ -227,8 +232,10 @@ func (c *Client) resolveSampleFromCache(ctx context.Context, query, raw string) 
 	return sample, nil
 }
 
+// resolveAmbiguousSampleFromCache returns the one sample query (which has no
+// LIMIT) finds for raw; several matches are ErrAmbiguous naming them.
 func (c *Client) resolveAmbiguousSampleFromCache(ctx context.Context, query, raw string) (*Sample, error) {
-	samples, err := c.querySamplesFromCache(ctx, query, raw)
+	samples, err := c.querySamplesFromCache(ctx, query+ambiguousCandidatesLimit, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +246,17 @@ func (c *Client) resolveAmbiguousSampleFromCache(ctx context.Context, query, raw
 	case 1:
 		return samples[0], nil
 	default:
-		return nil, fmt.Errorf("%w: %q matches samples %d and %d", ErrAmbiguous, raw, samples[0].IDSampleTmp, samples[1].IDSampleTmp)
+		total, countErr := c.ambiguousTotal(ctx, len(samples), `SELECT COUNT(*) FROM (`+query+`) AS candidates`, raw)
+		if countErr != nil {
+			return nil, countErr
+		}
+
+		candidates := make([]Sample, len(samples))
+		for index, sample := range samples {
+			candidates[index] = *sample
+		}
+
+		return nil, ambiguousSamplesError(raw, candidates, total)
 	}
 }
 

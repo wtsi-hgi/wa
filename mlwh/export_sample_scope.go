@@ -77,7 +77,7 @@ func (c *Client) manyToOneSampleScope(ctx context.Context, raw string) (exportSa
 			continue
 		}
 
-		samples, err := c.querySamplesFromCache(ctx, step.query, raw)
+		samples, err := c.querySamplesFromCache(ctx, step.query+" LIMIT 1", raw)
 		if err != nil {
 			return exportSampleScope{}, false, err
 		}

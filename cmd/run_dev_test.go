@@ -2410,6 +2410,17 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 		convey.So(combinedOutput, convey.ShouldNotContainSubstring, "mlwh sync")
 		convey.So(combinedOutput, convey.ShouldNotContainSubstring, "never been synced")
 
+		// The seeded cache carries the donor_samples rows sync derives from
+		// sample_mirror, so the fixture sample resolves by its donor id.
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		donorResponse, err := http.Get(snapshot.MLWHBackendURL + "/resolve/sample/DONOR7607")
+		convey.So(err, convey.ShouldBeNil)
+		donorBody, err := io.ReadAll(donorResponse.Body)
+		_ = donorResponse.Body.Close()
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(donorResponse.StatusCode, convey.ShouldEqual, http.StatusOK)
+		convey.So(string(donorBody), convey.ShouldContainSubstring, `"canonical":"7607STDY14643771"`)
+
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})

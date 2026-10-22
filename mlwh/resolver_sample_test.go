@@ -41,11 +41,11 @@ import (
 var (
 	sampleUUIDQuery       = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE uuid_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
 	sampleLimsIDQuery     = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
-	sampleNameQuery       = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
-	sampleSangerIDQuery   = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
-	sampleTextLimsIDQuery = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
-	sampleSupplierQuery   = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
-	sampleAccessionQuery  = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
+	sampleNameQuery       = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 11`
+	sampleSangerIDQuery   = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 11`
+	sampleTextLimsIDQuery = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 11`
+	sampleSupplierQuery   = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 11`
+	sampleAccessionQuery  = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 11`
 )
 
 func TestResolveSampleUUIDMatch(t *testing.T) {
@@ -237,9 +237,7 @@ func TestResolveSampleCrossColumnCascadeReturnsAmbiguous(t *testing.T) {
 		match, err := client.ResolveSample(context.Background(), "X")
 
 		convey.So(errors.Is(err, ErrAmbiguous), convey.ShouldBeTrue)
-		convey.So(err.Error(), convey.ShouldContainSubstring, "10")
-		convey.So(err.Error(), convey.ShouldContainSubstring, "20")
-		convey.So(err.Error(), convey.ShouldContainSubstring, "X")
+		convey.So(err.Error(), convey.ShouldContainSubstring, `"X" matches 2 samples: X, sample-20`)
 		convey.So(match, convey.ShouldResemble, Match{})
 	})
 }
@@ -367,7 +365,7 @@ func TestResolveSampleWarmCacheMissForMySQLCacheReturnsNotFoundWithoutNegativeCa
 			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 				WithArgs(syncTableSample).
 				WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}).AddRow("2026-01-02T03:04:05Z", nil, 0))
-			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + sampleMirrorSelectColumns + ` FROM donor_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = donor_samples.id_sample_tmp WHERE donor_samples.donor_id = ? ORDER BY sample_mirror.id_sample_tmp LIMIT 2`)).
+			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + sampleMirrorSelectColumns + ` FROM donor_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = donor_samples.id_sample_tmp WHERE donor_samples.donor_id = ? ORDER BY sample_mirror.id_sample_tmp LIMIT 11`)).
 				WithArgs(raw).
 				WillReturnRows(cacheMissRows)
 		}

@@ -1,6 +1,6 @@
 # wa mlwh API endpoint reference
 
-**API version:** `1.12.0`
+**API version:** `1.13.0`
 
 This catalogue lists every endpoint of the cache-backed, read-only `wa mlwh
 serve` REST API. It is **generated** from the same enriched `Registry`
@@ -514,50 +514,50 @@ Returns the number of DISTINCT candidate people matching the term across BOTH pe
 
 Find samples by Sanger sample id
 
-Returns the samples whose Sanger sample id exactly matches the given value.
+Lists every sample whose Sanger sample id exactly matches the given value, ordered by Sanger sample name. Several samples can share a Sanger sample id, so this returns all of them rather than failing as ambiguous (since API 1.13.0; older servers answered 409 ambiguous when more than one sample matched). Defaults to returning all matches; use limit/offset to page, and X-Total-Count equals /find/sample/sanger-id/:id/count. A value no sample holds returns 404 not_found; a page past the last match is an empty list. Use /resolve/sample/:id when exactly one sample is needed.
 
 - Path parameters: `id`
-- Query parameters: none
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0
 - Response: `[]Sample`
 
 ### `GET /find/sample/lims-id/:id`
 
 Find samples by LIMS sample id
 
-Returns the samples whose LIMS sample id exactly matches the given value.
+Lists every sample whose LIMS sample id exactly matches the given value, ordered by Sanger sample name. Several samples can share a LIMS sample id, so this returns all of them rather than failing as ambiguous (since API 1.13.0; older servers answered 409 ambiguous when more than one sample matched). Defaults to returning all matches; use limit/offset to page, and X-Total-Count equals /find/sample/lims-id/:id/count. A value no sample holds returns 404 not_found; a page past the last match is an empty list. Use /resolve/sample/:id when exactly one sample is needed.
 
 - Path parameters: `id`
-- Query parameters: none
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0
 - Response: `[]Sample`
 
 ### `GET /find/sample/accession/:id`
 
 Find samples by accession number
 
-Returns the samples whose accession number exactly matches the given value.
+Lists every sample whose accession number exactly matches the given value, ordered by Sanger sample name. Several samples can share an accession number, so this returns all of them rather than failing as ambiguous (since API 1.13.0; older servers answered 409 ambiguous when more than one sample matched). Defaults to returning all matches; use limit/offset to page, and X-Total-Count equals /find/sample/accession/:id/count. A value no sample holds returns 404 not_found; a page past the last match is an empty list. Use /resolve/sample/:id when exactly one sample is needed.
 
 - Path parameters: `id`
-- Query parameters: none
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0
 - Response: `[]Sample`
 
 ### `GET /find/sample/supplier-name/:id`
 
 Find samples by supplier name
 
-Returns the samples whose supplier name exactly matches the given value.
+Lists every sample whose supplier name exactly matches the given value, ordered by Sanger sample name. Several samples can share a supplier name, so this returns all of them rather than failing as ambiguous (since API 1.13.0; older servers answered 409 ambiguous when more than one sample matched). Defaults to returning all matches; use limit/offset to page, and X-Total-Count equals /find/sample/supplier-name/:id/count. A value no sample holds returns 404 not_found; a page past the last match is an empty list. Use /resolve/sample/:id when exactly one sample is needed.
 
 - Path parameters: `id`
-- Query parameters: none
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0
 - Response: `[]Sample`
 
 ### `GET /find/sample/library-type/:id`
 
 Find samples by library type
 
-Returns the samples whose library type exactly matches the given value.
+Lists every sample in libraries of the given library type, ordered by Sanger sample name. Several samples can share a library type, so this returns all of them rather than failing as ambiguous (since API 1.13.0; older servers answered 409 ambiguous when more than one sample matched). Defaults to returning all matches; use limit/offset to page, and X-Total-Count equals /find/sample/library-type/:id/count. A value no sample holds returns 404 not_found; a page past the last match is an empty list. Use /resolve/sample/:id when exactly one sample is needed.
 
 - Path parameters: `id`
-- Query parameters: none
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0
 - Response: `[]Sample`
 
 ### `GET /expand/:kind/:id`
@@ -864,7 +864,7 @@ Returns the number of iRODS data objects on the given run, the count counterpart
 
 Count samples by Sanger sample id
 
-Returns the number of samples whose Sanger sample id exactly matches the given value, the count counterpart of /find/sample/sanger-id/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
+Returns the number of samples whose Sanger sample id exactly matches the given value, the count counterpart of /find/sample/sanger-id/:id: it equals that list's length when every match is fetched, and the list's X-Total-Count header. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
 
 - Path parameters: `id`
 - Query parameters: none
@@ -874,7 +874,7 @@ Returns the number of samples whose Sanger sample id exactly matches the given v
 
 Count samples by LIMS sample id
 
-Returns the number of samples whose LIMS sample id exactly matches the given value, the count counterpart of /find/sample/lims-id/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
+Returns the number of samples whose LIMS sample id exactly matches the given value, the count counterpart of /find/sample/lims-id/:id: it equals that list's length when every match is fetched, and the list's X-Total-Count header. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
 
 - Path parameters: `id`
 - Query parameters: none
@@ -884,7 +884,7 @@ Returns the number of samples whose LIMS sample id exactly matches the given val
 
 Count samples by accession number
 
-Returns the number of samples whose accession number exactly matches the given value, the count counterpart of /find/sample/accession/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
+Returns the number of samples whose accession number exactly matches the given value, the count counterpart of /find/sample/accession/:id: it equals that list's length when every match is fetched, and the list's X-Total-Count header. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
 
 - Path parameters: `id`
 - Query parameters: none
@@ -894,7 +894,7 @@ Returns the number of samples whose accession number exactly matches the given v
 
 Count samples by supplier name
 
-Returns the number of samples whose supplier name exactly matches the given value, the count counterpart of /find/sample/supplier-name/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
+Returns the number of samples whose supplier name exactly matches the given value, the count counterpart of /find/sample/supplier-name/:id: it equals that list's length when every match is fetched, and the list's X-Total-Count header. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
 
 - Path parameters: `id`
 - Query parameters: none
@@ -904,7 +904,7 @@ Returns the number of samples whose supplier name exactly matches the given valu
 
 Count samples by library type
 
-Returns the number of distinct samples whose library type exactly matches the given value, the count counterpart of /find/sample/library-type/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
+Returns the number of distinct samples whose library type exactly matches the given value, the count counterpart of /find/sample/library-type/:id: it equals that list's length when every match is fetched, and the list's X-Total-Count header. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
 
 - Path parameters: `id`
 - Query parameters: none

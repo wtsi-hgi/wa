@@ -341,23 +341,23 @@ func (q *serverFakeQueryer) CountResolvePerson(_ context.Context, _ string) (Cou
 	panic("unexpected CountResolvePerson call")
 }
 
-func (q *serverFakeQueryer) FindSamplesBySangerID(_ context.Context, _ string) ([]Sample, error) {
+func (q *serverFakeQueryer) FindSamplesBySangerID(_ context.Context, _ string, _, _ int) ([]Sample, error) {
 	panic("unexpected FindSamplesBySangerID call")
 }
 
-func (q *serverFakeQueryer) FindSamplesByIDSampleLims(_ context.Context, _ string) ([]Sample, error) {
+func (q *serverFakeQueryer) FindSamplesByIDSampleLims(_ context.Context, _ string, _, _ int) ([]Sample, error) {
 	panic("unexpected FindSamplesByIDSampleLims call")
 }
 
-func (q *serverFakeQueryer) FindSamplesByAccessionNumber(_ context.Context, _ string) ([]Sample, error) {
+func (q *serverFakeQueryer) FindSamplesByAccessionNumber(_ context.Context, _ string, _, _ int) ([]Sample, error) {
 	panic("unexpected FindSamplesByAccessionNumber call")
 }
 
-func (q *serverFakeQueryer) FindSamplesBySupplierName(_ context.Context, _ string) ([]Sample, error) {
+func (q *serverFakeQueryer) FindSamplesBySupplierName(_ context.Context, _ string, _, _ int) ([]Sample, error) {
 	panic("unexpected FindSamplesBySupplierName call")
 }
 
-func (q *serverFakeQueryer) FindSamplesByLibraryType(_ context.Context, _ string) ([]Sample, error) {
+func (q *serverFakeQueryer) FindSamplesByLibraryType(_ context.Context, _ string, _, _ int) ([]Sample, error) {
 	panic("unexpected FindSamplesByLibraryType call")
 }
 

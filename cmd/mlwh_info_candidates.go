@@ -93,10 +93,10 @@ func infoUniqueIdentifier(ctx context.Context, client mlwhInfoClient, searcher m
 		holders infoSampleHolders
 	}{
 		{sample.Name, samplesNamed},
-		{sample.SangerSampleID, client.FindSamplesBySangerID},
-		{sample.IDSampleLims, client.FindSamplesByIDSampleLims},
+		{sample.SangerSampleID, infoUniquenessProbe(client.FindSamplesBySangerID)},
+		{sample.IDSampleLims, infoUniquenessProbe(client.FindSamplesByIDSampleLims)},
 		{sample.UUIDSampleLims, nil}, // UUIDs are unique by construction
-		{sample.AccessionNumber, client.FindSamplesByAccessionNumber},
+		{sample.AccessionNumber, infoUniquenessProbe(client.FindSamplesByAccessionNumber)},
 	} {
 		if strings.TrimSpace(key.value) == "" || !infoOnlyHolder(ctx, key.holders, key.value, sample) {
 			continue
@@ -315,6 +315,18 @@ func infoAmbiguousError(report infoCandidatesReport, advice string) error {
 // infoSampleHolders returns the samples holding one kind of identifier.
 type infoSampleHolders func(ctx context.Context, value string) ([]mlwh.Sample, error)
 
+// infoSampleFinder returns a page of the samples holding one kind of
+// identifier, as the client's FindSamplesBy* methods do.
+type infoSampleFinder func(ctx context.Context, value string, limit, offset int) ([]mlwh.Sample, error)
+
+// infoUniquenessProbe adapts find to infoOnlyHolder, fetching two samples:
+// enough to tell whether the value names only one.
+func infoUniquenessProbe(find infoSampleFinder) infoSampleHolders {
+	return func(ctx context.Context, value string) ([]mlwh.Sample, error) {
+		return find(ctx, value, 2, 0)
+	}
+}
+
 func sampleHasIdentifier(sample mlwh.Sample, identifier string) bool {
 	for _, value := range []string{sample.Name, sample.SangerSampleID, sample.SupplierName, sample.AccessionNumber, sample.DonorID, sample.IDSampleLims} {
 		if strings.EqualFold(value, identifier) {
@@ -331,10 +343,10 @@ func sampleHasIdentifier(sample mlwh.Sample, identifier string) bool {
 func addUniqueIdentifierMatches(ctx context.Context, client mlwhInfoClient, identifier string, matches []mlwh.Sample) []mlwh.Sample {
 	ctx = mlwh.WithLookupProbe(ctx)
 
-	for _, find := range []func(context.Context, string) ([]mlwh.Sample, error){
+	for _, find := range []infoSampleFinder{
 		client.FindSamplesBySangerID, client.FindSamplesByIDSampleLims, client.FindSamplesByAccessionNumber,
 	} {
-		found, _ := find(ctx, identifier)
+		found, _ := find(ctx, identifier, infoCandidateLimit, 0)
 		for _, sample := range found {
 			if !slices.ContainsFunc(matches, func(match mlwh.Sample) bool { return match.IDSampleTmp == sample.IDSampleTmp }) {
 				matches = append(matches, sample)

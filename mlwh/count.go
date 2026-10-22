@@ -161,10 +161,9 @@ var (
 
 // countFindSamplesBySangerIDSQL and its siblings size the find/sample/* lists:
 // each counts the SQSCP sample_mirror rows matching the exact field the
-// corresponding Find method matches (findSamplesBySangerIDSQL, ... in
-// hierarchy.go), with no LIMIT, so the count equals len(list) for an unambiguous
-// match (the case the cross-check seeds) and reports the true multiplicity when
-// the Find list would instead raise ErrAmbiguous.
+// corresponding Find method matches (the sampleFinder list queries in
+// hierarchy.go), with no LIMIT, so the count equals the length of the
+// fetch-all list.
 const (
 	countFindSamplesBySangerIDSQL     = `SELECT COUNT(*) FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP'`
 	countFindSamplesByIDSampleLimsSQL = `SELECT COUNT(*) FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP'`
@@ -1186,8 +1185,8 @@ func (c *Client) CountIRODSPathsForRunWithOptions(ctx context.Context, idRun str
 }
 
 // CountFindSamplesBySangerID counts the SQSCP samples whose sanger_sample_id
-// matches, the count counterpart of FindSamplesBySangerID, so it equals
-// len(FindSamplesBySangerID(id)) for an unambiguous match. It shares the Find
+// matches, the count counterpart of FindSamplesBySangerID, so it equals the
+// length of the fetch-all FindSamplesBySangerID list. It shares the Find
 // never-synced cascade: a zero count on a synced cache is ErrNotFound.
 func (c *Client) CountFindSamplesBySangerID(ctx context.Context, sangerID string) (Count, error) {
 	return c.countFindSamples(ctx, countFindSamplesBySangerIDSQL, "count samples by sanger sample id", sangerID, syncTableSample)
@@ -1220,7 +1219,7 @@ func (c *Client) CountFindSamplesByLibraryType(ctx context.Context, libraryType 
 }
 
 // countFindSamples is the shared body of the find/sample/* counts. It mirrors
-// findSamplesByQuery's never-synced cascade: a zero count on a synced cache is
+// findSamplePage's never-synced cascade: a zero count on a synced cache is
 // ErrNotFound, and a never-synced cache returns Count{} joined with
 // ErrCacheNeverSynced and ErrNotFound.
 func (c *Client) countFindSamples(ctx context.Context, query, action, raw string, syncTables ...string) (Count, error) {
