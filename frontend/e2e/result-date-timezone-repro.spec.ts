@@ -157,7 +157,7 @@ test("renders registration timestamps in the browser timezone", async ({
             '[data-registration-field="Last updated"]',
         );
         const fileButton = page
-            .locator("button[data-file-path]")
+            .locator("[data-file-path]")
             .filter({ hasText: "report.txt" });
 
         await expect(summary).toBeVisible();

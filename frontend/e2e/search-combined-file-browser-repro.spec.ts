@@ -905,7 +905,7 @@ test.describe("search combined file browser repro", () => {
             combinedBrowser.locator('[data-locked-output-directory="true"]'),
         ).toHaveCount(2);
         await expect(
-            combinedBrowser.locator("button[data-directory-path]"),
+            combinedBrowser.locator("[data-directory-path]"),
         ).toHaveCount(0);
         await expect(page.locator('[data-file-browser="true"]')).toHaveCount(0);
 

@@ -1411,7 +1411,7 @@ describe("O1 file preview", () => {
             window.dispatchEvent(new Event("resize"));
         });
 
-        expect(screen.queryByLabelText(/content truncated/i)).toBeNull();
+        expect(screen.queryByText(/content truncated/i)).toBeNull();
 
         rerender(
             createElement(FilePreview, {
@@ -1441,7 +1441,7 @@ describe("O1 file preview", () => {
             window.dispatchEvent(new Event("resize"));
         });
 
-        expect(screen.getByLabelText(/content truncated/i)).toBeTruthy();
+        expect(screen.getByText(/content truncated/i)).toBeTruthy();
     });
 
     it("shows the truncation fade for csv previews when preview height clips the table locally", () => {
@@ -1498,7 +1498,7 @@ describe("O1 file preview", () => {
             window.dispatchEvent(new Event("resize"));
         });
 
-        expect(screen.getByLabelText(/content truncated/i)).toBeTruthy();
+        expect(screen.getByText(/content truncated/i)).toBeTruthy();
     });
 
     it("renders svg previews without a nested bordered frame", () => {
@@ -1762,9 +1762,12 @@ describe("O1 file preview", () => {
         expect(article?.className).not.toContain("overflow-y-auto");
         expect(article?.className).toContain("overflow-hidden");
 
-        const truncationIndicator = screen.getByLabelText(/content truncated/i);
+        const truncationIndicator = screen.getByText(/content truncated/i);
         expect(truncationIndicator).toBeTruthy();
-        expect(truncationIndicator.getAttribute("data-truncated")).toBe("true");
+        const fade = truncationIndicator.closest("[data-truncated]");
+        expect(fade?.getAttribute("data-truncated")).toBe("true");
+        // axe aria-prohibited-attr: the role-less fade must not carry a label.
+        expect(fade?.hasAttribute("aria-label")).toBe(false);
     });
 
     it("constrained code preview shows the truncation indicator when the preview content is marked truncated", () => {
@@ -1786,9 +1789,12 @@ describe("O1 file preview", () => {
         expect(pre?.className).not.toContain("overflow-y-auto");
         expect(pre?.className).toContain("overflow-hidden");
 
-        const truncationIndicator = screen.getByLabelText(/content truncated/i);
+        const truncationIndicator = screen.getByText(/content truncated/i);
         expect(truncationIndicator).toBeTruthy();
-        expect(truncationIndicator.getAttribute("data-truncated")).toBe("true");
+        const fade = truncationIndicator.closest("[data-truncated]");
+        expect(fade?.getAttribute("data-truncated")).toBe("true");
+        // axe aria-prohibited-attr: the role-less fade must not carry a label.
+        expect(fade?.hasAttribute("aria-label")).toBe(false);
     });
 
     it("inline csv preview does not show a truncation indicator when the backend response is complete and the selected height fits the table", () => {
@@ -1807,7 +1813,7 @@ describe("O1 file preview", () => {
             container.querySelector(".overflow-hidden");
         expect(overflowHiddenContainer).not.toBeNull();
 
-        expect(screen.queryByLabelText(/content truncated/i)).toBeNull();
+        expect(screen.queryByText(/content truncated/i)).toBeNull();
         expect(
             screen.queryByText(/preview truncated after the first lines/i),
         ).toBeNull();

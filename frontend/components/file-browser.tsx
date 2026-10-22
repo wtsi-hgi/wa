@@ -974,44 +974,54 @@ function CopyPathControl({
 
         toast.error("Could not copy path");
     };
-    const handleClick = (event: ReactMouseEvent<HTMLSpanElement>): void => {
-        event.preventDefault();
-        event.stopPropagation();
-        void handleCopy();
-    };
-    const handleKeyDown = (
-        event: ReactKeyboardEvent<HTMLSpanElement>,
-    ): void => {
-        event.stopPropagation();
-
-        if (event.key !== "Enter" && event.key !== " ") {
-            return;
-        }
-
-        event.preventDefault();
-        void handleCopy();
-    };
-
+    // Rendered as a sibling of the row's stretched primary button (see
+    // RowActionButton), so it sits above that overlay to stay clickable.
     return (
-        <span
+        <button
+            type="button"
             aria-label={`Copy ${kind} full path ${path}`}
-            className={
+            className={cn(
+                "relative z-10",
                 compact
                     ? "inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 sm:opacity-0 sm:group-hover:opacity-100"
-                    : "inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background/80 text-muted-foreground shadow-sm transition hover:border-primary/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
-            }
+                    : "inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background/80 text-muted-foreground shadow-sm transition hover:border-primary/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45",
+            )}
             data-copy-path-control={kind}
-            onClick={handleClick}
-            onKeyDown={handleKeyDown}
-            role="button"
-            tabIndex={0}
+            onClick={() => void handleCopy()}
             title="Copy full path"
         >
             <Copy
                 className={compact ? "size-3" : "size-3.5"}
                 aria-hidden="true"
             />
-        </span>
+        </button>
+    );
+}
+
+// A file or directory row is a non-interactive container whose primary action
+// is this button stretched over the whole row, so the row's copy-path button
+// can be a sibling rather than a nested interactive element. It is the row's
+// first child so it precedes the copy button in tab order; being positioned,
+// it still paints above the row's static content and so receives clicks
+// anywhere on the row.
+function RowActionButton({
+    label,
+    onClick,
+    title,
+}: {
+    label: string;
+    onClick: () => void;
+    title?: string;
+}) {
+    return (
+        <button
+            type="button"
+            aria-label={label}
+            className="absolute inset-0 rounded-[inherit]"
+            data-file-browser-row-action="true"
+            onClick={onClick}
+            title={title}
+        />
     );
 }
 
@@ -1904,7 +1914,7 @@ export function FileBrowser({
                       ? target.parentElement
                       : null;
 
-            if (targetElement?.closest("button[data-directory-path]")) {
+            if (targetElement?.closest("[data-directory-path]")) {
                 event.preventDefault();
                 event.stopPropagation();
             }
@@ -1946,7 +1956,7 @@ export function FileBrowser({
                       ? target.parentElement
                       : null;
 
-            if (targetElement?.closest("button[data-directory-path]")) {
+            if (targetElement?.closest("[data-directory-path]")) {
                 event.preventDefault();
                 event.stopPropagation();
             }
@@ -1996,14 +2006,20 @@ export function FileBrowser({
         style?: CSSProperties,
     ) => {
         const name = fileName(file.path);
+        const selectFile = () => {
+            if (selectedPath === undefined) {
+                setUncontrolledPath(file.path);
+            }
+
+            onSelectFile(file);
+        };
 
         if (activeDesign.density === "compact") {
             return (
-                <button
-                    type="button"
-                    aria-label={`Select file ${name}`}
+                <div
                     key={file.path}
                     className={cn(
+                        "relative",
                         activeDesign.fileButtonBaseClass,
                         effectiveSelectedPath === file.path &&
                             activeDesign.fileButtonSelectedClass,
@@ -2011,30 +2027,26 @@ export function FileBrowser({
                     )}
                     data-file-browser-file-layout="row"
                     data-file-path={file.path}
-                    onClick={() => {
-                        if (selectedPath === undefined) {
-                            setUncontrolledPath(file.path);
-                        }
-
-                        onSelectFile(file);
-                    }}
                     style={style}
-                    title={`${file.path}\n${formatBytes(file.size)} · ${file.kind}`}
                 >
+                    <RowActionButton
+                        label={`Select file ${name}`}
+                        onClick={selectFile}
+                        title={`${file.path}\n${formatBytes(file.size)} · ${file.kind}`}
+                    />
                     <span className="min-w-0 flex-1 truncate text-foreground">
                         {name}
                     </span>
                     <CopyPathControl compact kind="file" path={file.path} />
-                </button>
+                </div>
             );
         }
 
         return (
-            <button
-                type="button"
-                aria-label={`Select file ${name}`}
+            <div
                 key={file.path}
                 className={cn(
+                    "relative",
                     activeDesign.fileButtonBaseClass,
                     effectiveSelectedPath === file.path &&
                         activeDesign.fileButtonSelectedClass,
@@ -2042,15 +2054,12 @@ export function FileBrowser({
                 )}
                 data-file-browser-file-layout="card"
                 data-file-path={file.path}
-                onClick={() => {
-                    if (selectedPath === undefined) {
-                        setUncontrolledPath(file.path);
-                    }
-
-                    onSelectFile(file);
-                }}
                 style={style}
             >
+                <RowActionButton
+                    label={`Select file ${name}`}
+                    onClick={selectFile}
+                />
                 <span
                     aria-hidden="true"
                     className={activeDesign.fileGlyphClass}
@@ -2083,7 +2092,7 @@ export function FileBrowser({
                         ])}
                     </span>
                 </span>
-            </button>
+            </div>
         );
     };
 
@@ -2845,62 +2854,73 @@ export function FileBrowser({
                         {folderControlsInNameArea ? folderControls : null}
                     </div>
                 ) : null;
+            const directoryCountsTitle = `${node.descendantFileCount} file${node.descendantFileCount === 1 ? "" : "s"}, ${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`;
+            const toggleDirectory = () => {
+                const nextIsExpanded = !isExpanded;
+
+                setCollapsedDirectories((current) => {
+                    const next = new Set(current);
+
+                    if (nextIsExpanded) {
+                        next.delete(node.path);
+                    } else {
+                        next.add(node.path);
+                    }
+
+                    return next;
+                });
+                setExpandedDirectories((current) => {
+                    const next = new Set(current);
+
+                    if (isExpanded) {
+                        for (const path of collectTreePaths(node)) {
+                            next.delete(path);
+                        }
+                        for (const path of ancestorPaths(node.path)) {
+                            if (path !== node.path) {
+                                next.add(path);
+                            }
+                        }
+                    } else {
+                        for (const path of ancestorPaths(node.path)) {
+                            next.add(path);
+                        }
+                    }
+
+                    return next;
+                });
+
+                if (selectedDirectory === undefined) {
+                    setUncontrolledDirectory(node.path);
+                }
+
+                onSelectDirectory?.(node.path, {
+                    expanded: nextIsExpanded,
+                    parentPath,
+                });
+            };
             const renderDirectoryButton = () => (
-                <button
-                    type="button"
-                    aria-label={`Toggle directory ${directoryDisplayLabel}`}
-                    className={activeDesign.directoryButtonClass}
+                <div
+                    className={cn(
+                        "relative",
+                        activeDesign.directoryButtonClass,
+                    )}
                     data-depth={depth}
                     data-directory-expanded={String(isExpanded)}
                     data-directory-path={node.path}
                     data-subdir-preview-heading={
                         showInlineSubdirPreview ? node.path : undefined
                     }
-                    onClick={() => {
-                        const nextIsExpanded = !isExpanded;
-
-                        setCollapsedDirectories((current) => {
-                            const next = new Set(current);
-
-                            if (nextIsExpanded) {
-                                next.delete(node.path);
-                            } else {
-                                next.add(node.path);
-                            }
-
-                            return next;
-                        });
-                        setExpandedDirectories((current) => {
-                            const next = new Set(current);
-
-                            if (isExpanded) {
-                                for (const path of collectTreePaths(node)) {
-                                    next.delete(path);
-                                }
-                                for (const path of ancestorPaths(node.path)) {
-                                    if (path !== node.path) {
-                                        next.add(path);
-                                    }
-                                }
-                            } else {
-                                for (const path of ancestorPaths(node.path)) {
-                                    next.add(path);
-                                }
-                            }
-
-                            return next;
-                        });
-
-                        if (selectedDirectory === undefined) {
-                            setUncontrolledDirectory(node.path);
-                        }
-
-                        onSelectDirectory?.(node.path, {
-                            expanded: nextIsExpanded,
-                            parentPath,
-                        });
-                    }}
                 >
+                    <RowActionButton
+                        label={`Toggle directory ${directoryDisplayLabel}`}
+                        onClick={toggleDirectory}
+                        title={
+                            activeDesign.density === "compact"
+                                ? `${node.path}\n${directoryCountsTitle}`
+                                : node.path
+                        }
+                    />
                     <span className={activeDesign.directoryChevronClass}>
                         {hasChildren || hasFiles ? (
                             isExpanded ? (
@@ -2929,7 +2949,7 @@ export function FileBrowser({
                             <span
                                 className="shrink-0 text-xs tabular-nums text-muted-foreground"
                                 data-directory-file-count={node.path}
-                                title={`${node.descendantFileCount} file${node.descendantFileCount === 1 ? "" : "s"}, ${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`}
+                                title={directoryCountsTitle}
                             >
                                 {node.descendantFileCount}
                             </span>
@@ -2967,7 +2987,7 @@ export function FileBrowser({
                             </span>
                         </span>
                     )}
-                </button>
+                </div>
             );
             const renderDirectoryRow = (groupedContent: ReactNode) => {
                 return (
