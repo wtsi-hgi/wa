@@ -66,7 +66,13 @@ type EntityMetadataPair = {
 
 type EntityDisplay = {
     title: string;
+    titleLabel?: string;
     metadata: EntityMetadataPair[];
+};
+
+type SampleDisplayOptions = {
+    // Samples nested under a library row already show its library type.
+    omitLibraryType?: boolean;
 };
 
 type RelatedEntityRowProps = {
@@ -80,6 +86,7 @@ type RelatedEntityRowProps = {
     metadata: EntityMetadataPair[];
     onCopy: () => void;
     title: string;
+    titleLabel?: string;
 };
 
 type DirectMetadataRowProps = {
@@ -579,15 +586,54 @@ function studyEntityDisplay(study: {
     };
 }
 
-function sampleEntityDisplay(sample: EnrichmentSample): EntityDisplay {
-    const title = entityTitle([
-        asString(sample.sanger_id),
-        asString(sample.id_sample_lims),
-        asString(sample.sample_name),
-    ]);
+function sampleLibraryTypes(sample: EnrichmentSample): string[] {
+    const types = sample.library_types?.length
+        ? sample.library_types
+        : [sample.library_type];
+
+    return [
+        ...new Set(
+            types
+                .map((type) => asString(type)?.trim())
+                .filter((type): type is string => Boolean(type)),
+        ),
+    ];
+}
+
+function sampleSupplierTitle(sample: EnrichmentSample): string | null {
+    const supplierName = asString(sample.supplier_name);
+
+    if (
+        !supplierName ||
+        valuesMatch(asString(sample.sanger_id), supplierName) ||
+        valuesMatch(asString(sample.sample_name), supplierName)
+    ) {
+        return null;
+    }
+
+    return supplierName.trim();
+}
+
+function sampleEntityDisplay(
+    sample: EnrichmentSample,
+    options: SampleDisplayOptions = {},
+): EntityDisplay {
+    const supplierTitle = sampleSupplierTitle(sample);
+    const title =
+        supplierTitle ??
+        entityTitle([
+            asString(sample.sanger_id),
+            asString(sample.id_sample_lims),
+            asString(sample.sample_name),
+        ]);
+    const donorId = asString(sample.donor_id);
+    const libraryTypes = options.omitLibraryType
+        ? []
+        : sampleLibraryTypes(sample);
 
     return {
         title,
+        titleLabel: supplierTitle ? "Supplier name" : undefined,
         metadata: entityMetadataPairs(
             [
                 asString(sample.sample_name)
@@ -595,6 +641,10 @@ function sampleEntityDisplay(sample: EnrichmentSample): EntityDisplay {
                     : null,
                 asString(sample.sanger_id)
                     ? { label: "id", value: sample.sanger_id }
+                    : null,
+                donorId ? { label: "donor", value: donorId } : null,
+                libraryTypes.length > 0
+                    ? { label: "library_type", value: libraryTypes.join(", ") }
                     : null,
                 asString(sample.id_sample_lims)
                     ? { label: "sample_lims", value: sample.id_sample_lims }
@@ -850,6 +900,7 @@ function RelatedEntityRow({
     metadata,
     onCopy,
     title,
+    titleLabel,
 }: RelatedEntityRowProps) {
     return (
         <article
@@ -861,6 +912,14 @@ function RelatedEntityRow({
         >
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
+                    {titleLabel ? (
+                        <p
+                            data-testid="seqmeta-entity-title-label"
+                            className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+                        >
+                            {titleLabel}
+                        </p>
+                    ) : null}
                     <p
                         data-testid="seqmeta-entity-title"
                         className="break-all text-sm leading-6 text-foreground"
@@ -1159,6 +1218,20 @@ function buildDetailFields(
             );
             appendDetailField(
                 fields,
+                sampleRecord?.donor_id
+                    ? {
+                          key: "seqmeta_donor_id",
+                          label: "Donor ID",
+                          searchKey: "sample",
+                          value: sampleRecord.donor_id,
+                          group: sampleMetadata ? "direct" : "related",
+                      }
+                    : null,
+                rawValue,
+                metadataKey,
+            );
+            appendDetailField(
+                fields,
                 sampleRecord?.id_sample_lims
                     ? {
                           key: "seqmeta_id_sample_lims",
@@ -1330,6 +1403,52 @@ function runLibraryItems(enrichment: EnrichmentResult): HierarchicalLibrary[] {
     return libraryItems;
 }
 
+function studyGroup(enrichment: EnrichmentResult): HierarchicalGroup | null {
+    const studies = enrichment.graph.study
+        ? [enrichment.graph.study]
+        : (enrichment.graph.studies ?? []);
+    const seen = new Set<string>();
+    const items = studies
+        .filter((study) => {
+            if (seen.has(study.id_study_lims)) {
+                return false;
+            }
+
+            seen.add(study.id_study_lims);
+            return true;
+        })
+        .map((study) => ({
+            name: study.name,
+            id: study.id_study_lims,
+            accession: asString(study.accession_number) ?? undefined,
+        }));
+
+    if (items.length === 0) {
+        return null;
+    }
+
+    return {
+        type: "study",
+        title: items.length === 1 ? "Study" : "Studies",
+        items,
+    };
+}
+
+function sampleLibrariesForGroups(
+    enrichment: EnrichmentResult,
+): HierarchicalLibrary[] {
+    const libraries: HierarchicalLibrary[] = [];
+    const seen = new Set<string>();
+
+    addLibraryCandidate(libraries, seen, sampleLibraryForGroups(enrichment));
+
+    for (const library of enrichment.graph.sample_detail?.libraries ?? []) {
+        addLibraryCandidate(libraries, seen, libraryFromLink(library));
+    }
+
+    return libraries.map((library) => ({ ...library, samples: [] }));
+}
+
 function buildHierarchicalGroups(
     metadataKey: string,
     enrichment: EnrichmentResult | null,
@@ -1384,20 +1503,10 @@ function buildHierarchicalGroups(
     }
 
     if (runMetadata) {
-        if (enrichment.graph.study) {
-            groups.push({
-                type: "study",
-                title: "Study",
-                items: [
-                    {
-                        name: enrichment.graph.study.name,
-                        id: enrichment.graph.study.id_study_lims,
-                        accession:
-                            asString(enrichment.graph.study.accession_number) ??
-                            undefined,
-                    },
-                ],
-            });
+        const studies = studyGroup(enrichment);
+
+        if (studies) {
+            groups.push(studies);
         }
 
         if (enrichment.graph.sample) {
@@ -1484,32 +1593,22 @@ function buildHierarchicalGroups(
 
     // For sample details with hierarchy, show library parent, study grandparent, and lanes
     if (sampleMetadata && enrichment.graph.sample_detail) {
-        // Show parent library
-        const library = sampleLibraryForGroups(enrichment);
+        // Show parent libraries, the best-matching one first
+        const libraries = sampleLibrariesForGroups(enrichment);
 
-        if (library) {
+        if (libraries.length > 0) {
             groups.push({
                 type: "library",
-                title: "Library",
-                items: [{ ...library, samples: [] }],
+                title: libraries.length === 1 ? "Library" : "Libraries",
+                items: libraries,
             });
         }
 
         // Show study (grandparent of the sample)
-        if (enrichment.graph.study) {
-            groups.push({
-                type: "study",
-                title: "Study",
-                items: [
-                    {
-                        name: enrichment.graph.study.name,
-                        id: enrichment.graph.study.id_study_lims,
-                        accession:
-                            asString(enrichment.graph.study.accession_number) ??
-                            undefined,
-                    },
-                ],
-            });
+        const studies = studyGroup(enrichment);
+
+        if (studies) {
+            groups.push(studies);
         }
 
         // Show lanes
@@ -2254,6 +2353,9 @@ export function MLWHBadge({
                                                                                                         const sampleDisplay =
                                                                                                             sampleEntityDisplay(
                                                                                                                 sample,
+                                                                                                                {
+                                                                                                                    omitLibraryType: true,
+                                                                                                                },
                                                                                                             );
                                                                                                         const sampleCopyKey =
                                                                                                             sampleCopyStateKey(
@@ -2306,6 +2408,9 @@ export function MLWHBadge({
                                                                                                                 }}
                                                                                                                 title={
                                                                                                                     sampleDisplay.title
+                                                                                                                }
+                                                                                                                titleLabel={
+                                                                                                                    sampleDisplay.titleLabel
                                                                                                                 }
                                                                                                             ></RelatedEntityRow>
                                                                                                         );
@@ -2499,6 +2604,9 @@ export function MLWHBadge({
                                                                                         }}
                                                                                         title={
                                                                                             sampleDisplay.title
+                                                                                        }
+                                                                                        titleLabel={
+                                                                                            sampleDisplay.titleLabel
                                                                                         }
                                                                                     ></RelatedEntityRow>
                                                                                 );

@@ -187,6 +187,7 @@ const mlwhEnrichmentSampleInputSchema = z.object({
     sanger_id: z.string(),
     name: z.string(),
     supplier_name: z.string().optional(),
+    donor_id: z.string().optional(),
     taxon_id: z.number(),
     common_name: z.string(),
     library_type: z.string(),
@@ -201,6 +202,7 @@ const mlwhRawEnrichmentSampleInputSchema = z
         name: z.string(),
         sanger_sample_id: z.string().optional(),
         supplier_name: z.string().optional(),
+        donor_id: z.string().optional(),
         taxon_id: z.number(),
         common_name: z.string(),
         accession_number: z.string(),
@@ -219,9 +221,11 @@ const normalizedEnrichmentSampleSchema = z.object({
     sanger_id: z.string(),
     sample_name: z.string(),
     supplier_name: z.string().optional(),
+    donor_id: z.string().optional(),
     taxon_id: z.number(),
     common_name: z.string(),
     library_type: z.string(),
+    library_types: z.array(z.string()).optional(),
     accession_number: z.string(),
     id_run: z.number().optional(),
     lane: z.number().optional(),
@@ -243,9 +247,11 @@ function normalizeEnrichmentSample(
         sanger_id: sample.sanger_id,
         sample_name: sample.name,
         supplier_name: sample.supplier_name,
+        donor_id: sample.donor_id,
         taxon_id: sample.taxon_id,
         common_name: sample.common_name,
         library_type: sample.library_type,
+        library_types: undefined,
         accession_number: sample.accession_number,
         id_run: undefined,
         lane: undefined,
@@ -253,6 +259,20 @@ function normalizeEnrichmentSample(
         irods_path: undefined,
         study_accession_number: undefined,
     };
+}
+
+function distinctLibraryTypes(
+    libraries: RawEnrichmentSampleInput["libraries"],
+): string[] | undefined {
+    const types = [
+        ...new Set(
+            (libraries ?? [])
+                .map((library) => library.pipeline_id_lims.trim())
+                .filter(Boolean),
+        ),
+    ];
+
+    return types.length > 0 ? types : undefined;
 }
 
 function normalizeRawEnrichmentSample(
@@ -268,9 +288,11 @@ function normalizeRawEnrichmentSample(
         sanger_id: sample.sanger_sample_id ?? sample.name,
         sample_name: sample.name,
         supplier_name: sample.supplier_name,
+        donor_id: sample.donor_id,
         taxon_id: sample.taxon_id,
         common_name: sample.common_name,
         library_type: firstLibrary?.pipeline_id_lims ?? "",
+        library_types: distinctLibraryTypes(sample.libraries),
         accession_number: sample.accession_number,
         id_run: undefined,
         lane: undefined,
