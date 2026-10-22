@@ -296,20 +296,23 @@ Every error row has a severity (`UsageErrorSeverity`, computed in SQL by
 
 1. `fault`: status >= 500 (`upstream_impaired`, its `timeout` and
    `canceled` kinds, `cache_never_synced`, `internal_error`, ...).
-2. `expected`: code `not_found` or `ambiguous`, on any route. These are a
-   lookup's answer: the identifier is unknown or names several records.
+2. `expected`: code `not_found`, `ambiguous`, or `unsupported_identifier`,
+   on any route. These are a lookup's answer: the identifier is unknown,
+   names several records, or is no kind the endpoint supports. The results
+   page's search box classifies each typed term to offer suggestions, so
+   text that is no known identifier kind is routine there.
 3. `fault`: any other 4xx from wa's own clients, categories `cli`, `web`,
-   `results_server`, and `mlwhdiff_server` (`bad_request`,
-   `unsupported_identifier`, `no_route`, `uncoded`, ...). wa sent a request
-   its own server rejects, so wa needs fixing.
+   `results_server`, and `mlwhdiff_server` (`bad_request`, `no_route`,
+   `uncoded`, ...). wa sent a request its own server rejects, so wa needs
+   fixing.
 4. `caller`: any other 4xx, from `mcp` or `other`. MCP tools pass the
    agent's arguments through, so their rejected requests are usually the
    agent's.
 
 Rows recorded before error details (`error_code` NULL) are judged by status
-and caller alone: on a matched route, only `not_found` answers 404 and only
-`ambiguous` answers 409, so those count as `expected`; other statuses follow
-rules 1, 3, and 4. So the 502s and CLI 400 of an old window are faults.
+and caller alone: on a matched route, only `not_found` answers 404, only
+`ambiguous` answers 409, and only `unsupported_identifier` answers 422, so
+those count as `expected`; other statuses follow rules 1, 3, and 4. So the 502s and CLI 400 of an old window are faults.
 
 `totals.error_severity` and each `days[].error_severity` are a
 `UsageErrorBreakdown`: `fault`, `caller`, `expected`, and `probe` sum to
@@ -1953,9 +1956,10 @@ Release step, no tests.
   `ambiguous`, which buried the few real faults. The server classifies
   each row so every consumer agrees, and computes it at summary time from
   stored columns, so old rows are classified too and the rules can change
-  without a migration. `not_found` and `ambiguous` are expected on every
-  route, not only lookup routes: every `:id` route resolves its identifier
-  first, and a list of lookup routes would need upkeep. 4xx from MCP count
+  without a migration. `not_found`, `ambiguous`, and
+  `unsupported_identifier` are expected on every route, not only lookup
+  routes: every `:id` route resolves its identifier first, and a list of
+  lookup routes would need upkeep. 4xx from MCP count
   as caller errors, not faults, because MCP tools forward agent arguments.
 - **Probe header, not a different lookup order.** `wa mlwh info` tries
   study first and sample name second on purpose (they take precedence over
