@@ -44,7 +44,8 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	"github.com/wtsi-hgi/wa/internal/sqliteuri"
 )
@@ -53,6 +54,13 @@ const (
 	defaultMySQLLockTimeoutSeconds = 30
 	mysqlReadPoolWarmConns         = 6
 	mysqlSyncLockNamePrefix        = "wa_mlwh_sync_"
+	mysqlSchemaLockNamePrefix      = "wa_mlwh_schema_"
+
+	// cacheSchemaLockTimeout bounds how long an open waits for another
+	// process to finish creating or migrating the cache schema, and for a new
+	// SQLite cache's switch to WAL mode.
+	cacheSchemaLockTimeout  = 5 * time.Minute
+	sqliteBusyRetryInterval = 50 * time.Millisecond
 
 	// CacheSchemaVersion is the embedded cache schema version supported by OpenCache.
 	// Bumped to 13 for the Phase 1 foundation schema. The existing migration
@@ -66,6 +74,9 @@ var (
 	ErrPasswordInDSN = errors.New("mlwh: password must not appear in DSN")
 	// ErrUpstreamImpaired reports that a required upstream cache/database operation failed.
 	ErrUpstreamImpaired = errors.New("mlwh: upstream database impaired")
+
+	errCacheSchemaLockTimeout = errors.New("timed out waiting for another process to set up the cache schema")
+	errSQLiteSchemaLockPool   = errors.New("mlwh: sqlite cache schema lock needs a one-connection pool")
 
 	sqlOpenFunc                    = sql.Open
 	cacheMigrationStderr io.Writer = os.Stderr
@@ -115,7 +126,9 @@ func openSQLiteCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 	rwDB.SetMaxOpenConns(1)
 	rwDB.SetMaxIdleConns(1)
 
-	if err = rwDB.PingContext(ctx); err != nil {
+	// Connecting switches a new cache to WAL mode, which fails at once with
+	// SQLITE_BUSY, ignoring busy_timeout, while another process opens it too.
+	if err = retrySQLiteBusy(ctx, cacheSchemaLockTimeout, func() error { return rwDB.PingContext(ctx) }); err != nil {
 		_ = rwDB.Close()
 
 		return nil, fmt.Errorf("mlwh: ping sqlite cache: %w", err)
@@ -594,48 +607,180 @@ func mysqlReadOnlyDSN(dsn string) (string, error) {
 	return parsed.FormatDSN(), nil
 }
 
+// prepareCacheSchema makes db hold the current cache schema. A cache already
+// at CacheSchemaVersion takes no lock, so opening it never waits for a running
+// sync. Otherwise the schema is created or migrated under a cross-process
+// schema lock, re-checked first in case another opener has just done it.
 func prepareCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
+	current, err := cacheSchemaIsCurrent(ctx, db, dialect)
+	if err != nil || current {
+		return err
+	}
+
+	return withCacheSchemaLock(ctx, db, dialect, func() error {
+		current, err := cacheSchemaIsCurrent(ctx, db, dialect)
+		if err != nil || current {
+			return err
+		}
+
+		return setUpCacheSchema(ctx, db, dialect)
+	})
+}
+
+// cacheSchemaIsCurrent reports whether db holds a valid CacheSchemaVersion
+// schema, applying that version's additive updates. It returns false for a
+// missing, older or newer schema, or one that does not validate.
+func cacheSchemaIsCurrent(ctx context.Context, db *sql.DB, dialect string) (bool, error) {
 	rowCount, version, err := querySchemaVersion(ctx, db)
 	if err != nil {
 		if isMissingSchemaVersionError(dialect, err) {
-			if err = applySchema(ctx, db, dialect); err != nil {
-				return err
-			}
-
-			return writeSchemaVersion(ctx, db)
+			return false, nil
 		}
 
+		return false, fmt.Errorf("mlwh: query schema version: %w", err)
+	}
+
+	if rowCount != 1 || version != CacheSchemaVersion {
+		return false, nil
+	}
+
+	if err = ensureAdditiveCurrentCacheIndexes(ctx, db, dialect); err != nil {
+		return false, err
+	}
+
+	if err = ensureSyncOutcomeSchema(ctx, db, dialect); err != nil {
+		return false, err
+	}
+
+	if err = ensureMySQLStudySearchColumnCollation(ctx, db, dialect); err != nil {
+		return false, err
+	}
+
+	return validateCurrentCacheSchema(ctx, db, dialect) == nil, nil
+}
+
+// setUpCacheSchema creates a missing schema, or migrates any other. Callers
+// hold the schema lock.
+func setUpCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
+	rowCount, version, err := querySchemaVersion(ctx, db)
+	if err != nil && !isMissingSchemaVersionError(dialect, err) {
 		return fmt.Errorf("mlwh: query schema version: %w", err)
 	}
 
-	switch {
-	case rowCount == 0:
+	if err != nil || rowCount == 0 {
 		if err = applySchema(ctx, db, dialect); err != nil {
 			return err
 		}
 
 		return writeSchemaVersion(ctx, db)
-	case rowCount == 1 && version == CacheSchemaVersion:
-		if err = ensureAdditiveCurrentCacheIndexes(ctx, db, dialect); err != nil {
-			return err
-		}
-
-		if err = ensureSyncOutcomeSchema(ctx, db, dialect); err != nil {
-			return err
-		}
-
-		if err = ensureMySQLStudySearchColumnCollation(ctx, db, dialect); err != nil {
-			return err
-		}
-
-		if err = validateCurrentCacheSchema(ctx, db, dialect); err != nil {
-			return migrateCacheSchema(ctx, db, dialect, version)
-		}
-
-		return nil
-	default:
-		return migrateCacheSchema(ctx, db, dialect, version)
 	}
+
+	return migrateCacheSchema(ctx, db, dialect, version)
+}
+
+// withCacheSchemaLock runs fn while holding a lock that serialises schema
+// setup across processes sharing the cache.
+func withCacheSchemaLock(ctx context.Context, db *sql.DB, dialect string, fn func() error) error {
+	if dialect == "mysql" {
+		return withMySQLCacheSchemaLock(ctx, db, fn)
+	}
+
+	return withSQLiteCacheSchemaLock(ctx, db, fn)
+}
+
+// withSQLiteCacheSchemaLock runs fn inside a BEGIN IMMEDIATE transaction, so
+// other writers wait and the schema change commits atomically. db must be
+// limited to one connection, so fn's statements run in that transaction.
+func withSQLiteCacheSchemaLock(ctx context.Context, db *sql.DB, fn func() error) error {
+	if db.Stats().MaxOpenConnections != 1 {
+		return errSQLiteSchemaLockPool
+	}
+
+	if err := retrySQLiteBusy(ctx, cacheSchemaLockTimeout, func() error {
+		_, err := db.ExecContext(ctx, `BEGIN IMMEDIATE`)
+
+		return err
+	}); err != nil {
+		return fmt.Errorf("mlwh: acquire sqlite cache schema lock: %w", err)
+	}
+
+	if err := fn(); err != nil {
+		_, _ = db.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
+
+		return err
+	}
+
+	if _, err := db.ExecContext(ctx, `COMMIT`); err != nil {
+		_, _ = db.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
+
+		return fmt.Errorf("mlwh: commit sqlite cache schema: %w", err)
+	}
+
+	return nil
+}
+
+// withMySQLCacheSchemaLock runs fn while holding a MySQL named lock scoped to
+// the cache database.
+func withMySQLCacheSchemaLock(ctx context.Context, db *sql.DB, fn func() error) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("mlwh: acquire mysql cache schema lock connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	var database string
+	if err = conn.QueryRowContext(ctx, `SELECT DATABASE()`).Scan(&database); err != nil {
+		return fmt.Errorf("mlwh: read mysql cache database name: %w", err)
+	}
+
+	sum := sha1.Sum([]byte(database))
+	lockName := mysqlSchemaLockNamePrefix + hex.EncodeToString(sum[:])[:16]
+
+	var got sql.NullInt64
+	if err = conn.QueryRowContext(ctx, `SELECT GET_LOCK(?, ?)`, lockName, int(cacheSchemaLockTimeout.Seconds())).Scan(&got); err != nil {
+		return fmt.Errorf("mlwh: acquire mysql cache schema lock: %w", err)
+	}
+	if got.Int64 != 1 {
+		return fmt.Errorf("mlwh: acquire mysql cache schema lock: %w", errCacheSchemaLockTimeout)
+	}
+
+	fnErr := fn()
+
+	var released sql.NullInt64
+	releaseErr := conn.QueryRowContext(context.WithoutCancel(ctx), `SELECT RELEASE_LOCK(?)`, lockName).Scan(&released)
+	if fnErr != nil {
+		return fnErr
+	}
+	if releaseErr != nil {
+		return fmt.Errorf("mlwh: release mysql cache schema lock: %w", releaseErr)
+	}
+
+	return nil
+}
+
+// retrySQLiteBusy runs fn until it does not fail with SQLITE_BUSY, ctx ends,
+// or timeout passes.
+func retrySQLiteBusy(ctx context.Context, timeout time.Duration, fn func() error) error {
+	deadline := time.Now().Add(timeout)
+
+	for {
+		err := fn()
+		if err == nil || !isSQLiteBusy(err) || time.Now().After(deadline) {
+			return err
+		}
+
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(sqliteBusyRetryInterval):
+		}
+	}
+}
+
+func isSQLiteBusy(err error) bool {
+	var sqliteErr *sqlite.Error
+
+	return errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqlite3.SQLITE_BUSY
 }
 
 func deleteSyncTableRows(ctx context.Context, db *sql.DB, stateTable string, tables []string) error {

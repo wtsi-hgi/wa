@@ -565,10 +565,19 @@ func TestOpenCacheMySQLMigratesV1Cache(t *testing.T) {
 		roDB.SetMaxOpenConns(1)
 
 		rwMock.ExpectPing()
-		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*), COALESCE(MAX(version), 0) FROM schema_version`)).WillReturnRows(
-			sqlmock.NewRows([]string{"count", "version"}).AddRow(1, 1),
-		)
+		expectV1SchemaVersion := func() {
+			rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*), COALESCE(MAX(version), 0) FROM schema_version`)).WillReturnRows(
+				sqlmock.NewRows([]string{"count", "version"}).AddRow(1, 1),
+			)
+		}
+		expectV1SchemaVersion()
+		expectMySQLSchemaLock(rwMock)
+		expectV1SchemaVersion()
+		expectV1SchemaVersion()
 		expectMySQLSchemaMigration(rwMock, 1, CacheSchemaVersion)
+		// The migration runs on a second pooled connection while the schema
+		// lock holds the first, so closing the pool closes two.
+		rwMock.ExpectClose()
 		rwMock.ExpectClose()
 
 		expectMySQLReadPoolWarmup(roMock)
@@ -1122,10 +1131,17 @@ func expectSchemaBootstrap(mock sqlmock.Sqlmock, dialect string) {
 		panic(err)
 	}
 
+	expectMissingSchemaVersion := func() {
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*), COALESCE(MAX(version), 0) FROM schema_version`)).WillReturnError(
+			&mysql.MySQLError{Number: 1146, Message: "Table 'wa_cache.schema_version' doesn't exist"},
+		)
+	}
+
 	mock.ExpectPing()
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*), COALESCE(MAX(version), 0) FROM schema_version`)).WillReturnError(
-		&mysql.MySQLError{Number: 1146, Message: "Table 'wa_cache.schema_version' doesn't exist"},
-	)
+	expectMissingSchemaVersion()
+	expectMySQLSchemaLock(mock)
+	expectMissingSchemaVersion()
+	expectMissingSchemaVersion()
 	if dialect == "mysql" {
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT VERSION()`)).WillReturnRows(
 			sqlmock.NewRows([]string{"version"}).AddRow("8.0.36"),
@@ -1140,6 +1156,18 @@ func expectSchemaBootstrap(mock sqlmock.Sqlmock, dialect string) {
 
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM schema_version`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)`)).WithArgs(CacheSchemaVersion).WillReturnResult(sqlmock.NewResult(1, 1))
+	expectMySQLSchemaUnlock(mock)
+}
+
+// expectMySQLSchemaLock expects the MySQL cache schema lock to be taken.
+func expectMySQLSchemaLock(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT DATABASE()`)).WillReturnRows(sqlmock.NewRows([]string{"database"}).AddRow("wa_cache"))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT GET_LOCK(?, ?)`)).WillReturnRows(sqlmock.NewRows([]string{"got"}).AddRow(1))
+}
+
+// expectMySQLSchemaUnlock expects the MySQL cache schema lock to be released.
+func expectMySQLSchemaUnlock(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT RELEASE_LOCK(?)`)).WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(1))
 }
 
 func expectNoDroppedMirrorRepairSweep(mock sqlmock.Sqlmock) {
@@ -1623,6 +1651,7 @@ func expectMySQLSchemaMigration(mock sqlmock.Sqlmock, fromVersion, toVersion int
 
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM schema_version`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)`)).WithArgs(toVersion).WillReturnResult(sqlmock.NewResult(1, 1))
+	expectMySQLSchemaUnlock(mock)
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 		WithArgs(syncTableSample).
 		WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
