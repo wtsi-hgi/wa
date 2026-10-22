@@ -163,10 +163,13 @@ export function PreviewGalleryLightbox({
     }
 
     const relativePath = galleryRelativePath(file.path, basePath);
+    // Named like the single-file enlarged views, so the dialog names the
+    // file it currently shows.
+    const fileName = file.path.split("/").pop() ?? file.path;
 
     return (
         <div
-            aria-label={`Preview gallery: ${relativePath}`}
+            aria-label={`Enlarged ${fileName} preview`}
             aria-modal="true"
             className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4"
             data-preview-gallery="true"

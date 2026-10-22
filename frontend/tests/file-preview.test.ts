@@ -2190,7 +2190,7 @@ describe("O1 file preview", () => {
         fireEvent.keyDown(window, { key: "ArrowRight" });
         expect(onIndexChange).toHaveBeenCalledWith(1);
         expect(
-            screen.getByRole("dialog", { name: "Preview gallery: a/plot.png" }),
+            screen.getByRole("dialog", { name: "Enlarged plot.png preview" }),
         ).toBeTruthy();
     });
 });

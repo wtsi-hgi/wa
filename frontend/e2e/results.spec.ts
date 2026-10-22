@@ -1484,7 +1484,7 @@ test.describe("Q1 critical results flows", () => {
         ).toHaveCount(0);
     });
 
-    test("enlarges CSV previews before exposing table controls", async ({
+    test("sorts CSV previews inline and adds row filtering when enlarged", async ({
         page,
     }) => {
         await openResultDetail(page, rnaseqPipelineName);
@@ -1496,13 +1496,18 @@ test.describe("Q1 critical results flows", () => {
 
         await expect(preview).toBeVisible();
         // Inline preview is capped server-side so the file browser only renders
-        // a small subset of the rows; the full table only appears once enlarged.
+        // a small subset of the rows without a row summary or filter; sorting
+        // and copying already work inline.
         await expect(preview.getByText(/Showing \d+ preview rows/)).toHaveCount(
             0,
         );
+        await expect(preview.getByLabel("Filter rows")).toHaveCount(0);
         await expect(
             preview.getByRole("button", { name: "Sort by sample_id" }),
-        ).toHaveCount(0);
+        ).toBeVisible();
+        await expect(
+            preview.getByRole("button", { name: "Copy table as TSV" }),
+        ).toBeVisible();
 
         await preview
             .getByRole("button", { name: /Enlarge report\.csv preview/i })
@@ -1690,7 +1695,8 @@ test.describe("Q1 critical results flows", () => {
         const fullSizeImage = page.getByAltText("plot-001.png full preview");
 
         await expect(
-            page.getByRole("dialog", { name: "Image preview lightbox" }),
+            // Grid thumbnails open in the preview gallery lightbox.
+            page.getByRole("dialog", { name: "Enlarged plot-001.png preview" }),
         ).toBeVisible();
         await expect(fullSizeImage).toHaveAttribute("src", /\/api\/file\?/);
         await expect(fullSizeImage).not.toHaveAttribute("src", /thumb=true/);
