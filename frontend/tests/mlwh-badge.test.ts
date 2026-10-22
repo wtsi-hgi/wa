@@ -29,7 +29,10 @@ import type {
     ResultSet,
     SampleDetail,
 } from "@/lib/contracts";
-import { enrichmentResultSchema } from "@/lib/contracts";
+import {
+    enrichmentResultSchema,
+    enrichmentSamplesSchema,
+} from "@/lib/contracts";
 import {
     buildMLWHCacheCookie,
     deserializeMLWHCacheCookie,
@@ -5355,5 +5358,368 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
         expect(copyButtons.length).toBe(2);
         expect(filterButtons.length).toBe(2);
+    });
+});
+
+function rawMLWHSample(overrides: Record<string, unknown> = {}) {
+    return {
+        id_sample_tmp: 2,
+        id_lims: "SQSCP",
+        id_sample_lims: "SMP7607-0000",
+        uuid_sample_lims: "22222222-2222-3333-4444-555555557607",
+        name: "7607STDY14643771",
+        sanger_sample_id: "7607STDY14643771",
+        supplier_name: "Supplier Sample 7607",
+        accession_number: "SAMEA76070000",
+        donor_id: "DONOR7607",
+        taxon_id: 9606,
+        common_name: "Human",
+        description: "fixture sample",
+        ...overrides,
+    };
+}
+
+async function openBadge(
+    metadataKey: string,
+    rawValue: string,
+    enrichment: EnrichmentResult,
+) {
+    const { MLWHBadge } = await import("@/components/mlwh-badge");
+
+    render(createElement(MLWHBadge, { metadataKey, rawValue, enrichment }));
+    fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
+
+    await waitFor(() => {
+        expect(screen.getByRole("dialog")).toBeTruthy();
+    });
+
+    return screen.getByTestId("seqmeta-dialog-body");
+}
+
+function relatedGroup(body: HTMLElement, type: string): HTMLElement | null {
+    return body.querySelector(
+        `[data-field-group="related-data"] [data-field-group="${type}"]`,
+    );
+}
+
+function entityTitleLabel(row: Element | null | undefined): string {
+    return (
+        row?.querySelector('[data-testid="seqmeta-entity-title-label"]')
+            ?.textContent ?? ""
+    );
+}
+
+describe("MLWH panel sample supplier, donor, and library type", () => {
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+    });
+
+    it("shows the run's studies and supplier-named samples for a run-only result set", async () => {
+        const runStudy = buildStudy({
+            id_study_lims: "7607",
+            name: "Run study 7607",
+            accession_number: "ERP7607",
+        });
+        const otherStudy = buildStudy({
+            id_study_lims: "6568",
+            name: "Run study 6568",
+            accession_number: "EGAS6568",
+        });
+        const enrichment = enrichmentResultSchema.parse({
+            identifier: "48522",
+            type: "run_id",
+            graph: {
+                studies: [runStudy, otherStudy],
+                samples: [
+                    rawMLWHSample(),
+                    rawMLWHSample({
+                        id_sample_tmp: 1,
+                        id_sample_lims: "10524782",
+                        name: "WTSI_wEMB10524782",
+                        sanger_sample_id: "WTSI_wEMB10524782",
+                        supplier_name: "WTSI_wEMB10524782",
+                        donor_id: "DONOR10524782",
+                    }),
+                ],
+                libraries: [
+                    {
+                        library_type: "Custom",
+                        id_study_lims: "7607",
+                        library_id: "71046409",
+                        id_library_lims: "LIB7607-71046409",
+                    },
+                ],
+                study_details: [
+                    {
+                        study: runStudy,
+                        library_details: [
+                            {
+                                library: {
+                                    pipeline_id_lims: "Custom",
+                                    id_study_lims: "7607",
+                                    library_id: "71046409",
+                                    id_library_lims: "LIB7607-71046409",
+                                },
+                                samples: [rawMLWHSample()],
+                            },
+                        ],
+                    },
+                    {
+                        study: otherStudy,
+                        library_details: [
+                            {
+                                library: {
+                                    pipeline_id_lims: "Chromium",
+                                    id_study_lims: "6568",
+                                },
+                                samples: [
+                                    rawMLWHSample({
+                                        id_sample_tmp: 1,
+                                        id_sample_lims: "10524782",
+                                        name: "WTSI_wEMB10524782",
+                                        sanger_sample_id: "WTSI_wEMB10524782",
+                                        supplier_name: "WTSI_wEMB10524782",
+                                        donor_id: "DONOR10524782",
+                                    }),
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
+            partial: false,
+        });
+
+        const body = await openBadge("seqmeta_id_run", "48522", enrichment);
+
+        const studyGroup = relatedGroup(body, "study");
+        expect(studyGroup?.querySelector("h5")?.textContent).toBe("Studies");
+        const studyRows = studyGroup?.querySelectorAll(
+            '[data-seqmeta-detail-key="study"]',
+        );
+        expect(studyRows).toHaveLength(2);
+        expectEntityRowTitle(studyRows?.[0], "7607");
+        expect(entityText(studyRows?.[0])).toContain("name:Run study 7607");
+        expectEntityRowTitle(studyRows?.[1], "6568");
+
+        for (const toggle of screen.getAllByLabelText("Show samples")) {
+            fireEvent.click(toggle);
+        }
+
+        const sampleRows = body.querySelectorAll(
+            '[data-seqmeta-detail-key="sample"]',
+        );
+        expect(sampleRows).toHaveLength(2);
+
+        const supplierRow = sampleRows[0];
+        expectEntityRowTitle(supplierRow, "Supplier Sample 7607");
+        expect(entityTitleLabel(supplierRow)).toBe("Supplier name");
+        expect(entityText(supplierRow)).toContain("name:7607STDY14643771");
+        expect(entityText(supplierRow)).toContain("donor:DONOR7607");
+        expect(entityText(supplierRow)).toContain("sample_lims:SMP7607-0000");
+        // The enclosing library row already names the library type.
+        expect(entityText(supplierRow)).not.toContain("library_type:");
+
+        // A supplier name equal to the Sanger name keeps the Sanger title.
+        const sangerRow = sampleRows[1];
+        expectEntityRowTitle(sangerRow, "WTSI_wEMB10524782");
+        expect(entityTitleLabel(sangerRow)).toBe("");
+        expect(entityText(sangerRow)).toContain("donor:DONOR10524782");
+        expect(fetchLibrarySamplesMock).not.toHaveBeenCalled();
+    });
+
+    it("shows a single Study group for a run whose samples share one study", async () => {
+        const enrichment = enrichmentResultSchema.parse({
+            identifier: "48522",
+            type: "run_id",
+            graph: {
+                studies: [buildStudy({ id_study_lims: "7607", name: "7607" })],
+                samples: [rawMLWHSample()],
+            },
+            partial: false,
+        });
+
+        const body = await openBadge("seqmeta_runid", "48522", enrichment);
+        const studyGroup = relatedGroup(body, "study");
+
+        expect(studyGroup?.querySelector("h5")?.textContent).toBe("Study");
+        expect(
+            studyGroup?.querySelectorAll('[data-seqmeta-detail-key="study"]'),
+        ).toHaveLength(1);
+    });
+
+    it("shows donor id and every library of a sample-registered result set", async () => {
+        const libraries = [
+            {
+                pipeline_id_lims: "Custom",
+                id_study_lims: "7607",
+                library_id: "71046409",
+                id_library_lims: "LIB7607-71046409",
+            },
+            {
+                pipeline_id_lims: "RNA PolyA",
+                id_study_lims: "7607",
+                library_id: "71046410",
+            },
+        ];
+        const sample = rawMLWHSample({ libraries });
+        const enrichment = enrichmentResultSchema.parse({
+            identifier: "7607STDY14643771",
+            type: "sanger_sample_name",
+            graph: {
+                study: buildStudy({ id_study_lims: "7607" }),
+                sample,
+                samples: [sample],
+                library: {
+                    library_type: "Custom",
+                    id_study_lims: "7607",
+                    library_id: "71046409",
+                    id_library_lims: "LIB7607-71046409",
+                },
+                sample_detail: {
+                    sample,
+                    study: buildStudy({ id_study_lims: "7607" }),
+                    lanes: [{ id_run: 48522, lane: 1, tag_index: 1 }],
+                    libraries,
+                },
+            },
+            partial: false,
+        });
+
+        expect(enrichment.graph.sample?.donor_id).toBe("DONOR7607");
+        expect(enrichment.graph.sample?.library_types).toEqual([
+            "Custom",
+            "RNA PolyA",
+        ]);
+
+        const body = await openBadge(
+            "seqmeta_sample_name",
+            "7607STDY14643771",
+            enrichment,
+        );
+
+        const direct = body.querySelector(
+            '[data-field-group="direct-metadata"]',
+        );
+        const donorRow = direct?.querySelector(
+            '[data-seqmeta-detail-key="seqmeta_donor_id"]',
+        );
+        expect(donorRow?.textContent).toContain("Donor ID");
+        expect(donorRow?.textContent).toContain("DONOR7607");
+        expect(
+            direct?.querySelector(
+                '[data-seqmeta-detail-key="seqmeta_supplier_name"]',
+            )?.textContent,
+        ).toContain("Supplier Sample 7607");
+
+        const libraryGroup = relatedGroup(body, "library");
+        expect(libraryGroup?.querySelector("h5")?.textContent).toBe(
+            "Libraries",
+        );
+        const libraryRows = libraryGroup?.querySelectorAll(
+            '[data-seqmeta-detail-key="library"]',
+        );
+        expect(libraryRows).toHaveLength(2);
+        expectEntityRowTitle(libraryRows?.[0], "71046409");
+        expect(entityText(libraryRows?.[0])).toContain("type:Custom");
+        expectEntityRowTitle(libraryRows?.[1], "71046410");
+        expect(entityText(libraryRows?.[1])).toContain("type:RNA PolyA");
+    });
+
+    it("shows supplier name and donor id for samples expanded under a study's libraries", async () => {
+        fetchLibrarySamplesMock.mockResolvedValue(
+            enrichmentSamplesSchema.parse([
+                rawMLWHSample({
+                    libraries: [
+                        {
+                            pipeline_id_lims: "Custom",
+                            id_study_lims: "7607",
+                            library_id: "71046409",
+                        },
+                    ],
+                }),
+            ]),
+        );
+        const enrichment = buildEnrichment({
+            identifier: "7607",
+            type: "study_id",
+            graph: {
+                study: buildStudy({ id_study_lims: "7607" }),
+                study_detail: {
+                    study: buildStudy({ id_study_lims: "7607" }),
+                    library_details: [
+                        {
+                            library_type: "Custom",
+                            id_study_lims: "7607",
+                            library_id: "71046409",
+                            samples: [],
+                        },
+                    ],
+                },
+            },
+        });
+
+        const body = await openBadge(
+            "seqmeta_id_study_lims",
+            "7607",
+            enrichment,
+        );
+        fireEvent.click(screen.getByLabelText("Show samples"));
+
+        await waitFor(() => {
+            expect(
+                body.querySelector('[data-seqmeta-detail-key="sample"]'),
+            ).toBeTruthy();
+        });
+
+        const sampleRow = body.querySelector(
+            '[data-seqmeta-detail-key="sample"]',
+        );
+        expectEntityRowTitle(sampleRow, "Supplier Sample 7607");
+        expect(entityTitleLabel(sampleRow)).toBe("Supplier name");
+        expect(entityText(sampleRow)).toContain("id:7607STDY14643771");
+        expect(entityText(sampleRow)).toContain("donor:DONOR7607");
+        expect(entityText(sampleRow)).not.toContain("library_type:");
+    });
+
+    it("lists each sample's library types in a library-type result set's flat sample list", async () => {
+        const enrichment = enrichmentResultSchema.parse({
+            identifier: "Custom",
+            type: "library_type",
+            graph: {
+                studies: [buildStudy({ id_study_lims: "7607" })],
+                samples: [
+                    rawMLWHSample({
+                        libraries: [
+                            {
+                                pipeline_id_lims: "Custom",
+                                id_study_lims: "7607",
+                            },
+                            {
+                                pipeline_id_lims: "RNA PolyA",
+                                id_study_lims: "7607",
+                            },
+                        ],
+                    }),
+                ],
+            },
+            partial: false,
+        });
+
+        const body = await openBadge(
+            "seqmeta_pipeline_id_lims",
+            "Custom",
+            enrichment,
+        );
+        const sampleRow = relatedGroup(body, "samples")?.querySelector(
+            '[data-seqmeta-detail-key="sample"]',
+        );
+
+        expectEntityRowTitle(sampleRow, "Supplier Sample 7607");
+        expect(entityText(sampleRow)).toContain(
+            "library_type:Custom, RNA PolyA",
+        );
+        expect(entityText(sampleRow)).toContain("donor:DONOR7607");
     });
 });
