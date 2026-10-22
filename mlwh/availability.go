@@ -204,6 +204,22 @@ const latestDataForStudySQLPrefix = `SELECT ` + latestDataSelectColumns + latest
 
 const latestDataCreatedOrderSQL = ` ORDER BY spi.created DESC, spi.id_run, spi.id_iseq_product`
 
+// latestDataCreatedIndexHint pins MySQL to the (id_study_lims, created) index
+// for the faculty-sponsor latest-data queries, and latestDataSponsorPageHint
+// also makes the iRODS mirror the first table of the page's join: when MySQL
+// drove the join from study_mirror instead, it read every row of a 3M-row
+// study and took minutes. MySQL ignores a hint naming a missing index, and
+// SQLite reads both as comments.
+const (
+	latestDataCreatedIndexHint = `/*+ INDEX(spi spi_mirror_study_lims_created_idx) */ `
+	latestDataSponsorPageHint  = `/*+ JOIN_PREFIX(spi) INDEX(spi spi_mirror_study_lims_created_idx) */ `
+)
+
+// latestDataCreatedForStudySQLPrefix reads one study's created values only, so
+// with ORDER BY created DESC LIMIT n it is a backward scan of the
+// (id_study_lims, created) index that stops after n entries and never sorts.
+const latestDataCreatedForStudySQLPrefix = `SELECT ` + latestDataCreatedIndexHint + `spi.created FROM seq_product_irods_locations_mirror spi WHERE spi.id_study_lims = ?`
+
 var latestDataFacultySponsorStudyIDsSQL = `SELECT id_study_lims FROM study_mirror WHERE ` + facultySponsorWhereClause + ` ORDER BY id_study_lims`
 
 // addedWindowOpenEnded is the upper bound used by the [since, until) created
@@ -478,28 +494,57 @@ func latestDataForStudyQuery(studyLimsID, fileType string, limit, offset int) (s
 	return query + latestDataCreatedOrderSQL + ` LIMIT ? OFFSET ?`, append(args, limit, offset), nil
 }
 
-func latestDataForFacultySponsorQuery(studyIDs []string, fileType string, limit, offset int) (string, []any, error) {
-	perStudyLimit := limit + offset
+// latestDataCreatedCutoffQuery finds the created value of the depth-th newest
+// row across studyIDs. Each study contributes at most depth created values from
+// the (id_study_lims, created) index, and every row in the overall top depth is
+// among its own study's top depth, so the depth-th value of the merged set is
+// the overall cutoff. The query returns no row when the studies hold fewer than
+// depth rows, and NULL when the depth-th row has no created value.
+func latestDataCreatedCutoffQuery(studyIDs []string, fileType string, depth int) (string, []any, error) {
 	parts := make([]string, 0, len(studyIDs))
-	args := make([]any, 0, len(studyIDs)*3+2)
+	args := make([]any, 0, len(studyIDs)*3+1)
 
 	for index, studyID := range studyIDs {
-		query, queryArgs, err := latestDataFilterQuery(latestDataForStudySQLPrefix, "", fileType, studyID)
+		query, queryArgs, err := latestDataFilterQuery(latestDataCreatedForStudySQLPrefix, "", fileType, studyID)
 		if err != nil {
 			return "", nil, err
 		}
 
-		parts = append(parts, fmt.Sprintf("SELECT * FROM (%s%s LIMIT ?) AS latest_%d", query, latestDataCreatedOrderSQL, index))
+		parts = append(parts, fmt.Sprintf("SELECT created FROM (%s ORDER BY spi.created DESC LIMIT ?) AS created_%d", query, index))
 		args = append(args, queryArgs...)
-		args = append(args, perStudyLimit)
+		args = append(args, depth)
 	}
 
-	query := `SELECT created, id_product, collection, data_object, id_study_lims, study_name, name, supplier_name, id_run, lane, tag_index, platform, merged FROM (` +
-		strings.Join(parts, ` UNION ALL `) +
-		`) AS per_study_latest ORDER BY created DESC, id_run, id_product LIMIT ? OFFSET ?`
-	args = append(args, limit, offset)
+	query := `SELECT created FROM (` + strings.Join(parts, ` UNION ALL `) +
+		`) AS per_study_created ORDER BY created DESC LIMIT 1 OFFSET ?`
 
-	return query, args, nil
+	return query, append(args, depth-1), nil
+}
+
+// latestDataForFacultySponsorQuery pages the newest rows across studyIDs. With
+// a cutoff it reads only rows created at or after it, a range of the
+// (id_study_lims, created) index holding the page plus any rows tied on the
+// cutoff, instead of sorting every row of every study. Without one the studies
+// hold fewer than limit+offset rows with a created value, so all are read.
+func latestDataForFacultySponsorQuery(studyIDs []string, fileType string, cutoff sql.NullString, limit, offset int) (string, []any, error) {
+	args := make([]any, 0, len(studyIDs)+4)
+	for _, studyID := range studyIDs {
+		args = append(args, studyID)
+	}
+
+	prefix := `SELECT ` + latestDataSponsorPageHint + latestDataSelectColumns + latestDataFromSQL +
+		` WHERE spi.id_study_lims IN (` + sqlPlaceholders(len(studyIDs)) + `)`
+	if cutoff.Valid {
+		prefix += ` AND spi.created >= ?`
+		args = append(args, cutoff.String)
+	}
+
+	query, queryArgs, err := latestDataFilterQuery(prefix, "", fileType, args...)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return query + latestDataCreatedOrderSQL + ` LIMIT ? OFFSET ?`, append(queryArgs, limit, offset), nil
 }
 
 func scanRecentDataRow(scan func(dest ...any) error) (RecentDataRow, error) {
@@ -701,10 +746,11 @@ func (c *Client) LatestDataForStudy(ctx context.Context, studyLimsID, fileType s
 }
 
 // LatestDataForFacultySponsor returns a newest-first page across all SQSCP
-// studies whose faculty_sponsor contains name. It fetches each matching study's
-// bounded top rows through the study+created access path and merges that bounded
-// candidate set, avoiding both one-query-per-study fan-out and an unbounded
-// all-files sort.
+// studies whose faculty_sponsor contains name. It reads each matching study's
+// newest created values from the (id_study_lims, created) index to find the
+// page's created cutoff, then fetches and sorts only the rows at or after it,
+// avoiding both one-query-per-study fan-out and sorting every file of every
+// study.
 func (c *Client) LatestDataForFacultySponsor(ctx context.Context, name, fileType string, limit, offset int) ([]RecentDataRow, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("%w: faculty sponsor name is required", ErrUnsupportedIdentifier)
@@ -721,7 +767,12 @@ func (c *Client) LatestDataForFacultySponsor(ctx context.Context, name, fileType
 		return []RecentDataRow{}, nil
 	}
 
-	query, args, err := latestDataForFacultySponsorQuery(studyIDs, fileType, limit, offset)
+	cutoff, err := c.latestDataCreatedCutoff(ctx, studyIDs, fileType, limit+offset)
+	if err != nil {
+		return nil, err
+	}
+
+	query, args, err := latestDataForFacultySponsorQuery(studyIDs, fileType, cutoff, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -775,6 +826,32 @@ func (c *Client) latestDataFacultySponsorStudyIDs(ctx context.Context, name stri
 	}
 
 	return []string{}, nil
+}
+
+// latestDataCreatedCutoff returns the created value of the depth-th newest row
+// across studyIDs, or an invalid NullString when there is no such row or it has
+// no created value.
+func (c *Client) latestDataCreatedCutoff(ctx context.Context, studyIDs []string, fileType string, depth int) (sql.NullString, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return sql.NullString{}, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	query, args, err := latestDataCreatedCutoffQuery(studyIDs, fileType, depth)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+
+	var cutoff sql.NullString
+	err = db.QueryRowContext(ctx, query, args...).Scan(&cutoff)
+	if errors.Is(err, sql.ErrNoRows) {
+		return sql.NullString{}, nil
+	}
+	if err != nil {
+		return sql.NullString{}, fmt.Errorf("%w: query latest-data faculty sponsor cutoff: %w", ErrUpstreamImpaired, err)
+	}
+
+	return cutoff, nil
 }
 
 func (c *Client) queryRecentDataRows(ctx context.Context, query string, args []any, action string) ([]RecentDataRow, error) {

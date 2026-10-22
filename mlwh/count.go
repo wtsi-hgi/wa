@@ -153,9 +153,12 @@ const (
 
 // countLatestDataForFacultySponsorSQLPrefix/Suffix count raw iRODS-location
 // rows under SQSCP studies whose faculty_sponsor contains the term. The same
-// file-type clause is spliced before the suffix when requested.
+// file-type clause is spliced before the suffix when requested. The hint picks
+// the narrowest (id_study_lims, ...) index for the unfiltered count: MySQL chose
+// the CHAR(64) product index, which halved the speed on a 3M-row study. MySQL
+// ignores it if the index is missing, and SQLite reads it as a comment.
 var (
-	countLatestDataForFacultySponsorSQLPrefix = `SELECT COUNT(*) FROM seq_product_irods_locations_mirror spi INNER JOIN study_mirror ON study_mirror.id_study_lims = spi.id_study_lims AND study_mirror.id_lims = 'SQSCP' WHERE ` + likeContainsClause([]string{"study_mirror.faculty_sponsor"})
+	countLatestDataForFacultySponsorSQLPrefix = `SELECT /*+ INDEX(spi spi_mirror_study_lims_sample_tmp_idx) */ COUNT(*) FROM seq_product_irods_locations_mirror spi INNER JOIN study_mirror ON study_mirror.id_study_lims = spi.id_study_lims AND study_mirror.id_lims = 'SQSCP' WHERE ` + likeContainsClause([]string{"study_mirror.faculty_sponsor"})
 	countLatestDataForFacultySponsorSQLSuffix = ``
 )
 
