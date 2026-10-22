@@ -30,6 +30,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -1188,6 +1189,160 @@ func seedLatestDataProduct(t *testing.T, db *sql.DB, studyID string, sampleID, p
 	product := formatInt(productID)
 	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, product, "/seq/"+formatInt(int64(runID)), product+".cram", sampleID, studyID, created, "illumina")
 	setIRODSLocationMirrorRunFields(t, db, runID, lane, tag, product)
+}
+
+// latestDataCutoffSponsor is the faculty sponsor of the cutoff scenario's
+// studies; latestDataCutoffDecoySponsor owns a study with newer rows that must
+// never appear in the sponsor's pages.
+const (
+	latestDataCutoffSponsor      = "Ada Lovelace"
+	latestDataCutoffDecoySponsor = "Grace Hopper"
+)
+
+func TestLatestDataForFacultySponsorMatchesFullSortOracle(t *testing.T) {
+	convey.Convey("Given sponsor studies whose rows tie on created across studies, with NULL created rows and mixed file types", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedLatestDataSponsorCutoffScenario(t, cache.DB(), 20)
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("then every page equals the same page of one unbounded sort of all the sponsor's rows", func() {
+			assertLatestDataForFacultySponsorMatchesOracle(t, client)
+		})
+	})
+}
+
+// seedLatestDataSponsorCutoffScenario seeds four studies of
+// latestDataCutoffSponsor: two whose created values repeat within and across
+// the studies, one with two NULL created rows, and one with no rows. A decoy
+// study of another sponsor gets decoyRows newer rows. Every row has its own
+// product, so the latest-data order is total and pages are deterministic.
+func seedLatestDataSponsorCutoffScenario(t *testing.T, db *sql.DB, decoyRows int) {
+	t.Helper()
+
+	base := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	studies := []struct {
+		id      string
+		sponsor string
+		rows    int
+		created func(i int) sql.NullString
+		ext     func(i int) string
+	}{
+		{id: "LDC1", sponsor: latestDataCutoffSponsor, rows: 30,
+			created: func(i int) sql.NullString {
+				return latestDataCutoffCreated(base.Add(time.Duration(i*7%11) * time.Hour))
+			},
+			ext: func(i int) string {
+				if i%3 == 0 {
+					return "crai"
+				}
+
+				return "cram"
+			}},
+		{id: "LDC2", sponsor: latestDataCutoffSponsor, rows: 20,
+			created: func(i int) sql.NullString {
+				return latestDataCutoffCreated(base.Add(time.Duration(i*5%11) * time.Hour))
+			},
+			ext: func(i int) string {
+				if i%4 == 0 {
+					return "bam"
+				}
+
+				return "cram"
+			}},
+		{id: "LDC3", sponsor: latestDataCutoffSponsor, rows: 4,
+			created: func(i int) sql.NullString {
+				if i < 2 {
+					return sql.NullString{}
+				}
+
+				return latestDataCutoffCreated(base.Add(time.Duration(i) * time.Minute))
+			},
+			ext: func(int) string { return "cram" }},
+		{id: "LDC4", sponsor: latestDataCutoffSponsor},
+		{id: "LDCX", sponsor: latestDataCutoffDecoySponsor, rows: decoyRows,
+			created: func(i int) sql.NullString {
+				return latestDataCutoffCreated(base.Add(100*time.Hour + time.Duration(i)*time.Second))
+			},
+			ext: func(int) string { return "cram" }},
+	}
+
+	for index, study := range studies {
+		seedHierarchyStudy(t, db, int64(9400+index), study.id)
+		setStudyFacultySponsorForTest(t, db, study.id, study.sponsor)
+
+		sampleID := int64(9500 + index)
+		seedSampleMirrorRow(t, db, sampleID, "cutoff-sample-"+study.id, "supplier-"+study.id, "donor-"+study.id, base)
+
+		for i := range study.rows {
+			product := fmt.Sprintf("%s-%05d", strings.ToLower(study.id), i)
+			fileName := product + "." + study.ext(i)
+			_, err := db.Exec(
+				`INSERT INTO seq_product_irods_locations_mirror(id_seq_product_irods_locations_tmp, id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform, id_run, position, tag_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				int64(index*100_000+i), product, "/seq", fileName, "/seq/"+study.id, fileName, sampleID, study.id,
+				formatSyncTime(base), study.created(i), "illumina", 70_000+i%(index+3), i%8+1, i,
+			)
+			if err != nil {
+				t.Fatalf("seed latest-data cutoff row %s/%d: %v", study.id, i, err)
+			}
+		}
+	}
+
+	seedSyncStateRun(t, db, syncTableStudy, base, base)
+	seedSyncStateRun(t, db, syncTableSeqProductIRODSLocations, base, base)
+}
+
+func latestDataCutoffCreated(created time.Time) sql.NullString {
+	return sql.NullString{String: formatSyncTime(created), Valid: true}
+}
+
+// assertLatestDataForFacultySponsorMatchesOracle checks pages on both sides of
+// the cutoff paths: a cutoff tied with other rows, a page reaching the NULL
+// created rows, a page past the end, and file-type filters.
+func assertLatestDataForFacultySponsorMatchesOracle(t *testing.T, client *Client) {
+	t.Helper()
+
+	ctx := context.Background()
+	pages := []struct{ limit, offset int }{
+		{1, 0}, {3, 0}, {10, 0}, {10, 5}, {5, 40}, {10, 48}, {60, 0}, {1000, 0}, {3, 52}, {2, 53}, {5, 60},
+	}
+
+	for _, fileType := range []string{"", "cram", "bam", "crai", "vcf"} {
+		all := latestDataSponsorOracleRows(t, client, fileType)
+		for _, page := range pages {
+			got, err := client.LatestDataForFacultySponsor(ctx, "lovelace", fileType, page.limit, page.offset)
+			convey.So(err, convey.ShouldBeNil)
+
+			want := make([]RecentDataRow, 0, page.limit)
+			if page.offset < len(all) {
+				want = append(want, all[page.offset:min(len(all), page.offset+page.limit)]...)
+			}
+
+			convey.So(fmt.Sprintf("file_type=%q limit=%d offset=%d: %v", fileType, page.limit, page.offset, got),
+				convey.ShouldEqual, fmt.Sprintf("file_type=%q limit=%d offset=%d: %v", fileType, page.limit, page.offset, want))
+		}
+	}
+}
+
+// latestDataSponsorOracleRows sorts every latest-data row of the cutoff
+// sponsor's studies in one unbounded query, the definition each bounded page
+// must match.
+func latestDataSponsorOracleRows(t *testing.T, client *Client, fileType string) []RecentDataRow {
+	t.Helper()
+
+	query, args, err := latestDataFilterQuery(
+		`SELECT `+latestDataSelectColumns+latestDataFromSQL+` WHERE study_mirror.faculty_sponsor = ?`, "", fileType, latestDataCutoffSponsor)
+	if err != nil {
+		t.Fatalf("latest-data oracle query: %v", err)
+	}
+
+	rows, err := client.queryRecentDataRows(context.Background(), query+latestDataCreatedOrderSQL, args, "latest-data oracle")
+	if err != nil {
+		t.Fatalf("latest-data oracle rows: %v", err)
+	}
+
+	return rows
 }
 
 // seedB3AvailabilitySyncState marks every feeding table synced, so the B3

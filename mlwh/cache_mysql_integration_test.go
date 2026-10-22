@@ -35,6 +35,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -948,6 +949,7 @@ type mysqlExplainPlanRow struct {
 	selectType   string
 	scanType     string
 	key          string
+	keyLen       string
 	possibleKeys string
 	extra        string
 }
@@ -1091,6 +1093,102 @@ func TestRealMySQLD1aExportStudyIRODSUsesCoveringIndex(t *testing.T) {
 			convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
 			convey.So(plan.key, convey.ShouldEqual, "spi_mirror_study_lims_export_idx")
 			convey.So(strings.ToLower(plan.extra), convey.ShouldNotContainSubstring, "filesort")
+		})
+	})
+}
+
+// TestRealMySQLLatestDataForFacultySponsorUsesCreatedIndexes guards the
+// faculty-sponsor latest-data page against sorting every row of every sponsor
+// study: on a 7M-row iRODS mirror that took 6-38s for large sponsors.
+func TestRealMySQLLatestDataForFacultySponsorUsesCreatedIndexes(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	client, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	if client.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", client.cache.Dialect())
+	}
+
+	writeDB := client.cache.DB()
+	seedLatestDataSponsorCutoffScenario(t, writeDB, 2000)
+	if _, err = writeDB.Exec("ANALYZE TABLE seq_product_irods_locations_mirror, study_mirror"); err != nil {
+		t.Fatalf("analyze latest-data cutoff fixture tables: %v", err)
+	}
+
+	studyIDs := []string{"LDC1", "LDC2", "LDC3", "LDC4"}
+
+	convey.Convey("Given a throwaway MySQL cache with sponsor studies and a large decoy study", t, func() {
+		convey.Convey("then every page equals the same page of one unbounded sort of all the sponsor's rows", func() {
+			assertLatestDataForFacultySponsorMatchesOracle(t, client)
+		})
+
+		convey.Convey("then each study's created values come from a backward covering scan of the (id_study_lims, created) index without a filesort", func() {
+			query, args, queryErr := latestDataCreatedCutoffQuery(studyIDs, "", 10)
+			convey.So(queryErr, convey.ShouldBeNil)
+
+			arms := 0
+			for _, plan := range explainPlanRows(t, writeDB, query, args...) {
+				if plan.table != "spi" {
+					continue
+				}
+				arms++
+				convey.So(plan.key, convey.ShouldEqual, "spi_mirror_study_lims_created_idx")
+				convey.So(plan.extra, convey.ShouldContainSubstring, "Using index")
+				convey.So(plan.extra, convey.ShouldContainSubstring, "Backward index scan")
+				convey.So(strings.ToLower(plan.extra), convey.ShouldNotContainSubstring, "filesort")
+			}
+			convey.So(arms, convey.ShouldEqual, len(studyIDs))
+		})
+
+		convey.Convey("then the page's join starts from the (id_study_lims, created) range at or after the cutoff", func() {
+			cutoff, cutoffErr := client.latestDataCreatedCutoff(ctx, studyIDs, "", 10)
+			convey.So(cutoffErr, convey.ShouldBeNil)
+			convey.So(cutoff.Valid, convey.ShouldBeTrue)
+
+			query, args, queryErr := latestDataForFacultySponsorQuery(studyIDs, "", cutoff, 10, 0)
+			convey.So(queryErr, convey.ShouldBeNil)
+
+			plans := explainPlanRows(t, writeDB, query, args...)
+			convey.So(plans, convey.ShouldNotBeEmpty)
+			convey.So(plans[0].table, convey.ShouldEqual, "spi")
+			plan := plans[0]
+			convey.So(plan.key, convey.ShouldEqual, "spi_mirror_study_lims_created_idx")
+			convey.So(plan.scanType, convey.ShouldEqual, "range")
+
+			armQuery, armArgs, armErr := latestDataCreatedCutoffQuery(studyIDs[:1], "", 10)
+			convey.So(armErr, convey.ShouldBeNil)
+			arm, armOK := findExplainPlanRow(explainPlanRows(t, writeDB, armQuery, armArgs...), "spi")
+			convey.So(armOK, convey.ShouldBeTrue)
+
+			// A longer key than the id_study_lims-only lookup means the range
+			// also bounds created.
+			rangeLen, convErr := strconv.Atoi(plan.keyLen)
+			convey.So(convErr, convey.ShouldBeNil)
+			studyLen, convErr := strconv.Atoi(arm.keyLen)
+			convey.So(convErr, convey.ShouldBeNil)
+			convey.So(rangeLen, convey.ShouldBeGreaterThan, studyLen)
+		})
+
+		convey.Convey("then the X-Total-Count count reads the narrow (id_study_lims, id_sample_tmp) index only", func() {
+			query, args, queryErr := latestDataFilterQuery(countLatestDataForFacultySponsorSQLPrefix, countLatestDataForFacultySponsorSQLSuffix, "",
+				likeContainsArgs(escapeLIKEPattern("lovelace"), []string{"study_mirror.faculty_sponsor"})...)
+			convey.So(queryErr, convey.ShouldBeNil)
+
+			plan, ok := findExplainPlanRow(explainPlanRows(t, writeDB, query, args...), "spi")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(plan.key, convey.ShouldEqual, "spi_mirror_study_lims_sample_tmp_idx")
+			convey.So(plan.extra, convey.ShouldContainSubstring, "Using index")
+
+			count, countErr := client.CountLatestDataForFacultySponsor(ctx, "lovelace", "")
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(latestDataSponsorOracleRows(t, client, "")))
 		})
 	})
 }
@@ -1692,6 +1790,8 @@ func explainPlanRows(t *testing.T, db *sql.DB, query string, args ...any) []mysq
 				plan.scanType = value
 			case "key":
 				plan.key = value
+			case "key_len":
+				plan.keyLen = value
 			case "possible_keys":
 				plan.possibleKeys = value
 			case "Extra":
