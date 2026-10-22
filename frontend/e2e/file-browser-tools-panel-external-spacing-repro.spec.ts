@@ -386,7 +386,7 @@ async function collectToolsPanelExternalSpacingMetric(
             );
             const row = document.querySelector(selector("data-directory-row"));
             const directoryButton = document.querySelector(
-                `button${selector("data-directory-path")}`,
+                selector("data-directory-path"),
             );
 
             if (

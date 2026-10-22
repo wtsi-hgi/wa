@@ -354,13 +354,14 @@ function DownloadIconLink({
 function TruncationFade({ className }: { className?: string }) {
     return (
         <div
-            aria-label="Content truncated"
             className={cn(
                 "pointer-events-none absolute inset-x-0 bottom-0 h-16",
                 className,
             )}
             data-truncated="true"
-        />
+        >
+            <span className="sr-only">Content truncated</span>
+        </div>
     );
 }
 

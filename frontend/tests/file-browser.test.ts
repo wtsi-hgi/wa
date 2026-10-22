@@ -57,13 +57,28 @@ function buildResultSet(pipelineName: string, index: number): ResultSet {
     };
 }
 
+// File and directory rows are containers whose primary action is a stretched
+// button; clicking a row means clicking that button, as a pointer would.
+function rowAction(target: Element | null | undefined): Element | null {
+    if (
+        target instanceof HTMLElement &&
+        target.matches("[data-file-path], [data-directory-path]")
+    ) {
+        return target.querySelector(":scope > [data-file-browser-row-action]");
+    }
+
+    return target ?? null;
+}
+
 async function click(target: Element | null | undefined): Promise<void> {
-    if (!(target instanceof HTMLElement)) {
+    const clickable = rowAction(target);
+
+    if (!(clickable instanceof HTMLElement)) {
         throw new Error("Expected clickable HTMLElement");
     }
 
     await act(async () => {
-        target.click();
+        clickable.click();
     });
 }
 
@@ -116,51 +131,39 @@ describe("N1 file browser", () => {
         expect(container.textContent).toContain("File Browser");
         expect(container.textContent).not.toContain("Folders");
         expect(
-            container.querySelector(
-                'button[data-directory-path="/out/project"]',
-            ),
+            container.querySelector('[data-directory-path="/out/project"]'),
         ).toBeTruthy();
         expect(container.textContent).toContain("3.txt");
         expect(container.textContent).not.toContain("1.txt");
         expect(container.textContent).not.toContain("2.txt");
 
         await click(
-            container.querySelector(
-                'button[data-directory-path="/out/project"]',
-            ),
+            container.querySelector('[data-directory-path="/out/project"]'),
         );
 
         expect(
-            container.querySelector(
-                'button[data-directory-path="/out/project/run"]',
-            ),
+            container.querySelector('[data-directory-path="/out/project/run"]'),
         ).toBeNull();
         expect(container.textContent).not.toContain("1.txt");
         expect(container.textContent).not.toContain("2.txt");
 
         await click(
-            container.querySelector(
-                'button[data-directory-path="/out/project"]',
-            ),
+            container.querySelector('[data-directory-path="/out/project"]'),
         );
 
         expect(
-            container.querySelector(
-                'button[data-directory-path="/out/project/run"]',
-            ),
+            container.querySelector('[data-directory-path="/out/project/run"]'),
         ).toBeTruthy();
         expect(
             container.querySelector(
-                'button[data-directory-path="/out/project/other"]',
+                '[data-directory-path="/out/project/other"]',
             ),
         ).toBeTruthy();
         expect(container.textContent).not.toContain("1.txt");
         expect(container.textContent).not.toContain("2.txt");
 
         await click(
-            container.querySelector(
-                'button[data-directory-path="/out/project/run"]',
-            ),
+            container.querySelector('[data-directory-path="/out/project/run"]'),
         );
 
         expect(container.textContent).toContain("1.txt");
@@ -168,19 +171,17 @@ describe("N1 file browser", () => {
         expect(container.textContent).not.toContain("3.txt");
 
         await click(
-            container.querySelector(
-                'button[data-directory-path="/out/project/run"]',
-            ),
+            container.querySelector('[data-directory-path="/out/project/run"]'),
         );
 
         expect(
             container.querySelector(
-                'button[data-file-path="/out/project/run/1.txt"]',
+                '[data-file-path="/out/project/run/1.txt"]',
             ),
         ).toBeNull();
         expect(
             container.querySelector(
-                'button[data-file-path="/out/project/run/2.txt"]',
+                '[data-file-path="/out/project/run/2.txt"]',
             ),
         ).toBeNull();
     });
@@ -202,13 +203,9 @@ describe("N1 file browser", () => {
         });
 
         const alphaButton = () =>
-            container.querySelector(
-                'button[data-directory-path="/results/alpha"]',
-            );
+            container.querySelector('[data-directory-path="/results/alpha"]');
         const betaButton = () =>
-            container.querySelector(
-                'button[data-directory-path="/results/beta"]',
-            );
+            container.querySelector('[data-directory-path="/results/beta"]');
 
         expect(alphaButton()?.getAttribute("data-directory-expanded")).toBe(
             "true",
@@ -218,7 +215,7 @@ describe("N1 file browser", () => {
         );
         expect(
             container.querySelector(
-                'button[data-file-path="/results/alpha/one.txt"]',
+                '[data-file-path="/results/alpha/one.txt"]',
             ),
         ).toBeTruthy();
 
@@ -226,13 +223,11 @@ describe("N1 file browser", () => {
 
         expect(
             container.querySelector(
-                'button[data-file-path="/results/alpha/one.txt"]',
+                '[data-file-path="/results/alpha/one.txt"]',
             ),
         ).toBeNull();
         expect(
-            container.querySelector(
-                'button[data-file-path="/results/beta/two.txt"]',
-            ),
+            container.querySelector('[data-file-path="/results/beta/two.txt"]'),
         ).toBeTruthy();
         expect(alphaButton()?.getAttribute("data-directory-expanded")).toBe(
             "false",
@@ -259,7 +254,7 @@ describe("N1 file browser", () => {
         });
 
         const resultsButton = container.querySelector(
-            'button[data-directory-path="/results"]',
+            '[data-directory-path="/results"]',
         );
 
         expect(resultsButton).toBeTruthy();
@@ -301,20 +296,16 @@ describe("N1 file browser", () => {
 
         expect(filterInput?.value).toBe("**/*.tsv");
         expect(
-            container.querySelector(
-                'button[data-directory-path="/demo/reports"]',
-            ),
+            container.querySelector('[data-directory-path="/demo/reports"]'),
         ).toBeTruthy();
         expect(
-            container.querySelector('button[data-file-path$=".tsv"]'),
+            container.querySelector('[data-file-path$=".tsv"]'),
         ).toBeTruthy();
         expect(
-            container.querySelector('button[data-directory-path="/demo/logs"]'),
+            container.querySelector('[data-directory-path="/demo/logs"]'),
         ).toBeNull();
         expect(
-            container.querySelector(
-                'button[data-directory-path="/demo/metrics"]',
-            ),
+            container.querySelector('[data-directory-path="/demo/metrics"]'),
         ).toBeNull();
         expect(container.textContent).toContain("alpha-summary.tsv");
         expect(container.textContent).not.toContain("alpha-run.log");
@@ -692,7 +683,7 @@ describe("N1 file browser", () => {
 
         expect(filterInput()?.value).toBe("");
         expect(
-            container.querySelector('button[data-directory-path="/demo/logs"]'),
+            container.querySelector('[data-directory-path="/demo/logs"]'),
         ).toBeTruthy();
 
         await act(async () => {
@@ -816,7 +807,7 @@ describe("N1 file browser", () => {
             '[data-directory-row="/results/root/alpha"]',
         );
         const alphaButton = container.querySelector(
-            'button[data-directory-path="/results/root/alpha"]',
+            '[data-directory-path="/results/root/alpha"]',
         ) as HTMLButtonElement | null;
         const alphaFiles = container.querySelector(
             '[data-file-browser-directory-files="/results/root/alpha"]',
@@ -825,7 +816,7 @@ describe("N1 file browser", () => {
             '[data-directory-group="/results/root/alpha/sub"]',
         );
         const alphaChildButton = container.querySelector(
-            'button[data-directory-path="/results/root/alpha/sub"]',
+            '[data-directory-path="/results/root/alpha/sub"]',
         ) as HTMLButtonElement | null;
         const betaGroup = container.querySelector(
             '[data-directory-group="/results/root/beta"]',
@@ -931,7 +922,7 @@ describe("N1 file browser", () => {
         expect(firstGridRow).toBeTruthy();
         expect(
             firstGridRow?.querySelector(
-                'button[data-file-path="/results/a/001.png"]',
+                '[data-file-path="/results/a/001.png"]',
             ),
         ).toBeTruthy();
         expect(
@@ -1317,14 +1308,12 @@ describe("N1 file browser", () => {
         });
 
         expect(
-            container.querySelector(
-                'button[data-directory-path="/out/project"]',
-            )?.textContent,
+            container.querySelector('[data-directory-path="/out/project"]')
+                ?.textContent,
         ).toContain("4 files");
         expect(
-            container.querySelector(
-                'button[data-directory-path="/out/project"]',
-            )?.textContent,
+            container.querySelector('[data-directory-path="/out/project"]')
+                ?.textContent,
         ).toContain("4 subfolders");
     });
 
@@ -1385,9 +1374,7 @@ describe("N1 file browser", () => {
         });
 
         await click(
-            container.querySelector(
-                'button[data-file-path="/results/report.txt"]',
-            ),
+            container.querySelector('[data-file-path="/results/report.txt"]'),
         );
 
         expect(handleSelectFile).toHaveBeenCalledWith(file);
@@ -1427,7 +1414,7 @@ describe("N1 file browser", () => {
             '[data-file-path="/results/root/report.txt"]',
         );
         const directoryButton = container.querySelector(
-            'button[data-directory-path="/results/root/nested"]',
+            '[data-directory-path="/results/root/nested"]',
         );
         const directoryCopyButton = container.querySelector(
             '[aria-label="Copy directory full path /results/root/nested"]',
@@ -1442,6 +1429,24 @@ describe("N1 file browser", () => {
         expect(directoryCopyButton).toBeTruthy();
         expect(fileCopyButton).not.toBe(fileRow);
         expect(directoryCopyButton).not.toBe(directoryButton);
+        // axe nested-interactive: copy controls are real buttons that sit
+        // beside, not inside, the row's primary button.
+        expect(fileCopyButton?.tagName).toBe("BUTTON");
+        expect(directoryCopyButton?.tagName).toBe("BUTTON");
+        // The row's own action keeps coming first in tab order.
+        expect(
+            fileRow?.querySelector("button")?.getAttribute("aria-label"),
+        ).toBe("Select file report.txt");
+        expect(
+            directoryButton
+                ?.querySelector("button")
+                ?.getAttribute("aria-label"),
+        ).toMatch(/^Toggle directory /);
+        expect(
+            container.querySelectorAll(
+                "button button, button [role='button'], button [tabindex]",
+            ),
+        ).toHaveLength(0);
         expect(directoryButton?.getAttribute("data-directory-expanded")).toBe(
             "false",
         );
@@ -1705,9 +1710,7 @@ describe("N1 file browser", () => {
             ),
         ).toBeTruthy();
         expect(
-            container.querySelector(
-                'button[data-file-path="/results/plot-001.png"]',
-            ),
+            container.querySelector('[data-file-path="/results/plot-001.png"]'),
         ).toBeTruthy();
     });
 
@@ -1745,7 +1748,7 @@ describe("N1 file browser", () => {
             '[data-directory-row="/results"]',
         ) as HTMLElement | null;
         const fileButton = container.querySelector(
-            'button[data-file-path="/results/plot-001.png"]',
+            '[data-file-path="/results/plot-001.png"]',
         ) as HTMLElement | null;
 
         expect(folderControls).toBeTruthy();
@@ -2018,14 +2021,10 @@ describe("N1 file browser", () => {
             container.querySelector("[data-file-browser-header]")?.textContent,
         ).not.toContain("Page 2 of 3");
         expect(
-            container.querySelector(
-                'button[data-file-path="/results/plot-101.png"]',
-            ),
+            container.querySelector('[data-file-path="/results/plot-101.png"]'),
         ).toBeTruthy();
         expect(
-            container.querySelector(
-                'button[data-file-path="/results/plot-001.png"]',
-            ),
+            container.querySelector('[data-file-path="/results/plot-001.png"]'),
         ).toBeNull();
 
         await click(
@@ -2278,7 +2277,7 @@ describe("N1 file browser", () => {
         ).toBeNull();
 
         await click(
-            container.querySelector('button[data-directory-path="/results/a"]'),
+            container.querySelector('[data-directory-path="/results/a"]'),
         );
 
         expect(
@@ -2365,7 +2364,7 @@ describe("N1 file browser", () => {
 
         // All file buttons must be direct children of the grid container
         const fileButtons = container.querySelectorAll(
-            'button[data-file-path^="/results/plot-"]',
+            '[data-file-path^="/results/plot-"]',
         );
 
         expect(fileButtons).toHaveLength(3);
@@ -3033,7 +3032,7 @@ describe("N1 file browser", () => {
 
         await click(
             container.querySelector(
-                'button[data-directory-path="/demo/sample-a/lanes"]',
+                '[data-directory-path="/demo/sample-a/lanes"]',
             ),
         );
 
@@ -3050,7 +3049,7 @@ describe("N1 file browser", () => {
 
         await click(
             container.querySelector(
-                'button[data-directory-path="/demo/sample-a/lanes"]',
+                '[data-directory-path="/demo/sample-a/lanes"]',
             ),
         );
 
@@ -3105,9 +3104,7 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
 
         await click(
-            container.querySelector(
-                'button[data-directory-path="/demo/sample-a"]',
-            ),
+            container.querySelector('[data-directory-path="/demo/sample-a"]'),
         );
 
         expect(
@@ -3115,9 +3112,7 @@ describe("N1 file browser", () => {
         ).toBeNull();
 
         await click(
-            container.querySelector(
-                'button[data-directory-path="/demo/sample-a"]',
-            ),
+            container.querySelector('[data-directory-path="/demo/sample-a"]'),
         );
 
         expect(
@@ -3166,9 +3161,7 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
 
         await click(
-            container.querySelector(
-                'button[data-directory-path="/demo/sample-a"]',
-            ),
+            container.querySelector('[data-directory-path="/demo/sample-a"]'),
         );
 
         expect(
@@ -3176,9 +3169,7 @@ describe("N1 file browser", () => {
         ).toBeNull();
 
         await click(
-            container.querySelector(
-                'button[data-directory-path="/demo/sample-a"]',
-            ),
+            container.querySelector('[data-directory-path="/demo/sample-a"]'),
         );
 
         expect(
@@ -3243,18 +3234,16 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
 
         await click(
-            container.querySelector('button[data-directory-path="/demo/qc"]'),
+            container.querySelector('[data-directory-path="/demo/qc"]'),
+        );
+
+        await click(
+            container.querySelector('[data-directory-path="/demo/qc/images"]'),
         );
 
         await click(
             container.querySelector(
-                'button[data-directory-path="/demo/qc/images"]',
-            ),
-        );
-
-        await click(
-            container.querySelector(
-                'button[data-directory-path="/demo/qc/images/gallery"]',
+                '[data-directory-path="/demo/qc/images/gallery"]',
             ),
         );
 
@@ -3279,7 +3268,7 @@ describe("N1 file browser", () => {
 
         await click(
             container.querySelector(
-                'button[data-directory-path="/demo/qc/images/gallery"]',
+                '[data-directory-path="/demo/qc/images/gallery"]',
             ),
         );
 
@@ -3415,13 +3404,11 @@ describe("N1 file browser", () => {
         ).toBeNull();
 
         await click(
-            container.querySelector(
-                'button[data-directory-path="/demo/sample-a"]',
-            ),
+            container.querySelector('[data-directory-path="/demo/sample-a"]'),
         );
         await click(
             container.querySelector(
-                'button[data-directory-path="/demo/sample-a/lanes"]',
+                '[data-directory-path="/demo/sample-a/lanes"]',
             ),
         );
 
@@ -3449,12 +3436,8 @@ describe("N1 file browser", () => {
             ),
         ).toBeTruthy();
 
-        await click(
-            container.querySelector('button[data-directory-path="/demo"]'),
-        );
-        await click(
-            container.querySelector('button[data-directory-path="/demo"]'),
-        );
+        await click(container.querySelector('[data-directory-path="/demo"]'));
+        await click(container.querySelector('[data-directory-path="/demo"]'));
 
         expect(
             container.querySelector(
@@ -3468,13 +3451,11 @@ describe("N1 file browser", () => {
         ).toBeNull();
 
         await click(
-            container.querySelector(
-                'button[data-directory-path="/demo/sample-a"]',
-            ),
+            container.querySelector('[data-directory-path="/demo/sample-a"]'),
         );
         await click(
             container.querySelector(
-                'button[data-directory-path="/demo/sample-a/lanes"]',
+                '[data-directory-path="/demo/sample-a/lanes"]',
             ),
         );
 
@@ -3795,9 +3776,7 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
 
         await click(
-            container.querySelector(
-                'button[data-directory-path="/demo/sample-a"]',
-            ),
+            container.querySelector('[data-directory-path="/demo/sample-a"]'),
         );
 
         const expandedSampleARow = container.querySelector(
@@ -3848,7 +3827,7 @@ describe("N1 file browser", () => {
             '[data-directory-row="/results"]',
         ) as HTMLElement | null;
         const directoryButton = directoryRow?.querySelector(
-            'button[data-directory-path="/results"]',
+            '[data-directory-path="/results"]',
         ) as HTMLElement | null;
         const folderControls = directoryRow?.querySelector(
             '[data-file-browser-folder-controls="/results"]',
@@ -4405,7 +4384,7 @@ describe("N1 file browser", () => {
             ) as HTMLElement | null;
         const directoryButton = () =>
             container.querySelector(
-                'button[data-directory-path="/demo"]',
+                '[data-directory-path="/demo"]',
             ) as HTMLElement | null;
 
         expect(disclosure()).toBeTruthy();
@@ -4419,7 +4398,7 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
 
         await act(async () => {
-            directoryButton()?.dispatchEvent(
+            rowAction(directoryButton())?.dispatchEvent(
                 new MouseEvent("click", { bubbles: true, cancelable: true }),
             );
         });
@@ -4472,7 +4451,7 @@ describe("N1 file browser", () => {
             ) as HTMLElement | null;
         const fileButton = () =>
             container.querySelector(
-                'button[data-file-path="/demo/readme.md"]',
+                '[data-file-path="/demo/readme.md"]',
             ) as HTMLElement | null;
 
         expect(disclosure()).toBeTruthy();
@@ -4485,7 +4464,7 @@ describe("N1 file browser", () => {
         expect(disclosure()?.hasAttribute("open")).toBe(true);
 
         await act(async () => {
-            fileButton()?.dispatchEvent(
+            rowAction(fileButton())?.dispatchEvent(
                 new MouseEvent("click", { bubbles: true, cancelable: true }),
             );
         });
@@ -4538,7 +4517,7 @@ describe("N1 file browser", () => {
             ) as HTMLElement | null;
         const directoryButton = () =>
             container.querySelector(
-                'button[data-directory-path="/demo"]',
+                '[data-directory-path="/demo"]',
             ) as HTMLElement | null;
 
         expect(disclosure()).toBeTruthy();
@@ -4552,7 +4531,7 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
 
         await act(async () => {
-            directoryButton()?.dispatchEvent(
+            rowAction(directoryButton())?.dispatchEvent(
                 new MouseEvent("click", { bubbles: true, cancelable: true }),
             );
         });
@@ -4604,7 +4583,7 @@ describe("N1 file browser", () => {
             ) as HTMLElement | null;
         const fileButton = () =>
             container.querySelector(
-                'button[data-file-path="/demo/readme.md"]',
+                '[data-file-path="/demo/readme.md"]',
             ) as HTMLElement | null;
 
         expect(disclosure()).toBeTruthy();
@@ -4617,7 +4596,7 @@ describe("N1 file browser", () => {
         expect(disclosure()?.hasAttribute("open")).toBe(true);
 
         await act(async () => {
-            fileButton()?.dispatchEvent(
+            rowAction(fileButton())?.dispatchEvent(
                 new MouseEvent("click", { bubbles: true, cancelable: true }),
             );
         });
@@ -4811,11 +4790,21 @@ describe("N1 file browser", () => {
             container.querySelectorAll('[data-file-browser-file-layout="row"]'),
         ).toHaveLength(2);
         expect(
+            container.querySelectorAll("[data-copy-path-control]").length,
+        ).toBeGreaterThan(0);
+        expect(
+            container.querySelectorAll(
+                "button button, button [role='button'], button [tabindex]",
+            ),
+        ).toHaveLength(0);
+        expect(
             container.querySelector('[data-file-browser-file-layout="card"]'),
         ).toBeNull();
         expect(
             container
-                .querySelector('[data-file-path="/results/run/alpha.tsv"]')
+                .querySelector(
+                    '[data-file-path="/results/run/alpha.tsv"] [data-file-browser-row-action]',
+                )
                 ?.getAttribute("title"),
         ).toContain("/results/run/alpha.tsv");
         expect(window.localStorage.getItem("wa:file-browser:compact")).toBe(

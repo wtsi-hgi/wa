@@ -70,7 +70,7 @@ test("constrained markdown preview shows truncation indicator instead of scrollb
             // If content is truncated, there should be a truncation indicator
             if (overflow.scrollHeight > overflow.clientHeight) {
                 const truncationIndicator = page.locator(
-                    '[aria-label*="truncated"], [data-truncated="true"]',
+                    '[data-truncated="true"]',
                 );
                 await expect(truncationIndicator).toBeVisible();
             }
@@ -118,7 +118,7 @@ test("constrained code preview shows truncation indicator instead of scrollbar",
                 overflow.scrollHeight > overflow.clientHeight
             ) {
                 const truncationIndicator = page.locator(
-                    '[aria-label*="truncated"], [data-truncated="true"]',
+                    '[data-truncated="true"]',
                 );
                 await expect(truncationIndicator).toBeVisible();
             }

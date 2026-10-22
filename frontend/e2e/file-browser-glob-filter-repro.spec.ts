@@ -725,10 +725,10 @@ test("matches nested-directory glob filters across py_inputs TSV gzip paths", as
         "/",
     );
     const nestedDirectory = page
-        .locator(`button[data-directory-path$="${nestedDirectorySuffix}"]`)
+        .locator(`[data-directory-path$="${nestedDirectorySuffix}"]`)
         .first();
     const nestedFile = page
-        .locator(`button[data-file-path$="${nestedPathSuffix}"]`)
+        .locator(`[data-file-path$="${nestedPathSuffix}"]`)
         .first();
     const globInput = page.getByLabel("Filter files by glob");
 
@@ -784,10 +784,10 @@ test("active star toggles make natural glob text match nested barcode files", as
         "/",
     );
     const nestedDirectory = page
-        .locator(`button[data-directory-path$="${nestedDirectorySuffix}"]`)
+        .locator(`[data-directory-path$="${nestedDirectorySuffix}"]`)
         .first();
     const nestedFile = page
-        .locator(`button[data-file-path$="${nestedPathSuffix}"]`)
+        .locator(`[data-file-path$="${nestedPathSuffix}"]`)
         .first();
     const globInput = page.getByLabel("Filter files by glob");
     const leadingWildcardButton = page.getByRole("button", {

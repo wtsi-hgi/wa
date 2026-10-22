@@ -159,21 +159,19 @@ describe("O1 result detail hydration", () => {
         });
 
         expect(
-            container.querySelector(
-                'button[data-file-path="/results/a/sample.bam"]',
-            ),
+            container.querySelector('[data-file-path="/results/a/sample.bam"]'),
         ).not.toBeNull();
 
         fireEvent.click(
             container.querySelector(
-                'button[data-directory-path="/results/b"]',
+                '[data-directory-path="/results/b"] [data-file-browser-row-action]',
             )!,
         );
 
         await waitFor(() => {
             expect(
                 container.querySelector(
-                    'button[data-file-path="/results/a/sample.bam"]',
+                    '[data-file-path="/results/a/sample.bam"]',
                 ),
             ).toBeNull();
         });
@@ -359,14 +357,14 @@ describe("O1 result detail hydration", () => {
 
         fireEvent.click(
             container.querySelector(
-                'button[data-directory-path="/results/b"]',
+                '[data-directory-path="/results/b"] [data-file-browser-row-action]',
             )!,
         );
 
         await waitFor(() => {
             expect(
                 container.querySelector(
-                    'button[data-file-path="/results/a/sample.bam"]',
+                    '[data-file-path="/results/a/sample.bam"]',
                 ),
             ).toBeNull();
         });

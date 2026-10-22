@@ -633,7 +633,7 @@ async function measureExpandedDirectoryBox(
             return {
                 childGroupRect: rectMetrics(childGroup),
                 childIndentMarkerRect: rectMetrics(
-                    childButton?.children.item(0) ?? null,
+                    childButton?.children.item(1) ?? null,
                 ),
                 contentBelongsToDirectoryRow:
                     row instanceof HTMLElement &&
@@ -644,7 +644,7 @@ async function measureExpandedDirectoryBox(
                 fileRowsRect: rectMetrics(fileRows),
                 parentButtonRect: rectMetrics(parentButton),
                 parentIndentMarkerRect: rectMetrics(
-                    parentButton?.children.item(0) ?? null,
+                    parentButton?.children.item(1) ?? null,
                 ),
                 rowRect: rectMetrics(row),
             };
@@ -686,7 +686,7 @@ async function measureDirectoryDepthIndent(
                     return null;
                 }
 
-                const textColumn = button.children.item(1);
+                const textColumn = button.children.item(2);
 
                 return textColumn?.firstElementChild ?? null;
             }
@@ -889,7 +889,7 @@ test.describe("File Browser single preview layout", () => {
         await expect
             .poll(async () =>
                 directoryButton.evaluate((button) => {
-                    const textColumn = button.children.item(1);
+                    const textColumn = button.children.item(2);
                     const label = textColumn?.firstElementChild;
 
                     if (!(label instanceof HTMLElement)) {
@@ -910,7 +910,7 @@ test.describe("File Browser single preview layout", () => {
 
         const evidence = await directoryButton.evaluate(
             (button, expectedPath) => {
-                const textColumn = button.children.item(1);
+                const textColumn = button.children.item(2);
                 const label = textColumn?.firstElementChild;
 
                 if (!(label instanceof HTMLElement)) {
@@ -1085,7 +1085,7 @@ test.describe("File Browser single preview layout", () => {
 
         // Get the first file button in the layout
         const fileButton = singleLayoutContainer
-            .locator("button[data-file-path]")
+            .locator("[data-file-path]")
             .first();
 
         await expect(fileButton).toBeVisible();
@@ -1160,9 +1160,7 @@ test.describe("File Browser single preview layout", () => {
         const preview = singleLayoutContainer.locator(
             '[data-file-browser-preview="single"]',
         );
-        const fileButtons = singleLayoutContainer.locator(
-            "button[data-file-path]",
-        );
+        const fileButtons = singleLayoutContainer.locator("[data-file-path]");
 
         await expect(singleLayoutContainer).toBeVisible();
         await expect(preview).toBeVisible();
@@ -1724,7 +1722,7 @@ test.describe("File Browser single preview layout", () => {
             .locator(`[data-directory-row="${rnaseqQcPath}"]`)
             .first();
         const directoryButton = directoryRow
-            .locator("button[data-directory-path]")
+            .locator("[data-directory-path]")
             .first();
 
         await expect(directoryRow).toBeVisible();
@@ -2589,7 +2587,7 @@ test.describe("File Browser single preview layout", () => {
             `[data-file-browser-folder-controls="${galleriesDemoSampleALane1Path}"]`,
         );
         const lane1Button = page.locator(
-            `button[data-directory-path="${galleriesDemoSampleALane1Path}"]`,
+            `[data-directory-path="${galleriesDemoSampleALane1Path}"]`,
         );
 
         await expect(lanesControls).toHaveCount(0);
@@ -2672,9 +2670,7 @@ test.describe("File Browser single preview layout", () => {
         ).toHaveCount(0);
 
         await page
-            .locator(
-                `button[data-directory-path="${galleriesDemoSampleALanesPath}"]`,
-            )
+            .locator(`[data-directory-path="${galleriesDemoSampleALanesPath}"]`)
             .click();
 
         await expect(lanesControls).toHaveCount(0);
