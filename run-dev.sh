@@ -413,6 +413,7 @@ if has_nonblank_value "${WA_MLWH_SERVER_URL:-}" && (( ! LOCAL_MLWH_SERVER_CONFIG
   REMOTE_MLWH_SERVER_CONFIGURED=1
 fi
 FRONTEND_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS:-120}"
+RESULTS_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_RESULTS_HEALTH_MAX_ATTEMPTS:-120}"
 SEQMETA_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS:-1200}"
 
 RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-https://127.0.0.1:$results_port/rest/v1/results/stats}"
@@ -635,6 +636,16 @@ fi
 
 if (( FRONTEND_HEALTH_MAX_ATTEMPTS < 1 )); then
   printf 'frontend health max attempts must be at least 1\n' >&2
+  exit 1
+fi
+
+if [[ ! "$RESULTS_HEALTH_MAX_ATTEMPTS" =~ ^[0-9]+$ ]]; then
+  printf 'results health max attempts must be an integer\n' >&2
+  exit 1
+fi
+
+if (( RESULTS_HEALTH_MAX_ATTEMPTS < 1 )); then
+  printf 'results health max attempts must be at least 1\n' >&2
   exit 1
 fi
 
@@ -1712,7 +1723,7 @@ else
   PIDS+=("$!")
   RESULTS_STARTED=1
 
-  wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict" 120 "$!" "$RESULTS_LOG" "$WA_RESULTS_BACKEND_CA_CERT"
+  wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict" "$RESULTS_HEALTH_MAX_ATTEMPTS" "$!" "$RESULTS_LOG" "$WA_RESULTS_BACKEND_CA_CERT"
 fi
 
 seed_fixtures=0
@@ -1819,28 +1830,34 @@ else
   wait_for_http "frontend health" "$FRONTEND_HEALTH_URL" "strict" "$FRONTEND_HEALTH_MAX_ATTEMPTS" "$FRONTEND_PID" "$FRONTEND_LOG" "$DEV_TLS_CERT"
 fi
 
-printf 'Development environment is ready.\n'
-printf 'Results: %s\n' "$WA_RESULTS_BACKEND_URL"
-printf 'Results bind: %s (%s)\n' "$RESULTS_BIND_ADDR" "$RESULTS_BIND_SCOPE"
-printf 'Dev TLS cert: %s (valid for %s)\n' "$DEV_TLS_CERT" "$(dev_tls_san_display)"
-if [[ -n "${WA_RESULTS_SERVER_URL:-}" ]]; then
-  printf 'Results public: %s\n' "$WA_RESULTS_SERVER_URL"
-elif [[ "$RESULTS_BIND_SCOPE" == "listening beyond loopback" ]]; then
-  printf 'Results public: not configured (set WA_RESULTS_SERVER_URL to the reachable HTTPS URL for remote CLI users)\n'
-fi
-if [[ -n "${WA_MLWH_BACKEND_URL:-}" ]]; then
-  printf 'MLWH: %s\n' "$WA_MLWH_BACKEND_URL"
-fi
-if (( LOCAL_MLWH_SERVER_CONFIGURED )); then
-  printf 'MLWH bind: %s (%s)\n' "$SEQMETA_BIND_ADDR" "$SEQMETA_BIND_SCOPE"
-  if [[ -n "${WA_MLWH_SERVER_URL:-}" ]]; then
-    printf 'MLWH public: %s\n' "$WA_MLWH_SERVER_URL"
-  elif [[ "$SEQMETA_BIND_SCOPE" == "listening beyond loopback" ]]; then
-    printf 'MLWH public: not configured (set WA_MLWH_SERVER_URL to the reachable URL for remote CLI users)\n'
+# Build the banner first and print it in one write, so a reader that sees the
+# ready line also sees every line after it. Bash line-buffers its own stdout,
+# so cat writes it.
+ready_banner="$(
+  printf 'Development environment is ready.\n'
+  printf 'Results: %s\n' "$WA_RESULTS_BACKEND_URL"
+  printf 'Results bind: %s (%s)\n' "$RESULTS_BIND_ADDR" "$RESULTS_BIND_SCOPE"
+  printf 'Dev TLS cert: %s (valid for %s)\n' "$DEV_TLS_CERT" "$(dev_tls_san_display)"
+  if [[ -n "${WA_RESULTS_SERVER_URL:-}" ]]; then
+    printf 'Results public: %s\n' "$WA_RESULTS_SERVER_URL"
+  elif [[ "$RESULTS_BIND_SCOPE" == "listening beyond loopback" ]]; then
+    printf 'Results public: not configured (set WA_RESULTS_SERVER_URL to the reachable HTTPS URL for remote CLI users)\n'
   fi
-fi
-printf 'Frontend: https://127.0.0.1:%s\n' "$frontend_port"
-printf 'Logs: %s\n' "$LOG_DIR"
+  if [[ -n "${WA_MLWH_BACKEND_URL:-}" ]]; then
+    printf 'MLWH: %s\n' "$WA_MLWH_BACKEND_URL"
+  fi
+  if (( LOCAL_MLWH_SERVER_CONFIGURED )); then
+    printf 'MLWH bind: %s (%s)\n' "$SEQMETA_BIND_ADDR" "$SEQMETA_BIND_SCOPE"
+    if [[ -n "${WA_MLWH_SERVER_URL:-}" ]]; then
+      printf 'MLWH public: %s\n' "$WA_MLWH_SERVER_URL"
+    elif [[ "$SEQMETA_BIND_SCOPE" == "listening beyond loopback" ]]; then
+      printf 'MLWH public: not configured (set WA_MLWH_SERVER_URL to the reachable URL for remote CLI users)\n'
+    fi
+  fi
+  printf 'Frontend: https://127.0.0.1:%s\n' "$frontend_port"
+  printf 'Logs: %s\n' "$LOG_DIR"
+)"
+cat <<<"$ready_banner"
 
 if (( ${#PIDS[@]} > 0 )); then
   wait "${PIDS[@]}"
