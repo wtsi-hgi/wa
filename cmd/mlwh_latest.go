@@ -132,7 +132,7 @@ func newMLWHLatestCommand() *cobra.Command {
 	command.Flags().StringVar(&serverURL, "server", defaultMLWHInfoServerURL(), "MLWH server base URL (defaults to WA_MLWH_SERVER_URL, WA_MLWH_BACKEND_URL, or active WA_*_SEQMETA_PORT)")
 	command.Flags().StringVar(&facultySponsor, "faculty-sponsor", "", "list latest data across studies whose faculty_sponsor contains this name")
 	command.Flags().StringVar(&fileType, "file-type", "", "restrict rows to this filename suffix (a leading dot is stripped), e.g. cram")
-	command.Flags().IntVar(&limit, "limit", latestDefaultLimit, "maximum number of newest rows to return")
+	command.Flags().IntVar(&limit, "limit", latestDefaultLimit, fmt.Sprintf("maximum number of newest rows to return (at most %d)", mlwh.SearchMaxLimit))
 	command.Flags().IntVar(&offset, "offset", 0, "number of newest rows to skip (for pagination)")
 
 	return command
@@ -172,6 +172,9 @@ func latestInvalidFileTypeError(fileType string) error {
 func validateLatestPagination(limit, offset int) error {
 	if limit < 0 || offset < 0 {
 		return errors.New("limit and offset must be non-negative")
+	}
+	if limit > mlwh.SearchMaxLimit {
+		return fmt.Errorf("--limit must not exceed %d", mlwh.SearchMaxLimit)
 	}
 
 	return nil
