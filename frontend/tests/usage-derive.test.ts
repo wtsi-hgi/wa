@@ -25,6 +25,7 @@ import {
     weekBuckets,
     weekStart,
     withFilter,
+    withoutLegacyErrors,
     worstSeverity,
     type TimeBucket,
     type UsageErrorGroup,
@@ -258,6 +259,19 @@ describe("attentionRows", () => {
         ]);
         expect(rows[0].routes).toHaveLength(6);
     });
+
+    it("leaves only the real 30-day shape's one detailed caller error once legacy errors are dropped", () => {
+        const { summary } = withoutLegacyErrors(anonSummary());
+
+        expect(
+            attentionRows(summary.errors ?? []).map((row) => [
+                row.severity,
+                row.status,
+                row.code,
+                row.count,
+            ]),
+        ).toEqual([["caller", 404, "no_route", 1]]);
+    });
 });
 
 describe("expectedGroups and errorAnchors", () => {
@@ -277,25 +291,69 @@ describe("expectedGroups and errorAnchors", () => {
         }),
     ];
 
-    it("splits expected groups by whether they have details", () => {
-        const { detailed, legacy } = expectedGroups(errors);
-
-        expect(detailed.map((g) => g.route)).toEqual(["/classify/:id", "/x"]);
-        expect(legacy.map((g) => g.count)).toEqual([2]);
+    it("lists the expected groups", () => {
+        expect(expectedGroups(errors).map((g) => [g.route, g.count])).toEqual([
+            ["/classify/:id", 4],
+            ["/classify/:id", 2],
+            ["/x", 1],
+        ]);
     });
 
-    it("anchors each route at its first listing: attention, expected, older", () => {
+    it("anchors each route at its first listing: attention, then expected", () => {
         expect(Object.fromEntries(errorAnchors(errors))).toEqual({
             "GET /x": "err-fault-502-upstream_impaired-GET-x",
             "GET /classify/:id": "err-expected-GET-classify-_id",
         });
+    });
+});
+
+describe("withoutLegacyErrors", () => {
+    it("drops the real 30-day shape's errors recorded before error details from every count", () => {
+        const { legacy, summary } = withoutLegacyErrors(anonSummary());
+
+        expect(legacy).toBe(461);
+        expect(summary.totals.errors).toBe(22);
+        expect(summary.totals.error_rate).toBeCloseTo(22 / 1578);
+        expect(summary.totals.error_severity).toEqual(
+            breakdown({ caller: 1, expected: 21 }),
+        );
+        expect(summary.totals.requests).toBe(1578);
+
+        const classify = summary.endpoints.find(
+            (endpoint) => endpoint.route === "/classify/:id",
+        )!;
+
+        expect([classify.errors, classify.error_severity]).toEqual([
+            3,
+            breakdown({ expected: 3 }),
+        ]);
         expect(
-            Object.fromEntries(
-                errorAnchors([
-                    group({ severity: "expected", error_code: null }),
-                ]),
+            [
+                ...summary.categories,
+                ...summary.endpoints,
+                ...summary.mcp_tools,
+                ...summary.mcp_agents,
+                ...summary.other_user_agents,
+                ...summary.days,
+                ...(summary.buckets ?? []),
+                summary.previous_totals!,
+            ].every(
+                (row) =>
+                    row.error_severity?.fault === 0 &&
+                    row.error_severity.legacy.expected === 0,
             ),
-        ).toEqual({ "GET /classify/:id": "err-older-GET-classify-_id" });
+        ).toBe(true);
+        expect(
+            summary.errors?.every((group) => group.error_code !== null),
+        ).toBe(true);
+    });
+
+    it("leaves a summary without severities as it is", () => {
+        const raw = anonSummary();
+        const { error_severity: _severity, ...totals } = raw.totals;
+        const old = { ...raw, totals };
+
+        expect(withoutLegacyErrors(old)).toEqual({ legacy: 0, summary: old });
     });
 });
 

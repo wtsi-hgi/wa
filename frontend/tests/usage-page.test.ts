@@ -23,6 +23,7 @@ import {
     type UsageSummary,
     type UsageWindow,
 } from "@/lib/contracts";
+import { impliedErrorCode } from "@/lib/usage-error-help";
 
 import usageSummaryAnonFixture from "./fixtures/usage-summary-30d-anon.json";
 import usageSummaryA3Fixture from "./fixtures/usage-summary-a3-24h.json";
@@ -56,6 +57,46 @@ function anonSummary(overrides: Partial<UsageSummary> = {}): UsageSummary {
     return {
         ...usageSummarySchema.parse(usageSummaryAnonFixture),
         ...overrides,
+    };
+}
+
+// detailedAnon is anonSummary with its faults recorded as if after error
+// details: each code-less fault group takes the code its status implies, and
+// no breakdown counts a fault as legacy. Its legacy caller errors and expected
+// misses stay legacy.
+function detailedAnon(): UsageSummary {
+    const summary = anonSummary();
+    const detailed = <T extends { error_severity?: UsageErrorBreakdown }>(
+        row: T,
+    ): T =>
+        row.error_severity
+            ? {
+                  ...row,
+                  error_severity: {
+                      ...row.error_severity,
+                      legacy: { ...row.error_severity.legacy, fault: 0 },
+                  },
+              }
+            : row;
+
+    return {
+        ...summary,
+        totals: detailed(summary.totals),
+        categories: summary.categories.map(detailed),
+        endpoints: summary.endpoints.map(detailed),
+        mcp_tools: summary.mcp_tools.map(detailed),
+        mcp_agents: summary.mcp_agents.map(detailed),
+        other_user_agents: summary.other_user_agents.map(detailed),
+        days: summary.days.map(detailed),
+        buckets: summary.buckets?.map(detailed),
+        errors: summary.errors?.map((group) =>
+            group.error_code === null && group.severity === "fault"
+                ? {
+                      ...group,
+                      error_code: impliedErrorCode(group.status, group.route),
+                  }
+                : group,
+        ),
     };
 }
 
@@ -421,8 +462,8 @@ describe("usage dashboard header", () => {
 });
 
 describe("usage KPI strip", () => {
-    it("headlines the real 30 days: 15 faults at 0.95%, not 483 errors", async () => {
-        await renderView(anonSummary(), "30d");
+    it("headlines faults, not all errors", async () => {
+        await renderView(detailedAnon(), "30d");
 
         expect(kpi("Requests").value).toBe("1,578");
         expect(kpi("Requests").detail).toBe("CLI 95.9% · MCP 3.0%");
@@ -430,9 +471,7 @@ describe("usage KPI strip", () => {
         expect(kpi("Sessions").value).toBe("292");
         expect(kpi("MCP requests").value).toBe("47");
         expect(kpi("Faults").value).toBe("15");
-        expect(kpi("Faults").detail).toBe(
-            "0.95% of requests · 3 caller errors",
-        );
+        expect(kpi("Faults").detail).toBe("0.95% of requests · 1 caller error");
         expect(
             within(screen.getByTestId("kpi-Faults"))
                 .getByRole("link")
@@ -444,7 +483,8 @@ describe("usage KPI strip", () => {
 
     it("compares with the previous window when records cover it", async () => {
         await renderView(
-            anonSummary({
+            {
+                ...detailedAnon(),
                 window: "24h",
                 window_start: "2026-10-20T15:49:43Z",
                 earliest_record: "2026-10-01T00:00:00Z",
@@ -457,7 +497,7 @@ describe("usage KPI strip", () => {
                     ip_clients: 1,
                     users: 10,
                 },
-            }),
+            },
             "24h",
         );
 
@@ -478,36 +518,59 @@ describe("usage KPI strip", () => {
 
 describe("usage Needs attention", () => {
     it("lists merged faults, then caller errors, with what to do", async () => {
-        await renderView(anonSummary(), "30d");
+        await renderView(detailedAnon(), "30d");
 
         const items = attentionItems();
 
-        expect(items).toHaveLength(4);
-        expect(items[0]).toContain(
-            "502 upstream_impaired (inferred, recorded before error details) on 6 routes14",
-        );
+        expect(items).toHaveLength(3);
+        expect(items[0]).toContain("502 upstream_impaired on 6 routes14");
         expect(items[0]).toContain(
             "Check the wa mlwh serve logs at the times shown, and the cache database's health.",
         );
         expect(items[0]).toMatch(/^Fault:/);
         expect(items[1]).toContain(
-            "400 bad_request (inferred, recorded before error details) on GET /study/:id/latest-data1",
+            "400 bad_request on GET /study/:id/latest-data1",
         );
-        expect(items[2]).toMatch(/^Caller error:404 no_route \(inferred/);
-        expect(items[3]).toMatch(
+        expect(items[2]).toMatch(
             /^Caller error:404 no_route on GET \(no matching route\)1/,
         );
 
         const region = section("Needs attention");
 
-        expect(region.textContent).toContain("15 faults · 3 caller errors");
+        expect(region.textContent).toContain("15 faults · 1 caller error");
         expect(region.textContent).toContain(
-            "Expected lookup misses are not problems: 21 under Expected outcomes and 444 under Older errors.",
+            "Expected lookup misses are not problems: 21 under Expected outcomes.",
         );
     });
 
+    it("ignores the errors recorded before error details", async () => {
+        await renderView(anonSummary({ filter: {} }), "30d");
+
+        expect(kpi("Faults").value).toBe("0");
+        expect(kpi("Faults").detail).toBe("0.0% of requests · 1 caller error");
+        expect(attentionItems()).toEqual([
+            expect.stringMatching(
+                /^Caller error:404 no_route on GET \(no matching route\)1/,
+            ),
+        ]);
+        expect(section("Needs attention").textContent).toContain(
+            "0 faults · 1 caller error",
+        );
+        expect(screen.queryAllByTestId("fault-marker")).toHaveLength(0);
+        expect(section("Endpoints").textContent).not.toContain("faults");
+        expect(document.body.textContent).not.toContain("inferred");
+        expect(
+            screen.queryByRole("region", { name: /Older errors/ }),
+        ).toBeNull();
+        expect(
+            screen.getByText(
+                "461 errors recorded before error details are not shown.",
+            ),
+        ).toBeTruthy();
+    });
+
     it("expands a row into its routes and lists unmatched paths for no_route", async () => {
-        await renderView(anonSummary(), "30d");
+        await renderView(detailedAnon(), "30d");
 
         const row = document.getElementById("err-caller-404-no_route")!;
 
@@ -517,14 +580,16 @@ describe("usage Needs attention", () => {
             within(row).getByRole("group", { name: "GET (no matching route)" }),
         ).toBeTruthy();
 
-        const faults = document.getElementById("err-fault-502-legacy")!;
+        const faults = document.getElementById(
+            "err-fault-502-upstream_impaired",
+        )!;
 
         expect(
             within(faults)
                 .getAllByRole("group")
                 .map((group) => group.id),
         ).toContain(
-            "err-fault-502-legacy-GET-export-_children-_parent_kind-_parent_id",
+            "err-fault-502-upstream_impaired-GET-export-_children-_parent_kind-_parent_id",
         );
     });
 
@@ -579,7 +644,7 @@ describe("usage Needs attention", () => {
         );
 
         expect(section("Needs attention").textContent).toContain(
-            "Showing the 1 largest error groups (2 of 483 errors).",
+            "Showing the 1 largest error groups (2 of 22 errors).",
         );
     });
 
@@ -640,7 +705,7 @@ describe("usage Needs attention", () => {
 
 describe("usage activity and changes", () => {
     it("clips the chart to the records and marks faults", async () => {
-        await renderView(anonSummary(), "30d");
+        await renderView(detailedAnon(), "30d");
 
         const region = section("Activity");
 
@@ -650,7 +715,7 @@ describe("usage activity and changes", () => {
         expect(screen.getAllByTestId("activity-column")).toHaveLength(2);
         expect(screen.getAllByTestId("fault-marker")).toHaveLength(2);
         expect(within(region).getByRole("img").getAttribute("aria-label")).toBe(
-            "Requests per day from 20 Oct to 21 Oct: 1,578 requests, peak 859 at 21 Oct. 15 faults, 3 caller errors.",
+            "Requests per day from 20 Oct to 21 Oct: 1,578 requests, peak 859 at 21 Oct. 15 faults, 1 caller error.",
         );
 
         const table = within(region).getByRole("table");
@@ -834,7 +899,7 @@ describe("usage ranked panels", () => {
     });
 
     it("groups endpoints by first segment with fault-aware badges", async () => {
-        await renderView(anonSummary({ filter: {} }), "30d");
+        await renderView({ ...detailedAnon(), filter: {} }, "30d");
 
         const endpoints = section("Endpoints");
 
@@ -862,7 +927,7 @@ describe("usage ranked panels", () => {
         });
 
         expect(badge.getAttribute("href")).toBe(
-            "#err-fault-502-legacy-GET-export-_children-_parent_kind-_parent_id",
+            "#err-fault-502-upstream_impaired-GET-export-_children-_parent_kind-_parent_id",
         );
     });
 
@@ -967,12 +1032,11 @@ describe("usage ranked panels", () => {
 });
 
 describe("usage collapsed details and deep links", () => {
-    it("collapses expected outcomes, older errors, and sessions", async () => {
+    it("collapses expected outcomes and sessions", async () => {
         await renderView(anonSummary(), "30d");
 
         for (const [name, title] of [
             ["Expected outcomes (21 lookup misses)", "Expected outcomes"],
-            ["Older errors without details (444)", "Older errors"],
             [
                 "Sessions and clients (292 sessions, 2 clients by IP)",
                 "Sessions",
@@ -1005,23 +1069,24 @@ describe("usage collapsed details and deep links", () => {
     });
 
     it("opens the disclosures holding an #err- target", async () => {
-        window.location.hash = "#err-fault-502-legacy-GET-runs-count";
+        window.location.hash =
+            "#err-fault-502-upstream_impaired-GET-runs-count";
 
         try {
-            await renderView(anonSummary(), "30d");
+            await renderView(detailedAnon(), "30d");
 
             const target = document.getElementById(
-                "err-fault-502-legacy-GET-runs-count",
+                "err-fault-502-upstream_impaired-GET-runs-count",
             )!;
 
             expect(target.closest("details")?.open).toBe(true);
 
-            window.location.hash = "#err-older-GET-resolve-study-_id";
+            window.location.hash = "#err-expected-GET-resolve-study-_id";
             window.dispatchEvent(new HashChangeEvent("hashchange"));
 
             expect(
                 document
-                    .getElementById("err-older-GET-resolve-study-_id")!
+                    .getElementById("err-expected-GET-resolve-study-_id")!
                     .closest("details")?.open,
             ).toBe(true);
         } finally {

@@ -4,7 +4,6 @@ import type { UsageSummary } from "@/lib/contracts";
 import {
     expectedGroups,
     expectedPrefix,
-    olderPrefix,
     routeGroups,
 } from "@/lib/usage-derive";
 
@@ -44,8 +43,10 @@ function CollapsedPanel({
 }
 
 export function ExpectedPanel({ summary }: { summary: UsageSummary }) {
-    const { detailed } = expectedGroups(summary.errors ?? []);
-    const routes = routeGroups(detailed, expectedPrefix);
+    const routes = routeGroups(
+        expectedGroups(summary.errors ?? []),
+        expectedPrefix,
+    );
     const total = routes.reduce((sum, route) => sum + route.total, 0);
 
     return (
@@ -63,31 +64,6 @@ export function ExpectedPanel({ summary }: { summary: UsageSummary }) {
             ) : (
                 <RouteErrorList headingLevel={3} routes={routes} />
             )}
-        </CollapsedPanel>
-    );
-}
-
-export function OlderErrorsPanel({ summary }: { summary: UsageSummary }) {
-    const { legacy } = expectedGroups(summary.errors ?? []);
-    const routes = routeGroups(legacy, olderPrefix);
-    const total = routes.reduce((sum, route) => sum + route.total, 0);
-
-    if (total === 0) {
-        return null;
-    }
-
-    return (
-        <CollapsedPanel
-            id="older"
-            title={`Older errors without details (${formatCount(total)})`}
-        >
-            <p className="max-w-3xl text-sm text-muted-foreground">
-                These lookup misses were recorded before the server stored error
-                codes and messages, so they are judged by status alone and have
-                no detail. Faults and caller errors of that age are listed under
-                Needs attention.
-            </p>
-            <RouteErrorList headingLevel={3} routes={routes} />
         </CollapsedPanel>
     );
 }

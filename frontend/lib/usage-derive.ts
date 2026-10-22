@@ -1,7 +1,8 @@
-// Pure derivations for the admin /usage dashboard: severity fallback, error
-// merging, period changes, grouping of agents and endpoints, time buckets,
-// and filter links. Every function reads a parsed GET /usage summary and
-// tolerates the fields older servers omit.
+// Pure derivations for the admin /usage dashboard: severity fallback,
+// dropping errors recorded before error details, error merging, period
+// changes, grouping of agents and endpoints, time buckets, and filter links.
+// Every function reads a parsed GET /usage summary and tolerates the fields
+// older servers omit.
 
 import {
     usageCategorySchema,
@@ -216,27 +217,15 @@ export function attentionRows(errors: UsageErrorGroup[]): AttentionRow[] {
         );
 }
 
-// expectedGroups splits the expected groups into those with error details
-// and those recorded before them.
-export function expectedGroups(errors: UsageErrorGroup[]): {
-    detailed: UsageErrorGroup[];
-    legacy: UsageErrorGroup[];
-} {
-    const expected = errors.filter(
-        (group) => groupSeverity(group) === "expected",
-    );
-
-    return {
-        detailed: expected.filter((group) => group.error_code !== null),
-        legacy: expected.filter((group) => group.error_code === null),
-    };
+// expectedGroups lists the expected groups.
+export function expectedGroups(errors: UsageErrorGroup[]): UsageErrorGroup[] {
+    return errors.filter((group) => groupSeverity(group) === "expected");
 }
 
 export const expectedPrefix = "err-expected";
-export const olderPrefix = "err-older";
 
 // errorAnchors maps each endpoint label with errors to the id of its first
-// listing: attention rows, then expected outcomes, then older errors.
+// listing: attention rows, then expected outcomes.
 export function errorAnchors(errors: UsageErrorGroup[]): Map<string, string> {
     const anchors = new Map<string, string>();
     const add = (routes: AttentionRoute[]) => {
@@ -246,16 +235,109 @@ export function errorAnchors(errors: UsageErrorGroup[]): Map<string, string> {
             }
         }
     };
-    const { detailed, legacy } = expectedGroups(errors);
 
     for (const row of attentionRows(errors)) {
         add(row.routes);
     }
 
-    add(routeGroups(detailed, expectedPrefix));
-    add(routeGroups(legacy, olderPrefix));
+    add(routeGroups(expectedGroups(errors), expectedPrefix));
 
     return anchors;
+}
+
+function legacyCount(breakdown: UsageErrorBreakdown): number {
+    return (
+        breakdown.legacy.fault +
+        breakdown.legacy.caller +
+        breakdown.legacy.expected
+    );
+}
+
+// detailedBreakdown is breakdown without the errors recorded before error
+// details, which the server counts in both its parts and legacy.
+function detailedBreakdown(
+    breakdown: UsageErrorBreakdown,
+): UsageErrorBreakdown {
+    const { legacy } = breakdown;
+
+    return {
+        fault: Math.max(0, breakdown.fault - legacy.fault),
+        caller: Math.max(0, breakdown.caller - legacy.caller),
+        expected: Math.max(0, breakdown.expected - legacy.expected),
+        probe: breakdown.probe,
+        legacy: { fault: 0, caller: 0, expected: 0 },
+    };
+}
+
+type ErrorCounts = {
+    error_rate?: number;
+    error_severity?: UsageErrorBreakdown;
+    errors?: number;
+    requests: number;
+};
+
+// withoutLegacyCounts drops entry's legacy errors from its breakdown and,
+// when it has them, its errors and error rate.
+function withoutLegacyCounts<T extends ErrorCounts>(entry: T): T {
+    const breakdown = entry.error_severity;
+
+    if (!breakdown) {
+        return entry;
+    }
+
+    const result: T = {
+        ...entry,
+        error_severity: detailedBreakdown(breakdown),
+    };
+
+    if (entry.errors !== undefined) {
+        result.errors = Math.max(0, entry.errors - legacyCount(breakdown));
+    }
+
+    if (entry.error_rate !== undefined) {
+        result.error_rate = rate(result.errors ?? 0, entry.requests);
+    }
+
+    return result;
+}
+
+// withoutLegacyErrors drops the errors recorded before error details (code
+// null, counted in each breakdown's legacy), which nobody can act on: their
+// groups go, and every breakdown, errors count, and error rate leaves them
+// out. legacy is how many errors were dropped. A server without
+// totals.error_severity cannot say how many there are, so its summary is
+// returned unchanged.
+export function withoutLegacyErrors(summary: UsageSummary): {
+    legacy: number;
+    summary: UsageSummary;
+} {
+    const totals = summary.totals.error_severity;
+
+    if (!totals) {
+        return { legacy: 0, summary };
+    }
+
+    return {
+        legacy: legacyCount(totals),
+        summary: {
+            ...summary,
+            totals: withoutLegacyCounts(summary.totals),
+            previous_totals: summary.previous_totals
+                ? withoutLegacyCounts(summary.previous_totals)
+                : summary.previous_totals,
+            categories: summary.categories.map(withoutLegacyCounts),
+            endpoints: summary.endpoints.map(withoutLegacyCounts),
+            mcp_tools: summary.mcp_tools.map(withoutLegacyCounts),
+            mcp_agents: summary.mcp_agents.map(withoutLegacyCounts),
+            other_user_agents:
+                summary.other_user_agents.map(withoutLegacyCounts),
+            days: summary.days.map(withoutLegacyCounts),
+            buckets: summary.buckets?.map(withoutLegacyCounts),
+            errors: summary.errors?.filter(
+                (group) => group.error_code !== null,
+            ),
+        },
+    };
 }
 
 // worstSeverity is the most urgent severity with errors in breakdown, or null.
