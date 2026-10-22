@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -83,12 +84,10 @@ var openMLWHSearchRemoteClient = func(_ context.Context, cfg mlwh.RemoteConfig) 
 // `wa mlwh search`. Both *mlwh.RemoteClient and the local *mlwh.Client satisfy
 // it.
 type mlwhSearchClient interface {
-	SearchStudies(ctx context.Context, term string, limit, offset int) ([]mlwh.Study, error)
-	SearchSamples(ctx context.Context, term string, limit, offset int) ([]mlwh.Sample, error)
-	SearchSamplesWithOptions(ctx context.Context, term string, opts mlwh.SampleSearchOptions, limit, offset int) ([]mlwh.Sample, error)
 	CountStudySearch(ctx context.Context, term string) (mlwh.Count, error)
-	CountSampleSearch(ctx context.Context, term string) (mlwh.Count, error)
 	CountSampleSearchWithOptions(ctx context.Context, term string, opts mlwh.SampleSearchOptions) (mlwh.Count, error)
+	SearchStudiesCursor(ctx context.Context, term string, page mlwh.SearchPageOptions) (mlwh.SearchCursorPage[mlwh.Study], error)
+	SearchSamplesCursor(ctx context.Context, term string, opts mlwh.SampleSearchOptions, page mlwh.SearchPageOptions) (mlwh.SearchCursorPage[mlwh.Sample], error)
 	Close() error
 }
 
@@ -125,6 +124,7 @@ func newMLWHSearchCommand() *cobra.Command {
 		deliverablesOnly bool
 		limit            int
 		offset           int
+		cursor           string
 		jsonOut          bool
 		withData         bool
 	)
@@ -147,23 +147,37 @@ func newMLWHSearchCommand() *cobra.Command {
 			"By default both studies and samples are searched; pass --type to",
 			"restrict to one. Sample searches can be narrowed with --organism,",
 			"--library-type, --qc pass|fail|pending and --deliverables-only. Use",
-			"--limit/--offset to page results and --json for a single JSON object",
-			"suitable for piping into jq. Each section reports a total match count;",
-			"a very common sample term reports its count as a floor (e.g. 10000+).",
+			"--limit to size a page and --json for a single JSON object suitable",
+			"for piping into jq. Each section reports a total match count; a very",
+			"common sample term reports its count as a floor (e.g. 10000+).",
+			"",
+			"To page, pass the next cursor a page reports to --cursor, with the",
+			"same term, --type study or sample, and options. A cursor continues",
+			"just after the last row of the page that gave it (like ElasticSearch's",
+			"search_after), so later pages do not re-scan earlier ones, and rows",
+			"are never repeated or skipped when the cache syncs between pages. If",
+			"it has synced since the first page, the page carries a warning: rows",
+			"that newly match before the cursor are missed until a new search.",
+			"--offset still skips rows instead, but cannot be combined with",
+			"--cursor.",
 			"",
 			"The --json object has two parts:",
 			`  {"query": {"term", "type", "words", "organism", "library_type", "qc",`,
 			`             "deliverables_only", "with_data", "limit", "offset",`,
+			`             "cursor", "next": {"studies", "samples"},`,
 			`             "cache_synced_at", "wa_version"},`,
 			`   "results": {"studies": {"count", "results": [...]},`,
 			`               "samples": {"count", "results": [...]}},`,
-			`   "timed_out": true}`,
+			`   "timed_out": true, "warnings": [...]}`,
 			"query echoes the term and the options that shaped the results (type",
-			"is study, sample or both; organism, library_type and qc appear only",
-			"when given), cache_synced_at (the oldest sync time across the cache's",
-			"tables) and wa_version (this client's version). results has a section",
-			"per requested type. timed_out appears only when the search ran out of",
-			"time, so results are incomplete.",
+			"is study, sample or both; organism, library_type, qc and cursor",
+			"appear only when given), next (per requested type, the cursor for",
+			"its next page, or null when no rows remain), cache_synced_at (the",
+			"oldest sync time across the cache's tables) and wa_version (this",
+			"client's version). results has a section per requested type.",
+			"timed_out appears only when the search ran out of time, so results",
+			"are incomplete; warnings only when there is one, such as a cache sync",
+			"since the first page.",
 			"",
 			"Add --with-data to list each returned sample's sequencing data under",
 			"it: one row per product that has an iRODS object (the sample's",
@@ -190,6 +204,14 @@ func newMLWHSearchCommand() *cobra.Command {
 			"",
 			"  # Page sample matches against a local operator cache",
 			"  WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite wa mlwh search musculus --type sample --limit 100",
+			"",
+			"  # Loop over every sample match, page by page",
+			"  cursor=",
+			"  while page=$(wa mlwh search musculus --type sample --json ${cursor:+--cursor \"$cursor\"}); do",
+			"    echo \"$page\" | jq -c '.results.samples.results[]'",
+			"    cursor=$(echo \"$page\" | jq -r '.query.next.samples // empty')",
+			"    [ -n \"$cursor\" ] || break",
+			"  done",
 		}, "\n"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
@@ -199,6 +221,11 @@ func newMLWHSearchCommand() *cobra.Command {
 			term := strings.TrimSpace(args[0])
 			if term == "" {
 				return usageError("usage: wa mlwh search <term>")
+			}
+
+			cursor = strings.TrimSpace(cursor)
+			if err := validateSearchCursorFlags(cursor, typeFlag, offset); err != nil {
+				return err
 			}
 
 			// Bound the whole invocation so a slow term cannot hang the CLI; the
@@ -231,7 +258,7 @@ func newMLWHSearchCommand() *cobra.Command {
 				DeliverablesOnly: deliverablesOnly,
 			}
 
-			return runMLWHSearch(ctx, client, cmd.OutOrStdout(), term, typeFlag, opts, searchPage{limit: limit, offset: offset, withData: withData}, jsonOut)
+			return runMLWHSearch(ctx, client, cmd.OutOrStdout(), term, typeFlag, opts, searchPage{limit: limit, offset: offset, cursor: cursor, withData: withData}, jsonOut)
 		},
 	}
 
@@ -244,15 +271,32 @@ func newMLWHSearchCommand() *cobra.Command {
 	command.Flags().BoolVar(&deliverablesOnly, "deliverables-only", false, "restrict sample matches to deliverable data objects")
 	command.Flags().IntVar(&limit, "limit", 50, "maximum number of results to return per kind")
 	command.Flags().IntVar(&offset, "offset", 0, "number of results to skip per kind (for pagination)")
+	command.Flags().StringVar(&cursor, "cursor", "", "continue a --type study or --type sample search after the page whose next cursor this is")
 	command.Flags().BoolVar(&jsonOut, "json", false, "emit a single JSON object instead of human-readable text")
 	command.Flags().BoolVar(&withData, "with-data", false, "list each returned sample's products that have an iRODS object (study, platform, run, lane, tag, manual QC, iRODS path)")
 
 	return command
 }
 
-func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, term, typeFlag string, sampleOpts mlwh.SampleSearchOptions, page searchPage, jsonOut bool) error {
-	limit, offset := page.limit, page.offset
+// validateSearchCursorFlags rejects a --cursor without a single --type (each
+// kind pages with its own cursor) or combined with --offset.
+func validateSearchCursorFlags(cursor, typeFlag string, offset int) error {
+	if cursor == "" {
+		return nil
+	}
 
+	wantStudies, wantSamples, err := searchTypeSelection(typeFlag)
+	if err == nil && wantStudies && wantSamples {
+		return usageError("--cursor needs --type study or --type sample: each kind pages with its own cursor")
+	}
+	if offset != 0 {
+		return usageError("--cursor and --offset cannot be combined: continue with the cursor alone")
+	}
+
+	return nil
+}
+
+func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, term, typeFlag string, sampleOpts mlwh.SampleSearchOptions, page searchPage, jsonOut bool) error {
 	wantStudies, wantSamples, err := searchTypeSelection(typeFlag)
 	if err != nil {
 		return err
@@ -271,13 +315,13 @@ func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, 
 	// would only time out again) while any already-collected section is kept. A
 	// non-timeout error still surfaces. Rendering then stays valid in both modes.
 	if wantStudies && !report.TimedOut {
-		if err := addStudySearchSection(ctx, client, &report, term, limit, offset); err != nil {
+		if err := addStudySearchSection(ctx, client, &report, term, page); err != nil {
 			return err
 		}
 	}
 
 	if wantSamples && !report.TimedOut {
-		if err := addSampleSearchSection(ctx, client, &report, term, sampleOpts, limit, offset); err != nil {
+		if err := addSampleSearchSection(ctx, client, &report, term, sampleOpts, page); err != nil {
 			return err
 		}
 	}
@@ -290,12 +334,14 @@ func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, 
 
 	if jsonOut {
 		query := newSearchQuery(term, typeFlag, sampleOpts, page)
+		query.Next = report.nextCursors()
 		query.CacheSyncedAt = mlwhCacheSyncedAt(ctx, client)
 
 		return writeMLWHJSONDocument(out, "search report", mlwhJSONDocument[searchQuery, searchReport]{
 			Query:    query,
 			Results:  report,
 			TimedOut: report.TimedOut,
+			Warnings: report.warnings,
 		})
 	}
 
@@ -327,8 +373,8 @@ func sampleSearchHasExactFilter(opts mlwh.SampleSearchOptions) bool {
 // addStudySearchSection runs the study search and folds the result into report.
 // A deadline error is recorded as report.TimedOut (section left nil, partial
 // results preserved); any other error is returned unchanged.
-func addStudySearchSection(ctx context.Context, client mlwhSearchClient, report *searchReport, term string, limit, offset int) error {
-	section, emptyCache, err := buildStudySearchSection(ctx, client, term, limit, offset)
+func addStudySearchSection(ctx context.Context, client mlwhSearchClient, report *searchReport, term string, page searchPage) error {
+	section, emptyCache, err := buildStudySearchSection(ctx, client, term, page)
 	if err != nil {
 		if isSearchTimeoutError(err) {
 			report.TimedOut = true
@@ -341,14 +387,16 @@ func addStudySearchSection(ctx context.Context, client mlwhSearchClient, report 
 
 	report.Studies = section
 	report.cacheUnavailable = report.cacheUnavailable || emptyCache
+	report.addPageWarnings(section.stale)
 
 	return nil
 }
 
-func buildStudySearchSection(ctx context.Context, client mlwhSearchClient, term string, limit, offset int) (*studySearchSection, bool, error) {
+func buildStudySearchSection(ctx context.Context, client mlwhSearchClient, term string, page searchPage) (*studySearchSection, bool, error) {
 	emptyCache := false
 
-	studies, err := client.SearchStudies(ctx, term, limit, offset)
+	result, err := client.SearchStudiesCursor(ctx, term, page.options())
+	studies := result.Items
 	if err != nil {
 		if !isEmptyCacheSearchError(err) {
 			return nil, false, fmt.Errorf("search studies for %q: %w", term, err)
@@ -370,7 +418,7 @@ func buildStudySearchSection(ctx context.Context, client mlwhSearchClient, term 
 		studies = []mlwh.Study{}
 	}
 
-	return &studySearchSection{Count: count.Count, Results: studies}, emptyCache, nil
+	return &studySearchSection{Count: count.Count, Results: studies, next: result.NextCursor, stale: result.Stale}, emptyCache, nil
 }
 
 // isEmptyCacheSearchError reports whether err is the never-synced/empty-cache
@@ -392,8 +440,8 @@ func isSearchTimeoutError(err error) bool {
 
 // addSampleSearchSection runs the sample search and folds the result into report,
 // mirroring addStudySearchSection's timeout/partial-results handling.
-func addSampleSearchSection(ctx context.Context, client mlwhSearchClient, report *searchReport, term string, opts mlwh.SampleSearchOptions, limit, offset int) error {
-	section, emptyCache, err := buildSampleSearchSection(ctx, client, term, opts, limit, offset)
+func addSampleSearchSection(ctx context.Context, client mlwhSearchClient, report *searchReport, term string, opts mlwh.SampleSearchOptions, page searchPage) error {
+	section, emptyCache, err := buildSampleSearchSection(ctx, client, term, opts, page)
 	if err != nil {
 		if isSearchTimeoutError(err) {
 			report.TimedOut = true
@@ -406,14 +454,16 @@ func addSampleSearchSection(ctx context.Context, client mlwhSearchClient, report
 
 	report.Samples = section
 	report.cacheUnavailable = report.cacheUnavailable || emptyCache
+	report.addPageWarnings(section.stale)
 
 	return nil
 }
 
-func buildSampleSearchSection(ctx context.Context, client mlwhSearchClient, term string, opts mlwh.SampleSearchOptions, limit, offset int) (*sampleSearchSection, bool, error) {
+func buildSampleSearchSection(ctx context.Context, client mlwhSearchClient, term string, opts mlwh.SampleSearchOptions, page searchPage) (*sampleSearchSection, bool, error) {
 	emptyCache := false
 
-	samples, err := client.SearchSamplesWithOptions(ctx, term, opts, limit, offset)
+	result, err := client.SearchSamplesCursor(ctx, term, opts, page.options())
+	samples := result.Items
 	if err != nil {
 		if !isEmptyCacheSearchError(err) {
 			return nil, false, fmt.Errorf("search samples for %q: %w", term, err)
@@ -436,7 +486,7 @@ func buildSampleSearchSection(ctx context.Context, client mlwhSearchClient, term
 		results[index] = searchSample{Sample: sample}
 	}
 
-	return &sampleSearchSection{Count: count.Count, Results: results}, emptyCache, nil
+	return &sampleSearchSection{Count: count.Count, Results: results, next: result.NextCursor, stale: result.Stale}, emptyCache, nil
 }
 
 func writeSearchReportText(out io.Writer, report searchReport) {
@@ -444,10 +494,16 @@ func writeSearchReportText(out io.Writer, report searchReport) {
 
 	if report.Studies != nil {
 		writeStudySearchSection(out, report.Studies)
+		writeSearchNextPageHint(out, "studies", "study", report.Studies.next)
 	}
 
 	if report.Samples != nil {
 		writeSampleSearchSection(out, report.Samples)
+		writeSearchNextPageHint(out, "samples", "sample", report.Samples.next)
+	}
+
+	for _, warning := range report.warnings {
+		_, _ = fmt.Fprintf(out, "\nwarning: %s\n", warning)
 	}
 
 	if report.cacheUnavailable {
@@ -471,6 +527,15 @@ func writeStudySearchSection(out io.Writer, section *studySearchSection) {
 		writeSearchField(out, "accession_number", study.AccessionNumber)
 		_, _ = fmt.Fprintln(out)
 	}
+}
+
+// writeSearchNextPageHint tells the reader how to get a section's next page.
+func writeSearchNextPageHint(out io.Writer, section, searchType, next string) {
+	if next == "" {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "  more %s: add --type %s --cursor %s\n", section, searchType, next)
 }
 
 // formatSearchCount renders a count header value, appending "+" when a sample
@@ -511,7 +576,12 @@ func writeSampleSearchSection(out io.Writer, section *sampleSearchSection) {
 type searchPage struct {
 	limit    int
 	offset   int
+	cursor   string
 	withData bool
+}
+
+func (page searchPage) options() mlwh.SearchPageOptions {
+	return mlwh.SearchPageOptions{Limit: page.limit, Offset: page.offset, Cursor: page.cursor}
 }
 
 // studySearchSection is the JSON shape of the studies block. Results is always a
@@ -521,6 +591,8 @@ type searchPage struct {
 type studySearchSection struct {
 	Count   int          `json:"count"`
 	Results []mlwh.Study `json:"results"`
+	next    string
+	stale   bool
 }
 
 // sampleSearchSection is the JSON shape of the samples block; see
@@ -528,6 +600,8 @@ type studySearchSection struct {
 type sampleSearchSection struct {
 	Count   int            `json:"count"`
 	Results []searchSample `json:"results"`
+	next    string
+	stale   bool
 }
 
 // searchQuery is the --json "query" object of `wa mlwh search`: the term, the
@@ -545,6 +619,10 @@ type searchQuery struct {
 	WithData         bool   `json:"with_data"`
 	Limit            int    `json:"limit"`
 	Offset           int    `json:"offset"`
+	Cursor           string `json:"cursor,omitempty"`
+	// Next maps each searched kind ("studies", "samples") to the cursor for
+	// its next page, or null when no rows remain.
+	Next map[string]*string `json:"next"`
 	// CacheSyncedAt is the oldest last_run across the cache's synced tables.
 	CacheSyncedAt string `json:"cache_synced_at,omitempty"`
 	WAVersion     string `json:"wa_version"`
@@ -567,6 +645,8 @@ func newSearchQuery(term, typeFlag string, opts mlwh.SampleSearchOptions, page s
 		WithData:         page.withData,
 		Limit:            page.limit,
 		Offset:           page.offset,
+		Cursor:           page.cursor,
+		Next:             map[string]*string{},
 		WAVersion:        waBuildVersion(),
 	}
 }
@@ -589,4 +669,35 @@ type searchReport struct {
 	TimedOut         bool                 `json:"-"`
 	cacheUnavailable bool
 	dataTimedOut     bool
+	warnings         []string
+}
+
+// addPageWarnings records the stale-cursor warning once when a section's page
+// continued a cursor across a cache sync.
+func (report *searchReport) addPageWarnings(stale bool) {
+	if stale && !slices.Contains(report.warnings, mlwh.SearchCursorStaleWarning) {
+		report.warnings = append(report.warnings, mlwh.SearchCursorStaleWarning)
+	}
+}
+
+// nextCursors maps each searched section to its next-page cursor, or nil
+// when it has no more rows.
+func (report searchReport) nextCursors() map[string]*string {
+	next := map[string]*string{}
+	if report.Studies != nil {
+		next["studies"] = optionalCursor(report.Studies.next)
+	}
+	if report.Samples != nil {
+		next["samples"] = optionalCursor(report.Samples.next)
+	}
+
+	return next
+}
+
+func optionalCursor(cursor string) *string {
+	if cursor == "" {
+		return nil
+	}
+
+	return &cursor
 }

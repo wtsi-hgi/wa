@@ -12,7 +12,7 @@ for study-based search.
 ## How To Reach It
 
 - HTTP: `$MLWH_URL/<route>`. The full contract is `GET /openapi.json`
-  (`info.version` is the MLWH API version, 1.14.0 at the time of writing) and
+  (`info.version` is the MLWH API version, 1.15.0 at the time of writing) and
   the generated `MLWH_API_REFERENCE.md`.
 - CLI: `WA_MLWH_SERVER_URL=$MLWH_URL "$RUN/wa" mlwh <subcommand>`, or
   `--server $MLWH_URL`.

@@ -116,6 +116,26 @@ var sampleSearchTokenPageSQL = `SELECT token, id_sample_tmp FROM ` + sampleSearc
 var sampleSearchTokenPageOpenSQL = `SELECT token, id_sample_tmp FROM ` + sampleSearchTokenTable +
 	` WHERE ` + sampleTokenPrefixLowerClause + ` ORDER BY token, id_sample_tmp LIMIT ? OFFSET ?`
 
+// sampleSearchTokenAfterClause continues the (token, id_sample_tmp) index order
+// strictly after a search cursor's key. It is written as an OR of the two
+// index ranges rather than a row-value comparison so MySQL's range optimizer
+// seeks both (a row-value `>` is not range-optimised there); the token range
+// before it starts at the cursor's token.
+const sampleSearchTokenAfterClause = ` AND (token > ? OR (token = ? AND id_sample_tmp > ?))`
+
+// sampleSearchTokenPageAfterSQL is the keyset form of sampleSearchTokenPageSQL:
+// the half-open range is bound to [cursor token, upper) and
+// sampleSearchTokenAfterClause drops the rows at or before the cursor.
+var sampleSearchTokenPageAfterSQL = `SELECT token, id_sample_tmp FROM ` + sampleSearchTokenTable +
+	` WHERE ` + sampleTokenPrefixRangeClause + sampleSearchTokenAfterClause +
+	` ORDER BY token, id_sample_tmp LIMIT ? OFFSET ?`
+
+// sampleSearchTokenPageOpenAfterSQL is the keyset form of
+// sampleSearchTokenPageOpenSQL.
+var sampleSearchTokenPageOpenAfterSQL = `SELECT token, id_sample_tmp FROM ` + sampleSearchTokenTable +
+	` WHERE ` + sampleTokenPrefixLowerClause + sampleSearchTokenAfterClause +
+	` ORDER BY token, id_sample_tmp LIMIT ? OFFSET ?`
+
 // sampleSearchByIDsSQLPrefix selects full sample rows by id_sample_tmp (the
 // matching samples a prefix page resolved to), scoped to SQSCP and ordered by
 // id_sample_tmp; the id placeholders and ORDER BY are appended per call.
@@ -166,11 +186,33 @@ var sampleDeliverablePageSQL = `SELECT deliverable.id_sample_tmp FROM (` + sampl
 	`) AS deliverable INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = deliverable.id_sample_tmp ` +
 	`WHERE sample_mirror.id_lims = 'SQSCP' ORDER BY deliverable.id_sample_tmp LIMIT ? OFFSET ?`
 
+// sampleDeliverablePageAfterSQL is the keyset form of sampleDeliverablePageSQL:
+// only samples after the cursor's id_sample_tmp (a primary-key range on
+// sample_mirror).
+var sampleDeliverablePageAfterSQL = `SELECT deliverable.id_sample_tmp FROM (` + sampleDeliverableAllUnionSQL +
+	`) AS deliverable INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = deliverable.id_sample_tmp ` +
+	`WHERE sample_mirror.id_lims = 'SQSCP' AND sample_mirror.id_sample_tmp > ? ORDER BY deliverable.id_sample_tmp LIMIT ? OFFSET ?`
+
 const sampleLibraryTypePageSQL = `SELECT DISTINCT id_sample_tmp FROM library_samples WHERE pipeline_id_lims = ? ORDER BY id_sample_tmp LIMIT ? OFFSET ?`
+
+// sampleLibraryTypePageAfterSQL is the keyset form of sampleLibraryTypePageSQL.
+const sampleLibraryTypePageAfterSQL = `SELECT DISTINCT id_sample_tmp FROM library_samples WHERE pipeline_id_lims = ? AND id_sample_tmp > ? ORDER BY id_sample_tmp LIMIT ? OFFSET ?`
 
 const sampleSQSCPPageSQL = `SELECT id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT ? OFFSET ?`
 
+// sampleSQSCPPageAfterSQL is the keyset form of sampleSQSCPPageSQL: a
+// primary-key range after the cursor's id_sample_tmp.
+const sampleSQSCPPageAfterSQL = `SELECT id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp > ? ORDER BY id_sample_tmp LIMIT ? OFFSET ?`
+
 const sampleOrganismCommonNamePageSQL = `SELECT id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' AND common_name = ? ORDER BY id_sample_tmp LIMIT ?`
+
+// sampleOrganismCommonNamePageAfterSQL is the keyset form of
+// sampleOrganismCommonNamePageSQL. The common_name index carries the primary
+// key, so (common_name = ?, id_sample_tmp > ?) is one index range already in
+// id order; the MySQL hint (a comment to SQLite) keeps the optimizer from an
+// index-merge intersection with the primary key, which reads both ranges
+// whole and sorts them.
+const sampleOrganismCommonNamePageAfterSQL = `SELECT /*+ INDEX(sample_mirror sample_mirror_common_name_idx) */ id_sample_tmp FROM sample_mirror WHERE id_lims = 'SQSCP' AND common_name = ? AND id_sample_tmp > ? ORDER BY id_sample_tmp LIMIT ?`
 
 const sampleQCRollupVerdictSQL = `CASE WHEN MIN(qc) = 0 THEN '` + qcFail + `' WHEN SUM(CASE WHEN qc IS NULL THEN 1 ELSE 0 END) > 0 THEN '` + qcPending + `' ELSE '` + qcPass + `' END`
 
@@ -200,6 +242,11 @@ var sampleFullPrefixWhere = `id_lims = 'SQSCP' AND ` + likeContainsClause(sample
 var sampleFullPrefixPageSQL = `SELECT id_sample_tmp FROM sample_mirror WHERE ` + sampleFullPrefixWhere +
 	` ORDER BY id_sample_tmp LIMIT ?`
 
+// sampleFullPrefixPageAfterSQL is the keyset form of sampleFullPrefixPageSQL:
+// only samples after the cursor's id_sample_tmp.
+var sampleFullPrefixPageAfterSQL = `SELECT id_sample_tmp FROM sample_mirror WHERE ` + sampleFullPrefixWhere +
+	` AND id_sample_tmp > ? ORDER BY id_sample_tmp LIMIT ?`
+
 // sampleFullPrefixCountSQL counts the distinct full-value-prefix samples bounded by
 // sampleSearchCountCap: the inner SELECT over the OR'd prefix predicates is capped
 // with LIMIT (no ORDER BY, so a dense prefix stops as soon as the cap is reached),
@@ -220,6 +267,12 @@ var studySearchFromWhere = ` FROM study_mirror WHERE ` + studySearchWhereClause
 // studySearchSQL selects full study rows matching the term, ordered for stable
 // pagination (id_study_lims with an id_study_tmp tie-breaker).
 var studySearchSQL = `SELECT ` + studyMirrorSelectColumns + studySearchFromWhere +
+	` ORDER BY id_study_lims, id_study_tmp LIMIT ? OFFSET ?`
+
+// studySearchAfterSQL is the keyset form of studySearchSQL: only studies after
+// the cursor's (id_study_lims, id_study_tmp) in the same order.
+var studySearchAfterSQL = `SELECT ` + studyMirrorSelectColumns + studySearchFromWhere +
+	` AND (id_study_lims > ? OR (id_study_lims = ? AND id_study_tmp > ?))` +
 	` ORDER BY id_study_lims, id_study_tmp LIMIT ? OFFSET ?`
 
 // studySearchCountSQL counts the study rows SearchStudies would return for the
@@ -250,48 +303,109 @@ func likeContainsClause(fields []string) string {
 	return "(" + strings.Join(predicates, " OR ") + ")"
 }
 
-func (c *Client) sampleFilterBaseSource(ctx context.Context, db *sql.DB, filters sampleFilterFamily, base sampleFilterBase) (sampleIDPageSource, error) {
+func (c *Client) sampleFilterBaseSource(ctx context.Context, db *sql.DB, filters sampleFilterFamily, base sampleFilterBase, after sampleSearchAfter) (sampleKeyPageSource, error) {
 	switch base {
 	case sampleFilterBaseOrganism:
-		return func(limit, offset int) ([]int64, error) {
-			return c.sampleOrganismSearchIDs(ctx, db, filters.Organism, limit, offset)
+		return func(limit, offset int) ([]sampleSearchKey, error) {
+			return idKeys(c.sampleOrganismSearchIDs(ctx, db, filters.Organism, limit, offset, after))
 		}, nil
 	case sampleFilterBaseLibraryType:
-		return func(limit, offset int) ([]int64, error) {
-			return c.sampleLibraryTypeSearchIDs(ctx, db, filters.LibraryType, limit, offset)
+		return func(limit, offset int) ([]sampleSearchKey, error) {
+			return idKeys(c.sampleLibraryTypeSearchIDs(ctx, db, filters.LibraryType, limit, offset, after))
 		}, nil
 	case sampleFilterBaseQC:
-		return func(limit, offset int) ([]int64, error) {
-			return c.sampleQCSearchIDs(ctx, db, filters.QC, limit, offset)
+		return func(limit, offset int) ([]sampleSearchKey, error) {
+			return idKeys(c.sampleQCSearchIDs(ctx, db, filters.QC, limit, offset, after))
 		}, nil
 	case sampleFilterBaseDeliverable:
-		return func(limit, offset int) ([]int64, error) {
-			return queryIDColumn(ctx, db, sampleDeliverablePageSQL, limit, offset)
+		return func(limit, offset int) ([]sampleSearchKey, error) {
+			if after.set {
+				return idKeys(queryIDColumn(ctx, db, sampleDeliverablePageAfterSQL, after.key.id, limit, offset))
+			}
+
+			return idKeys(queryIDColumn(ctx, db, sampleDeliverablePageSQL, limit, offset))
 		}, nil
 	default:
 		return nil, ErrUnsupportedIdentifier
 	}
 }
 
+// sampleSearchKey is one matching sample's position in a sample search's sort
+// order: its id_sample_tmp, plus, for the single-token --words path that
+// streams the (token, id_sample_tmp) index, the token it was matched under
+// (empty on every id-ordered path). A search cursor carries the key of the
+// last sample a page returned.
+type sampleSearchKey struct {
+	token string
+	id    int64
+}
+
+// sampleSearchAfter is a keyset lower bound: when set, a sample search returns
+// only samples whose key sorts strictly after key.
+type sampleSearchAfter struct {
+	key sampleSearchKey
+	set bool
+}
+
+// idKeys wraps an id-ordered source's ids as sample search keys.
+func idKeys(ids []int64, err error) ([]sampleSearchKey, error) {
+	if err != nil {
+		return nil, err
+	}
+
+	keys := make([]sampleSearchKey, len(ids))
+	for index, id := range ids {
+		keys[index] = sampleSearchKey{id: id}
+	}
+
+	return keys, nil
+}
+
+// keyIDs returns the ids of keys in order.
+func keyIDs(keys []sampleSearchKey) []int64 {
+	ids := make([]int64, len(keys))
+	for index, key := range keys {
+		ids[index] = key.id
+	}
+
+	return ids
+}
+
+type sampleKeyPageSource func(limit, offset int) ([]sampleSearchKey, error)
+
 type sampleIDPageSource func(limit, offset int) ([]int64, error)
 
-func (c *Client) filterSampleCandidatePages(ctx context.Context, db *sql.DB, source sampleIDPageSource, filters sampleFilterFamily, limit, offset int) ([]int64, error) {
+func (c *Client) filterSampleCandidatePages(ctx context.Context, db *sql.DB, source sampleKeyPageSource, filters sampleFilterFamily, limit, offset int) ([]sampleSearchKey, error) {
 	if filters.empty() {
 		return source(limit, offset)
 	}
 
-	return filterSampleIDPages(source, func(ids []int64) ([]int64, error) {
+	return filterSampleKeyPages(source, func(ids []int64) ([]int64, error) {
 		return c.filterSampleIDsByFamily(ctx, db, ids, filters)
 	}, limit, offset)
 }
 
 func filterSampleIDPages(source sampleIDPageSource, filter sampleIDFilter, limit, offset int) ([]int64, error) {
+	keys, err := filterSampleKeyPages(func(limit, offset int) ([]sampleSearchKey, error) {
+		return idKeys(source(limit, offset))
+	}, filter, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	return keyIDs(keys), nil
+}
+
+// filterSampleKeyPages pages source in sampleFilterFetchChunk-sized raw chunks,
+// keeps the keys whose ids filter keeps, and returns the page
+// [offset, offset+limit) of the kept keys in source order.
+func filterSampleKeyPages(source sampleKeyPageSource, filter sampleIDFilter, limit, offset int) ([]sampleSearchKey, error) {
 	need := offset + limit
 	if need <= 0 {
 		return nil, nil
 	}
 
-	filtered := make([]int64, 0, need)
+	filtered := make([]sampleSearchKey, 0, need)
 	rawOffset := 0
 	for len(filtered) < need {
 		candidates, err := source(sampleFilterFetchChunk, rawOffset)
@@ -302,11 +416,11 @@ func filterSampleIDPages(source sampleIDPageSource, filter sampleIDFilter, limit
 			break
 		}
 
-		kept, err := filter(candidates)
+		kept, err := filter(keyIDs(candidates))
 		if err != nil {
 			return nil, err
 		}
-		filtered = append(filtered, kept...)
+		filtered = append(filtered, keysForIDs(candidates, kept)...)
 		if len(candidates) < sampleFilterFetchChunk {
 			break
 		}
@@ -314,10 +428,27 @@ func filterSampleIDPages(source sampleIDPageSource, filter sampleIDFilter, limit
 		rawOffset += len(candidates)
 	}
 	if offset >= len(filtered) {
-		return []int64{}, nil
+		return []sampleSearchKey{}, nil
 	}
 
 	return filtered[offset:min(need, len(filtered))], nil
+}
+
+// keysForIDs returns the keys whose id is in kept, in keys order.
+func keysForIDs(keys []sampleSearchKey, kept []int64) []sampleSearchKey {
+	keptSet := make(map[int64]struct{}, len(kept))
+	for _, id := range kept {
+		keptSet[id] = struct{}{}
+	}
+
+	out := make([]sampleSearchKey, 0, len(kept))
+	for _, key := range keys {
+		if _, ok := keptSet[key.id]; ok {
+			out = append(out, key)
+		}
+	}
+
+	return out
 }
 
 type sampleIDFilter func([]int64) ([]int64, error)
@@ -549,9 +680,9 @@ func sampleSearchShouldShortCircuit(term string, filters sampleFilterFamily) boo
 	return filters.empty() && len(term) < searchTermMinLength
 }
 
-func (c *Client) sampleFilterFamilyIDs(ctx context.Context, db *sql.DB, filters sampleFilterFamily, limit, offset int) ([]int64, error) {
+func (c *Client) sampleFilterFamilyKeys(ctx context.Context, db *sql.DB, filters sampleFilterFamily, limit, offset int, after sampleSearchAfter) ([]sampleSearchKey, error) {
 	base := filters.base()
-	source, err := c.sampleFilterBaseSource(ctx, db, filters, base)
+	source, err := c.sampleFilterBaseSource(ctx, db, filters, base, after)
 	if err != nil {
 		return nil, err
 	}
@@ -986,17 +1117,17 @@ func sampleDeliverableFilterQuery(ids []int64) (string, []any) {
 // in id order, so merging their bottom-need slices yields the bottom-need of the
 // union (any id among the union's smallest need lies among each source's smallest
 // need). Callers slice [offset:offset+limit] for a page, or pass need=cap to count.
-func (c *Client) sampleSearchUnionIDs(ctx context.Context, db *sql.DB, term string, tokens []string, need int) ([]int64, error) {
+func (c *Client) sampleSearchUnionIDs(ctx context.Context, db *sql.DB, term string, tokens []string, need int, after sampleSearchAfter) ([]int64, error) {
 	if need <= 0 {
 		return nil, nil
 	}
 
-	prefixIDs, err := c.sampleFullPrefixPage(ctx, db, term, need)
+	prefixIDs, err := c.sampleFullPrefixPage(ctx, db, term, need, after)
 	if err != nil {
 		return nil, err
 	}
 
-	wordIDs, err := c.sampleWordTokenAnchorPage(ctx, db, tokens, need)
+	wordIDs, err := c.sampleWordTokenAnchorPage(ctx, db, tokens, need, after)
 	if err != nil {
 		return nil, err
 	}
@@ -1009,15 +1140,17 @@ func (c *Client) sampleSearchUnionIDs(ctx context.Context, db *sql.DB, term stri
 // ascending id order (sampleFullPrefixPageSQL). The bound pattern is the escaped
 // term plus a single '%', so user wildcards are literal and the match is a prefix,
 // not a substring; '%' alone (no leading '%') keeps the NOCASE/ci index range seek.
-func (c *Client) sampleFullPrefixPage(ctx context.Context, db *sql.DB, term string, need int) ([]int64, error) {
+func (c *Client) sampleFullPrefixPage(ctx context.Context, db *sql.DB, term string, need int, after sampleSearchAfter) ([]int64, error) {
 	if need <= 0 {
 		return nil, nil
 	}
 
-	pattern := escapeLIKEPrefixPattern(term)
-	args := append(likeContainsArgs(pattern, sampleFullPrefixFields), need)
+	args := likeContainsArgs(escapeLIKEPrefixPattern(term), sampleFullPrefixFields)
+	if after.set {
+		return queryIDColumn(ctx, db, sampleFullPrefixPageAfterSQL, append(args, after.key.id, need)...)
+	}
 
-	return queryIDColumn(ctx, db, sampleFullPrefixPageSQL, args...)
+	return queryIDColumn(ctx, db, sampleFullPrefixPageSQL, append(args, need)...)
 }
 
 // sampleWordTokenAnchorPage returns up to need of the smallest id_sample_tmps that
@@ -1031,7 +1164,7 @@ func (c *Client) sampleFullPrefixPage(ctx context.Context, db *sql.DB, term stri
 // full-value prefix (Part A) carries the term. This replaces the former GROUP BY
 // over the OR-union of every per-token range, which scanned the whole union when one
 // token was a very broad prefix.
-func (c *Client) sampleWordTokenAnchorPage(ctx context.Context, db *sql.DB, tokens []string, need int) ([]int64, error) {
+func (c *Client) sampleWordTokenAnchorPage(ctx context.Context, db *sql.DB, tokens []string, need int, after sampleSearchAfter) ([]int64, error) {
 	if need <= 0 || len(tokens) == 0 {
 		return nil, nil
 	}
@@ -1057,6 +1190,9 @@ func (c *Client) sampleWordTokenAnchorPage(ctx context.Context, db *sql.DB, toke
 	anchorIDs, err := c.sampleSearchTokenPage(ctx, db, anchor, sampleSearchCountCap, 0)
 	if err != nil {
 		return nil, err
+	}
+	if after.set {
+		anchorIDs = slices.DeleteFunc(anchorIDs, func(id int64) bool { return id <= after.key.id })
 	}
 
 	others := tokensExcept(tokens, anchor)
@@ -1145,9 +1281,7 @@ func (c *Client) SearchStudies(ctx context.Context, term string, limit, offset i
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	args := append(likeContainsArgs(escapeLIKEPattern(term), studySearchFields), limit, offset)
-
-	studies, err := c.queryStudySearch(ctx, db, studySearchSQL, args...)
+	studies, err := c.studySearchRows(ctx, db, term, limit, offset, searchCursor{})
 	if err != nil {
 		return nil, err
 	}
@@ -1193,19 +1327,27 @@ func (c *Client) SearchSamplesWithOptions(ctx context.Context, term string, opts
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	ids, err := c.sampleSearchIDs(ctx, db, term, opts, filters, limit, offset)
+	keys, err := c.sampleSearchKeys(ctx, db, term, opts, filters, limit, offset, sampleSearchAfter{})
 	if err != nil {
 		return nil, err
 	}
-	if len(ids) == 0 {
-		if err = c.requireAnySyncState(ctx, syncTableSample); err != nil {
+
+	return c.samplesForSearchKeys(ctx, db, keys)
+}
+
+// samplesForSearchKeys loads and hydrates the samples a sample search page's
+// keys name, ordered by id_sample_tmp. An empty page on a never-synced cache
+// returns an empty slice joined with ErrCacheNeverSynced and ErrNotFound.
+func (c *Client) samplesForSearchKeys(ctx context.Context, db *sql.DB, keys []sampleSearchKey) ([]Sample, error) {
+	if len(keys) == 0 {
+		if err := c.requireAnySyncState(ctx, syncTableSample); err != nil {
 			return []Sample{}, err
 		}
 
 		return []Sample{}, nil
 	}
 
-	samples, err := c.fetchSamplesByID(ctx, db, ids)
+	samples, err := c.fetchSamplesByID(ctx, db, keyIDs(keys))
 	if err != nil {
 		return nil, err
 	}
@@ -1219,64 +1361,76 @@ func (c *Client) SearchSamplesWithOptions(ctx context.Context, term string, opts
 // sampleSearchIDs returns the id_sample_tmps for the page [offset, offset+limit) of
 // samples matching term under the selected sample search mode.
 func (c *Client) sampleSearchIDs(ctx context.Context, db *sql.DB, term string, opts SampleSearchOptions, filters sampleFilterFamily, limit, offset int) ([]int64, error) {
-	if filters.empty() {
-		return c.textSampleSearchIDs(ctx, db, term, opts, limit, offset)
-	}
-	if term == "" || len(term) < searchTermMinLength {
-		return c.sampleFilterFamilyIDs(ctx, db, filters, limit, offset)
+	keys, err := c.sampleSearchKeys(ctx, db, term, opts, filters, limit, offset, sampleSearchAfter{})
+	if err != nil {
+		return nil, err
 	}
 
-	source := func(sourceLimit, sourceOffset int) ([]int64, error) {
-		return c.textSampleSearchIDs(ctx, db, term, opts, sourceLimit, sourceOffset)
+	return keyIDs(keys), nil
+}
+
+// sampleSearchKeys returns the keys of the page [offset, offset+limit) of
+// samples matching term under the selected sample search mode, counted from
+// just after after when it is set, in the mode's sort order.
+func (c *Client) sampleSearchKeys(ctx context.Context, db *sql.DB, term string, opts SampleSearchOptions, filters sampleFilterFamily, limit, offset int, after sampleSearchAfter) ([]sampleSearchKey, error) {
+	if filters.empty() {
+		return c.textSampleSearchKeys(ctx, db, term, opts, limit, offset, after)
+	}
+	if term == "" || len(term) < searchTermMinLength {
+		return c.sampleFilterFamilyKeys(ctx, db, filters, limit, offset, after)
+	}
+
+	source := func(sourceLimit, sourceOffset int) ([]sampleSearchKey, error) {
+		return c.textSampleSearchKeys(ctx, db, term, opts, sourceLimit, sourceOffset, after)
 	}
 
 	return c.filterSampleCandidatePages(ctx, db, source, filters, limit, offset)
 }
 
-func (c *Client) textSampleSearchIDs(ctx context.Context, db *sql.DB, term string, opts SampleSearchOptions, limit, offset int) ([]int64, error) {
+func (c *Client) textSampleSearchKeys(ctx context.Context, db *sql.DB, term string, opts SampleSearchOptions, limit, offset int, after sampleSearchAfter) ([]sampleSearchKey, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 	if opts.Words {
-		return c.wordSampleSearchIDs(ctx, db, term, limit, offset)
+		return c.wordSampleSearchKeys(ctx, db, term, limit, offset, after)
 	}
 
-	prefixIDs, err := c.sampleFullPrefixPage(ctx, db, term, offset+limit)
+	prefixIDs, err := c.sampleFullPrefixPage(ctx, db, term, offset+limit, after)
 	if err != nil {
 		return nil, err
 	}
 	if offset >= len(prefixIDs) {
-		return []int64{}, nil
+		return []sampleSearchKey{}, nil
 	}
 
-	return prefixIDs[offset:min(offset+limit, len(prefixIDs))], nil
+	return idKeys(prefixIDs[offset:min(offset+limit, len(prefixIDs))], nil)
 }
 
-func (c *Client) wordSampleSearchIDs(ctx context.Context, db *sql.DB, term string, limit, offset int) ([]int64, error) {
+func (c *Client) wordSampleSearchKeys(ctx context.Context, db *sql.DB, term string, limit, offset int, after sampleSearchAfter) ([]sampleSearchKey, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 
 	tokens := sampleSearchTokensForTerm(term)
 	if len(tokens) == 0 {
-		return []int64{}, nil
+		return []sampleSearchKey{}, nil
 	}
 	if len(tokens) == 1 {
-		return c.sampleSearchTokenPage(ctx, db, tokens[0], limit, offset)
+		return c.sampleSearchTokenKeys(ctx, db, tokens[0], limit, offset, after)
 	}
 
-	unionIDs, err := c.sampleSearchUnionIDs(ctx, db, term, tokens, offset+limit)
+	unionIDs, err := c.sampleSearchUnionIDs(ctx, db, term, tokens, offset+limit, after)
 	if err != nil {
 		return nil, err
 	}
 	if offset >= len(unionIDs) {
-		return []int64{}, nil
+		return []sampleSearchKey{}, nil
 	}
 
-	return unionIDs[offset:min(offset+limit, len(unionIDs))], nil
+	return idKeys(unionIDs[offset:min(offset+limit, len(unionIDs))], nil)
 }
 
-func (c *Client) sampleOrganismSearchIDs(ctx context.Context, db *sql.DB, organism string, limit, offset int) ([]int64, error) {
+func (c *Client) sampleOrganismSearchIDs(ctx context.Context, db *sql.DB, organism string, limit, offset int, after sampleSearchAfter) ([]int64, error) {
 	need := offset + limit
 	if need <= 0 {
 		return nil, nil
@@ -1290,7 +1444,7 @@ func (c *Client) sampleOrganismSearchIDs(ctx context.Context, db *sql.DB, organi
 		return []int64{}, nil
 	}
 
-	ids, err := c.sampleOrganismIDsForCommonNames(ctx, db, commonNames, need)
+	ids, err := c.sampleOrganismIDsForCommonNames(ctx, db, commonNames, need, after)
 	if err != nil {
 		return nil, err
 	}
@@ -1312,14 +1466,19 @@ func (c *Client) resolveOrganismCommonNames(ctx context.Context, db *sql.DB, org
 	return queryStringColumn(ctx, db, query, args...)
 }
 
-func (c *Client) sampleOrganismIDsForCommonNames(ctx context.Context, db *sql.DB, commonNames []string, need int) ([]int64, error) {
+func (c *Client) sampleOrganismIDsForCommonNames(ctx context.Context, db *sql.DB, commonNames []string, need int, after sampleSearchAfter) ([]int64, error) {
 	if need <= 0 {
 		return nil, nil
 	}
 
 	merged := make([]int64, 0, need)
 	for _, commonName := range commonNames {
-		ids, err := queryIDColumn(ctx, db, sampleOrganismCommonNamePageSQL, commonName, need)
+		query, args := sampleOrganismCommonNamePageSQL, []any{commonName, need}
+		if after.set {
+			query, args = sampleOrganismCommonNamePageAfterSQL, []any{commonName, after.key.id, need}
+		}
+
+		ids, err := queryIDColumn(ctx, db, query, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -1330,8 +1489,12 @@ func (c *Client) sampleOrganismIDsForCommonNames(ctx context.Context, db *sql.DB
 	return merged, nil
 }
 
-func (c *Client) sampleLibraryTypeSearchIDs(ctx context.Context, db *sql.DB, libraryType string, limit, offset int) ([]int64, error) {
+func (c *Client) sampleLibraryTypeSearchIDs(ctx context.Context, db *sql.DB, libraryType string, limit, offset int, after sampleSearchAfter) ([]int64, error) {
 	source := func(sourceLimit, sourceOffset int) ([]int64, error) {
+		if after.set {
+			return queryIDColumn(ctx, db, sampleLibraryTypePageAfterSQL, libraryType, after.key.id, sourceLimit, sourceOffset)
+		}
+
 		return queryIDColumn(ctx, db, sampleLibraryTypePageSQL, libraryType, sourceLimit, sourceOffset)
 	}
 
@@ -1340,8 +1503,12 @@ func (c *Client) sampleLibraryTypeSearchIDs(ctx context.Context, db *sql.DB, lib
 	}, limit, offset)
 }
 
-func (c *Client) sampleQCSearchIDs(ctx context.Context, db *sql.DB, verdict string, limit, offset int) ([]int64, error) {
+func (c *Client) sampleQCSearchIDs(ctx context.Context, db *sql.DB, verdict string, limit, offset int, after sampleSearchAfter) ([]int64, error) {
 	source := func(sourceLimit, sourceOffset int) ([]int64, error) {
+		if after.set {
+			return queryIDColumn(ctx, db, sampleSQSCPPageAfterSQL, after.key.id, sourceLimit, sourceOffset)
+		}
+
 		return queryIDColumn(ctx, db, sampleSQSCPPageSQL, sourceLimit, sourceOffset)
 	}
 
@@ -1456,61 +1623,67 @@ func (c *Client) filterDeliverableSampleIDs(ctx context.Context, db *sql.DB, ids
 
 // sampleSearchTokenPage returns the distinct id_sample_tmps for the page
 // [offset, offset+limit) of samples matching the single token prefix, in
-// (token, id_sample_tmp) index order. A sample can own several prefix-matching
+// (token, id_sample_tmp) index order (see sampleSearchTokenKeys).
+func (c *Client) sampleSearchTokenPage(ctx context.Context, db *sql.DB, token string, limit, offset int) ([]int64, error) {
+	keys, err := c.sampleSearchTokenKeys(ctx, db, token, limit, offset, sampleSearchAfter{})
+	if err != nil {
+		return nil, err
+	}
+
+	return keyIDs(keys), nil
+}
+
+// sampleSearchTokenKeys returns the keys of the page [offset, offset+limit) of
+// distinct samples matching the single token prefix, in (token, id_sample_tmp)
+// index order, each keyed by the first (smallest) matching token, where the
+// index stream first reaches it. A sample can own several prefix-matching
 // tokens, so the index-ordered token stream is de-duplicated app-side; it
 // over-fetches token rows in bounded pages and loops only when duplicates
 // exhaust an over-fetch, keeping the common case to one index-ordered read.
-func (c *Client) sampleSearchTokenPage(ctx context.Context, db *sql.DB, token string, limit, offset int) ([]int64, error) {
+//
+// With after set the stream starts just after the cursor's (token, id) key. A
+// sample met there under a later token was already returned before the
+// cursor if its first matching token sorts before the row's token, so
+// dropFirstMatchedBefore drops it rather than returning it twice.
+func (c *Client) sampleSearchTokenKeys(ctx context.Context, db *sql.DB, token string, limit, offset int, after sampleSearchAfter) ([]sampleSearchKey, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 
-	query, bounds := sampleTokenPrefixQuery(token, sampleSearchTokenPageSQL, sampleSearchTokenPageOpenSQL)
+	query, bounds := sampleTokenKeysetQuery(token, after)
 
 	need := offset + limit
 	seen := make(map[int64]struct{}, need)
-	ordered := make([]int64, 0, need)
+	ordered := make([]sampleSearchKey, 0, need)
 	tokenOffset := 0
 	fetch := need*sampleSearchTokenPageMultiplier + sampleSearchTokenPageMargin
 
 	for len(ordered) < need {
 		args := append(append([]any(nil), bounds...), fetch, tokenOffset)
 
-		rows, err := db.QueryContext(ctx, query, args...)
+		rows, err := queryTokenKeys(ctx, db, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("%w: query sample search: %w", ErrUpstreamImpaired, err)
+			return nil, err
 		}
 
-		scanned := 0
-		for rows.Next() {
-			var (
-				token string
-				id    int64
-			)
-			if scanErr := rows.Scan(&token, &id); scanErr != nil {
-				_ = rows.Close()
-
-				return nil, fmt.Errorf("%w: scan sample search: %w", ErrUpstreamImpaired, scanErr)
+		candidates := rows
+		if after.set {
+			candidates, err = dropFirstMatchedBefore(ctx, db, token, rows)
+			if err != nil {
+				return nil, err
 			}
+		}
 
-			scanned++
-			if _, ok := seen[id]; ok {
+		for _, key := range candidates {
+			if _, ok := seen[key.id]; ok {
 				continue
 			}
 
-			seen[id] = struct{}{}
-			ordered = append(ordered, id)
-		}
-		if err = rows.Err(); err != nil {
-			_ = rows.Close()
-
-			return nil, fmt.Errorf("%w: query sample search: %w", ErrUpstreamImpaired, err)
-		}
-		if err = rows.Close(); err != nil {
-			return nil, fmt.Errorf("%w: query sample search: %w", ErrUpstreamImpaired, err)
+			seen[key.id] = struct{}{}
+			ordered = append(ordered, key)
 		}
 
-		if scanned < fetch {
+		if len(rows) < fetch {
 			break
 		}
 
@@ -1518,10 +1691,97 @@ func (c *Client) sampleSearchTokenPage(ctx context.Context, db *sql.DB, token st
 	}
 
 	if offset >= len(ordered) {
-		return []int64{}, nil
+		return []sampleSearchKey{}, nil
 	}
 
 	return ordered[offset:min(offset+limit, len(ordered))], nil
+}
+
+// sampleTokenKeysetQuery picks the token page SQL and its leading bound
+// arguments for token, continuing after the cursor key when after is set.
+func sampleTokenKeysetQuery(token string, after sampleSearchAfter) (string, []any) {
+	if !after.set {
+		return sampleTokenPrefixQuery(token, sampleSearchTokenPageSQL, sampleSearchTokenPageOpenSQL)
+	}
+
+	lower, upper, hasUpper := sampleTokenPrefixBounds(token)
+	lower = max(lower, after.key.token)
+	keyset := []any{after.key.token, after.key.token, after.key.id}
+	if !hasUpper {
+		return sampleSearchTokenPageOpenAfterSQL, append([]any{lower}, keyset...)
+	}
+
+	return sampleSearchTokenPageAfterSQL, append([]any{lower, upper}, keyset...)
+}
+
+// queryTokenKeys runs a (token, id_sample_tmp) query and returns its rows as
+// sample search keys in result order.
+func queryTokenKeys(ctx context.Context, db *sql.DB, query string, args ...any) ([]sampleSearchKey, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: query sample search: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	keys := make([]sampleSearchKey, 0)
+	for rows.Next() {
+		var key sampleSearchKey
+		if scanErr := rows.Scan(&key.token, &key.id); scanErr != nil {
+			return nil, fmt.Errorf("%w: scan sample search: %w", ErrUpstreamImpaired, scanErr)
+		}
+
+		keys = append(keys, key)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: query sample search: %w", ErrUpstreamImpaired, err)
+	}
+
+	return keys, nil
+}
+
+// dropFirstMatchedBefore removes the rows whose sample has a matching token
+// (one starting with prefix) that sorts before the row's own token: the index
+// stream reached that sample earlier, under its first matching token. The
+// sample's tokens are re-derived from its searchable fields exactly as the sync
+// stores them. A sample with no SQSCP row is kept; the page fetch drops it.
+func dropFirstMatchedBefore(ctx context.Context, db *sql.DB, prefix string, rows []sampleSearchKey) ([]sampleSearchKey, error) {
+	first, err := firstMatchingTokens(ctx, db, prefix, keyIDs(rows))
+	if err != nil {
+		return nil, err
+	}
+
+	return slices.DeleteFunc(rows, func(key sampleSearchKey) bool {
+		token, ok := first[key.id]
+
+		return ok && token < key.token
+	}), nil
+}
+
+// firstMatchingTokens returns, for each SQSCP sample in ids, the smallest of
+// its search tokens that starts with prefix.
+func firstMatchingTokens(ctx context.Context, db *sql.DB, prefix string, ids []int64) (map[int64]string, error) {
+	distinct := slices.Clone(ids)
+	slices.Sort(distinct)
+	distinct = slices.Compact(distinct)
+
+	first := make(map[int64]string, len(distinct))
+	for start := 0; start < len(distinct); start += sampleAnchorFieldFetchChunk {
+		rows, err := fetchSampleSearchFields(ctx, db, distinct[start:min(start+sampleAnchorFieldFetchChunk, len(distinct))])
+		if err != nil {
+			return nil, err
+		}
+
+		for _, row := range rows {
+			for _, token := range sampleSearchTokens(row.name, row.supplierName, row.commonName, row.donorID) {
+				current, ok := first[row.id]
+				if strings.HasPrefix(token, prefix) && (!ok || token < current) {
+					first[row.id] = token
+				}
+			}
+		}
+	}
+
+	return first, nil
 }
 
 // fetchSamplesByID loads the full sample rows for the given id_sample_tmps
@@ -1648,7 +1908,7 @@ func (c *Client) countWordSampleSearch(ctx context.Context, term string) (int, e
 		return 0, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	unionIDs, err := c.sampleSearchUnionIDs(ctx, db, term, tokens, sampleSearchCountCap)
+	unionIDs, err := c.sampleSearchUnionIDs(ctx, db, term, tokens, sampleSearchCountCap, sampleSearchAfter{})
 	if err != nil {
 		return 0, err
 	}

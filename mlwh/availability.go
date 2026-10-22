@@ -1055,12 +1055,53 @@ func (c *Client) studyOverviewLibraryTypes(ctx context.Context, studyLimsID stri
 // feeding tables, considering only tables that have ever synced. A table with no
 // sync_state row is skipped rather than dragging the result to empty.
 func (c *Client) oldestFeedingLastRun(ctx context.Context, tables []string) (string, error) {
+	lastRuns, err := c.feedingLastRuns(ctx, tables)
+	if err != nil {
+		return "", err
+	}
+
+	var oldest time.Time
+	for _, lastRun := range lastRuns {
+		if oldest.IsZero() || lastRun.Before(oldest) {
+			oldest = lastRun
+		}
+	}
+
+	if oldest.IsZero() {
+		return "", nil
+	}
+
+	return oldest.UTC().Format(utcRFC3339Layout), nil
+}
+
+// newestFeedingLastRun returns the newest last_run across the given feeding
+// tables, or the zero time when none has synced. last_run advances with every
+// committed sync batch, so a change in it means the tables may have changed.
+func (c *Client) newestFeedingLastRun(ctx context.Context, tables []string) (time.Time, error) {
+	lastRuns, err := c.feedingLastRuns(ctx, tables)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	var newest time.Time
+	for _, lastRun := range lastRuns {
+		if lastRun.After(newest) {
+			newest = lastRun
+		}
+	}
+
+	return newest, nil
+}
+
+// feedingLastRuns returns the non-zero last_run of each given feeding table
+// that has a sync_state row.
+func (c *Client) feedingLastRuns(ctx context.Context, tables []string) ([]time.Time, error) {
 	db := c.readCacheDB()
 	if db == nil {
-		return "", fmt.Errorf("mlwh: cache reader not configured")
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 	if len(tables) == 0 {
-		return "", nil
+		return nil, nil
 	}
 
 	args := make([]any, 0, len(tables))
@@ -1073,40 +1114,33 @@ func (c *Client) oldestFeedingLastRun(ctx context.Context, tables []string) (str
 		args...,
 	)
 	if err != nil {
-		return "", fmt.Errorf("%w: query feeding sync state last_run: %w", ErrUpstreamImpaired, err)
+		return nil, fmt.Errorf("%w: query feeding sync state last_run: %w", ErrUpstreamImpaired, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	var oldest time.Time
+	lastRuns := make([]time.Time, 0, len(tables))
 	for rows.Next() {
 		var (
 			table   string
 			lastRaw any
 		)
 		if err = rows.Scan(&table, &lastRaw); err != nil {
-			return "", fmt.Errorf("%w: scan feeding sync state last_run: %w", ErrUpstreamImpaired, err)
+			return nil, fmt.Errorf("%w: scan feeding sync state last_run: %w", ErrUpstreamImpaired, err)
 		}
 
 		lastRun, err := parseLastRunValue(table, lastRaw)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		if lastRun.IsZero() {
-			continue
-		}
-		if oldest.IsZero() || lastRun.Before(oldest) {
-			oldest = lastRun
+		if !lastRun.IsZero() {
+			lastRuns = append(lastRuns, lastRun)
 		}
 	}
 	if err = rows.Err(); err != nil {
-		return "", fmt.Errorf("%w: query feeding sync state last_run: %w", ErrUpstreamImpaired, err)
+		return nil, fmt.Errorf("%w: query feeding sync state last_run: %w", ErrUpstreamImpaired, err)
 	}
 
-	if oldest.IsZero() {
-		return "", nil
-	}
-
-	return oldest.UTC().Format(utcRFC3339Layout), nil
+	return lastRuns, nil
 }
 
 // studyOverviewForEmptyStudy resolves a StudyOverview when no samples are linked to

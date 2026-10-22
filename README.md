@@ -333,9 +333,9 @@ The `--json` output of `wa mlwh search` and `wa mlwh info` is one object split
 into the request and its answer. `query` echoes the term or identifier, the
 options that shaped the results, `cache_synced_at` (the cache sync time the
 human `info` output shows) and `wa_version` (the version of this `wa` client).
-`results` holds what was found. `timed_out` (search) and `warnings` (info) sit
-beside them, present only when set, because they say the results are
-incomplete. For example, `wa mlwh search PD42478a --type sample
+`results` holds what was found. `timed_out` and `warnings` sit beside them,
+present only when set, because they say the results are incomplete or need a
+caveat. For example, `wa mlwh search PD42478a --type sample
 --deliverables-only --with-data --json` prints:
 
 ```json
@@ -348,6 +348,7 @@ incomplete. For example, `wa mlwh search PD42478a --type sample
         "with_data": true,
         "limit": 50,
         "offset": 0,
+        "next": { "samples": null },
         "cache_synced_at": "2026-10-21T08:00:00Z",
         "wa_version": "..."
     },
@@ -361,14 +362,46 @@ incomplete. For example, `wa mlwh search PD42478a --type sample
 ```
 
 Search's `type` is `study`, `sample` or `both`, and `organism`,
-`library_type` and `qc` appear only when given; `results` has `studies` and
-`samples` sections for the requested types. Info's `query` has `identifier`,
-`type` (the `--type` given, or `auto`) and, for a study, `since` (the start of
-the samples-with-data window); its `results` is the report, with `kind` first.
+`library_type`, `qc` and `cursor` appear only when given; `results` has
+`studies` and `samples` sections for the requested types, and `next` has the
+cursor for each section's next page, or `null` when no rows remain. Info's
+`query` has `identifier`, `type` (the `--type` given, or `auto`) and, for a
+study, `since` (the start of the samples-with-data window); its `results` is
+the report, with `kind` first.
 The output does not include the server's API version, which `wa` learns only
 by fetching `GET /openapi.json`. This shape replaced the flat objects of wa
 v1.0.0, which had `term` or `identifier`, `cache_synced_at` and `warnings`
 beside the results. Export output stays data only.
+
+#### Paging search results
+
+To read every match of a search, pass the section's `query.next` cursor back
+to `--cursor` with the same term, options and a single `--type`, until it is
+`null`:
+
+```bash
+cursor=
+while page=$(wa mlwh search musculus --type sample --json ${cursor:+--cursor "$cursor"}); do
+  echo "$page" | jq -c '.results.samples.results[]'
+  cursor=$(echo "$page" | jq -r '.query.next.samples // empty')
+  [ -n "$cursor" ] || break
+done
+```
+
+A cursor works like ElasticSearch's `search_after`: it holds the sort key of
+the page's last row, and the next page starts just after that key, so deep
+pages do not re-scan earlier rows. The cache is updated in place by its
+periodic sync, so there is no point-in-time snapshot. Unlike `--offset`, a
+cursor never repeats or skips a row whose sort key stays the same when the
+cache syncs between pages. If it has synced since the first page, the page
+still comes back with the warning "cache synced since the first page; results
+may include newer matches". Rows that newly match with a key before the cursor
+(for example a sample with a lower internal id whose name changed to match)
+are missed until a new search. Studies are keyed by `id_study_lims`, samples by
+their internal id, and a one-word `--words` sample search by the matched word
+then the id. `--cursor` cannot be combined with `--offset`, and needs a server
+at MLWH API 1.15.0 or later; an older server is reported, not silently paged
+from the start.
 
 #### Agent feedback
 

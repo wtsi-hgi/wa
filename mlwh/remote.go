@@ -47,7 +47,15 @@ const (
 	// MultiSampleExportAPIVersion is the first MLWH API version whose Export
 	// endpoint honours multi_sample.
 	MultiSampleExportAPIVersion = "1.11.0"
+
+	// SearchCursorAPIVersion is the first MLWH API version whose study and
+	// sample search endpoints page by cursor.
+	SearchCursorAPIVersion = "1.15.0"
 )
+
+// ErrSearchCursorUnsupported reports that a remote server answered a cursor
+// search page as an offset page, because its API predates search cursors.
+var ErrSearchCursorUnsupported = errors.New("mlwh: search cursors unsupported")
 
 var _ Queryer = (*RemoteClient)(nil)
 
@@ -1062,6 +1070,67 @@ func remoteSampleSearchQuery(limit, offset int, opts SampleSearchOptions) url.Va
 // X-Next-Offset response headers.
 func (rc *RemoteClient) SearchSamplesPage(ctx context.Context, term string, limit, offset int) (Page[Sample], error) {
 	return remoteCallPage[Sample](rc, ctx, "SearchSamples", []string{term}, remotePagination(limit, offset))
+}
+
+// SearchStudiesCursor runs one page of a study search through the remote
+// server, sending page.Cursor as the cursor query param, and returns the page
+// with the next cursor and staleness the server reports in X-Next-Cursor and
+// X-Search-Warning. A server older than SearchCursorAPIVersion ignores the
+// cursor and sizes the reply as an offset page (X-Next-Offset), which a cursor
+// page never carries, so that reply returns ErrSearchCursorUnsupported rather
+// than the first page again.
+func (rc *RemoteClient) SearchStudiesCursor(ctx context.Context, term string, page SearchPageOptions) (SearchCursorPage[Study], error) {
+	return remoteCallSearchCursorPage[Study](rc, ctx, "SearchStudies", term, remoteSearchPageQuery(page))
+}
+
+// SearchSamplesCursor runs one page of a sample search through the remote
+// server; see SearchStudiesCursor.
+func (rc *RemoteClient) SearchSamplesCursor(ctx context.Context, term string, opts SampleSearchOptions, page SearchPageOptions) (SearchCursorPage[Sample], error) {
+	query := remoteSearchPageQuery(page)
+	addSampleSearchOptionValues(query, opts)
+
+	return remoteCallSearchCursorPage[Sample](rc, ctx, "SearchSamples", term, query)
+}
+
+// remoteSearchPageQuery encodes a search page: limit, plus the cursor when one
+// is given or the offset otherwise (the server rejects both together).
+func remoteSearchPageQuery(page SearchPageOptions) url.Values {
+	cursor := strings.TrimSpace(page.Cursor)
+	if cursor == "" {
+		return remotePagination(page.Limit, page.Offset)
+	}
+
+	values := url.Values{}
+	values.Set("limit", strconv.Itoa(page.Limit))
+	values.Set("cursor", cursor)
+	if page.Offset != 0 {
+		values.Set("offset", strconv.Itoa(page.Offset))
+	}
+
+	return values
+}
+
+func remoteCallSearchCursorPage[T any](rc *RemoteClient, ctx context.Context, method, term string, query url.Values) (SearchCursorPage[T], error) {
+	result, header, err := rc.do(ctx, method, []string{term}, query)
+	if err != nil {
+		return SearchCursorPage[T]{}, err
+	}
+
+	typed, ok := result.(*[]T)
+	if !ok {
+		return SearchCursorPage[T]{}, fmt.Errorf("%w: registry result for %s has type %T", ErrUpstreamImpaired, method, result)
+	}
+
+	if query.Get("cursor") != "" && header.Get("X-Next-Offset") != "" {
+		return SearchCursorPage[T]{}, fmt.Errorf("%w: the MLWH server at %s ignored the cursor; cursor paging needs API %s or later",
+			ErrSearchCursorUnsupported, rc.baseURL, SearchCursorAPIVersion)
+	}
+
+	return SearchCursorPage[T]{
+		Items:      *typed,
+		NextCursor: header.Get(SearchNextCursorHeader),
+		Stale:      header.Get(SearchWarningHeader) != "",
+	}, nil
 }
 
 // CountStudySearch counts the studies matching term through the remote server.
