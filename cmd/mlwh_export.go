@@ -84,6 +84,16 @@ Product exports:
   deliverables view. A blank irods_path is expected when no matching object is
   attached; use irods_unmatched and reason for known gaps.
 
+Library type:
+  products, irods/files, sample-crams and lanes accept the opt-in library_type
+  column (alias pipeline_id_lims): the Illumina library type of each row's own
+  product, from its flowcell (a merged CRAM uses the component flowcell the
+  cache records). It is blank for PacBio, Element, Ultima and ONT rows, and on
+  products and lanes rows whose grouped products disagree or lack a type. It
+  never comes from the sample's library list, so it can differ from
+  --library-type, which keeps rows whose sample has any library of that type.
+  Needs a server at MLWH API 1.14.0 or later.
+
 Deliverables:
   CRAM file exports default to deliverables-only. In MLWH terms, deliverable uses
   iseq_flowcell.entity_type IN ('library','library_indexed') for Illumina and

@@ -691,7 +691,7 @@ func assertMultiSampleScopeIndexServed(t *testing.T, client *Client) {
 	assertExplainUsesKey(plans, "sample_mirror", "sample_mirror_supplier_name_idx")
 	assertExplainUsesKey(plans, "spi", "spi_mirror_sample_tmp_iseq_product_idx", "seq_product_irods_locations_mirror_id_sample_tmp_idx")
 
-	from, laneArgs := exportLanesFrom(scope)
+	from, laneArgs := exportLanesFrom(scope, false)
 	plans = explainPlanRows(t, db, `SELECT lanes.id_run`+from, laneArgs...)
 	assertExplainUsesKey(plans, "sample_mirror", "sample_mirror_supplier_name_idx")
 	assertExplainUsesKey(plans, "ipm", "ipm_mirror_sample_run_position_tag_idx")
