@@ -1805,3 +1805,23 @@ func TestServerHealthDoesNotReadCacheD1(t *testing.T) {
 		convey.So(strings.TrimSpace(response.Body.String()), convey.ShouldEqual, `{"status":"ok"}`)
 	})
 }
+
+func TestServerNeverSyncedMessageIsNotANotFound(t *testing.T) {
+	convey.Convey("Bug 261021 never-synced: Given a real Client over a cold cache, when GET /resolve/library/Bespoke is served", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/resolve/library/Bespoke")
+
+		convey.Convey("then the 503 cache_never_synced message is the never-synced sentinel alone, not a not-found", func() {
+			assertMLWHErrorEnvelopeForTest(t, response, http.StatusServiceUnavailable, "cache_never_synced")
+
+			var payload httpErrorEnvelope
+			decodeMLWHJSONResponseForTest(t, response, &payload)
+			convey.So(payload.Message, convey.ShouldEqual, ErrCacheNeverSynced.Error())
+			convey.So(payload.Message, convey.ShouldNotContainSubstring, ErrNotFound.Error())
+		})
+	})
+}
