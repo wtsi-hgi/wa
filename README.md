@@ -13,8 +13,9 @@ REST APIs and CLIs, and a Next.js web UI for browsing results.
 | **mlwhdiff**    | Hash-based MLWH change detection with watermarks in SQLite, a REST polling API, and a CLI for ad-hoc diffs.                                                                                              |
 | **results-web** | Next.js web UI for the results API - searchable table, file browser with inline preview, dashboard stats, and study-based search via the MLWH server.                                                    |
 
-Planned sub-products (notify, jobrun, watchtower, samplepicker) are described
-in [.docs/proposal.md](.docs/proposal.md).
+[.docs/proposal.md](.docs/proposal.md) describes how these fit together with
+the planned sub-products (notify, jobrun, watchtower, samplepicker) and the
+build order.
 
 ## Install
 
