@@ -497,6 +497,80 @@ describe("J1 dashboard with search builder and recent results", () => {
         });
     });
 
+    it("suggests metadata keys and every repeated value from result sets the signed-in viewer can see", async () => {
+        currentSessionMock.mockResolvedValue({
+            authenticated: true,
+            username: "alice",
+        });
+        fetchStatsMock.mockResolvedValue(
+            buildStats({
+                recent: [
+                    {
+                        ...buildResultSet(61),
+                        metadata: { panel: "haem", project: "CAT" },
+                        metadata_values: {
+                            panel: ["haem"],
+                            project: ["CAT", "dog"],
+                        },
+                    },
+                    lockResultSet({
+                        ...buildResultSet(62),
+                        metadata: {
+                            assay: "hidden-assay",
+                            project: "hidden-project",
+                        },
+                    }),
+                ],
+                total: 2,
+            }),
+        );
+        searchResultsMock.mockResolvedValue([]);
+
+        const pageModule = await import("@/app/(results)/page");
+        const Page = pageModule.default;
+        const serverTree = createElement(
+            AppProviders,
+            undefined,
+            await Page({ searchParams: Promise.resolve({}) }),
+        );
+        const container = document.createElement("div");
+
+        document.body.appendChild(container);
+        container.innerHTML = renderToString(serverTree);
+
+        let root: ReturnType<typeof hydrateRoot> | null = null;
+
+        await act(async () => {
+            root = hydrateRoot(container, serverTree);
+        });
+
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
+        fireEvent.click(screen.getByRole("option", { name: /^metadata$/i }));
+        fireEvent.change(screen.getByLabelText(/metadata key/i), {
+            target: { value: "project" },
+        });
+
+        const optionValues = (selector: string) =>
+            Array.from(container.querySelectorAll(selector)).map((option) =>
+                option.getAttribute("value"),
+            );
+
+        expect(
+            optionValues("datalist#metadata-filter-key-suggestions option"),
+        ).toEqual(["project", "panel"]);
+        expect(
+            optionValues("datalist#metadata-filter-value-suggestions option"),
+        ).toEqual(["CAT", "dog"]);
+
+        await act(async () => {
+            root?.unmount();
+        });
+    });
+
     it("keeps study filters usable without loading live study suggestions", async () => {
         process.env.WA_MLWH_BACKEND_URL = "https://seqmeta.example";
         fetchStatsMock.mockResolvedValue(buildStats());

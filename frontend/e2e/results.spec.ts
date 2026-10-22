@@ -1175,6 +1175,66 @@ test.describe("Q1 critical results flows", () => {
         await expect(rows.first()).not.toContainText("erin");
     });
 
+    test("filters results by a project metadata tag through the search builder", async ({
+        page,
+    }) => {
+        await page.goto("/");
+        await expectRecentRowsLoaded(page);
+
+        const searchBuilder = page.locator('[data-search-builder="true"]');
+        const addFieldButton = searchBuilder.getByRole("button", {
+            name: /add specific field to filter/i,
+        });
+
+        await addFieldButton.click();
+        await page.getByRole("option", { name: /^metadata$/i }).click();
+
+        const keyInput = page.getByLabel("Metadata key");
+        const valueInput = page.getByLabel("Metadata value");
+
+        await expect(
+            page
+                .locator("datalist#metadata-filter-key-suggestions option")
+                .first(),
+        ).toHaveAttribute("value", "project");
+
+        await keyInput.fill("project");
+        await expect(
+            page.locator(
+                "datalist#metadata-filter-value-suggestions option[value='latest-pagination']",
+            ),
+        ).toHaveCount(1);
+        await valueInput.fill("LATEST-PAGINATION");
+        await page.getByRole("button", { name: /^add$/i }).click();
+
+        await expect(page).toHaveURL(/\?meta_project=LATEST-PAGINATION$/);
+        await expect(
+            searchBuilder.getByRole("button", {
+                name: "Remove Project LATEST-PAGINATION",
+            }),
+        ).toBeVisible();
+        await switchToResultRowsView(page);
+
+        const rows = recentRows(page);
+        await expect(rows).toHaveCount(6);
+        for (const row of await rows.all()) {
+            await expect(row).toContainText("latest-pagination");
+        }
+
+        await addFieldButton.click();
+        await page.getByRole("option", { name: /^metadata$/i }).click();
+        await keyInput.fill("panel");
+        await valueInput.fill("haem");
+        await page.getByRole("button", { name: /^add$/i }).click();
+
+        await expect(page).toHaveURL(
+            /\?meta_project=LATEST-PAGINATION&meta_panel=haem$/,
+        );
+        await expect(
+            page.getByText("No result sets matched the current search."),
+        ).toBeVisible();
+    });
+
     test("returns to the dashboard state that opened a result detail", async ({
         page,
     }) => {

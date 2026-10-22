@@ -923,4 +923,154 @@ describe("K1 filter builder component", () => {
 
         expect(pushMock).toHaveBeenCalledWith("/?sample=hek_r");
     });
+    describe("metadata key = value filter", () => {
+        const metadataSuggestions = {
+            meta_panel: ["haem"],
+            meta_priority: ["urgent"],
+            meta_project: ["CAT", "Category-B", "dog"],
+            sample: ["SMP1001"],
+            seqmeta_lane: ["1"],
+            study: ["6568"],
+        };
+
+        async function openMetadataForm(
+            currentFilters: Record<string, string[]> = {},
+        ) {
+            const { FilterBuilder } =
+                await import("@/components/filter-builder");
+            const view = render(
+                createElement(FilterBuilder, {
+                    currentFilters,
+                    metaKeys: ["panel", "priority", "project"],
+                    seqmetaAvailable: false,
+                    studies: [],
+                    suggestionValues: metadataSuggestions,
+                }),
+            );
+
+            fireEvent.click(
+                screen.getByRole("button", {
+                    name: /add specific field to filter/i,
+                }),
+            );
+            fireEvent.click(
+                screen.getByRole("option", { name: /^metadata$/i }),
+            );
+
+            return view;
+        }
+
+        function datalistValues(container: HTMLElement, id: string) {
+            return Array.from(
+                container.querySelectorAll(`datalist#${id} option`),
+            ).map((option) => option.getAttribute("value"));
+        }
+
+        it("pins Metadata after the common fields", async () => {
+            const { container } = await openMetadataForm();
+
+            const optionLabels = Array.from(
+                container.querySelectorAll("[data-filter-field-option]"),
+            ).map((option) => option.textContent?.trim());
+
+            expect(optionLabels.slice(0, 6)).toEqual([
+                "Pipeline name",
+                "Unique",
+                "Study",
+                "Sample",
+                "Requester",
+                "Metadata",
+            ]);
+        });
+
+        it("suggests only free-form metadata keys with project first", async () => {
+            const { container } = await openMetadataForm();
+
+            expect(
+                datalistValues(container, "metadata-filter-key-suggestions"),
+            ).toEqual(["project", "panel", "priority"]);
+            expect(
+                (screen.getByLabelText(/metadata key/i) as HTMLInputElement)
+                    .value,
+            ).toBe("");
+        });
+
+        it("suggests the chosen key's values case-insensitively and adds a meta_ URL filter", async () => {
+            const { container } = await openMetadataForm();
+
+            fireEvent.change(screen.getByLabelText(/metadata key/i), {
+                target: { value: "PROJECT" },
+            });
+            fireEvent.change(screen.getByLabelText(/metadata value/i), {
+                target: { value: "cat" },
+            });
+
+            expect(
+                datalistValues(container, "metadata-filter-value-suggestions"),
+            ).toEqual(["CAT", "Category-B"]);
+
+            fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+            expect(pushMock).toHaveBeenCalledWith("/?meta_project=cat");
+        });
+
+        it("ANDs a second metadata key with existing filters and hides values already applied in any case", async () => {
+            const { container } = await openMetadataForm({
+                meta_project: ["cat"],
+                user: ["alice"],
+            });
+
+            fireEvent.change(screen.getByLabelText(/metadata key/i), {
+                target: { value: "project" },
+            });
+
+            expect(
+                datalistValues(container, "metadata-filter-value-suggestions"),
+            ).toEqual(["Category-B", "dog"]);
+
+            fireEvent.change(screen.getByLabelText(/metadata key/i), {
+                target: { value: "panel" },
+            });
+            fireEvent.change(screen.getByLabelText(/metadata value/i), {
+                target: { value: "haem" },
+            });
+            fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+            expect(pushMock).toHaveBeenCalledWith(
+                "/?meta_project=cat&user=alice&meta_panel=haem",
+            );
+            expect(
+                screen.getByRole("button", { name: "Remove Project cat" }),
+            ).toBeTruthy();
+        });
+
+        it("accepts a key and value that no loaded result set suggests", async () => {
+            await openMetadataForm();
+
+            fireEvent.change(screen.getByLabelText(/metadata key/i), {
+                target: { value: " batch " },
+            });
+            fireEvent.change(screen.getByLabelText(/metadata value/i), {
+                target: { value: " b7 " },
+            });
+            fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+            expect(pushMock).toHaveBeenCalledWith("/?meta_batch=b7");
+        });
+
+        it("does not add a filter without both a key and a value", async () => {
+            await openMetadataForm();
+
+            fireEvent.change(screen.getByLabelText(/metadata value/i), {
+                target: { value: "cat" },
+            });
+            fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+            fireEvent.change(screen.getByLabelText(/metadata key/i), {
+                target: { value: "project" },
+            });
+            fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+            expect(pushMock).not.toHaveBeenCalled();
+        });
+    });
 });

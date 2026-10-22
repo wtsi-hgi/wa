@@ -96,7 +96,13 @@ const permanentFieldOptions: FieldOption[] = [
     { key: "study", label: "Study", placeholder: "6568 or ERP012345" },
     { key: "sample", label: "Sample", placeholder: "SANG001 or SMP001" },
     { key: "user", label: "Requester", placeholder: "alice" },
+    { key: "metadata", label: "Metadata", placeholder: "project" },
 ];
+
+const metadataFieldKey = "metadata";
+const metadataQueryPrefix = "meta_";
+const preferredMetadataKey = "project";
+const metadataSuggestionLimit = 8;
 
 const coreFieldOptions: FieldOption[] = [
     ...permanentFieldOptions,
@@ -245,6 +251,183 @@ function getVisibleSuggestions(
                 value.toLowerCase().includes(normalizedDraft),
         )
         .slice(0, 8);
+}
+
+/**
+ * Lists the free-form metadata keys (registered with --meta key=value or
+ * --project) that appear on the result sets already loaded for this viewer,
+ * with project first. Keys come from the page's suggestion values, which only
+ * hold result sets the viewer can see in the results table.
+ */
+export function metadataKeySuggestions(
+    suggestionValues: FilterSuggestionMap,
+): string[] {
+    return Object.entries(suggestionValues)
+        .filter(
+            ([fieldKey, values]) =>
+                fieldKey.startsWith(metadataQueryPrefix) && values.length > 0,
+        )
+        .map(([fieldKey]) => fieldKey.slice(metadataQueryPrefix.length))
+        .filter((metaKey) => metaKey.length > 0)
+        .sort((left, right) => {
+            if (left === preferredMetadataKey) {
+                return -1;
+            }
+
+            if (right === preferredMetadataKey) {
+                return 1;
+            }
+
+            return left.localeCompare(right, undefined, {
+                sensitivity: "base",
+            });
+        });
+}
+
+/**
+ * Resolves a typed metadata key to a known key's stored spelling when they
+ * differ only by case, since stored keys are matched exactly.
+ */
+export function resolveMetadataKey(draftKey: string, knownKeys: string[]) {
+    const trimmedKey = draftKey.trim();
+    const lowerKey = trimmedKey.toLowerCase();
+
+    return (
+        knownKeys.find((metaKey) => metaKey.toLowerCase() === lowerKey) ??
+        trimmedKey
+    );
+}
+
+function getMetadataValueSuggestions(
+    currentFilters: SearchFilters,
+    suggestionValues: FilterSuggestionMap,
+    metaKey: string,
+    draftValue: string,
+): string[] {
+    if (!metaKey) {
+        return [];
+    }
+
+    const fieldKey = `${metadataQueryPrefix}${metaKey}`;
+    const appliedValues = new Set(
+        (currentFilters[fieldKey] ?? []).map((value) => value.toLowerCase()),
+    );
+    const normalizedDraft = draftValue.trim().toLowerCase();
+
+    return (suggestionValues[fieldKey] ?? [])
+        .filter((value) => !appliedValues.has(value.toLowerCase()))
+        .filter(
+            (value) =>
+                normalizedDraft.length === 0 ||
+                value.toLowerCase().includes(normalizedDraft),
+        )
+        .slice(0, metadataSuggestionLimit);
+}
+
+type MetadataFilterFormProps = {
+    currentFilters: SearchFilters;
+    suggestionValues: FilterSuggestionMap;
+    onApply: (fieldKey: string, value: string) => void;
+};
+
+function MetadataFilterForm({
+    currentFilters,
+    suggestionValues,
+    onApply,
+}: MetadataFilterFormProps) {
+    const knownKeys = metadataKeySuggestions(suggestionValues);
+    const [keyDraft, setKeyDraft] = useState("");
+    const [valueDraft, setValueDraft] = useState("");
+    const metaKey = resolveMetadataKey(keyDraft, knownKeys);
+    const valueSuggestions = getMetadataValueSuggestions(
+        currentFilters,
+        suggestionValues,
+        metaKey,
+        valueDraft,
+    );
+
+    function handleSubmit(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (!metaKey || !valueDraft.trim()) {
+            return;
+        }
+
+        onApply(`${metadataQueryPrefix}${metaKey}`, valueDraft);
+    }
+
+    return (
+        <form
+            data-metadata-filter-form="true"
+            className="space-y-3"
+            onSubmit={handleSubmit}
+        >
+            <div className="space-y-2">
+                <label
+                    htmlFor="metadata-filter-key"
+                    className="text-sm font-medium text-foreground"
+                >
+                    Metadata key
+                </label>
+                <input
+                    data-metadata-key-input="true"
+                    id="metadata-filter-key"
+                    list="metadata-filter-key-suggestions"
+                    value={keyDraft}
+                    onChange={(event) => {
+                        setKeyDraft(event.target.value);
+                        setValueDraft("");
+                    }}
+                    className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/30"
+                />
+                {knownKeys.length > 0 ? (
+                    <datalist id="metadata-filter-key-suggestions">
+                        {knownKeys.map((knownKey) => (
+                            <option key={knownKey} value={knownKey} />
+                        ))}
+                    </datalist>
+                ) : null}
+            </div>
+            <div className="space-y-2">
+                <label
+                    htmlFor="metadata-filter-value"
+                    className="text-sm font-medium text-foreground"
+                >
+                    Metadata value
+                </label>
+                <input
+                    data-metadata-value-input="true"
+                    id="metadata-filter-value"
+                    list="metadata-filter-value-suggestions"
+                    value={valueDraft}
+                    onChange={(event) => setValueDraft(event.target.value)}
+                    className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/30"
+                />
+                {valueSuggestions.length > 0 ? (
+                    <datalist id="metadata-filter-value-suggestions">
+                        {valueSuggestions.map((suggestion) => (
+                            <option key={suggestion} value={suggestion} />
+                        ))}
+                    </datalist>
+                ) : null}
+            </div>
+            <p
+                data-testid="metadata-filter-help"
+                className="text-sm leading-6 text-muted-foreground"
+            >
+                Finds result sets registered with{" "}
+                <code className="whitespace-nowrap">--meta key=value</code>;{" "}
+                <code className="whitespace-nowrap">--project X</code> is
+                project=X. Values match ignoring case, and part of a value also
+                matches.
+            </p>
+            <button
+                type="submit"
+                className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-95"
+            >
+                Add
+            </button>
+        </form>
+    );
 }
 
 function isSearchSuggestion(value: unknown): value is SearchSuggestion {
@@ -576,7 +759,18 @@ export function FilterBuilder({
                                             data-search-builder-selected-field-panel="true"
                                             className="border-t border-border/70 p-3"
                                         >
-                                            {selectedField ? (
+                                            {selectedField?.key ===
+                                            metadataFieldKey ? (
+                                                <MetadataFilterForm
+                                                    currentFilters={
+                                                        currentFilters
+                                                    }
+                                                    suggestionValues={
+                                                        suggestionValues
+                                                    }
+                                                    onApply={applyFilterValue}
+                                                />
+                                            ) : selectedField ? (
                                                 <form
                                                     className="space-y-3"
                                                     onSubmit={handleAddFilter}

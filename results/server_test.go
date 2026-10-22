@@ -1237,6 +1237,68 @@ func performOwnerResultsRequestForTest(t *testing.T, server *Server, method, pat
 	return performResultsJWTRequestForTest(t, handler, method, path, token, body)
 }
 
+func TestServerMetadataKeyValueFilter(t *testing.T) {
+	convey.Convey("Given result sets tagged with --project and --meta values, GET /results meta_<key> filters match values case-insensitively, OR within a key and AND across keys", t, func() {
+		store := newSQLiteStoreForTest(t)
+		server := NewServer(store, nil, nil)
+		ids := map[string]string{}
+
+		for _, tagged := range []struct {
+			runKey string
+			values map[string][]string
+		}{
+			{runKey: "meta-filter-a", values: map[string][]string{"project": {"CAT", "dog"}, "panel": {"haem"}}},
+			{runKey: "meta-filter-b", values: map[string][]string{"project": {"cat"}, "panel": {"solid"}}},
+			{runKey: "meta-filter-c", values: map[string][]string{"project": {"bird"}}},
+		} {
+			reg := testServerRegistration(t)
+			reg.RunKey = tagged.runKey
+			reg.Metadata = nil
+			reg.MetadataValues = tagged.values
+
+			response := performOwnerResultsRequestForTest(t, server, http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
+			convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
+
+			var result ResultSet
+			decodeJSONResponseForTest(t, response, &result)
+			ids[tagged.runKey] = result.ID
+		}
+
+		for _, tc := range []struct {
+			path     string
+			expected []string
+		}{
+			{path: "/results?meta_project=cat", expected: []string{"meta-filter-a", "meta-filter-b"}},
+			{path: "/results?meta_project=CAT", expected: []string{"meta-filter-a", "meta-filter-b"}},
+			{path: "/results?meta_project=DOG", expected: []string{"meta-filter-a"}},
+			{path: "/results?meta_project=cat&meta_panel=HAEM", expected: []string{"meta-filter-a"}},
+			{path: "/results?meta_project=bird&meta_project=dog", expected: []string{"meta-filter-a", "meta-filter-c"}},
+			{path: "/results?meta_project=bird&meta_panel=haem", expected: []string{}},
+		} {
+			response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, tc.path, nil)
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+			var results []ResultSet
+			decodeJSONResponseForTest(t, response, &results)
+
+			got := make([]string, 0, len(results))
+			for _, result := range results {
+				got = append(got, result.ID)
+			}
+
+			want := make([]string, 0, len(tc.expected))
+			for _, runKey := range tc.expected {
+				want = append(want, ids[runKey])
+			}
+
+			convey.So(got, convey.ShouldHaveLength, len(want))
+			for _, id := range want {
+				convey.So(got, convey.ShouldContain, id)
+			}
+		}
+	})
+}
+
 func TestServerPostResults(t *testing.T) {
 	convey.Convey("E1.1: Given an empty store and valid Registration JSON, when POST /results is called, then status is 201 with JSON result fields and application/json content type", t, func() {
 		store := newSQLiteStoreForTest(t)

@@ -47,5 +47,12 @@ Evidence: `$RUN/evidence/rw-*.png`.
   option, `<label> value` input, `Add`) is used in
   `frontend/e2e/results.spec.ts`, `addRequesterFilter`. Reuse it rather than
   typing into the generic box.
+- The search builder's `Metadata` option has `Metadata key` and
+  `Metadata value` inputs with datalists
+  `#metadata-filter-key-suggestions` and
+  `#metadata-filter-value-suggestions`; `Add` sets `meta_<key>=<value>` in
+  the URL. Seed sets tagged `project=latest-pagination` (6, requester `ivy`)
+  exercise it; register more with `--project` or `--meta` via the
+  [results CLI](results-cli.md).
 - The frontend binds all interfaces (`*:<port>`), not just loopback. Keep
   the port range private.
