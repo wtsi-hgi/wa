@@ -101,11 +101,19 @@ func (c *Client) manyToOneSampleScope(ctx context.Context, raw string) (exportSa
 
 // exportLanesFrom selects the distinct Illumina run/lane/tag products of the
 // scoped samples, one row per (product, sample), so rows from different samples
-// stay distinguishable and the order is deterministic across samples.
-func exportLanesFrom(scope exportSampleScope) (string, []any) {
+// stay distinguishable and the order is deterministic across samples. With
+// withLibraryType the derived table also carries each row's library type from
+// the product's flowcell; grouping on the same four keys keeps one row per
+// (product, sample).
+func exportLanesFrom(scope exportSampleScope, withLibraryType bool) (string, []any) {
 	predicate, args := scope.predicate("ipm.id_sample_tmp")
+	if withLibraryType {
+		return ` FROM (SELECT ipm.id_run, ipm.position, ipm.tag_index, ipm.id_sample_tmp, ` + exportLibraryTypeAggregate +
+			` AS library_type FROM iseq_product_metrics_mirror ipm` + exportLibraryTypeJoin + ` WHERE ` + predicate +
+			` GROUP BY ipm.id_run, ipm.position, ipm.tag_index, ipm.id_sample_tmp) AS lanes`, args
+	}
 
-	return ` FROM (SELECT DISTINCT ipm.id_run, ipm.position, ipm.tag_index, ipm.id_sample_tmp FROM iseq_product_metrics_mirror ipm WHERE ` +
+	return ` FROM (SELECT DISTINCT ipm.id_run, ipm.position, ipm.tag_index, ipm.id_sample_tmp, '' AS library_type FROM iseq_product_metrics_mirror ipm WHERE ` +
 		predicate + `) AS lanes`, args
 }
 
@@ -146,6 +154,7 @@ func (c *Client) multiSampleStudiesForExport(ctx context.Context, scope exportSa
 type exportLaneRow struct {
 	IDRun, Position, TagIndex                       int
 	Name, SupplierName, SangerSampleID, AccessionNo string
+	LibraryType                                     string
 }
 
 func (row exportLaneRow) cell(column string) string {
@@ -164,6 +173,8 @@ func (row exportLaneRow) cell(column string) string {
 		return row.SangerSampleID
 	case "accession_number":
 		return row.AccessionNo
+	case exportColumnLibraryType:
+		return row.LibraryType
 	default:
 		return ""
 	}
@@ -179,7 +190,7 @@ func queryExportLaneRows(ctx context.Context, db *sql.DB, query string, args ...
 	lanes := make([]exportLaneRow, 0)
 	for rows.Next() {
 		var lane exportLaneRow
-		if err = rows.Scan(&lane.IDRun, &lane.Position, &lane.TagIndex, &lane.Name, &lane.SupplierName, &lane.SangerSampleID, &lane.AccessionNo); err != nil {
+		if err = rows.Scan(&lane.IDRun, &lane.Position, &lane.TagIndex, &lane.Name, &lane.SupplierName, &lane.SangerSampleID, &lane.AccessionNo, &lane.LibraryType); err != nil {
 			return nil, fmt.Errorf("%w: scan export lanes: %w", ErrUpstreamImpaired, err)
 		}
 
@@ -241,9 +252,9 @@ func (c *Client) exportLanes(ctx context.Context, plan exportPlan, parent export
 		return ExportResult{}, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	from, args := exportLanesFrom(parent.SampleScope)
+	from, args := exportLanesFrom(parent.SampleScope, exportColumnsNeedLibraryType(plan.columns))
 	query := `SELECT lanes.id_run, lanes.position, lanes.tag_index, COALESCE(sm.name, ''), COALESCE(sm.supplier_name, ''), ` +
-		`COALESCE(sm.sanger_sample_id, ''), COALESCE(sm.accession_number, '')` + from +
+		`COALESCE(sm.sanger_sample_id, ''), COALESCE(sm.accession_number, ''), lanes.library_type` + from +
 		` LEFT JOIN sample_mirror sm ON sm.id_sample_tmp = lanes.id_sample_tmp` +
 		` ORDER BY lanes.id_run, lanes.position, lanes.tag_index, lanes.id_sample_tmp LIMIT ? OFFSET ?`
 
@@ -252,7 +263,8 @@ func (c *Client) exportLanes(ctx context.Context, plan exportPlan, parent export
 		return ExportResult{}, err
 	}
 
-	total, err := c.queryCount(ctx, `SELECT COUNT(*)`+from, "count export lanes", args...)
+	countFrom, countArgs := exportLanesFrom(parent.SampleScope, false)
+	total, err := c.queryCount(ctx, `SELECT COUNT(*)`+countFrom, "count export lanes", countArgs...)
 	if err != nil {
 		return ExportResult{}, err
 	}

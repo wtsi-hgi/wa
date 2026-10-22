@@ -205,6 +205,25 @@ product. It is product-grained, keyed by run/lane/tag, and includes products
 with no matching iRODS path; those rows keep `irods_path` blank and can explain
 known gaps with `irods_unmatched` and `reason`.
 
+To put each product's library type next to its sample, run, lane, tag, QC and
+CRAM path, add the opt-in `library_type` column (alias `pipeline_id_lims`) to a
+`products`, `irods`/`files`, `sample-crams` or `lanes` export:
+
+```bash
+wa mlwh export products study 7568 --file-type cram --columns supplier_name,id_run,lane,tag_index,library_type,manual_qc,irods_path
+wa mlwh export sample-crams study 7568 --columns name,supplier_name,library_type,irods_path
+```
+
+The value is the Illumina library type of the row's own product, from its
+flowcell record (`iseq_flowcell.pipeline_id_lims`); a merged CRAM takes the type
+of the component flowcell the cache records for it. It is blank for PacBio,
+Element, Ultima and ONT rows, because the cache holds no per-product library
+type for them, and on a `products` or `lanes` row whose grouped products
+disagree or have no type. It is never guessed from the sample's library list,
+where a sample can have several types, so it can differ from `--library-type`,
+which keeps rows whose sample has any library of that type in the study. It
+needs a server at MLWH API 1.14.0 or later.
+
 Use `wa mlwh export irods ...` for file-object-grained exports: each row is one
 iRODS data object/path. The older standalone `wa mlwh irods` command has been
 replaced by the generic export surface. Use `wa mlwh export sample-crams ...`

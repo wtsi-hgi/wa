@@ -45,6 +45,28 @@ const (
 	exportFormatJSON = "json"
 
 	defaultExportAllLimit = 1000
+
+	exportColumnLibraryType = "library_type"
+
+	// exportLibraryTypeJoin reaches a product's flowcell row from an
+	// iseq_product_metrics_mirror row aliased ipm. The join is a primary-key
+	// lookup, so it never adds rows.
+	exportLibraryTypeJoin = ` LEFT JOIN iseq_flowcell_mirror lt_ifc ON lt_ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp`
+
+	// exportLibraryTypeAggregate is the library type of a grouped row (one
+	// products or lanes row can cover several product-metrics rows, such as the
+	// merged products sharing run/0/0): the type every grouped row agrees on,
+	// or blank when they differ or any of them has no type.
+	exportLibraryTypeAggregate = `CASE WHEN COUNT(lt_ifc.pipeline_id_lims) = COUNT(*) AND ` +
+		`MIN(lt_ifc.pipeline_id_lims) = MAX(lt_ifc.pipeline_id_lims) THEN MIN(lt_ifc.pipeline_id_lims) ELSE '' END`
+
+	// exportIRODSLibraryTypeJoin reaches the flowcell row of an iRODS object's
+	// product (alias spi, or the ranked sample-crams derived table). Only
+	// Illumina products have an iseq_product_metrics row, so other platforms'
+	// objects get NULL and a blank library type.
+	exportIRODSLibraryTypeJoinTemplate = ` LEFT JOIN iseq_product_metrics_mirror lt_ipm ON lt_ipm.id_iseq_product = %s.id_iseq_product` +
+		` LEFT JOIN iseq_flowcell_mirror lt_ifc ON lt_ifc.id_iseq_flowcell_tmp = lt_ipm.id_iseq_flowcell_tmp`
+	exportIRODSLibraryTypeSelect = `COALESCE(lt_ifc.pipeline_id_lims, '')`
 )
 
 type exportRelationshipKind string
@@ -193,6 +215,7 @@ var (
 			{Name: "id_run", Supported: true},
 			{Name: "lane", Aliases: []string{"position"}, Supported: true},
 			{Name: "tag_index", Supported: true},
+			libraryTypeExportColumn(),
 		},
 		Default: []string{"supplier_name", "sanger_sample_id", "id_run", "lane", "tag_index"},
 	}
@@ -236,6 +259,7 @@ var (
 			{Name: "reason", Supported: true},
 			{Name: "id_study_lims", Supported: true},
 			{Name: "study_accession_number", Supported: true},
+			libraryTypeExportColumn(),
 		},
 		Default: []string{
 			"name",
@@ -370,7 +394,19 @@ func fileExportColumns() []exportColumn {
 		{Name: "id_sample_tmp", Supported: true},
 		{Name: "collection", Supported: true},
 		{Name: "data_object", Supported: true},
+		libraryTypeExportColumn(),
 	}
+}
+
+// libraryTypeExportColumn is the opt-in per-product library type column. Its
+// value is the Illumina iseq_flowcell.pipeline_id_lims of the product's own
+// flowcell row, reached through the product's iseq_product_metrics row (for a
+// merged product, the component flowcell the cache records for it). Rows of
+// other platforms are blank because their cached product metrics carry no
+// library type. It is never taken from library_samples, which lists every
+// library type a sample has in a study rather than the type of one product.
+func libraryTypeExportColumn() exportColumn {
+	return exportColumn{Name: exportColumnLibraryType, Aliases: []string{"pipeline_id_lims"}, Supported: true}
 }
 
 func resolveExportColumns(rel ExportRelationship, vocab exportVocabulary, requested []string) ([]exportColumn, error) {
@@ -532,6 +568,16 @@ func exportColumnsNeedSample(columns []exportColumn) bool {
 func exportColumnsNeedStudy(columns []exportColumn) bool {
 	for _, column := range columns {
 		if column.NeedsStudy {
+			return true
+		}
+	}
+
+	return false
+}
+
+func exportColumnsNeedLibraryType(columns []exportColumn) bool {
+	for _, column := range columns {
+		if column.Name == exportColumnLibraryType {
 			return true
 		}
 	}
@@ -1301,6 +1347,7 @@ func (c *Client) exportProducts(ctx context.Context, plan exportPlan, parent exp
 	input := exportProductQueryInput{
 		studyID:             parent.Canonical,
 		needsIRODS:          plan.needsIRODS,
+		withLibraryType:     exportColumnsNeedLibraryType(plan.columns),
 		normalisedFile:      plan.normalisedFile,
 		deliverablesOnly:    plan.deliverablesOnly,
 		filters:             plan.filters,
@@ -1434,6 +1481,7 @@ func (c *Client) exportSampleCRAMs(ctx context.Context, plan exportPlan, parent 
 
 	input := exportSampleCRAMQueryInput{
 		studyID:             parent.Canonical,
+		withLibraryType:     exportColumnsNeedLibraryType(plan.columns),
 		normalisedFile:      plan.normalisedFile,
 		deliverablesOnly:    plan.deliverablesOnly,
 		filters:             plan.filters,
@@ -1461,6 +1509,7 @@ type exportFilters struct {
 
 type exportSampleCRAMQueryInput struct {
 	studyID             string
+	withLibraryType     bool
 	normalisedFile      string
 	deliverablesOnly    bool
 	filters             exportFilters
@@ -1521,16 +1570,29 @@ func (c *Client) queryExportSampleCRAMRows(ctx context.Context, db *sql.DB, inpu
 func exportSampleCRAMPageQuery(input exportSampleCRAMQueryInput) (string, []any) {
 	ranked, args := exportSampleCRAMRankedQuery(input)
 	query := `SELECT ranked.id_seq_product_irods_locations_tmp, ranked.id_iseq_product, ranked.irods_collection, ranked.irods_file_name, ` +
-		`ranked.id_sample_tmp, ranked.id_study_lims, COALESCE(ranked.created, ''), ranked.platform, ranked.id_run, ranked.position, ` +
-		`ranked.tag_index, ranked.qc, ranked.is_deliverable, ranked.merged, COALESCE(sm.name, ''), COALESCE(sm.supplier_name, ''), ` +
-		`COALESCE(sm.sanger_sample_id, ''), COALESCE(sm.accession_number, ''), COALESCE(study_mirror.accession_number, '') FROM (` + ranked +
+		`ranked.id_sample_tmp, ranked.id_study_lims, COALESCE(ranked.created, '') AS created, ranked.platform, ranked.id_run, ranked.position, ` +
+		`ranked.tag_index, ranked.qc, ranked.is_deliverable, ranked.merged, COALESCE(sm.name, '') AS name, ` +
+		`COALESCE(sm.supplier_name, '') AS supplier_name, COALESCE(sm.sanger_sample_id, '') AS sanger_sample_id, ` +
+		`COALESCE(sm.accession_number, '') AS accession_number, COALESCE(study_mirror.accession_number, '') AS study_accession_number`
+	if !input.withLibraryType {
+		query += `, ''`
+	}
+	query += ` FROM (` + ranked +
 		`) ranked INNER JOIN sample_mirror sm ON sm.id_sample_tmp = ranked.id_sample_tmp AND sm.id_lims = 'SQSCP' ` +
 		`LEFT JOIN study_mirror ON study_mirror.id_study_lims = ranked.id_study_lims AND study_mirror.id_lims = 'SQSCP' WHERE ranked.rn = 1`
 	query, args = appendExportSampleCRAMSampleFilters(query, args, input)
 	query += ` ORDER BY sm.name, ranked.id_sample_tmp LIMIT ? OFFSET ?`
 	args = append(args, input.limit, input.offset)
+	if !input.withLibraryType {
+		return query, args
+	}
 
-	return query, args
+	// The library type is looked up for the page's rows only: joining it inside
+	// the ranked query made MySQL look up every CRAM of a large study before
+	// sorting and limiting (11s instead of 0.7s for a 20k-sample study page).
+	return `SELECT page.*, ` + exportIRODSLibraryTypeSelect + ` FROM (` + query + `) page` +
+		fmt.Sprintf(exportIRODSLibraryTypeJoinTemplate, "page") +
+		` ORDER BY page.name, page.id_sample_tmp`, args
 }
 
 func exportSampleCRAMRankedQuery(input exportSampleCRAMQueryInput) (string, []any) {
@@ -1700,7 +1762,7 @@ func (c *Client) queryExportProductRows(
 
 	products := make([]exportProductRow, 0)
 	for rows.Next() {
-		row, scanErr := scanExportProductRow(rows.Scan, plan.needsIRODS)
+		row, scanErr := scanExportProductRow(rows.Scan, input.needsIRODS, input.withLibraryType)
 		if scanErr != nil {
 			return nil, fmt.Errorf("%w: scan export product row: %w", ErrUpstreamImpaired, scanErr)
 		}
@@ -1734,6 +1796,10 @@ func exportProductListQuery(input exportProductQueryInput) (string, []any) {
 		} else {
 			selectClause += manifestListIRODSNoUnmatchedSelect
 		}
+	}
+	if input.withLibraryType {
+		selectClause += `, ` + exportLibraryTypeAggregate
+		join += exportLibraryTypeJoin
 	}
 	args = append(args, whereArgs...)
 	query := selectClause + manifestListBaseFrom + join + where
@@ -1800,7 +1866,7 @@ func exportProductQCHaving(qc string) string {
 	}
 }
 
-func scanExportProductRow(scan func(dest ...any) error, withIRODS bool) (exportProductRow, error) {
+func scanExportProductRow(scan func(dest ...any) error, withIRODS, withLibraryType bool) (exportProductRow, error) {
 	var (
 		row             exportProductRow
 		name            sql.NullString
@@ -1813,6 +1879,7 @@ func scanExportProductRow(scan func(dest ...any) error, withIRODS bool) (exportP
 		collection      sql.NullString
 		fileName        sql.NullString
 		unmatched       int
+		libraryType     sql.NullString
 	)
 
 	dest := []any{
@@ -1830,6 +1897,9 @@ func scanExportProductRow(scan func(dest ...any) error, withIRODS bool) (exportP
 	if withIRODS {
 		dest = append(dest, &collection, &fileName, &unmatched)
 	}
+	if withLibraryType {
+		dest = append(dest, &libraryType)
+	}
 	if err := scan(dest...); err != nil {
 		return exportProductRow{}, err
 	}
@@ -1839,6 +1909,7 @@ func scanExportProductRow(scan func(dest ...any) error, withIRODS bool) (exportP
 	row.AccessionNumber = nullStringValue(accessionNumber)
 	row.SangerSampleID = nullStringValue(sangerSampleID)
 	row.ManualQC = qcRollupString(productCount, pendingQC, minQC)
+	row.LibraryType = nullStringValue(libraryType)
 	if withIRODS && collection.Valid && fileName.Valid {
 		row.IRODSPath = strings.TrimRight(collection.String, "/") + "/" + fileName.String
 	}
@@ -2282,6 +2353,7 @@ type exportCursor struct {
 type exportProductQueryInput struct {
 	studyID             string
 	needsIRODS          bool
+	withLibraryType     bool
 	normalisedFile      string
 	deliverablesOnly    bool
 	filters             exportFilters
@@ -2540,6 +2612,7 @@ func scanExportIRODSRow(scan func(dest ...any) error) (exportIRODSRow, error) {
 		sangerSampleID  sql.NullString
 		sampleAccession sql.NullString
 		studyAccession  sql.NullString
+		libraryType     sql.NullString
 	)
 
 	if err := scan(
@@ -2562,6 +2635,7 @@ func scanExportIRODSRow(scan func(dest ...any) error) (exportIRODSRow, error) {
 		&sangerSampleID,
 		&sampleAccession,
 		&studyAccession,
+		&libraryType,
 	); err != nil {
 		return exportIRODSRow{}, err
 	}
@@ -2573,6 +2647,7 @@ func scanExportIRODSRow(scan func(dest ...any) error) (exportIRODSRow, error) {
 	row.SangerSampleID = nullStringValue(sangerSampleID)
 	row.SampleAccession = nullStringValue(sampleAccession)
 	row.StudyAccession = nullStringValue(studyAccession)
+	row.LibraryType = nullStringValue(libraryType)
 
 	return row, nil
 }
@@ -2613,6 +2688,9 @@ func exportIRODSFromWhere(input exportIRODSQueryInput, count bool) (string, []an
 	if exportColumnsNeedStudy(input.columns) {
 		query += ` LEFT JOIN study_mirror ON study_mirror.id_study_lims = spi.id_study_lims AND study_mirror.id_lims = 'SQSCP'`
 	}
+	if !count && exportColumnsNeedLibraryType(input.columns) {
+		query += fmt.Sprintf(exportIRODSLibraryTypeJoinTemplate, "spi")
+	}
 
 	where, args, err := exportIRODSWhere(input, count)
 	if err != nil {
@@ -2636,10 +2714,15 @@ func exportIRODSSelect(input exportIRODSQueryInput) string {
 		studyAccession = `COALESCE(study_mirror.accession_number, '')`
 	}
 
+	libraryType := `''`
+	if exportColumnsNeedLibraryType(input.columns) {
+		libraryType = exportIRODSLibraryTypeSelect
+	}
+
 	return `SELECT spi.id_seq_product_irods_locations_tmp, spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, ` +
 		`spi.id_sample_tmp, spi.id_study_lims, COALESCE(spi.created, ''), spi.platform, spi.id_run, spi.position, ` +
 		`spi.tag_index, spi.qc, spi.is_deliverable, spi.merged, ` + sampleName + `, ` + supplierName + `, ` +
-		sangerSampleID + `, ` + sampleAccession + `, ` + studyAccession
+		sangerSampleID + `, ` + sampleAccession + `, ` + studyAccession + `, ` + libraryType
 }
 
 func exportNeedsSample(input exportIRODSQueryInput) bool {
@@ -2719,6 +2802,7 @@ type exportIRODSRow struct {
 	SangerSampleID       string
 	SampleAccession      string
 	StudyAccession       string
+	LibraryType          string
 }
 
 func (row exportIRODSRow) cell(column string) string {
@@ -2777,6 +2861,8 @@ func (row exportIRODSRow) cell(column string) string {
 		return row.Collection
 	case "data_object":
 		return row.FileName
+	case exportColumnLibraryType:
+		return row.LibraryType
 	default:
 		return ""
 	}
@@ -2812,6 +2898,7 @@ type exportProductRow struct {
 	IRODSUnmatched                    bool
 	Reason                            string
 	IDStudyLims, StudyAccessionNumber string
+	LibraryType                       string
 }
 
 func (row exportProductRow) cell(column string) string {
@@ -2842,6 +2929,8 @@ func (row exportProductRow) cell(column string) string {
 		return row.IDStudyLims
 	case "study_accession_number":
 		return row.StudyAccessionNumber
+	case exportColumnLibraryType:
+		return row.LibraryType
 	default:
 		return ""
 	}
