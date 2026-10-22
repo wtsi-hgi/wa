@@ -269,7 +269,7 @@ func TestFindUniqueSampleReportsSharedValuesAsAmbiguous(t *testing.T) {
 		defer cleanup()
 		seedSharedFindSamples(t, client.cache.DB())
 
-		convey.Convey("the single-sample lookup enrichment uses names every candidate", func() {
+		convey.Convey("the single-sample lookup that enrichment uses names every candidate", func() {
 			samples, err := client.findUniqueSample(context.Background(), sangerIDSampleFinder, "seed-sanger")
 
 			convey.So(samples, convey.ShouldBeNil)
