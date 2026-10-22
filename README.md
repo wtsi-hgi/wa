@@ -388,7 +388,7 @@ while page=$(wa mlwh search musculus --type sample --json ${cursor:+--cursor "$c
 done
 ```
 
-A cursor works like ElasticSearch's `search_after`: it holds the sort key of
+A cursor works like Elasticsearch's `search_after`: it holds the sort key of
 the page's last row, and the next page starts just after that key, so deep
 pages do not re-scan earlier rows. The cache is updated in place by its
 periodic sync, so there is no point-in-time snapshot. Unlike `--offset`, a

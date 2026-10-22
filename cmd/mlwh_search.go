@@ -153,7 +153,7 @@ func newMLWHSearchCommand() *cobra.Command {
 			"",
 			"To page, pass the next cursor a page reports to --cursor, with the",
 			"same term, --type study or sample, and options. A cursor continues",
-			"just after the last row of the page that gave it (like ElasticSearch's",
+			"just after the last row of the page that gave it (like Elasticsearch's",
 			"search_after), so later pages do not re-scan earlier ones, and rows",
 			"are never repeated or skipped when the cache syncs between pages. If",
 			"it has synced since the first page, the page carries a warning: rows",

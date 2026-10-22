@@ -88,7 +88,7 @@ type SearchPageOptions struct {
 
 // SearchCursorPage is one page of a study or sample search. NextCursor
 // continues the search just after the page's last row (keyset, like
-// ElasticSearch's search_after) and is empty when no rows remain. Stale is set
+// Elasticsearch's search_after) and is empty when no rows remain. Stale is set
 // when the page continued a cursor and the cache has synced since the search's
 // first page: rows whose sort key did not change are still neither repeated nor
 // skipped, but matches that now sort before the cursor are missed and the page
