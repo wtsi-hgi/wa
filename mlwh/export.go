@@ -49,8 +49,8 @@ const (
 	exportColumnLibraryType = "library_type"
 
 	// exportLibraryTypeJoin reaches a product's flowcell row from an
-	// iseq_product_metrics_mirror row aliased ipm. Both joins are primary-key
-	// lookups, so they never add rows.
+	// iseq_product_metrics_mirror row aliased ipm. The join is a primary-key
+	// lookup, so it never adds rows.
 	exportLibraryTypeJoin = ` LEFT JOIN iseq_flowcell_mirror lt_ifc ON lt_ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp`
 
 	// exportLibraryTypeAggregate is the library type of a grouped row (one
