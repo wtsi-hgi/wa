@@ -101,6 +101,7 @@ vi.mock("@/components/file-browser", () => ({
         previewPage,
         previewPageCount,
         previewSummary,
+        renderExpandedPreview,
         renderGridPreview,
         renderSinglePreview,
         selectedDirectory,
@@ -123,6 +124,7 @@ vi.mock("@/components/file-browser", () => ({
         previewPage?: number;
         previewPageCount?: number;
         previewSummary?: string;
+        renderExpandedPreview?: (file: FileEntry) => React.ReactNode;
         renderGridPreview?: (file: FileEntry) => React.ReactNode;
         renderSinglePreview?: (file: FileEntry | null) => React.ReactNode;
         selectedDirectory?: string;
@@ -156,6 +158,9 @@ vi.mock("@/components/file-browser", () => ({
                 "data-selected-directory": selectedDirectory ?? "",
                 "data-selected-path": selectedPath ?? "",
                 "data-file-filter-value": fileFilterValue ?? "",
+                "data-has-expanded-preview": String(
+                    typeof renderExpandedPreview === "function",
+                ),
                 "data-tree-file-paths": files
                     .map((file) => file.path)
                     .join("\n"),
@@ -292,6 +297,33 @@ vi.mock("@/components/file-browser", () => ({
 }));
 
 vi.mock("@/components/file-preview", () => ({
+    FileExpandedPreview: ({
+        content,
+        error,
+        file,
+        isLoading,
+        proxyUrl,
+    }: {
+        content?: { content: string; contentType: string };
+        error?: { message?: string; status: number };
+        file: FileEntry;
+        isLoading?: boolean;
+        proxyUrl: string;
+    }) =>
+        createElement(
+            "div",
+            {
+                "data-expanded-content": content?.content ?? "",
+                "data-expanded-content-type": content?.contentType ?? "",
+                "data-expanded-error": error
+                    ? `${error.status}:${error.message ?? ""}`
+                    : "",
+                "data-expanded-loading": String(Boolean(isLoading)),
+                "data-expanded-url": proxyUrl,
+                "data-testid": "expanded-preview",
+            },
+            `expanded:${file.path}`,
+        ),
     FileImageThumbnail: ({
         file,
         fullSizeUrl,
@@ -1158,5 +1190,143 @@ describe("O1 result detail file integration", () => {
                 screen.getByText("preview:/tmp/results/report.txt"),
             ).toBeTruthy();
         });
+    });
+
+    it("gives the file browser an expanded-preview renderer for the gallery", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [buildFile("/tmp/results/a/first.png")],
+                resultId: "result-1",
+            }),
+        );
+
+        expect(
+            screen
+                .getByText("File Browser")
+                .parentElement?.getAttribute("data-has-expanded-preview"),
+        ).toBe("true");
+    });
+
+    it("loads enlarged-mode content for text files shown in the gallery", async () => {
+        const { GalleryExpandedPreview } =
+            await import("@/components/result-detail-files");
+
+        fetchMock.mockResolvedValue(
+            new Response("sample\tk\nalpha\t3\n", {
+                headers: { "content-type": "text/tab-separated-values" },
+            }),
+        );
+
+        render(
+            createElement(GalleryExpandedPreview, {
+                file: buildFile("/tmp/results/run-a/clusters.tsv"),
+                resultId: "result-7",
+            }),
+        );
+
+        const expanded = screen.getByTestId("expanded-preview");
+
+        expect(expanded.getAttribute("data-expanded-loading")).toBe("true");
+
+        await waitFor(() => {
+            expect(expanded.getAttribute("data-expanded-loading")).toBe(
+                "false",
+            );
+        });
+
+        const requestedUrl = String(fetchMock.mock.calls[0]?.[0]);
+
+        expect(requestedUrl).toContain("mode=enlarged");
+        expect(requestedUrl).toContain("id=result-7");
+        expect(expanded.getAttribute("data-expanded-content")).toBe(
+            "sample\tk\nalpha\t3\n",
+        );
+        expect(expanded.getAttribute("data-expanded-content-type")).toBe(
+            "text/tab-separated-values",
+        );
+    });
+
+    it("renders gallery images from the proxy URL without fetching content", async () => {
+        const { GalleryExpandedPreview } =
+            await import("@/components/result-detail-files");
+
+        render(
+            createElement(GalleryExpandedPreview, {
+                file: buildFile("/tmp/results/run-a/kmeans_k3.png"),
+                resultId: "result-7",
+            }),
+        );
+
+        const expanded = screen.getByTestId("expanded-preview");
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(expanded.getAttribute("data-expanded-loading")).toBe("false");
+        expect(expanded.getAttribute("data-expanded-url")).toBe(
+            "/api/file?id=result-7&path=%2Ftmp%2Fresults%2Frun-a%2Fkmeans_k3.png",
+        );
+    });
+
+    it("surfaces gallery content errors", async () => {
+        const { GalleryExpandedPreview } =
+            await import("@/components/result-detail-files");
+
+        fetchMock.mockResolvedValue(
+            Response.json({ error: "file not found on disk" }, { status: 410 }),
+        );
+
+        render(
+            createElement(GalleryExpandedPreview, {
+                file: buildFile("/tmp/results/run-a/report.md"),
+                resultId: "result-7",
+            }),
+        );
+
+        await waitFor(() => {
+            expect(
+                screen
+                    .getByTestId("expanded-preview")
+                    .getAttribute("data-expanded-error"),
+            ).toBe("410:file not found on disk");
+        });
+    });
+
+    it("steps grid thumbnail render heights so resizing reuses thumbnails", async () => {
+        const { thumbnailRenderHeightFor } =
+            await import("@/components/result-detail-files");
+
+        expect(thumbnailRenderHeightFor(120)).toBe(420);
+        expect(thumbnailRenderHeightFor(420)).toBe(420);
+        expect(thumbnailRenderHeightFor(421)).toBe(840);
+        expect(thumbnailRenderHeightFor(900)).toBe(1600);
+        expect(thumbnailRenderHeightFor(5000)).toBe(1600);
+    });
+
+    it("remembers the chosen preview height across visits", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+        const props = {
+            files: [buildFile("/tmp/results/a/first.png")],
+            resultId: "result-1",
+        };
+        const firstVisit = render(createElement(ResultDetailFiles, props));
+
+        fireEvent.click(screen.getByText("resize-preview-320"));
+        expect(
+            screen
+                .getByText("File Browser")
+                .parentElement?.getAttribute("data-preview-height"),
+        ).toBe("320");
+        firstVisit.unmount();
+
+        render(createElement(ResultDetailFiles, props));
+
+        expect(
+            screen
+                .getByText("File Browser")
+                .parentElement?.getAttribute("data-preview-height"),
+        ).toBe("320");
     });
 });

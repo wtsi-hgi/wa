@@ -17,11 +17,13 @@ import {
     type PreviewMode,
 } from "@/components/file-browser";
 import {
+    FileExpandedPreview,
     FileImageThumbnail,
     FilePreview,
     type FilePreviewError,
 } from "@/components/file-preview";
 import type { FileEntry } from "@/lib/contracts";
+import { useStoredPreviewHeight } from "@/lib/file-browser-view-prefs";
 import {
     applyFileBrowserGlobWildcards,
     fileBrowserGlobFilterStorageKey,
@@ -73,7 +75,18 @@ type FileUrlOptions = {
 
 const thumbnailsPerPage = 100;
 const defaultPreviewHeight = 220;
-const thumbnailRenderHeight = 420;
+const thumbnailRenderHeights = [420, 840, 1600] as const;
+
+/**
+ * Height to render grid thumbnails at for a preview of the given height,
+ * stepped so that resizing a preview does not refetch every thumbnail.
+ */
+export function thumbnailRenderHeightFor(previewHeight: number): number {
+    return (
+        thumbnailRenderHeights.find((height) => previewHeight <= height) ??
+        thumbnailRenderHeights[thumbnailRenderHeights.length - 1]
+    );
+}
 
 class PreviewRequestError extends Error {
     constructor(
@@ -429,6 +442,78 @@ const GalleryPreviewRow = memo(function GalleryPreviewRow({
     );
 }, areGalleryPreviewRowPropsEqual);
 
+/** The enlarged view of one file in the click-through preview gallery. */
+export function GalleryExpandedPreview({
+    file,
+    resultId,
+}: {
+    file: FileEntry;
+    resultId: string;
+}) {
+    const needsContent = shouldRequestInlinePreview(file.path);
+    const [state, setState] = useState<EnlargedPreviewState>(() => ({
+        isLoading: needsContent,
+        path: file.path,
+    }));
+
+    useEffect(() => {
+        if (!needsContent) {
+            return;
+        }
+
+        let cancelled = false;
+
+        void resolvePreviewContent(resultId, file.path, "enlarged")
+            .then((nextPreview) => {
+                if (!cancelled) {
+                    setState({
+                        content: nextPreview.content,
+                        isLoading: false,
+                        path: file.path,
+                    });
+                }
+            })
+            .catch((error: unknown) => {
+                if (!cancelled) {
+                    setState({
+                        error: previewErrorFrom(error),
+                        isLoading: false,
+                        path: file.path,
+                    });
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [file.path, needsContent, resultId]);
+
+    return (
+        <FileExpandedPreview
+            content={state.content}
+            error={state.error}
+            file={file}
+            isLoading={state.isLoading}
+            proxyUrl={buildFileUrl(resultId, file.path)}
+        />
+    );
+}
+
+function previewErrorFrom(error: unknown): FilePreviewError {
+    if (!(error instanceof PreviewRequestError)) {
+        return { message: "Preview request failed", status: 500 };
+    }
+
+    const payload = error.body as { body?: unknown; fileSize?: number } | null;
+    const body = error.status === 413 ? payload?.body : error.body;
+
+    return {
+        fileSize: payload?.fileSize,
+        message: extractPreviewErrorMessage(body),
+        status: error.status,
+    };
+}
+
 function areGalleryPreviewRowPropsEqual(
     previous: { file: FileEntry; maxHeight: number; resultId: string },
     next: { file: FileEntry; maxHeight: number; resultId: string },
@@ -522,7 +607,8 @@ export function ResultDetailFiles({
         [directoryGroups, initialSelectedDirectory],
     );
     const [previewMode, setPreviewMode] = useState<PreviewMode>("single");
-    const [previewHeight, setPreviewHeight] = useState(defaultPreviewHeight);
+    const [previewHeight, setPreviewHeight] =
+        useStoredPreviewHeight(defaultPreviewHeight);
     const [selectedDirectory, setSelectedDirectory] = useState<
         string | undefined
     >(initialSelectedDirectory);
@@ -905,7 +991,7 @@ export function ResultDetailFiles({
                         thumbnailUrl={buildGridThumbnailUrl(
                             resultIdForFile(file),
                             file.path,
-                            thumbnailRenderHeight,
+                            thumbnailRenderHeightFor(previewHeight),
                         )}
                     />
                 ) : (
@@ -917,6 +1003,12 @@ export function ResultDetailFiles({
                     />
                 )
             }
+            renderExpandedPreview={(file) => (
+                <GalleryExpandedPreview
+                    file={file}
+                    resultId={resultIdForFile(file)}
+                />
+            )}
             renderSinglePreview={renderSinglePreview}
             selectedDirectory={effectiveSelectedDirectory}
             selectedPath={effectiveSelectedFile?.path}

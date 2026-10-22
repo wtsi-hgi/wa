@@ -3,7 +3,18 @@
 import Image from "next/image";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ArrowDownToLine, Expand, FileCode2, Search, X } from "lucide-react";
+import {
+    ArrowDown,
+    ArrowDownToLine,
+    ArrowUp,
+    ArrowUpDown,
+    Check,
+    Copy,
+    Expand,
+    FileCode2,
+    Search,
+    X,
+} from "lucide-react";
 import hljs from "highlight.js/lib/core";
 import json from "highlight.js/lib/languages/json";
 import markdownLanguage from "highlight.js/lib/languages/markdown";
@@ -11,6 +22,7 @@ import plaintext from "highlight.js/lib/languages/plaintext";
 import python from "highlight.js/lib/languages/python";
 import xml from "highlight.js/lib/languages/xml";
 import ReactMarkdown from "react-markdown";
+import { toast } from "sonner";
 
 import {
     Table,
@@ -21,6 +33,8 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { PreviewPagination } from "@/components/preview-pagination";
+import { usePreviewGalleryOpener } from "@/components/preview-gallery";
+import { copyText } from "@/lib/clipboard";
 import type { FileEntry } from "@/lib/contracts";
 import {
     buildOmeTiffMetadataUrl,
@@ -33,6 +47,12 @@ import {
     nonPreviewableBinaryExtensions,
     previewBitmapImageExtensions,
 } from "@/lib/preview-file-types";
+import {
+    nextTableSort,
+    sortTableRows,
+    tableToTsv,
+    type TableSort,
+} from "@/lib/table-data";
 import { cn, formatBytes } from "@/lib/utils";
 
 hljs.registerLanguage("json", json);
@@ -98,6 +118,7 @@ type LightboxImageProps = {
     downloadUrl?: string;
     fileName: string;
     fullSizeUrl: string;
+    galleryPath?: string;
     imageClassName?: string;
     maxHeightPx?: number;
     minimumWidthPx?: number;
@@ -111,6 +132,7 @@ type ExpandablePreviewProps = {
     children: ReactNode;
     dialogContent: ReactNode;
     fileName: string;
+    galleryPath?: string;
     onOpen?: () => void;
 };
 
@@ -126,8 +148,6 @@ type ParsedTable = {
     headers: string[];
     rows: string[][];
 };
-
-type SortDirection = "asc" | "desc";
 
 function hasVerticalOverflow(element: HTMLElement): boolean {
     return element.scrollHeight > element.clientHeight + 1;
@@ -348,9 +368,11 @@ function ExpandablePreview({
     children,
     dialogContent,
     fileName,
+    galleryPath,
     onOpen,
 }: ExpandablePreviewProps) {
     const [previewOpen, setPreviewOpen] = useState(false);
+    const openGallery = usePreviewGalleryOpener(galleryPath);
     const onOpenRef = useRef(onOpen);
 
     useEffect(() => {
@@ -385,7 +407,9 @@ function ExpandablePreview({
                     type="button"
                     aria-label={`Enlarge ${fileName} preview`}
                     className="absolute inset-0 z-10 flex cursor-zoom-in items-end justify-start rounded-[1.5rem] text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
-                    onClick={() => setPreviewOpen(true)}
+                    onClick={() =>
+                        openGallery ? openGallery() : setPreviewOpen(true)
+                    }
                 >
                     <span className="pointer-events-none m-3 inline-flex size-9 items-center justify-center rounded-full bg-[color:rgba(15,23,42,0.78)] text-white opacity-95 shadow-lg transition group-hover:bg-[color:rgba(15,23,42,0.88)]">
                         <Expand className="size-3.5" aria-hidden="true" />
@@ -425,17 +449,110 @@ function ExpandablePreview({
     );
 }
 
+function CopyTableButton({
+    headers,
+    rows,
+    truncated,
+    variant,
+}: {
+    headers: readonly string[];
+    rows: readonly string[][];
+    truncated: boolean;
+    variant: "inline" | "expanded";
+}) {
+    const [copied, setCopied] = useState(false);
+
+    useEffect(() => {
+        if (!copied) {
+            return undefined;
+        }
+
+        const timeoutId = window.setTimeout(() => setCopied(false), 1500);
+
+        return () => {
+            window.clearTimeout(timeoutId);
+        };
+    }, [copied]);
+
+    const handleCopy = async () => {
+        const succeeded = await copyText(tableToTsv(headers, rows));
+
+        if (!succeeded) {
+            toast.error("Could not copy table");
+            return;
+        }
+
+        setCopied(true);
+        toast.success(
+            `Copied ${rows.length} row${rows.length === 1 ? "" : "s"} as TSV`,
+            truncated
+                ? {
+                      description:
+                          "Only the rows loaded in this preview were copied.",
+                  }
+                : undefined,
+        );
+    };
+    const Icon = copied ? Check : Copy;
+
+    if (variant === "inline") {
+        return (
+            <button
+                type="button"
+                aria-label="Copy table as TSV"
+                className="absolute right-14 top-3 z-20 inline-flex size-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-foreground shadow-[0_8px_24px_-18px_rgba(48,67,98,0.85)] transition hover:border-primary/35 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                data-table-copy="inline"
+                onClick={() => void handleCopy()}
+                title="Copy table as TSV"
+            >
+                <Icon className="size-4" aria-hidden="true" />
+            </button>
+        );
+    }
+
+    return (
+        <button
+            type="button"
+            aria-label="Copy table as TSV"
+            className="inline-flex h-9 shrink-0 items-center gap-2 self-start rounded-full border border-border/70 bg-background px-3 text-sm font-medium text-foreground transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 sm:self-auto"
+            data-table-copy="expanded"
+            onClick={() => void handleCopy()}
+        >
+            <Icon className="size-4" aria-hidden="true" />
+            <span>{copied ? "Copied" : "Copy"}</span>
+        </button>
+    );
+}
+
+function SortIcon({ direction }: { direction: "asc" | "desc" | null }) {
+    const Icon =
+        direction === "asc"
+            ? ArrowUp
+            : direction === "desc"
+              ? ArrowDown
+              : ArrowUpDown;
+
+    return (
+        <Icon
+            aria-hidden="true"
+            className={cn(
+                "size-3.5 shrink-0",
+                direction ? "text-primary" : "text-muted-foreground/70",
+            )}
+            data-sort-icon={direction ?? "none"}
+        />
+    );
+}
+
 function CsvPreview({
     content,
     contentType,
     isExpanded = false,
-    maxHeight,
     truncated = false,
 }: {
     content: string;
     contentType: string;
     isExpanded?: boolean;
-    maxHeight?: number;
     truncated?: boolean;
 }) {
     const parsed = useMemo(
@@ -447,8 +564,7 @@ function CsvPreview({
     const [expandedTableReady, setExpandedTableReady] = useState(
         !isExpanded || parsed.rows.length <= EXPANDED_TABLE_PAGE_SIZE,
     );
-    const [sortIndex, setSortIndex] = useState<number | null>(null);
-    const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+    const [sort, setSort] = useState<TableSort | null>(null);
 
     const filteredRows = useMemo(() => {
         const normalizedFilter = filterValue.trim().toLowerCase();
@@ -462,28 +578,10 @@ function CsvPreview({
         );
     }, [filterValue, parsed.rows]);
 
-    const sortedRows = useMemo(() => {
-        if (sortIndex === null) {
-            return filteredRows;
-        }
-
-        return [...filteredRows].sort((left, right) => {
-            const leftValue = left[sortIndex] ?? "";
-            const rightValue = right[sortIndex] ?? "";
-            const numericLeft = Number(leftValue);
-            const numericRight = Number(rightValue);
-            const bothNumeric =
-                !Number.isNaN(numericLeft) && !Number.isNaN(numericRight);
-            const order = bothNumeric
-                ? numericLeft - numericRight
-                : leftValue.localeCompare(rightValue, undefined, {
-                      numeric: true,
-                      sensitivity: "base",
-                  });
-
-            return sortDirection === "asc" ? order : -order;
-        });
-    }, [filteredRows, sortDirection, sortIndex]);
+    const sortedRows = useMemo(
+        () => (sort ? sortTableRows(filteredRows, sort) : filteredRows),
+        [filteredRows, sort],
+    );
 
     useEffect(() => {
         if (expandedTableReady) {
@@ -526,7 +624,7 @@ function CsvPreview({
     }
 
     return (
-        <div className="space-y-4">
+        <div className={isExpanded ? "space-y-4" : "relative"}>
             {isExpanded ? (
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <p className="text-sm text-muted-foreground">
@@ -552,6 +650,12 @@ function CsvPreview({
                                 value={filterValue}
                             />
                         </label>
+                        <CopyTableButton
+                            headers={parsed.headers}
+                            rows={sortedRows}
+                            truncated={truncated}
+                            variant="expanded"
+                        />
                         {totalExpandedPages > 1 ? (
                             <div className="flex items-center gap-2 self-start sm:self-auto">
                                 <span className="text-sm text-muted-foreground">
@@ -569,50 +673,57 @@ function CsvPreview({
                         ) : null}
                     </div>
                 </div>
-            ) : null}
+            ) : (
+                <CopyTableButton
+                    headers={parsed.headers}
+                    rows={sortedRows}
+                    truncated={truncated}
+                    variant="inline"
+                />
+            )}
 
             <div className="overflow-auto">
                 <Table>
                     <TableHeader>
                         <TableRow>
-                            {parsed.headers.map((header, index) => (
-                                <TableHead key={`${header}-${index}`}>
-                                    {isExpanded ? (
+                            {parsed.headers.map((header, index) => {
+                                const direction =
+                                    sort?.index === index
+                                        ? sort.direction
+                                        : null;
+
+                                return (
+                                    <TableHead
+                                        aria-sort={
+                                            direction === "asc"
+                                                ? "ascending"
+                                                : direction === "desc"
+                                                  ? "descending"
+                                                  : "none"
+                                        }
+                                        key={`${header}-${index}`}
+                                    >
                                         <button
                                             type="button"
                                             aria-label={`Sort by ${header}`}
-                                            className="inline-flex items-center gap-2 rounded-full px-2 py-1 text-left text-sm font-medium text-foreground transition hover:bg-muted/50"
+                                            className="relative z-20 inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2 py-1 text-left text-sm font-medium text-foreground transition hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                                            data-sort-column={index}
                                             onClick={() => {
-                                                if (sortIndex === index) {
-                                                    setCurrentPage(1);
-                                                    setSortDirection(
-                                                        (current) =>
-                                                            current === "asc"
-                                                                ? "desc"
-                                                                : "asc",
-                                                    );
-                                                    return;
-                                                }
-
                                                 setCurrentPage(1);
-                                                setSortIndex(index);
-                                                setSortDirection("asc");
+                                                setSort((current) =>
+                                                    nextTableSort(
+                                                        current,
+                                                        index,
+                                                    ),
+                                                );
                                             }}
                                         >
                                             <span>{header}</span>
-                                            {sortIndex === index ? (
-                                                <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                                                    {sortDirection}
-                                                </span>
-                                            ) : null}
+                                            <SortIcon direction={direction} />
                                         </button>
-                                    ) : (
-                                        <span className="px-2 py-1 text-sm font-medium text-foreground">
-                                            {header}
-                                        </span>
-                                    )}
-                                </TableHead>
-                            ))}
+                                    </TableHead>
+                                );
+                            })}
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -644,6 +755,7 @@ function LightboxImage({
     downloadUrl,
     fileName,
     fullSizeUrl,
+    galleryPath,
     imageClassName,
     maxHeightPx = 240,
     minimumWidthPx,
@@ -653,6 +765,7 @@ function LightboxImage({
     thumbnailWidth = 320,
 }: LightboxImageProps) {
     const [lightboxOpen, setLightboxOpen] = useState(false);
+    const openGallery = usePreviewGalleryOpener(galleryPath);
     const defaultDialogPanelClassName =
         "relative z-10 max-h-full max-w-5xl rounded-[2rem] border border-white/15 bg-[color:rgba(15,23,42,0.9)] p-4 shadow-2xl";
     const defaultDialogCloseButtonClassName =
@@ -688,7 +801,9 @@ function LightboxImage({
                     type="button"
                     aria-label="Open image lightbox"
                     className="absolute inset-0 z-10 cursor-zoom-in rounded-[inherit] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
-                    onClick={() => setLightboxOpen(true)}
+                    onClick={() =>
+                        openGallery ? openGallery() : setLightboxOpen(true)
+                    }
                 />
                 <div className="relative overflow-hidden rounded-[inherit]">
                     <Image
@@ -779,10 +894,12 @@ function LightboxImage({
 
 function ImagePreview({
     fileName,
+    galleryPath,
     maxHeightPx,
     proxyUrl,
 }: {
     fileName: string;
+    galleryPath?: string;
     maxHeightPx?: number;
     proxyUrl: string;
 }) {
@@ -791,6 +908,7 @@ function ImagePreview({
             downloadUrl={buildDownloadUrl(proxyUrl)}
             fileName={fileName}
             fullSizeUrl={proxyUrl}
+            galleryPath={galleryPath}
             maxHeightPx={maxHeightPx}
             thumbnailUrl={proxyUrl}
         />
@@ -826,10 +944,12 @@ function metadataSummary(metadata: OmeTiffMetadata): string[] {
 
 function OmeTiffPreview({
     fileName,
+    galleryPath,
     maxHeightPx,
     proxyUrl,
 }: {
     fileName: string;
+    galleryPath?: string;
     maxHeightPx?: number;
     proxyUrl: string;
 }) {
@@ -863,6 +983,7 @@ function OmeTiffPreview({
             downloadUrl={buildDownloadUrl(proxyUrl)}
             fileName={fileName}
             fullSizeUrl={fullPlaneUrl}
+            galleryPath={galleryPath}
             imageClassName="mx-auto block"
             maxHeightPx={renderedHeight}
             sizes="(min-width: 1280px) 32vw, 92vw"
@@ -1122,6 +1243,7 @@ export const FileImageThumbnail = memo(
                 downloadUrl={buildDownloadUrl(sourceUrl)}
                 fileName={fileName}
                 fullSizeUrl={fullSizeUrl}
+                galleryPath={file.path}
                 maxHeightPx={height}
                 minimumWidthPx={160}
                 sizes="(min-width: 1536px) 26vw, (min-width: 1280px) 30vw, 92vw"
@@ -1180,6 +1302,176 @@ export function selectRenderer(contentType: string): PreviewRenderer {
     }
 
     return "binary";
+}
+
+type PreviewContent = {
+    content: string;
+    contentType: string;
+    truncated?: boolean;
+};
+
+function ExpandedStatusCard({ children }: { children: ReactNode }) {
+    return (
+        <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-sm text-muted-foreground">
+            {children}
+        </div>
+    );
+}
+
+/**
+ * The enlarged view of one file, as shown in a preview lightbox. Text
+ * renderers (table, markdown, code) need content; the others load from
+ * proxyUrl.
+ */
+export function FileExpandedPreview({
+    content,
+    error,
+    file,
+    highlightedContent,
+    isLoading = false,
+    proxyUrl,
+    renderer: rendererOverride,
+}: {
+    content?: PreviewContent;
+    error?: FilePreviewError;
+    file: FileEntry;
+    highlightedContent?: string;
+    isLoading?: boolean;
+    proxyUrl: string;
+    renderer?: PreviewRenderer;
+}) {
+    const renderer =
+        rendererOverride ??
+        (content
+            ? selectRenderer(content.contentType)
+            : guessRendererFromPath(file.path));
+    const fileName = file.path.split("/").pop() ?? file.path;
+    const computedHighlight = useMemo(() => {
+        if (
+            renderer !== "code" ||
+            highlightedContent !== undefined ||
+            !content
+        ) {
+            return undefined;
+        }
+
+        return highlightCode(content.content, content.contentType);
+    }, [content, highlightedContent, renderer]);
+
+    if (isLoading) {
+        return <ExpandedStatusCard>Loading full preview...</ExpandedStatusCard>;
+    }
+
+    if (error) {
+        const message = error.message?.trim();
+
+        return (
+            <ExpandedStatusCard>
+                {message && message.length > 0
+                    ? message
+                    : error.status === 413
+                      ? `File too large for preview (${formatBytes(error.fileSize)}).`
+                      : "Unable to load full preview"}
+            </ExpandedStatusCard>
+        );
+    }
+
+    if (!isPreviewable(renderer, file.path)) {
+        return (
+            <ExpandedStatusCard>
+                Binary preview is unavailable for this file type.
+            </ExpandedStatusCard>
+        );
+    }
+
+    if (renderer === "image" && isTiffPreviewPath(file.path)) {
+        return (
+            <OmeTiffExpandedPreview fileName={fileName} proxyUrl={proxyUrl} />
+        );
+    }
+
+    if (renderer === "image" || renderer === "svg") {
+        return (
+            <Image
+                alt={`${fileName} full preview`}
+                className="mx-auto block max-h-[calc(100vh-9rem)] max-w-full object-contain"
+                src={proxyUrl}
+                unoptimized
+                width={1600}
+                height={1200}
+                sizes="100vw"
+            />
+        );
+    }
+
+    if (renderer === "pdf") {
+        return (
+            <iframe
+                className="block h-[calc(100vh-9rem)] w-full bg-background"
+                src={proxyUrl}
+                title="Enlarged PDF preview"
+            />
+        );
+    }
+
+    if (renderer === "html") {
+        return (
+            <iframe
+                className="block h-[calc(100vh-9rem)] w-full bg-white"
+                sandbox={htmlPreviewSandbox}
+                src={proxyUrl}
+                title="Enlarged HTML preview"
+            />
+        );
+    }
+
+    if (!content) {
+        return <ExpandedStatusCard>Loading full preview...</ExpandedStatusCard>;
+    }
+
+    if (renderer === "markdown") {
+        return (
+            <div className="h-full overflow-auto">
+                <article className="max-w-none p-6 text-foreground">
+                    <ReactMarkdown>{content.content}</ReactMarkdown>
+                </article>
+            </div>
+        );
+    }
+
+    if (renderer === "csv") {
+        return (
+            <div>
+                <CsvPreview
+                    key={buildPreviewInstanceKey(
+                        file.path,
+                        content.contentType,
+                        content.content,
+                        "expanded",
+                    )}
+                    content={content.content}
+                    contentType={content.contentType}
+                    isExpanded
+                    truncated={content.truncated}
+                />
+            </div>
+        );
+    }
+
+    return (
+        <div>
+            <div className="overflow-hidden bg-[color:rgba(15,23,42,0.96)]">
+                <pre className="overflow-auto p-5 text-sm leading-7 text-slate-100">
+                    <code
+                        dangerouslySetInnerHTML={{
+                            __html:
+                                highlightedContent ?? computedHighlight ?? "",
+                        }}
+                    />
+                </pre>
+            </div>
+        </div>
+    );
 }
 
 export function FilePreview({
@@ -1246,19 +1538,24 @@ export function FilePreview({
             dialogContent?.contentType ?? "text/plain",
         );
     }, [content, dialogContent, highlightedContent, renderer]);
-    const enlargedLoadingNode = (
-        <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-sm text-muted-foreground">
-            Loading full preview...
-        </div>
+    const expandedTextNode = (
+        <FileExpandedPreview
+            content={dialogContent}
+            error={enlargedError}
+            file={file}
+            highlightedContent={dialogHighlightedContent}
+            isLoading={enlargedLoading && !enlargedContent}
+            proxyUrl={proxyUrl}
+            renderer={renderer}
+        />
     );
-    const enlargedErrorMessage = enlargedError?.message?.trim();
-    const enlargedErrorNode = enlargedError ? (
-        <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-sm text-muted-foreground">
-            {enlargedErrorMessage && enlargedErrorMessage.length > 0
-                ? enlargedErrorMessage
-                : "Unable to load full preview"}
-        </div>
-    ) : null;
+    const expandedUrlNode = (
+        <FileExpandedPreview
+            file={file}
+            proxyUrl={proxyUrl}
+            renderer={renderer}
+        />
+    );
     const isImagePreview = !isLoading && previewable && renderer === "image";
     const isTiffPreview =
         !isLoading &&
@@ -1347,6 +1644,7 @@ export function FilePreview({
             <section className="h-full max-w-full">
                 <OmeTiffPreview
                     fileName={fileName}
+                    galleryPath={file.path}
                     key={proxyUrl}
                     maxHeightPx={maxHeight}
                     proxyUrl={proxyUrl}
@@ -1360,6 +1658,7 @@ export function FilePreview({
             <section className="inline-flex h-full max-w-full">
                 <ImagePreview
                     fileName={fileName}
+                    galleryPath={file.path}
                     maxHeightPx={maxHeight}
                     proxyUrl={proxyUrl}
                 />
@@ -1399,18 +1698,9 @@ export function FilePreview({
 
                     {!isLoading && previewable && renderer === "svg" ? (
                         <ExpandablePreview
+                            galleryPath={file.path}
                             fileName={fileName}
-                            dialogContent={
-                                <Image
-                                    alt={`${fileName} full preview`}
-                                    className="mx-auto block max-h-[calc(100vh-9rem)] max-w-full object-contain"
-                                    src={proxyUrl}
-                                    unoptimized
-                                    width={1600}
-                                    height={1200}
-                                    sizes="100vw"
-                                />
-                            }
+                            dialogContent={expandedUrlNode}
                         >
                             <Image
                                 alt={`${fileName} preview`}
@@ -1432,14 +1722,9 @@ export function FilePreview({
 
                     {!isLoading && previewable && renderer === "pdf" ? (
                         <ExpandablePreview
+                            galleryPath={file.path}
                             fileName={fileName}
-                            dialogContent={
-                                <iframe
-                                    className="block h-[calc(100vh-9rem)] w-full bg-background"
-                                    src={proxyUrl}
-                                    title="Enlarged PDF preview"
-                                />
-                            }
+                            dialogContent={expandedUrlNode}
                         >
                             <iframe
                                 className="block w-full bg-background"
@@ -1452,15 +1737,9 @@ export function FilePreview({
 
                     {!isLoading && previewable && renderer === "html" ? (
                         <ExpandablePreview
+                            galleryPath={file.path}
                             fileName={fileName}
-                            dialogContent={
-                                <iframe
-                                    className="block h-[calc(100vh-9rem)] w-full bg-white"
-                                    sandbox={htmlPreviewSandbox}
-                                    src={proxyUrl}
-                                    title="Enlarged HTML preview"
-                                />
-                            }
+                            dialogContent={expandedUrlNode}
                         >
                             <iframe
                                 className="block w-full bg-white"
@@ -1474,23 +1753,10 @@ export function FilePreview({
 
                     {!isLoading && previewable && renderer === "markdown" ? (
                         <ExpandablePreview
+                            galleryPath={file.path}
                             fileName={fileName}
                             onOpen={onEnlargeOpen}
-                            dialogContent={
-                                enlargedLoading && !enlargedContent ? (
-                                    enlargedLoadingNode
-                                ) : enlargedErrorNode ? (
-                                    enlargedErrorNode
-                                ) : (
-                                    <div className="h-full overflow-auto">
-                                        <article className="max-w-none p-6 text-foreground">
-                                            <ReactMarkdown>
-                                                {dialogContent?.content ?? ""}
-                                            </ReactMarkdown>
-                                        </article>
-                                    </div>
-                                )
-                            }
+                            dialogContent={expandedTextNode}
                         >
                             <div>
                                 <div className="relative">
@@ -1522,34 +1788,10 @@ export function FilePreview({
                     renderer === "csv" &&
                     content ? (
                         <ExpandablePreview
+                            galleryPath={file.path}
                             fileName={fileName}
                             onOpen={onEnlargeOpen}
-                            dialogContent={
-                                enlargedLoading && !enlargedContent ? (
-                                    enlargedLoadingNode
-                                ) : enlargedErrorNode ? (
-                                    enlargedErrorNode
-                                ) : dialogContent ? (
-                                    <div>
-                                        <CsvPreview
-                                            key={buildPreviewInstanceKey(
-                                                file.path,
-                                                dialogContent.contentType,
-                                                dialogContent.content,
-                                                "expanded",
-                                            )}
-                                            content={dialogContent.content}
-                                            contentType={
-                                                dialogContent.contentType
-                                            }
-                                            isExpanded
-                                            truncated={dialogContent.truncated}
-                                        />
-                                    </div>
-                                ) : (
-                                    enlargedLoadingNode
-                                )
-                            }
+                            dialogContent={expandedTextNode}
                         >
                             <div>
                                 <div className="relative">
@@ -1573,7 +1815,6 @@ export function FilePreview({
                                             )}
                                             content={content.content}
                                             contentType={content.contentType}
-                                            maxHeight={maxHeight}
                                             truncated={content.truncated}
                                         />
                                     </div>
@@ -1587,29 +1828,10 @@ export function FilePreview({
 
                     {!isLoading && previewable && renderer === "code" ? (
                         <ExpandablePreview
+                            galleryPath={file.path}
                             fileName={fileName}
                             onOpen={onEnlargeOpen}
-                            dialogContent={
-                                enlargedLoading && !enlargedContent ? (
-                                    enlargedLoadingNode
-                                ) : enlargedErrorNode ? (
-                                    enlargedErrorNode
-                                ) : (
-                                    <div>
-                                        <div className="overflow-hidden bg-[color:rgba(15,23,42,0.96)]">
-                                            <pre className="overflow-auto p-5 text-sm leading-7 text-slate-100">
-                                                <code
-                                                    dangerouslySetInnerHTML={{
-                                                        __html:
-                                                            dialogHighlightedContent ??
-                                                            "",
-                                                    }}
-                                                />
-                                            </pre>
-                                        </div>
-                                    </div>
-                                )
-                            }
+                            dialogContent={expandedTextNode}
                         >
                             <div>
                                 <div className="relative overflow-hidden bg-[color:rgba(15,23,42,0.96)]">

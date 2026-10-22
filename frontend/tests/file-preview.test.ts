@@ -16,6 +16,17 @@ const { highlightAutoMock } = vi.hoisted(() => ({
     })),
 }));
 const fetchMock = vi.fn<typeof fetch>();
+const { toastErrorMock, toastSuccessMock } = vi.hoisted(() => ({
+    toastErrorMock: vi.fn(),
+    toastSuccessMock: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+    toast: {
+        error: toastErrorMock,
+        success: toastSuccessMock,
+    },
+}));
 
 vi.stubGlobal("fetch", fetchMock);
 
@@ -29,7 +40,15 @@ vi.mock("highlight.js/lib/core", () => ({
     },
 }));
 
-import { FilePreview, type FilePreviewProps } from "@/components/file-preview";
+import {
+    FileExpandedPreview,
+    FilePreview,
+    type FilePreviewProps,
+} from "@/components/file-preview";
+import {
+    PreviewGalleryContext,
+    PreviewGalleryLightbox,
+} from "@/components/preview-gallery";
 import type { FileEntry } from "@/lib/contracts";
 
 function mockElementOverflow(
@@ -128,6 +147,8 @@ afterEach(() => {
     cleanup();
     fetchMock.mockReset();
     highlightAutoMock.mockClear();
+    toastErrorMock.mockReset();
+    toastSuccessMock.mockReset();
 });
 
 afterAll(() => {
@@ -751,39 +772,199 @@ describe("O1 file preview", () => {
         },
     );
 
-    it("only exposes csv column sorting once the preview is enlarged", () => {
+    it("sorts inline csv rows from headers that show a sort affordance", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/report.csv" }),
             content: {
                 content: [
                     "sample,status,count",
                     "gamma,ready,3",
-                    "alpha,ready,1",
+                    "alpha,ready,10",
                     "beta,pending,2",
                 ].join("\n"),
                 contentType: "text/csv",
             },
         });
 
+        const sampleHeader = screen.getByRole("columnheader", {
+            name: /sample/i,
+        });
+        const countToggle = screen.getByRole("button", {
+            name: /sort by count/i,
+        });
+
+        expect(sampleHeader.getAttribute("aria-sort")).toBe("none");
         expect(
-            screen.queryByRole("button", { name: /sort by sample/i }),
-        ).toBeNull();
+            sampleHeader.querySelector('[data-sort-icon="none"]'),
+        ).not.toBeNull();
         expect(screen.getAllByRole("row")[1]?.textContent).toContain("gamma");
 
-        fireEvent.click(
-            screen.getByRole("button", { name: /enlarge report.csv preview/i }),
+        fireEvent.click(countToggle);
+
+        const countHeader = screen.getByRole("columnheader", {
+            name: /count/i,
+        });
+        const bodyRows = () =>
+            Array.from(document.querySelectorAll("tbody tr")).map(
+                (row) => row.querySelector("td")?.textContent,
+            );
+
+        expect(countHeader.getAttribute("aria-sort")).toBe("ascending");
+        expect(
+            countHeader.querySelector('[data-sort-icon="asc"]'),
+        ).not.toBeNull();
+        expect(bodyRows()).toEqual(["beta", "gamma", "alpha"]);
+        expect(screen.queryByRole("dialog")).toBeNull();
+
+        fireEvent.click(countToggle);
+
+        expect(countHeader.getAttribute("aria-sort")).toBe("descending");
+        expect(
+            countHeader.querySelector('[data-sort-icon="desc"]'),
+        ).not.toBeNull();
+        expect(bodyRows()).toEqual(["alpha", "gamma", "beta"]);
+        expect(sampleHeader.getAttribute("aria-sort")).toBe("none");
+    });
+
+    it("copies the inline table as TSV in its sorted order", async () => {
+        const writeText = vi.fn<(value: string) => Promise<void>>(() =>
+            Promise.resolve(),
         );
 
-        const toggle = screen.getByRole("button", { name: /sort by sample/i });
+        vi.stubGlobal("navigator", { clipboard: { writeText } });
 
-        fireEvent.click(toggle);
-        const dialog = screen.getByRole("dialog", {
-            name: /enlarged report.csv preview/i,
+        try {
+            renderPreview({
+                file: buildFile({ path: "/tmp/results/report.csv" }),
+                content: {
+                    content: [
+                        "sample,status,count",
+                        "gamma,ready,3",
+                        "alpha,ready,1",
+                    ].join("\n"),
+                    contentType: "text/csv",
+                },
+            });
+
+            fireEvent.click(
+                screen.getByRole("button", { name: /sort by sample/i }),
+            );
+
+            await act(async () => {
+                fireEvent.click(
+                    screen.getByRole("button", { name: /copy table as tsv/i }),
+                );
+            });
+
+            expect(writeText).toHaveBeenCalledWith(
+                "sample\tstatus\tcount\nalpha\tready\t1\ngamma\tready\t3\n",
+            );
+            expect(toastSuccessMock).toHaveBeenCalledWith(
+                "Copied 2 rows as TSV",
+                undefined,
+            );
+            expect(screen.queryByRole("dialog")).toBeNull();
+        } finally {
+            vi.stubGlobal("navigator", window.navigator);
+        }
+    });
+
+    it("copies only the filtered, sorted rows from the enlarged table and warns when truncated", async () => {
+        const writeText = vi.fn<(value: string) => Promise<void>>(() =>
+            Promise.resolve(),
+        );
+
+        vi.stubGlobal("navigator", { clipboard: { writeText } });
+
+        try {
+            renderPreview({
+                file: buildFile({ path: "/tmp/results/report.tsv" }),
+                content: {
+                    content: [
+                        "sample\tstatus\tcount",
+                        "gamma\tready\t3",
+                        "alpha\tready\t1",
+                        "beta\tpending\t2",
+                    ].join("\n"),
+                    contentType: "text/tab-separated-values",
+                    truncated: true,
+                },
+            });
+
+            fireEvent.click(
+                screen.getByRole("button", {
+                    name: /enlarge report.tsv preview/i,
+                }),
+            );
+
+            const dialog = screen.getByRole("dialog", {
+                name: /enlarged report.tsv preview/i,
+            });
+            const within = (name: RegExp) =>
+                Array.from(dialog.querySelectorAll("button")).find((button) =>
+                    name.test(button.getAttribute("aria-label") ?? ""),
+                );
+
+            fireEvent.change(screen.getByLabelText(/filter rows/i), {
+                target: { value: "ready" },
+            });
+            fireEvent.click(within(/sort by count/i) as HTMLElement);
+            fireEvent.click(within(/sort by count/i) as HTMLElement);
+
+            await act(async () => {
+                fireEvent.click(within(/copy table as tsv/i) as HTMLElement);
+            });
+
+            expect(writeText).toHaveBeenCalledWith(
+                "sample\tstatus\tcount\ngamma\tready\t3\nalpha\tready\t1\n",
+            );
+            expect(toastSuccessMock).toHaveBeenCalledWith(
+                "Copied 2 rows as TSV",
+                {
+                    description:
+                        "Only the rows loaded in this preview were copied.",
+                },
+            );
+            expect(within(/copy table as tsv/i)?.textContent).toContain(
+                "Copied",
+            );
+        } finally {
+            vi.stubGlobal("navigator", window.navigator);
+        }
+    });
+
+    it("reports a failed table copy", async () => {
+        vi.stubGlobal("navigator", {
+            clipboard: { writeText: () => Promise.reject(new Error("no")) },
         });
-        let rows = dialog.querySelectorAll("tbody tr");
+        const execCommand = vi.fn(() => false);
 
-        expect(rows[0]?.textContent).toContain("alpha");
-        expect(rows[2]?.textContent).toContain("gamma");
+        Object.defineProperty(document, "execCommand", {
+            configurable: true,
+            value: execCommand,
+        });
+
+        try {
+            renderPreview({
+                file: buildFile({ path: "/tmp/results/report.csv" }),
+                content: {
+                    content: "sample,count\nalpha,1",
+                    contentType: "text/csv",
+                },
+            });
+
+            await act(async () => {
+                fireEvent.click(
+                    screen.getByRole("button", { name: /copy table as tsv/i }),
+                );
+            });
+
+            expect(toastErrorMock).toHaveBeenCalledWith("Could not copy table");
+            expect(toastSuccessMock).not.toHaveBeenCalled();
+        } finally {
+            vi.stubGlobal("navigator", window.navigator);
+            Reflect.deleteProperty(document, "execCommand");
+        }
     });
 
     it("shows a download button for previewable files", () => {
@@ -883,12 +1064,14 @@ describe("O1 file preview", () => {
             screen.getByRole("button", { name: /enlarge report.csv preview/i }),
         );
 
-        const toggle = screen.getByRole("button", { name: /sort by sample/i });
-
-        fireEvent.click(toggle);
         const dialog = screen.getByRole("dialog", {
             name: /enlarged report.csv preview/i,
         });
+        const toggle = dialog.querySelector(
+            'button[aria-label="Sort by sample"]',
+        ) as HTMLElement;
+
+        fireEvent.click(toggle);
         let rows = dialog.querySelectorAll("tbody tr");
 
         expect(rows[0]?.textContent).toContain("alpha");
@@ -1839,5 +2022,152 @@ describe("O1 file preview", () => {
         });
 
         expect(screen.queryByText(/syntax-highlighted preview/i)).toBeNull();
+    });
+
+    it("opens the shared gallery instead of its own dialog when the file is in one", () => {
+        const open = vi.fn();
+
+        render(
+            createElement(
+                PreviewGalleryContext.Provider,
+                {
+                    value: {
+                        has: (path: string) =>
+                            path === "/tmp/results/report.csv",
+                        open,
+                    },
+                },
+                createElement(FilePreview, {
+                    content: {
+                        content: "sample,count\nalpha,1",
+                        contentType: "text/csv",
+                    },
+                    file: buildFile({ path: "/tmp/results/report.csv" }),
+                    proxyUrl: "/api/file?id=result-1&path=report.csv",
+                }),
+                createElement(FilePreview, {
+                    content: {
+                        content: "# Notes",
+                        contentType: "text/markdown",
+                    },
+                    file: buildFile({ path: "/tmp/results/notes.md" }),
+                    proxyUrl: "/api/file?id=result-1&path=notes.md",
+                }),
+            ),
+        );
+
+        fireEvent.click(
+            screen.getByRole("button", { name: /enlarge report.csv preview/i }),
+        );
+
+        expect(open).toHaveBeenCalledWith("/tmp/results/report.csv");
+        expect(screen.queryByRole("dialog")).toBeNull();
+
+        fireEvent.click(
+            screen.getByRole("button", { name: /enlarge notes.md preview/i }),
+        );
+
+        expect(open).toHaveBeenCalledTimes(1);
+        expect(
+            screen.getByRole("dialog", { name: /enlarged notes.md preview/i }),
+        ).toBeTruthy();
+    });
+
+    it("renders expanded views for each preview type", () => {
+        const { container, rerender } = render(
+            createElement(FileExpandedPreview, {
+                file: buildFile({ path: "/tmp/results/plot.png" }),
+                proxyUrl: "/api/file?id=r&path=plot.png",
+            }),
+        );
+
+        expect(
+            screen.getByAltText("plot.png full preview").getAttribute("src"),
+        ).toBe("/api/file?id=r&path=plot.png");
+
+        rerender(
+            createElement(FileExpandedPreview, {
+                file: buildFile({ path: "/tmp/results/report.pdf" }),
+                proxyUrl: "/api/file?id=r&path=report.pdf",
+            }),
+        );
+        expect(screen.getByTitle("Enlarged PDF preview")).toBeTruthy();
+
+        rerender(
+            createElement(FileExpandedPreview, {
+                content: {
+                    content: "sample\tcount\nalpha\t1\nbeta\t2",
+                    contentType: "text/tab-separated-values",
+                },
+                file: buildFile({ path: "/tmp/results/table.tsv" }),
+                proxyUrl: "/api/file?id=r&path=table.tsv",
+            }),
+        );
+        expect(screen.getByText("Showing 2 of 2 rows")).toBeTruthy();
+        expect(
+            screen.getByRole("button", { name: /copy table as tsv/i }),
+        ).toBeTruthy();
+
+        rerender(
+            createElement(FileExpandedPreview, {
+                file: buildFile({ path: "/tmp/results/table.tsv" }),
+                isLoading: true,
+                proxyUrl: "/api/file?id=r&path=table.tsv",
+            }),
+        );
+        expect(screen.getByText("Loading full preview...")).toBeTruthy();
+
+        rerender(
+            createElement(FileExpandedPreview, {
+                error: { fileSize: 2048, status: 413 },
+                file: buildFile({ path: "/tmp/results/table.tsv" }),
+                proxyUrl: "/api/file?id=r&path=table.tsv",
+            }),
+        );
+        expect(container.textContent).toContain("File too large for preview");
+
+        rerender(
+            createElement(FileExpandedPreview, {
+                file: buildFile({ path: "/tmp/results/reads.bam" }),
+                proxyUrl: "/api/file?id=r&path=reads.bam",
+            }),
+        );
+        expect(container.textContent).toContain(
+            "Binary preview is unavailable",
+        );
+    });
+
+    it("leaves arrow keys to form controls inside the gallery", () => {
+        const onIndexChange = vi.fn();
+        const files = [
+            buildFile({ path: "/runs/a/plot.png" }),
+            buildFile({ path: "/runs/b/plot.png" }),
+        ];
+
+        render(
+            createElement(PreviewGalleryLightbox, {
+                basePath: "/runs",
+                files,
+                index: 0,
+                onClose: vi.fn(),
+                onIndexChange,
+                renderExpanded: () =>
+                    createElement("input", { "aria-label": "Z slice" }),
+            }),
+        );
+
+        fireEvent.keyDown(screen.getByLabelText("Z slice"), {
+            key: "ArrowRight",
+        });
+        expect(onIndexChange).not.toHaveBeenCalled();
+
+        fireEvent.keyDown(window, { key: "ArrowLeft" });
+        expect(onIndexChange).not.toHaveBeenCalled();
+
+        fireEvent.keyDown(window, { key: "ArrowRight" });
+        expect(onIndexChange).toHaveBeenCalledWith(1);
+        expect(
+            screen.getByRole("dialog", { name: "Preview gallery: a/plot.png" }),
+        ).toBeTruthy();
     });
 });
