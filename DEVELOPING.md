@@ -446,19 +446,20 @@ later:
 
 ```bash
 host=$(hostname -f)
-mkdir -p ~/.config/devtls
-chmod 700 ~/.config/devtls
+dir=<a private directory of yours>
+mkdir -p "$dir"
+chmod 700 "$dir"
 openssl req -x509 -newkey rsa:2048 -nodes -days 397 \
-  -keyout ~/.config/devtls/"$host".key \
-  -out ~/.config/devtls/"$host".crt \
+  -keyout "$dir/$host.key" \
+  -out "$dir/$host.crt" \
   -subj "/CN=$host" \
   -addext "subjectAltName=DNS:$host,DNS:$(hostname -s),DNS:localhost,IP:127.0.0.1,IP:::1" \
   -addext 'basicConstraints=critical,CA:FALSE' \
   -addext 'keyUsage=critical,digitalSignature,keyEncipherment' \
   -addext 'extendedKeyUsage=serverAuth'
-chmod 600 ~/.config/devtls/"$host".key
-export WA_TLS_CERT=~/.config/devtls/$host.crt
-export WA_TLS_KEY=~/.config/devtls/$host.key
+chmod 600 "$dir/$host.key"
+export WA_TLS_CERT="$dir/$host.crt"
+export WA_TLS_KEY="$dir/$host.key"
 ```
 
 Add any other hostname you browse to, such as the `WA_RESULTS_SERVER_URL`
@@ -761,10 +762,10 @@ TLS: by default `run-dev.sh` reuses `.tmp/wa-dev-cert.pem` and
 such as the one CLI users already trust, add it to `.env.production.local`:
 
 ```bash
-WA_TLS_CERT=/software/hgi/installs/wa/wa-dev-cert.pem
-WA_TLS_KEY=/nfs/hgi/wa/tls/farm22-wrstat01.key
+WA_TLS_CERT=<install dir>/wa-dev-cert.pem
+WA_TLS_KEY=<private dir>/<host>.key
 # Only if a CA signed the certificate:
-# WA_TLS_CA_CERT=/software/hgi/installs/wa/ca.pem
+# WA_TLS_CA_CERT=<install dir>/ca.pem
 ```
 
 The results API, the production frontend, and the frontend's trust of the
@@ -775,9 +776,9 @@ world-readable. Keep it in a dir only the stack's user can open, readable by
 that user alone:
 
 ```bash
-mkdir -p /nfs/hgi/wa/tls
-chmod 700 /nfs/hgi/wa/tls
-chmod 400 /nfs/hgi/wa/tls/farm22-wrstat01.key
+mkdir -p <private dir>
+chmod 700 <private dir>
+chmod 400 <private dir>/<host>.key
 ```
 
 MLWH TLS: `.env.production` sets `NODE_USE_SYSTEM_CA=1`, so the frontend
@@ -896,7 +897,7 @@ With `WA_TLS_CERT` pointing at the install-dir certificate, as in
 binary:
 
 ```bash
-cp -L .tmp/wa /software/hgi/installs/wa/
+cp -L .tmp/wa <install dir>/
 ```
 
 With a CA-signed `WA_TLS_CERT`, give CLI users the `WA_TLS_CA_CERT`
