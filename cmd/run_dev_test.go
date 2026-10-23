@@ -1163,22 +1163,28 @@ func runDevNonRunDevUserAgentsForTest(requests map[string][]string) []string {
 	return others
 }
 
+// Terminate stops run-dev.sh's whole process group, including children left
+// running after run-dev.sh itself exited, then releases its guard.
 func (process *runDevProcess) Terminate() {
 	if process == nil || process.Command == nil || process.Command.Process == nil {
 		return
 	}
 
-	if process.ExitedWithin(0) {
-		return
+	if process.releaseGuard != nil {
+		defer process.releaseGuard()
 	}
 
-	signalRunDevProcessGroupForTest(process.Command, syscall.SIGTERM)
-	if process.ExitedWithin(5 * time.Second) {
-		return
-	}
+	pgid := process.Command.Process.Pid
+	for _, signal := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		if runDevProcessGroupGoneWithinForTest(pgid, 0) {
+			return
+		}
 
-	signalRunDevProcessGroupForTest(process.Command, syscall.SIGKILL)
-	_ = process.ExitedWithin(5 * time.Second)
+		signalRunDevProcessGroupForTest(process.Command, signal)
+		if runDevProcessGroupGoneWithinForTest(pgid, 5*time.Second) {
+			return
+		}
+	}
 }
 
 func TestRunDevAutoManagedMLWHBackendFailsFastOnColdCacheWithoutDSN(t *testing.T) {
@@ -2304,6 +2310,8 @@ func runRunDevExpectingFailureWithinForTest(
 		t.Fatalf("start run-dev.sh: %v", err)
 	}
 
+	defer guardRunDevProcessGroupForTest(t, command.Process.Pid)()
+
 	waitCh := make(chan error, 1)
 	go func() {
 		waitCh <- command.Wait()
@@ -3373,6 +3381,55 @@ func runDevEnvForTest(t *testing.T, unsetKeys []string) []string {
 	)
 }
 
+// runDevProcessGroupWatchdogForTest TERMs, then KILLs, process group $1 when
+// its stdin closes without a "released" line.
+const runDevProcessGroupWatchdogForTest = `IFS= read -r line
+[ "$line" = released ] && exit 0
+kill -TERM -- "-$1" 2>/dev/null || exit 0
+i=0
+while [ "$i" -lt 50 ]; do
+  kill -0 -- "-$1" 2>/dev/null || exit 0
+  sleep 0.1
+  i=$((i + 1))
+done
+kill -KILL -- "-$1" 2>/dev/null
+exit 0`
+
+// guardRunDevProcessGroupForTest starts a watchdog, in its own process
+// group, that stops process group pgid if this test binary dies before the
+// returned release func runs. A go test timeout, Ctrl-C or kill skips
+// t.Cleanup, and an idle run-dev.sh never notices its parent has gone.
+func guardRunDevProcessGroupForTest(t *testing.T, pgid int) func() {
+	t.Helper()
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create run-dev.sh watchdog pipe: %v", err)
+	}
+
+	watchdog := exec.Command("bash", "-c", runDevProcessGroupWatchdogForTest, "--", strconv.Itoa(pgid))
+	watchdog.Stdin = reader
+	watchdog.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	err = watchdog.Start()
+	_ = reader.Close()
+
+	if err != nil {
+		_ = writer.Close()
+		t.Fatalf("start run-dev.sh watchdog: %v", err)
+	}
+
+	var once sync.Once
+
+	return func() {
+		once.Do(func() {
+			_, _ = writer.WriteString("released\n")
+			_ = writer.Close()
+			_ = watchdog.Wait()
+		})
+	}
+}
+
 func signalRunDevProcessGroupForTest(command *exec.Cmd, signal syscall.Signal) {
 	if command == nil || command.Process == nil || command.Process.Pid <= 0 {
 		return
@@ -3721,13 +3778,14 @@ func waitForTCPPortToCloseForTest(t *testing.T, port int) {
 }
 
 type runDevProcess struct {
-	Command  *exec.Cmd
-	stdout   *bytes.Buffer
-	stderr   *bytes.Buffer
-	waitMu   sync.Mutex
-	waitCh   chan error
-	waitErr  error
-	waitDone bool
+	Command      *exec.Cmd
+	stdout       *bytes.Buffer
+	stderr       *bytes.Buffer
+	waitMu       sync.Mutex
+	waitCh       chan error
+	waitErr      error
+	waitDone     bool
+	releaseGuard func()
 }
 
 func (process *runDevProcess) Wait() error {
@@ -3884,6 +3942,7 @@ func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOption
 	}
 
 	t.Cleanup(process.Terminate)
+	process.releaseGuard = guardRunDevProcessGroupForTest(t, command.Process.Pid)
 
 	return process
 }
