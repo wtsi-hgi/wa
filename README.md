@@ -127,6 +127,8 @@ If the server uses the self-signed development certificate, also pass `--cert`
 or export `WA_RESULTS_SERVER_CERT` pointing at the certificate file they should
 trust. `run-dev.sh` creates that certificate for loopback, the hostnames of the
 machine running `make dev`, and any `WA_RESULTS_SERVER_URL` hostname it prints.
+If the stack serves a supplied `WA_TLS_CERT`, trust that certificate, or its
+CA, instead.
 MLWH lookup flags on `wa results register` are resolved on the results server;
 remote CLI users do not need `WA_MLWH_CACHE_PATH`.
 
@@ -660,9 +662,13 @@ make prod
 the `WA_RESULTS_SERVER_CERT` and `WA_RESULTS_SERVER_KEY` paths from the active
 env file, defaulting to `.tmp/wa-dev-cert.pem` and `.tmp/wa-dev-key.pem`.
 Relative paths are resolved from the repo root before child processes are
-started. If an existing certificate is missing a required hostname, it is
-regenerated with SANs for loopback, the current machine's `hostname -f` and
-`hostname -s`, and any configured public results hostname. It exports
+started. If an existing certificate is missing a required hostname, lacks the
+extensions macOS requires (`extendedKeyUsage=serverAuth`), is valid for more
+than 397 days, or expires within 30 days, it is regenerated with SANs for
+loopback, the current machine's `hostname -f` and `hostname -s`, and any
+configured public results hostname. To serve your own certificate instead,
+set `WA_TLS_CERT` and `WA_TLS_KEY`; `run-dev.sh` never writes to a supplied
+certificate. See [TLS certificates](DEVELOPING.md#tls-certificates). It exports
 `WA_RESULTS_BACKEND_URL=https://127.0.0.1:<port>` and
 `WA_RESULTS_BACKEND_CA_CERT` pointing at the same certificate for the Next.js
 server, and starts `next dev` with matching experimental HTTPS key/cert flags. Development

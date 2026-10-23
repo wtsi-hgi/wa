@@ -337,7 +337,9 @@ If the results API uses the self-signed development certificate created by
 `WA_RESULTS_SERVER_CERT=/path/to/wa-dev-cert.pem`. The generated certificate is
 valid for loopback, the machine's `hostname -f` and `hostname -s`, and the
 hostname from `WA_RESULTS_SERVER_URL`; `run-dev.sh` regenerates stale
-localhost-only certs when these SANs are missing.
+localhost-only certs when these SANs are missing. If the stack serves a
+supplied `WA_TLS_CERT`, users trust that certificate instead (or its CA, for a
+CA-signed one). See [TLS certificates](#tls-certificates).
 
 For operators, scenario host vars are bind hosts for `results serve`. To let
 another machine connect to a development API without duplicating the port,
@@ -412,6 +414,77 @@ Set `WA_DEV_ALLOWED_ORIGINS` in `.env.development.local` (comma separated) if yo
 add hostnames that are not covered by the defaults. Wildcards follow the
 Next.js 16 `allowedDevOrigins` syntax (`*` matches one DNS segment). The
 setting is ignored when `WA_ENV=production`.
+
+### TLS certificates
+
+`run-dev.sh` serves the results API and the frontend over HTTPS in every mode.
+By default it creates a self-signed certificate at `.tmp/wa-dev-cert.pem`, with
+its key at `.tmp/wa-dev-key.pem`. Its SANs cover loopback, `hostname -f`,
+`hostname -s`, the `WA_RESULTS_SERVER_URL` and `WA_RESULTS_BACKEND_URL` hosts,
+and the `WA_DEV_ALLOWED_ORIGINS` hosts. `run-dev.sh` regenerates this
+certificate when it misses one of those SANs, lacks the extensions below, is
+valid for more than 397 days, or expires within 30 days. Trust the new file
+again after it is regenerated.
+
+macOS browsers reject a TLS server certificate, even one trusted in Keychain,
+unless it has:
+
+- the hostname you browse to as a `subjectAltName`
+- `extendedKeyUsage=serverAuth`
+- a validity of at most 825 days for a root you trust yourself, or 398 days
+  for a publicly trusted CA
+
+The generated certificate meets these rules. It also sets
+`basicConstraints=critical,CA:FALSE` and
+`keyUsage=critical,digitalSignature,keyEncipherment`, and lasts 397 days.
+
+#### Use your own certificate
+
+To trust one certificate once, across checkouts and regenerations, make it
+yourself and point `WA_TLS_CERT` and `WA_TLS_KEY` at it. With OpenSSL 1.1.1 or
+later:
+
+```bash
+host=$(hostname -f)
+dir=<a private directory of yours>
+mkdir -p "$dir"
+chmod 700 "$dir"
+openssl req -x509 -newkey rsa:2048 -nodes -days 397 \
+  -keyout "$dir/$host.key" \
+  -out "$dir/$host.crt" \
+  -subj "/CN=$host" \
+  -addext "subjectAltName=DNS:$host,DNS:$(hostname -s),DNS:localhost,IP:127.0.0.1,IP:::1" \
+  -addext 'basicConstraints=critical,CA:FALSE' \
+  -addext 'keyUsage=critical,digitalSignature,keyEncipherment' \
+  -addext 'extendedKeyUsage=serverAuth'
+chmod 600 "$dir/$host.key"
+export WA_TLS_CERT="$dir/$host.crt"
+export WA_TLS_KEY="$dir/$host.key"
+```
+
+Add any other hostname you browse to, such as the `WA_RESULTS_SERVER_URL`
+host, to `subjectAltName`. Set the variables in your shell or in
+`.env.development.local` or `.env.production.local`. If a CA signed the
+certificate, also set `WA_TLS_CA_CERT` to that CA's PEM certificate.
+
+In every mode, `run-dev.sh` then gives the certificate and key to the results
+API and to the frontend (`next dev` or the production HTTPS server). It also
+sets `WA_RESULTS_BACKEND_CA_CERT` so the frontend trusts the results API with
+`WA_TLS_CA_CERT`, or with the certificate itself. `WA_TLS_CERT` and
+`WA_TLS_KEY` take precedence over the `WA_RESULTS_SERVER_CERT` and
+`WA_RESULTS_SERVER_KEY` values in the scenario env files. Do not export
+`WA_RESULTS_SERVER_CERT` globally for this: it is also the trust root of every
+`wa results` CLI call.
+
+`run-dev.sh` never writes to a supplied certificate or key. These are the
+`WA_TLS_CERT` and `WA_TLS_KEY` files, and any `WA_RESULTS_SERVER_CERT` or
+`WA_RESULTS_SERVER_KEY` outside `.tmp/`. It stops if the files are missing,
+are not a matching pair, have expired, or do not cover `127.0.0.1`, which the
+frontend and the startup health checks use to reach the servers. It warns, but
+starts, when the certificate misses another hostname it would put in a
+generated certificate, expires within 30 days, or lacks
+`extendedKeyUsage=serverAuth`. Only clients that use a missing name reject the
+certificate, so a missing SAN does not stop the stack.
 
 ## Manual Setup
 
@@ -647,8 +720,8 @@ from the [container image](#container-image), so this stack starts no local
 
 `make prod` runs `run-dev.sh --mode prod` in the foreground. It runs `next
 build`, then serves the build over HTTPS with `frontend/scripts/serve-https.mts`
-(`next start` has no HTTPS option), using the same self-signed certificate
-as `make dev`. The `make prod-*` targets run that same command in the
+(`next start` has no HTTPS option), using the same TLS certificate as
+`make dev`. The `make prod-*` targets run that same command in the
 background.
 
 ### Configure
@@ -683,9 +756,30 @@ WA_MLWH_SERVER_TOKEN=/nfs/hgi/wa/mlwh-admin.token
 WA_FEEDBACK_ADMINS=alice,bob
 ```
 
-TLS: `run-dev.sh` reuses `.tmp/wa-dev-cert.pem` and `.tmp/wa-dev-key.pem`,
-and regenerates them only when a required hostname is missing. Set
-`WA_RESULTS_SERVER_CERT` and `WA_RESULTS_SERVER_KEY` to use other files.
+TLS: by default `run-dev.sh` reuses `.tmp/wa-dev-cert.pem` and
+`.tmp/wa-dev-key.pem`, and regenerates them as described in
+[TLS certificates](#tls-certificates). To serve a certificate you manage,
+such as the one CLI users already trust, add it to `.env.production.local`:
+
+```bash
+WA_TLS_CERT=<install dir>/wa-dev-cert.pem
+WA_TLS_KEY=<private dir>/<host>.key
+# Only if a CA signed the certificate:
+# WA_TLS_CA_CERT=<install dir>/ca.pem
+```
+
+The results API, the production frontend, and the frontend's trust of the
+results API then all use it, and `run-dev.sh` never writes to it.
+
+Never put the private key in the shared install dir: that dir is
+world-readable. Keep it in a dir only the stack's user can open, readable by
+that user alone:
+
+```bash
+mkdir -p <private dir>
+chmod 700 <private dir>
+chmod 400 <private dir>/<host>.key
+```
 
 MLWH TLS: `.env.production` sets `NODE_USE_SYSTEM_CA=1`, so the frontend
 trusts the Genome Research Ltd. CA that signs `apps.hgi.sanger.ac.uk`, as
@@ -797,6 +891,18 @@ cp -L .tmp/wa .tmp/wa-dev-cert.pem /software/hgi/installs/wa/
 chmod -R o+rX /software/hgi/installs/wa
 ```
 
+Copying `.tmp/wa-dev-cert.pem` is only needed with the generated certificate.
+With `WA_TLS_CERT` pointing at the install-dir certificate, as in
+[Configure](#configure), there is no certificate to copy; still copy the
+binary:
+
+```bash
+cp -L .tmp/wa <install dir>/
+```
+
+With a CA-signed `WA_TLS_CERT`, give CLI users the `WA_TLS_CA_CERT`
+certificate instead.
+
 CLI users then set `WA_RESULTS_SERVER_URL=https://<farm host>:<results port>`,
 `WA_RESULTS_SERVER_CERT=/software/hgi/installs/wa/wa-dev-cert.pem`, and
 `WA_MLWH_SERVER_URL` to the remote MLWH URL.
@@ -870,30 +976,33 @@ trusted by the system.
 
 ### Environment variables for production
 
-| Variable                       | Required                                | Description                                                                                              |
-| ------------------------------ | --------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `WA_ENV`                       | For scenario CLI                        | Use `production` when loading `.env.production` or exporting `WA_PROD_*` defaults                        |
-| `WA_PROD_RESULTS_PORT`         | For server/CLI                          | Production results API port used by `make prod`, `results serve`, and same-machine CLI defaults          |
-| `WA_PROD_RESULTS_HOST`         | For server                              | Results API bind host for `make prod` / `results serve`; set `0.0.0.0` for remote connections            |
-| `WA_PROD_SEQMETA_PORT`         | For server/CLI                          | Production MLWH API port used by `make prod`, `mlwh serve`, and same-machine `wa mlwh info` defaults     |
-| `WA_PROD_SEQMETA_HOST`         | For server                              | MLWH API bind host for `make prod` / `mlwh serve`; set `0.0.0.0` for remote connections                  |
-| `WA_RESULTS_SERVER_URL`        | For remote CLI                          | Full Results API URL equivalent to `--server`, for example `https://results.example.org:8090`            |
-| `WA_RESULTS_DB_PATH`           | For results                             | SQLite path, full DSN, or passwordless MySQL DSN                                                         |
-| `WA_RESULTS_DB_PASSWORD`       | Optional                                | MySQL password paired with a passwordless DSN                                                            |
-| `WA_MLWH_DSN`                  | For `wa mlwh sync` and `check-source`   | Passwordless MLWH DSN                                                                                    |
-| `WA_MLWH_PASSWORD`             | Optional                                | MLWH password paired with a passwordless DSN                                                             |
-| `WA_MLWH_CACHE_PATH`           | For `wa mlwh serve` and local operators | SQLite path or passwordless MySQL cache DSN used by server-side MLWH lookups                             |
-| `WA_MLWH_CACHE_PASSWORD`       | Optional                                | MLWH cache MySQL password                                                                                |
-| `WA_MLWH_STALE_AFTER`          | Optional                                | Go duration after a table's last successful sync before `/freshness` reports it stale (default: `2h`)    |
-| `WA_MLWH_TRUSTED_PROXIES`      | Optional                                | Comma-separated proxy IPs/CIDRs whose `X-Forwarded-For` `mlwh serve` trusts (default: none)              |
-| `WA_MLWH_SERVER_URL`           | For results/mlwhdiff/mlwh info clients  | Remote `wa mlwh serve` URL, equivalent to `--mlwh-server-url` / `wa mlwh info --server`; not a bind host |
-| `WA_RESULTS_SERVER_CERT`       | For results                             | TLS certificate path and CLI trust root; `run-dev.sh` resolves relative paths from the repo root         |
-| `WA_RESULTS_SERVER_KEY`        | For results                             | TLS private key path for `wa results serve`; `run-dev.sh` resolves relative paths from the repo root     |
-| `WA_RESULTS_BACKEND_URL`       | For frontend                            | Results API URL for the frontend; kept as a lower-precedence CLI default for compatibility               |
-| `WA_RESULTS_BACKEND_CA_CERT`   | Optional                                | PEM certificate or CA bundle for frontend trust when results backend TLS is not system-trusted           |
-| `WA_MLWH_BACKEND_URL`          | For frontend / compatibility            | MLWH query API URL for the frontend and lower-precedence `wa mlwh info` default                          |
-| `WA_STUDIES_CACHE_TTL_SECONDS` | No                                      | Study list cache TTL (default: 300)                                                                      |
-| `PORT`                         | No                                      | Frontend listen port (default: 3000)                                                                     |
+| Variable                       | Required                                | Description                                                                                                        |
+| ------------------------------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `WA_ENV`                       | For scenario CLI                        | Use `production` when loading `.env.production` or exporting `WA_PROD_*` defaults                                  |
+| `WA_PROD_RESULTS_PORT`         | For server/CLI                          | Production results API port used by `make prod`, `results serve`, and same-machine CLI defaults                    |
+| `WA_PROD_RESULTS_HOST`         | For server                              | Results API bind host for `make prod` / `results serve`; set `0.0.0.0` for remote connections                      |
+| `WA_PROD_SEQMETA_PORT`         | For server/CLI                          | Production MLWH API port used by `make prod`, `mlwh serve`, and same-machine `wa mlwh info` defaults               |
+| `WA_PROD_SEQMETA_HOST`         | For server                              | MLWH API bind host for `make prod` / `mlwh serve`; set `0.0.0.0` for remote connections                            |
+| `WA_RESULTS_SERVER_URL`        | For remote CLI                          | Full Results API URL equivalent to `--server`, for example `https://results.example.org:8090`                      |
+| `WA_RESULTS_DB_PATH`           | For results                             | SQLite path, full DSN, or passwordless MySQL DSN                                                                   |
+| `WA_RESULTS_DB_PASSWORD`       | Optional                                | MySQL password paired with a passwordless DSN                                                                      |
+| `WA_MLWH_DSN`                  | For `wa mlwh sync` and `check-source`   | Passwordless MLWH DSN                                                                                              |
+| `WA_MLWH_PASSWORD`             | Optional                                | MLWH password paired with a passwordless DSN                                                                       |
+| `WA_MLWH_CACHE_PATH`           | For `wa mlwh serve` and local operators | SQLite path or passwordless MySQL cache DSN used by server-side MLWH lookups                                       |
+| `WA_MLWH_CACHE_PASSWORD`       | Optional                                | MLWH cache MySQL password                                                                                          |
+| `WA_MLWH_STALE_AFTER`          | Optional                                | Go duration after a table's last successful sync before `/freshness` reports it stale (default: `2h`)              |
+| `WA_MLWH_TRUSTED_PROXIES`      | Optional                                | Comma-separated proxy IPs/CIDRs whose `X-Forwarded-For` `mlwh serve` trusts (default: none)                        |
+| `WA_MLWH_SERVER_URL`           | For results/mlwhdiff/mlwh info clients  | Remote `wa mlwh serve` URL, equivalent to `--mlwh-server-url` / `wa mlwh info --server`; not a bind host           |
+| `WA_RESULTS_SERVER_CERT`       | For results                             | TLS certificate path and CLI trust root; `run-dev.sh` resolves relative paths from the repo root                   |
+| `WA_RESULTS_SERVER_KEY`        | For results                             | TLS private key path for `wa results serve`; `run-dev.sh` resolves relative paths from the repo root               |
+| `WA_TLS_CERT`                  | Optional                                | TLS certificate for every server `run-dev.sh` starts, in any mode; read only, never written                        |
+| `WA_TLS_KEY`                   | With `WA_TLS_CERT`                      | Private key for `WA_TLS_CERT`                                                                                      |
+| `WA_TLS_CA_CERT`               | Optional                                | CA certificate that signed `WA_TLS_CERT`, for the frontend and `run-dev.sh` health checks (default: `WA_TLS_CERT`) |
+| `WA_RESULTS_BACKEND_URL`       | For frontend                            | Results API URL for the frontend; kept as a lower-precedence CLI default for compatibility                         |
+| `WA_RESULTS_BACKEND_CA_CERT`   | Optional                                | PEM certificate or CA bundle for frontend trust when results backend TLS is not system-trusted                     |
+| `WA_MLWH_BACKEND_URL`          | For frontend / compatibility            | MLWH query API URL for the frontend and lower-precedence `wa mlwh info` default                                    |
+| `WA_STUDIES_CACHE_TTL_SECONDS` | No                                      | Study list cache TTL (default: 300)                                                                                |
+| `PORT`                         | No                                      | Frontend listen port (default: 3000)                                                                               |
 
 ### Container image
 
