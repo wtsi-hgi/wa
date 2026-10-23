@@ -752,23 +752,23 @@ var Registry = []Endpoint{
 		Verb:        registryVerbGet,
 		Path:        "/search/study/:term",
 		PathParams:  []string{"term"},
-		Query:       []string{},
+		Query:       []string{"cursor"},
 		Paginated:   true,
 		NewResult:   newSliceResult[Study],
 		Summary:     "Search studies by substring",
-		Description: "Returns studies whose name, title, programme, or faculty sponsor contains the term (case-insensitive substring, minimum 3 characters). Each result is a full study row carrying id_study_lims, name and faculty_sponsor, so two studies sharing the same name are still distinguishable by their distinct id_study_lims and faculty_sponsor without a further call. Defaults to a page of 100, maximum 1000.",
-		QueryParams: searchPaginationParams(),
+		Description: "Returns studies whose name, title, programme, or faculty sponsor contains the term (case-insensitive substring, minimum 3 characters). Each result is a full study row carrying id_study_lims, name and faculty_sponsor, so two studies sharing the same name are still distinguishable by their distinct id_study_lims and faculty_sponsor without a further call. Results are ordered by (id_study_lims, id_study_tmp). Defaults to a page of 100, maximum 1000. Pages by limit with offset or with cursor (since API 1.15.0): every page that has more rows sets the X-Next-Cursor response header, an opaque keyset cursor holding the sort key of the page's last row; pass it back as cursor (with no offset) to get the rows after that key, without re-scanning the rows before it. A cursor page sets X-Total-Count but not X-Next-Offset, and the last page has no X-Next-Cursor. A cursor is bound to its term, type and options; a malformed or mismatched cursor, or one combined with offset, is a 400. The cache syncs in place, so there is no point-in-time snapshot: when it has synced since the search's first page, the page still comes back but sets X-Search-Warning (\"cache synced since the first page; results may include newer matches\"). Rows whose sort key did not change are never repeated or skipped across cursor pages; rows that newly match with a key before the cursor are missed until a fresh search.",
+		QueryParams: searchCursorPaginationParams(),
 	},
 	{
 		Method:      "SearchSamples",
 		Verb:        registryVerbGet,
 		Path:        "/search/sample/:term",
 		PathParams:  []string{"term"},
-		Query:       []string{"words", "organism", "library_type", "qc", "deliverables_only"},
+		Query:       []string{"words", "organism", "library_type", "qc", "deliverables_only", "cursor"},
 		Paginated:   true,
 		NewResult:   newSliceResult[Sample],
 		Summary:     "Search samples by literal prefix",
-		Description: "Returns samples whose name, supplier_name, common_name, donor_id fields have the term as a literal whole-value prefix by default (case-insensitive, LIKE 'term%' with escaping; minimum 3 characters for the free-text term). Set words=true for the opt-in separator-agnostic word-prefix mode over the same fields; it is NOT the default. Exact filters organism, library_type, qc and deliverables_only AND-combine with the term and are exempt from the 3-character minimum: organism resolves whole-word common_name membership, library_type matches library_samples.pipeline_id_lims exactly, qc uses the per-sample roll-up from qc.go (fail>pending>pass), and deliverables_only uses the deliverable discriminator entity_type / is_sequencing_control, NOT is_spiked, with pass-through for PacBio/ONT. QC grain differs from export: sample search is per-sample roll-up, while export is raw per-product qc. Defaults to a page of 100, maximum 1000.",
+		Description: "Returns samples whose name, supplier_name, common_name, donor_id fields have the term as a literal whole-value prefix by default (case-insensitive, LIKE 'term%' with escaping; minimum 3 characters for the free-text term). Set words=true for the opt-in separator-agnostic word-prefix mode over the same fields; it is NOT the default. Exact filters organism, library_type, qc and deliverables_only AND-combine with the term and are exempt from the 3-character minimum: organism resolves whole-word common_name membership, library_type matches library_samples.pipeline_id_lims exactly, qc uses the per-sample roll-up from qc.go (fail>pending>pass), and deliverables_only uses the deliverable discriminator entity_type / is_sequencing_control, NOT is_spiked, with pass-through for PacBio/ONT. QC grain differs from export: sample search is per-sample roll-up, while export is raw per-product qc. Results are ordered by id_sample_tmp, except that a single-word words=true search follows its word index, ordered by (matched word, id_sample_tmp); within a page the rows are returned by id_sample_tmp. Defaults to a page of 100, maximum 1000. Pages by limit with offset or with cursor (since API 1.15.0): every page that has more rows sets the X-Next-Cursor response header, an opaque keyset cursor holding the sort key of the page's last row; pass it back as cursor (with no offset) to get the rows after that key, without re-scanning the rows before it. A cursor page sets X-Total-Count but not X-Next-Offset, and the last page has no X-Next-Cursor. A cursor is bound to its term, type and options; a malformed or mismatched cursor, or one combined with offset, is a 400. The cache syncs in place, so there is no point-in-time snapshot: when it has synced since the search's first page, the page still comes back but sets X-Search-Warning (\"cache synced since the first page; results may include newer matches\"). Rows whose sort key did not change are never repeated or skipped across cursor pages; rows that newly match with a key before the cursor are missed until a fresh search. A sample whose searchable name fields change between pages can move past the cursor and repeat under words=true.",
 		QueryParams: sampleSearchPaginationParams(),
 	},
 	{
@@ -1306,7 +1306,18 @@ func exportPaginationParams() []QueryParam {
 }
 
 func sampleSearchPaginationParams() []QueryParam {
-	return append(searchPaginationParams(), sampleSearchOptionQueryParams()...)
+	return append(searchCursorPaginationParams(), sampleSearchOptionQueryParams()...)
+}
+
+// searchCursorPaginationParams are the search limit/offset QueryParams plus
+// the keyset cursor that continues a search after an earlier page.
+func searchCursorPaginationParams() []QueryParam {
+	return append(searchPaginationParams(), QueryParam{
+		Name:        "cursor",
+		Type:        "string",
+		Required:    false,
+		Description: "opaque keyset cursor from the X-Next-Cursor header of an earlier page of the same search; returns the rows after that page's last row; cannot be combined with offset",
+	})
 }
 
 // searchPaginationParams are the limit/offset QueryParams for the substring

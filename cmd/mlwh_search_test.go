@@ -78,8 +78,34 @@ type stubMLWHSearchClient struct {
 	countStudySearch             func(ctx context.Context, term string) (mlwh.Count, error)
 	countSampleSearch            func(ctx context.Context, term string) (mlwh.Count, error)
 	countSampleSearchWithOptions func(ctx context.Context, term string, opts mlwh.SampleSearchOptions) (mlwh.Count, error)
+	searchStudiesCursor          func(ctx context.Context, term string, page mlwh.SearchPageOptions) (mlwh.SearchCursorPage[mlwh.Study], error)
+	searchSamplesCursor          func(ctx context.Context, term string, opts mlwh.SampleSearchOptions, page mlwh.SearchPageOptions) (mlwh.SearchCursorPage[mlwh.Sample], error)
 
 	closed bool
+}
+
+// SearchStudiesCursor uses searchStudiesCursor when stubbed, else serves the
+// offset page from SearchStudies with no next cursor.
+func (s *stubMLWHSearchClient) SearchStudiesCursor(ctx context.Context, term string, page mlwh.SearchPageOptions) (mlwh.SearchCursorPage[mlwh.Study], error) {
+	if s.searchStudiesCursor != nil {
+		return s.searchStudiesCursor(ctx, term, page)
+	}
+
+	studies, err := s.SearchStudies(ctx, term, page.Limit, page.Offset)
+
+	return mlwh.SearchCursorPage[mlwh.Study]{Items: studies}, err
+}
+
+// SearchSamplesCursor uses searchSamplesCursor when stubbed, else serves the
+// offset page from SearchSamplesWithOptions with no next cursor.
+func (s *stubMLWHSearchClient) SearchSamplesCursor(ctx context.Context, term string, opts mlwh.SampleSearchOptions, page mlwh.SearchPageOptions) (mlwh.SearchCursorPage[mlwh.Sample], error) {
+	if s.searchSamplesCursor != nil {
+		return s.searchSamplesCursor(ctx, term, opts, page)
+	}
+
+	samples, err := s.SearchSamplesWithOptions(ctx, term, opts, page.Limit, page.Offset)
+
+	return mlwh.SearchCursorPage[mlwh.Sample]{Items: samples}, err
 }
 
 func (s *stubMLWHSearchClient) SearchStudies(ctx context.Context, term string, limit, offset int) ([]mlwh.Study, error) {
@@ -438,6 +464,9 @@ func TestMLWHSearchCommandJSONEnvelope(t *testing.T) {
     "with_data": false,
     "limit": 5,
     "offset": 2,
+    "next": {
+      "samples": null
+    },
     "cache_synced_at": "2026-10-21T08:00:00Z",
     "wa_version": "`+waBuildVersion()+`"
   },
@@ -481,6 +510,10 @@ func TestMLWHSearchCommandJSONEnvelope(t *testing.T) {
     "with_data": false,
     "limit": 50,
     "offset": 0,
+    "next": {
+      "samples": null,
+      "studies": null
+    },
     "cache_synced_at": "2026-10-21T08:00:00Z",
     "wa_version": "`+waBuildVersion()+`"
   }`)
@@ -883,4 +916,55 @@ func mlwhJSONDocumentPartsForTest(decoded map[string]any) (query, results map[st
 	convey.So(resultsOK, convey.ShouldBeTrue)
 
 	return query, results
+}
+
+func TestMLWHSearchCommandJSONEchoesCursorAndWarnsOnStalePage(t *testing.T) {
+	convey.Convey("Given a study cursor page that continued across a cache sync and has more rows", t, func() {
+		var gotPage mlwh.SearchPageOptions
+		stub := &stubMLWHSearchClient{
+			searchStudiesCursor: func(_ context.Context, _ string, page mlwh.SearchPageOptions) (mlwh.SearchCursorPage[mlwh.Study], error) {
+				gotPage = page
+
+				return mlwh.SearchCursorPage[mlwh.Study]{
+					Items:      []mlwh.Study{{IDStudyLims: "6568", Name: "Malaria genomics survey"}},
+					NextCursor: "next-study-cursor",
+					Stale:      true,
+				}, nil
+			},
+			countStudySearch: func(_ context.Context, _ string) (mlwh.Count, error) {
+				return mlwh.Count{Count: 9}, nil
+			},
+		}
+		withStubMLWHSearchClient(t, stub)
+
+		convey.Convey("when wa mlwh search --json --cursor runs, then query echoes the cursor and next, and warnings carries the sync warning", func() {
+			output, err := executeRootCommandForTest(t, []string{"mlwh", "search", "malaria", "--type", "study", "--limit", "1", "--cursor", "this-cursor", "--json"})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(gotPage, convey.ShouldResemble, mlwh.SearchPageOptions{Limit: 1, Cursor: "this-cursor"})
+
+			var document struct {
+				Query struct {
+					Offset int                `json:"offset"`
+					Cursor string             `json:"cursor"`
+					Next   map[string]*string `json:"next"`
+				} `json:"query"`
+				Warnings []string `json:"warnings"`
+			}
+			convey.So(json.Unmarshal([]byte(output), &document), convey.ShouldBeNil)
+			convey.So(document.Query.Cursor, convey.ShouldEqual, "this-cursor")
+			convey.So(document.Query.Offset, convey.ShouldEqual, 0)
+			convey.So(document.Query.Next, convey.ShouldHaveLength, 1)
+			convey.So(*document.Query.Next["studies"], convey.ShouldEqual, "next-study-cursor")
+			convey.So(document.Warnings, convey.ShouldResemble, []string{mlwh.SearchCursorStaleWarning})
+		})
+
+		convey.Convey("when it runs as text, then it prints the next-page hint and the warning", func() {
+			output, err := executeRootCommandForTest(t, []string{"mlwh", "search", "malaria", "--type", "study", "--cursor", "this-cursor"})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(output, convey.ShouldContainSubstring, "  more studies: add --type study --cursor next-study-cursor\n")
+			convey.So(output, convey.ShouldContainSubstring, "\n\nwarning: "+mlwh.SearchCursorStaleWarning)
+		})
+	})
 }

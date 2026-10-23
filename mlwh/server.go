@@ -91,6 +91,13 @@ type irodsPathsWithOptionsQueryer interface {
 	CountIRODSPathsForRunWithOptions(ctx context.Context, idRun string, opts IRODSPathOptions) (Count, error)
 }
 
+// searchCursorQueryer pages study and sample searches with keyset cursors
+// (SearchPageOptions.Cursor); a queryer without it serves offset pages only.
+type searchCursorQueryer interface {
+	SearchStudiesCursor(ctx context.Context, term string, page SearchPageOptions) (SearchCursorPage[Study], error)
+	SearchSamplesCursor(ctx context.Context, term string, opts SampleSearchOptions, page SearchPageOptions) (SearchCursorPage[Sample], error)
+}
+
 type sampleSearchWithOptionsQueryer interface {
 	SearchSamplesWithOptions(ctx context.Context, term string, opts SampleSearchOptions, limit, offset int) ([]Sample, error)
 	CountSampleSearchWithOptions(ctx context.Context, term string, opts SampleSearchOptions) (Count, error)
@@ -105,6 +112,8 @@ var (
 	_ irodsPathsWithOptionsQueryer   = (*RemoteClient)(nil)
 	_ sampleSearchWithOptionsQueryer = (*Client)(nil)
 	_ sampleSearchWithOptionsQueryer = (*RemoteClient)(nil)
+	_ searchCursorQueryer            = (*Client)(nil)
+	_ searchCursorQueryer            = (*RemoteClient)(nil)
 )
 
 func irodsPathsForSampleResult(c *gin.Context, queryer Queryer, id string, opts IRODSPathOptions, pagination mlwhPagination) ([]IRODSPath, error) {
@@ -1316,10 +1325,24 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 				return
 			}
 			ctx := c.Request.Context()
+			total := func() (int, error) { return countValue(queryer.CountStudySearch(ctx, term)) }
+			page := SearchPageOptions{Limit: pagination.limit, Offset: pagination.offset, Cursor: strings.TrimSpace(c.Query("cursor"))}
+			if cursorQueryer, ok := queryer.(searchCursorQueryer); ok {
+				if err := validateStudySearchCursor(term, page); err != nil {
+					writeMLWHBadRequest(c, err.Error())
+
+					return
+				}
+				result, err := cursorQueryer.SearchStudiesCursor(ctx, term, page)
+				writeMLWHSearchCursorResult(c, result, err, page, total)
+
+				return
+			}
+			if !mlwhSearchCursorAbsent(c, page) {
+				return
+			}
 			result, err := queryer.SearchStudies(ctx, term, pagination.limit, pagination.offset)
-			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
-				return countValue(queryer.CountStudySearch(ctx, term))
-			})
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, total)
 		}
 	case "SearchSamples":
 		return func(c *gin.Context) {
@@ -1332,10 +1355,24 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 				return
 			}
 			ctx := c.Request.Context()
+			total := func() (int, error) { return countValue(countSampleSearchResult(ctx, queryer, term, opts)) }
+			page := SearchPageOptions{Limit: pagination.limit, Offset: pagination.offset, Cursor: strings.TrimSpace(c.Query("cursor"))}
+			if cursorQueryer, ok := queryer.(searchCursorQueryer); ok {
+				if err := validateSampleSearchCursor(term, opts, page); err != nil {
+					writeMLWHBadRequest(c, err.Error())
+
+					return
+				}
+				result, err := cursorQueryer.SearchSamplesCursor(ctx, term, opts, page)
+				writeMLWHSearchCursorResult(c, result, err, page, total)
+
+				return
+			}
+			if !mlwhSearchCursorAbsent(c, page) {
+				return
+			}
 			result, err := searchSamplesResult(ctx, queryer, term, opts, pagination)
-			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
-				return countValue(countSampleSearchResult(ctx, queryer, term, opts))
-			})
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, total)
 		}
 	case "CountStudySearch":
 		return func(c *gin.Context) {
@@ -1653,6 +1690,49 @@ func writeMLWHPaginatedResult[T any](c *gin.Context, items []T, err error, offse
 	}
 
 	c.JSON(http.StatusOK, items)
+}
+
+// writeMLWHSearchCursorResult writes a study or sample search page: on error
+// the error envelope, and on success the bare JSON-array body with
+// X-Next-Cursor (SearchNextCursorHeader) when more rows remain,
+// X-Search-Warning (SearchWarningHeader) when the data synced since the
+// cursor's first page, and the list-sizing headers. A cursor page has no
+// meaningful offset, so it reports X-Total-Count alone.
+func writeMLWHSearchCursorResult[T any](c *gin.Context, page SearchCursorPage[T], err error, request SearchPageOptions, total func() (int, error)) {
+	if err != nil {
+		writeMLWHError(c, err)
+
+		return
+	}
+
+	if page.NextCursor != "" {
+		c.Header(SearchNextCursorHeader, page.NextCursor)
+	}
+	if page.Stale {
+		c.Header(SearchWarningHeader, SearchCursorStaleWarning)
+	}
+
+	if totalRows, totalErr := total(); totalErr == nil {
+		if request.Cursor != "" {
+			c.Header("X-Total-Count", strconv.Itoa(totalRows))
+		} else {
+			writeListSizingHeaders(c, totalRows, request.Offset, len(page.Items))
+		}
+	}
+
+	c.JSON(http.StatusOK, page.Items)
+}
+
+// mlwhSearchCursorAbsent rejects a cursor sent to a search whose queryer pages
+// by offset only, so it is never silently ignored.
+func mlwhSearchCursorAbsent(c *gin.Context, page SearchPageOptions) bool {
+	if page.Cursor == "" {
+		return true
+	}
+
+	writeMLWHBadRequest(c, "cursor paging is not supported by this server's backend; page with offset")
+
+	return false
 }
 
 // writeListSizingHeaders sets the list-sizing response headers shared by every

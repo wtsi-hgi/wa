@@ -43,12 +43,13 @@ import (
 // the /find/sample lookups paginated lists of every match instead of failing
 // as ambiguous when several samples share the value, and 1.14 adds the opt-in
 // per-product library_type export column to products, irods/files,
-// sample-crams and lanes. The patch
+// sample-crams and lanes, and 1.15 adds keyset cursor paging (cursor,
+// X-Next-Cursor, X-Search-Warning) to the study and sample searches. The patch
 // component is reserved for documentation-only revisions. It is a compiled-in
 // constant: reading it never contacts a live server, letting an external
 // consumer (such as an MCP server importing this package) read the targeted API
 // version with compile-time safety.
-const APIVersion = "1.14.0"
+const APIVersion = "1.15.0"
 
 // mlwhAPIVersion is the unexported alias of APIVersion retained for internal
 // references; it shares APIVersion's single source of truth so the served

@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +120,98 @@ func TestMLWHSearchWithData(t *testing.T) {
 
 			convey.So(err, convey.ShouldNotBeNil)
 			convey.So(strings.Contains(err.Error(), "--with-data"), convey.ShouldBeTrue)
+		})
+	})
+}
+
+// searchCursorJSONForTest is the paging part of a wa mlwh search --json
+// document.
+type searchCursorJSONForTest struct {
+	Query struct {
+		Limit  int                `json:"limit"`
+		Cursor string             `json:"cursor"`
+		Next   map[string]*string `json:"next"`
+	} `json:"query"`
+	Results struct {
+		Samples struct {
+			Count   int                       `json:"count"`
+			Results []searchDataSampleForTest `json:"results"`
+		} `json:"samples"`
+	} `json:"results"`
+	Warnings []string `json:"warnings"`
+}
+
+func TestMLWHSearchCursorPaging(t *testing.T) {
+	convey.Convey("Given a supplier name shared by four samples behind a real MLWH server", t, func() {
+		clearMLWHClientEnvForTest(t)
+		serverURL := startMLWHExportServerForCachePathForTest(t, newSearchDataCachePathForTest(t))
+		searchArgs := []string{"mlwh", "search", "--type", "sample", multiSampleSupplierForTest, "--server", serverURL}
+
+		convey.Convey("when a script follows query.next.samples with --cursor, then it reads every sample once, with data, and the last page's next is null", func() {
+			var (
+				names   []string
+				cursors []string
+				cursor  string
+			)
+			for range 10 {
+				args := append(slices.Clone(searchArgs), "--json", "--with-data", "--limit", "1")
+				if cursor != "" {
+					args = append(args, "--cursor", cursor)
+				}
+				stdout, _, err := executeRootCommandSplitForTest(t, args)
+				convey.So(err, convey.ShouldBeNil)
+
+				var page searchCursorJSONForTest
+				convey.So(json.Unmarshal([]byte(stdout), &page), convey.ShouldBeNil)
+				convey.So(page.Query.Cursor, convey.ShouldEqual, cursor)
+				convey.So(page.Query.Next, convey.ShouldContainKey, "samples")
+				convey.So(page.Query.Next, convey.ShouldNotContainKey, "studies")
+				convey.So(page.Results.Samples.Count, convey.ShouldEqual, 4)
+				convey.So(page.Warnings, convey.ShouldBeEmpty)
+				for _, sample := range page.Results.Samples.Results {
+					convey.So(sample.Data, convey.ShouldNotBeNil)
+					names = append(names, sample.Name)
+				}
+
+				next := page.Query.Next["samples"]
+				if next == nil {
+					break
+				}
+				cursor = *next
+				cursors = append(cursors, cursor)
+			}
+
+			convey.So(names, convey.ShouldResemble, []string{"5534STDY0000101", "5534STDY0000102", "5534STDY0000103", "5534STDY0000104"})
+			convey.So(cursors, convey.ShouldHaveLength, 3)
+		})
+
+		convey.Convey("when a text page has more rows, then it prints how to get the next page", func() {
+			stdout, _, err := executeRootCommandSplitForTest(t, append(slices.Clone(searchArgs), "--limit", "2"))
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(stdout, convey.ShouldContainSubstring, "  more samples: add --type sample --cursor ")
+
+			last, _, err := executeRootCommandSplitForTest(t, append(slices.Clone(searchArgs), "--limit", "4"))
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(last, convey.ShouldNotContainSubstring, "more samples")
+		})
+
+		convey.Convey("when the cursor is not one the server issued, then the search fails as a bad request", func() {
+			_, _, err := executeRootCommandSplitForTest(t, append(slices.Clone(searchArgs), "--cursor", "bm90LWEtY3Vyc29y"))
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(errors.Is(err, mlwh.ErrBadRequest), convey.ShouldBeTrue)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "invalid search cursor")
+		})
+
+		convey.Convey("when --cursor is combined with --offset or given without one --type, then it is a usage error", func() {
+			_, _, err := executeRootCommandSplitForTest(t, append(slices.Clone(searchArgs), "--cursor", "abc", "--offset", "2"))
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "--cursor and --offset cannot be combined")
+
+			_, _, err = executeRootCommandSplitForTest(t, []string{"mlwh", "search", multiSampleSupplierForTest, "--server", serverURL, "--cursor", "abc"})
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "--cursor needs --type study or --type sample")
 		})
 	})
 }
