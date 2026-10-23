@@ -115,6 +115,9 @@ Remote CLI users should use the Results API URL/port from the output
 (`Results` or `Results public`), not the frontend URL/port. The self-signed
 dev TLS certificate is created or regenerated with SANs for loopback, this
 machine's hostnames, and WA_RESULTS_SERVER_URL/WA_RESULTS_BACKEND_URL hosts.
+Set WA_TLS_CERT and WA_TLS_KEY (and WA_TLS_CA_CERT if a CA signed the cert)
+to serve every mode with your own certificate instead; run-dev.sh only reads
+a supplied certificate and never rewrites it.
 Remote MLWH CLI users should use WA_MLWH_SERVER_URL. To make a managed local
 MLWH server reachable, set WA_DEV_SEQMETA_HOST or WA_PROD_SEQMETA_HOST to a
 reachable bind host such as 0.0.0.0; WA_MLWH_SERVER_URL is not a bind setting.
@@ -625,9 +628,65 @@ repo_absolute_path() {
   fi
 }
 
-DEV_TLS_CERT="$(repo_absolute_path "${WA_RESULTS_SERVER_CERT:-$DEFAULT_DEV_TLS_CERT}")"
-DEV_TLS_KEY="$(repo_absolute_path "${WA_RESULTS_SERVER_KEY:-$DEFAULT_DEV_TLS_KEY}")"
+# dev_tls_path_is_generated succeeds when path lies in run-dev.sh's own temp
+# dir (or the checkout's .tmp), the only places it may create or regenerate
+# TLS files.
+dev_tls_path_is_generated() {
+  local path="$1"
+  local root
+
+  if [[ "$path" == */../* || "$path" == */./* ]]; then
+    return 1
+  fi
+
+  for root in "$TMP_DIR" "$REPO_ROOT/.tmp"; do
+    root="$(repo_absolute_path "$root")"
+    root="${root%/}"
+    if [[ "$path" == "$root"/* ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+# WA_TLS_CERT/WA_TLS_KEY supply the TLS cert and key for every server run-dev.sh
+# starts, in any mode. They are separate from WA_RESULTS_SERVER_CERT, which is
+# also the results CLI's trust root, and win over the scenario env files'
+# WA_RESULTS_SERVER_CERT/KEY. A supplied cert, or WA_RESULTS_SERVER_CERT/KEY
+# outside run-dev.sh's temp dir, is only ever read.
+DEV_TLS_SUPPLIED=0
+if has_nonblank_value "${WA_TLS_CERT:-}" || has_nonblank_value "${WA_TLS_KEY:-}"; then
+  if ! has_nonblank_value "${WA_TLS_CERT:-}" || ! has_nonblank_value "${WA_TLS_KEY:-}"; then
+    printf 'run-dev.sh: set both WA_TLS_CERT and WA_TLS_KEY, or neither.\n' >&2
+    exit 1
+  fi
+
+  DEV_TLS_CERT="$(repo_absolute_path "$(trim_value "$WA_TLS_CERT")")"
+  DEV_TLS_KEY="$(repo_absolute_path "$(trim_value "$WA_TLS_KEY")")"
+  DEV_TLS_SUPPLIED=1
+else
+  DEV_TLS_CERT="$(repo_absolute_path "${WA_RESULTS_SERVER_CERT:-$DEFAULT_DEV_TLS_CERT}")"
+  DEV_TLS_KEY="$(repo_absolute_path "${WA_RESULTS_SERVER_KEY:-$DEFAULT_DEV_TLS_KEY}")"
+  if ! dev_tls_path_is_generated "$DEV_TLS_CERT" || ! dev_tls_path_is_generated "$DEV_TLS_KEY"; then
+    DEV_TLS_SUPPLIED=1
+  fi
+fi
+
+# Clients of the servers (the frontend and run-dev.sh's health probes) trust
+# WA_TLS_CA_CERT when a CA signed the supplied cert, else the cert itself.
+DEV_TLS_CA_CERT="$DEV_TLS_CERT"
+if has_nonblank_value "${WA_TLS_CA_CERT:-}"; then
+  DEV_TLS_CA_CERT="$(repo_absolute_path "$(trim_value "$WA_TLS_CA_CERT")")"
+fi
+
+# Apple requires a trusted TLS server cert to carry its hostnames as SANs,
+# extendedKeyUsage serverAuth, and a validity of at most 398 days (825 for
+# user-trusted roots), so macOS browsers reject certs without them.
+DEV_TLS_MAX_DAYS=397
+DEV_TLS_RENEW_SECONDS=$((30 * 24 * 60 * 60))
 mapfile -t DEV_TLS_SAN_ENTRIES < <(collect_dev_tls_san_entries)
+DEV_TLS_COVERED_SAN_ENTRIES=("${DEV_TLS_SAN_ENTRIES[@]}")
 
 if [[ ! "$FRONTEND_HEALTH_MAX_ATTEMPTS" =~ ^[0-9]+$ ]]; then
   printf 'frontend health max attempts must be an integer\n' >&2
@@ -665,14 +724,19 @@ ensure_dev_tls_certificate() {
     exit 1
   fi
 
-  if dev_tls_certificate_has_required_sans; then
+  if (( DEV_TLS_SUPPLIED )); then
+    check_supplied_dev_tls_certificate
+    return
+  fi
+
+  if dev_tls_generated_certificate_is_current; then
     chmod 0600 "$DEV_TLS_KEY"
     chmod 0644 "$DEV_TLS_CERT"
     return
   fi
 
   if [[ -s "$DEV_TLS_CERT" && -s "$DEV_TLS_KEY" ]]; then
-    printf 'Regenerating self-signed dev TLS certificate at %s with current hostnames\n' "$DEV_TLS_CERT"
+    printf 'Regenerating self-signed dev TLS certificate at %s with current hostnames and macOS-required extensions\n' "$DEV_TLS_CERT"
   else
     printf 'Creating self-signed dev TLS certificate at %s\n' "$DEV_TLS_CERT"
   fi
@@ -685,7 +749,7 @@ ensure_dev_tls_certificate() {
     -x509 \
     -newkey rsa:2048 \
     -nodes \
-    -days 365 \
+    -days "$DEV_TLS_MAX_DAYS" \
     -keyout "$DEV_TLS_KEY" \
     -out "$DEV_TLS_CERT" \
     -config "$openssl_config" \
@@ -700,30 +764,128 @@ ensure_dev_tls_certificate() {
   chmod 0644 "$DEV_TLS_CERT"
 }
 
-dev_tls_certificate_has_required_sans() {
-  local entry
-  local san_type
-  local san_value
+# dev_tls_generated_certificate_is_current succeeds when the generated cert
+# and key can be reused: a matching pair with every required SAN, the
+# extensions macOS requires, at most DEV_TLS_MAX_DAYS left, and more than
+# DEV_TLS_RENEW_SECONDS before it expires.
+dev_tls_generated_certificate_is_current() {
+  local text
 
   if [[ ! -s "$DEV_TLS_CERT" || ! -s "$DEV_TLS_KEY" ]]; then
     return 1
   fi
 
-  for entry in "${DEV_TLS_SAN_ENTRIES[@]}"; do
-    san_type="${entry%%:*}"
-    san_value="${entry#*:}"
+  dev_tls_key_matches_certificate || return 1
+  openssl x509 -in "$DEV_TLS_CERT" -noout -checkend "$DEV_TLS_RENEW_SECONDS" >/dev/null 2>&1 || return 1
+  if openssl x509 -in "$DEV_TLS_CERT" -noout -checkend "$((DEV_TLS_MAX_DAYS * 24 * 60 * 60))" >/dev/null 2>&1; then
+    return 1
+  fi
 
-    case "$san_type" in
-      DNS)
-        openssl verify -CAfile "$DEV_TLS_CERT" -verify_hostname "$san_value" "$DEV_TLS_CERT" >/dev/null 2>&1 || return 1
-        ;;
-      IP)
-        openssl verify -CAfile "$DEV_TLS_CERT" -verify_ip "$san_value" "$DEV_TLS_CERT" >/dev/null 2>&1 || return 1
-        ;;
-    esac
+  text="$(openssl x509 -in "$DEV_TLS_CERT" -noout -text 2>/dev/null)" || return 1
+  if [[ "$text" != *"CA:FALSE"* || "$text" != *"Digital Signature"* || "$text" != *"TLS Web Server Authentication"* ]]; then
+    return 1
+  fi
+
+  [[ -z "$(dev_tls_uncovered_san_entries)" ]]
+}
+
+# check_supplied_dev_tls_certificate validates a supplied cert and key without
+# writing to them. It exits when the servers could not start or be probed
+# with them, and warns about SANs the cert lacks, since those only matter to
+# clients that use those names.
+check_supplied_dev_tls_certificate() {
+  local path
+  local text
+  local entry
+  local missing=""
+  local -a uncovered=()
+
+  for path in "$DEV_TLS_CERT" "$DEV_TLS_KEY" "$DEV_TLS_CA_CERT"; do
+    if [[ ! -s "$path" || ! -r "$path" ]]; then
+      printf 'run-dev.sh: supplied TLS file %s is missing, empty, or unreadable.\n' "$path" >&2
+      exit 1
+    fi
   done
 
-  return 0
+  if ! openssl x509 -in "$DEV_TLS_CERT" -noout >/dev/null 2>&1; then
+    printf 'run-dev.sh: supplied TLS certificate %s is not a PEM certificate.\n' "$DEV_TLS_CERT" >&2
+    exit 1
+  fi
+
+  if ! dev_tls_key_matches_certificate; then
+    printf 'run-dev.sh: supplied TLS key %s does not match certificate %s.\n' "$DEV_TLS_KEY" "$DEV_TLS_CERT" >&2
+    exit 1
+  fi
+
+  if ! openssl x509 -in "$DEV_TLS_CERT" -noout -checkend 0 >/dev/null 2>&1; then
+    printf 'run-dev.sh: supplied TLS certificate %s has expired.\n' "$DEV_TLS_CERT" >&2
+    exit 1
+  fi
+
+  if ! dev_tls_certificate_covers "IP:127.0.0.1"; then
+    printf 'run-dev.sh: supplied TLS certificate %s does not cover 127.0.0.1, which the frontend and run-dev.sh health checks use to reach the servers; add IP:127.0.0.1 to its subjectAltName.\n' "$DEV_TLS_CERT" >&2
+    exit 1
+  fi
+
+  mapfile -t uncovered < <(dev_tls_uncovered_san_entries)
+  if (( ${#uncovered[@]} > 0 )); then
+    DEV_TLS_COVERED_SAN_ENTRIES=()
+    for entry in "${DEV_TLS_SAN_ENTRIES[@]}"; do
+      if [[ " ${uncovered[*]} " == *" $entry "* ]]; then
+        missing+="${missing:+, }${entry#*:}"
+      else
+        DEV_TLS_COVERED_SAN_ENTRIES+=("$entry")
+      fi
+    done
+
+    printf 'run-dev.sh: warning: supplied TLS certificate %s does not cover: %s\n' "$DEV_TLS_CERT" "$missing" >&2
+    printf 'run-dev.sh: clients using those names will reject it; run-dev.sh never rewrites a supplied certificate, so reissue it with those subjectAltNames if you need them.\n' >&2
+  fi
+
+  if ! openssl x509 -in "$DEV_TLS_CERT" -noout -checkend "$DEV_TLS_RENEW_SECONDS" >/dev/null 2>&1; then
+    printf 'run-dev.sh: warning: supplied TLS certificate %s expires within 30 days.\n' "$DEV_TLS_CERT" >&2
+  fi
+
+  text="$(openssl x509 -in "$DEV_TLS_CERT" -noout -text 2>/dev/null)" || text=""
+  if [[ "$text" != *"TLS Web Server Authentication"* ]]; then
+    printf 'run-dev.sh: warning: supplied TLS certificate %s lacks extendedKeyUsage serverAuth, so macOS browsers will reject it.\n' "$DEV_TLS_CERT" >&2
+  fi
+}
+
+dev_tls_key_matches_certificate() {
+  local cert_public_key
+  local key_public_key
+
+  cert_public_key="$(openssl x509 -in "$DEV_TLS_CERT" -noout -pubkey 2>/dev/null)" || return 1
+  key_public_key="$(openssl pkey -in "$DEV_TLS_KEY" -pubout 2>/dev/null)" || return 1
+
+  [[ -n "$cert_public_key" && "$cert_public_key" == "$key_public_key" ]]
+}
+
+# dev_tls_certificate_covers succeeds when the cert is valid for the TYPE:value
+# SAN entry. -partial_chain lets a CA-issued cert anchor its own check.
+dev_tls_certificate_covers() {
+  local san_type="${1%%:*}"
+  local san_value="${1#*:}"
+  local flag="-verify_hostname"
+
+  if [[ "$san_type" == "IP" ]]; then
+    flag="-verify_ip"
+  fi
+
+  openssl verify -partial_chain -CAfile "$DEV_TLS_CERT" "$flag" "$san_value" "$DEV_TLS_CERT" >/dev/null 2>&1
+}
+
+# dev_tls_uncovered_san_entries prints each required SAN entry the cert does
+# not cover.
+dev_tls_uncovered_san_entries() {
+  local entry
+
+  for entry in "${DEV_TLS_SAN_ENTRIES[@]}"; do
+    if ! dev_tls_certificate_covers "$entry"; then
+      printf '%s\n' "$entry"
+    fi
+  done
 }
 
 write_dev_tls_openssl_config() {
@@ -742,6 +904,9 @@ write_dev_tls_openssl_config() {
     printf '[req_distinguished_name]\n'
     printf 'CN = localhost\n'
     printf '[v3_req]\n'
+    printf 'basicConstraints = critical,CA:FALSE\n'
+    printf 'keyUsage = critical,digitalSignature,keyEncipherment\n'
+    printf 'extendedKeyUsage = serverAuth\n'
     printf 'subjectAltName = @alt_names\n'
     printf '[alt_names]\n'
 
@@ -770,7 +935,7 @@ dev_tls_san_display() {
   local entry
   local san_value
 
-  for entry in "${DEV_TLS_SAN_ENTRIES[@]}"; do
+  for entry in "${DEV_TLS_COVERED_SAN_ENTRIES[@]}"; do
     san_value="${entry#*:}"
     if [[ -z "$joined" ]]; then
       joined="$san_value"
@@ -787,7 +952,7 @@ cd "$REPO_ROOT"
 mkdir -p "$TMP_DIR" "$LOG_DIR"
 ensure_dev_tls_certificate
 
-export WA_RESULTS_BACKEND_CA_CERT="$DEV_TLS_CERT"
+export WA_RESULTS_BACKEND_CA_CERT="$DEV_TLS_CA_CERT"
 export WA_RESULTS_SERVER_CERT="$DEV_TLS_CERT"
 export WA_RESULTS_SERVER_KEY="$DEV_TLS_KEY"
 
@@ -1200,7 +1365,7 @@ preflight_service_ports() {
     ensure_port_available_or_reusable "MLWH" "seqmeta" "WA_${scenario_env_prefix}_SEQMETA_PORT" "$seqmeta_port" "$SEQMETA_HEALTH_URL"
   fi
 
-  ensure_port_available_or_reusable "frontend" "frontend" "WA_${scenario_env_prefix}_FRONTEND_PORT" "$frontend_port" "$FRONTEND_HEALTH_URL" "$DEV_TLS_CERT"
+  ensure_port_available_or_reusable "frontend" "frontend" "WA_${scenario_env_prefix}_FRONTEND_PORT" "$frontend_port" "$FRONTEND_HEALTH_URL" "$DEV_TLS_CA_CERT"
 }
 
 seed_results() {
@@ -1799,7 +1964,7 @@ printf '\n[%s]\n' "$FRONTEND_KIND" >>"$FRONTEND_LOG"
 if [[ -n "$MLWH_CACHE_PATH" ]]; then
   export WA_MLWH_CACHE_PATH="$MLWH_CACHE_PATH"
 fi
-if [[ "$scenario" == "dev" ]] && http_is_healthy "$FRONTEND_HEALTH_URL" "strict" "$DEV_TLS_CERT"; then
+if [[ "$scenario" == "dev" ]] && http_is_healthy "$FRONTEND_HEALTH_URL" "strict" "$DEV_TLS_CA_CERT"; then
   printf 'Reusing existing frontend dev server on https://127.0.0.1:%s\n' "$frontend_port"
   printf 'Reusing existing frontend dev server on https://127.0.0.1:%s\n' "$frontend_port" >>"$FRONTEND_LOG"
 else
@@ -1827,7 +1992,7 @@ else
   FRONTEND_PID="$!"
   FRONTEND_STARTED=1
 
-  wait_for_http "frontend health" "$FRONTEND_HEALTH_URL" "strict" "$FRONTEND_HEALTH_MAX_ATTEMPTS" "$FRONTEND_PID" "$FRONTEND_LOG" "$DEV_TLS_CERT"
+  wait_for_http "frontend health" "$FRONTEND_HEALTH_URL" "strict" "$FRONTEND_HEALTH_MAX_ATTEMPTS" "$FRONTEND_PID" "$FRONTEND_LOG" "$DEV_TLS_CA_CERT"
 fi
 
 # Build the banner first and print it in one write, so a reader that sees the
@@ -1837,7 +2002,11 @@ ready_banner="$(
   printf 'Development environment is ready.\n'
   printf 'Results: %s\n' "$WA_RESULTS_BACKEND_URL"
   printf 'Results bind: %s (%s)\n' "$RESULTS_BIND_ADDR" "$RESULTS_BIND_SCOPE"
-  printf 'Dev TLS cert: %s (valid for %s)\n' "$DEV_TLS_CERT" "$(dev_tls_san_display)"
+  if (( DEV_TLS_SUPPLIED )); then
+    printf 'Dev TLS cert: %s (supplied; valid for %s)\n' "$DEV_TLS_CERT" "$(dev_tls_san_display)"
+  else
+    printf 'Dev TLS cert: %s (valid for %s)\n' "$DEV_TLS_CERT" "$(dev_tls_san_display)"
+  fi
   if [[ -n "${WA_RESULTS_SERVER_URL:-}" ]]; then
     printf 'Results public: %s\n' "$WA_RESULTS_SERVER_URL"
   elif [[ "$RESULTS_BIND_SCOPE" == "listening beyond loopback" ]]; then

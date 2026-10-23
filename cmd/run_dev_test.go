@@ -1603,6 +1603,19 @@ func runDevEnsureTLSCertificateForTest(t *testing.T) (string, string) {
 	return certPath, keyPath
 }
 
+// runDevFreshGeneratedTLSCertPathsForTest returns run-dev.sh's generated dev
+// TLS cert and key paths in t's run-dev temp dir, with any files an earlier
+// run left there removed.
+func runDevFreshGeneratedTLSCertPathsForTest(t *testing.T) (string, string) {
+	t.Helper()
+
+	certPath, keyPath := runDevTLSCertPathsForTest(t)
+	convey.So(os.RemoveAll(certPath), convey.ShouldBeNil)
+	convey.So(os.RemoveAll(keyPath), convey.ShouldBeNil)
+
+	return certPath, keyPath
+}
+
 func runDevTLSCertPathsForTest(t *testing.T) (string, string) {
 	t.Helper()
 
@@ -1743,7 +1756,7 @@ func runDevWriteTLSCertificateForHostnamesForTest(t *testing.T, certPath string,
 		"rsa:2048",
 		"-nodes",
 		"-days",
-		"7",
+		"397",
 		"-keyout",
 		keyPath,
 		"-out",
@@ -1772,6 +1785,9 @@ func runDevOpenSSLConfigForHostnamesForTest(hosts []string) string {
 	builder.WriteString("[req_distinguished_name]\n")
 	builder.WriteString("CN = localhost\n")
 	builder.WriteString("[v3_req]\n")
+	builder.WriteString("basicConstraints = critical,CA:FALSE\n")
+	builder.WriteString("keyUsage = critical,digitalSignature,keyEncipherment\n")
+	builder.WriteString("extendedKeyUsage = serverAuth\n")
 	builder.WriteString("subjectAltName = @alt_names\n")
 	builder.WriteString("[alt_names]\n")
 
@@ -1857,13 +1873,17 @@ type runDevCertificateOptionsForTest struct {
 	devAllowedOrigins string
 	legacyBackendURL  string
 	publicResultsURL  string
+	// extraEnv adds or overrides run-dev.sh environment variables.
+	extraEnv map[string]string
+	// pnpmArgsLogPath, when set, runs the default pnpm frontend command
+	// through a stub that records its arguments here.
+	pnpmArgsLogPath string
 }
 
 func TestRunDevScriptDevCertificateSubjectAltNames(t *testing.T) {
 	convey.Convey("Bug 2: run-dev.sh generates a dev certificate trusted for local and public hostnames", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
-		certPath := filepath.Join(t.TempDir(), "wa-dev-cert.pem")
-		keyPath := filepath.Join(t.TempDir(), "wa-dev-key.pem")
+		certPath, keyPath := runDevFreshGeneratedTLSCertPathsForTest(t)
 		process, _ := startRunDevForDevCertificateTest(t, repoRoot, runDevCertificateOptionsForTest{
 			certPath:         certPath,
 			keyPath:          keyPath,
@@ -1890,8 +1910,7 @@ func TestRunDevScriptDevCertificateSubjectAltNames(t *testing.T) {
 
 	convey.Convey("Bug 2: run-dev.sh regenerates an existing localhost-only dev certificate when remote SANs are missing", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
-		certPath := filepath.Join(t.TempDir(), "wa-dev-cert.pem")
-		keyPath := filepath.Join(t.TempDir(), "wa-dev-key.pem")
+		certPath, keyPath := runDevFreshGeneratedTLSCertPathsForTest(t)
 		runDevWriteLocalhostOnlyTLSCertificateForTest(t, certPath, keyPath)
 		oldCert := runDevReadCertificateForTest(t, certPath)
 		convey.So(oldCert.VerifyHostname("farm22-wrstat01"), convey.ShouldNotBeNil)
@@ -1916,8 +1935,7 @@ func TestRunDevScriptDevCertificateSubjectAltNames(t *testing.T) {
 
 	convey.Convey("run-dev.sh does not expand wildcard allowed origins into dev certificate SANs", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
-		certPath := filepath.Join(t.TempDir(), "wa-dev-cert.pem")
-		keyPath := filepath.Join(t.TempDir(), "wa-dev-key.pem")
+		certPath, keyPath := runDevFreshGeneratedTLSCertPathsForTest(t)
 		process, _ := startRunDevForDevCertificateTest(t, repoRoot, runDevCertificateOptionsForTest{
 			certPath:          certPath,
 			keyPath:           keyPath,
@@ -1938,8 +1956,7 @@ func TestRunDevScriptDevCertificateSubjectAltNames(t *testing.T) {
 
 	convey.Convey("run-dev.sh strips allowed-origin ports before creating dev certificate SANs", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
-		certPath := filepath.Join(t.TempDir(), "wa-dev-cert.pem")
-		keyPath := filepath.Join(t.TempDir(), "wa-dev-key.pem")
+		certPath, keyPath := runDevFreshGeneratedTLSCertPathsForTest(t)
 		process, _ := startRunDevForDevCertificateTest(t, repoRoot, runDevCertificateOptionsForTest{
 			certPath:      certPath,
 			keyPath:       keyPath,
@@ -1990,8 +2007,6 @@ func startRunDevForDevCertificateTest(
 		"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"WA_ENV":                                "development",
 		"WA_DEV_RESULTS_HOST":                   "0.0.0.0",
-		"WA_RESULTS_SERVER_CERT":                options.certPath,
-		"WA_RESULTS_SERVER_KEY":                 options.keyPath,
 		"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results-dev.sqlite"),
 		"WA_MLWH_DSN":                           "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
 		"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
@@ -2015,6 +2030,17 @@ func startRunDevForDevCertificateTest(
 	if options.devAllowedOrigins != "" {
 		env["WA_DEV_ALLOWED_ORIGINS"] = options.devAllowedOrigins
 	}
+	if options.certPath != "" {
+		env["WA_RESULTS_SERVER_CERT"] = options.certPath
+	}
+	if options.keyPath != "" {
+		env["WA_RESULTS_SERVER_KEY"] = options.keyPath
+	}
+	if options.pnpmArgsLogPath != "" {
+		delete(env, "WA_RUN_DEV_FRONTEND_DEV_CMD")
+		writeRunDevPnpmArgsStubForTest(t, repoRoot, binDir, options.pnpmArgsLogPath)
+	}
+	maps.Copy(env, options.extraEnv)
 
 	process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 		mode:         "dev",
@@ -2026,6 +2052,26 @@ func startRunDevForDevCertificateTest(
 	})
 
 	return process, snapshotPath
+}
+
+// writeRunDevPnpmArgsStubForTest puts a pnpm on binDir that records its
+// arguments in logPath and serves the frontend stub on the --port value.
+func writeRunDevPnpmArgsStubForTest(t *testing.T, repoRoot string, binDir string, logPath string) {
+	t.Helper()
+
+	stub := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%%s\n' "$*" >> %q
+
+if [[ "$1" == "dev" ]]; then
+	exec node %q "$3"
+fi
+
+exit 0
+`, logPath, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"))
+
+	convey.So(os.WriteFile(filepath.Join(binDir, "pnpm"), []byte(stub), 0o755), convey.ShouldBeNil)
 }
 
 func writeRunDevHostnameStubForTest(t *testing.T, binDir string, fqdn string, short string) {
@@ -3269,6 +3315,11 @@ func runDevEnvForTest(t *testing.T, unsetKeys []string) []string {
 		// rather than rewriting the checkout's. Tests that need them set them.
 		"WA_RESULTS_SERVER_CERT",
 		"WA_RESULTS_SERVER_KEY",
+		// A developer's personal dev TLS cert would replace the one these
+		// tests generate or supply.
+		"WA_TLS_CERT",
+		"WA_TLS_KEY",
+		"WA_TLS_CA_CERT",
 		"WA_RUN_DEV_TMP_DIR",
 		"WA_RUN_DEV_LOG_DIR",
 		// Outside test mode run-dev.sh keeps the caller's XDG_STATE_HOME (or
@@ -3758,6 +3809,8 @@ type runDevStartOptions struct {
 	startDir      string
 	unsetEnv      []string
 	env           map[string]string
+	// command, when set, is run instead of run-dev.sh and its flags.
+	command []string
 }
 
 func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOptions) *runDevProcess {
@@ -3789,6 +3842,10 @@ func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOption
 			"--results-port", fmt.Sprintf("%d", options.resultsPort),
 			"--seqmeta-port", fmt.Sprintf("%d", options.seqmetaPort),
 		)
+	}
+
+	if len(options.command) > 0 {
+		args = options.command
 	}
 
 	command := exec.Command("bash", args...)
